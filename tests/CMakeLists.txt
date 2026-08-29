@@ -3,6 +3,14 @@ target_link_libraries(PlutoGERhiTypesTests PRIVATE PlutoGE::Render)
 target_include_directories(PlutoGERhiTypesTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGERhiTypesTests COMMAND PlutoGERhiTypesTests)
 
+add_executable(PlutoGEWindowClientApiTests WindowClientApiTests.cpp)
+target_link_libraries(PlutoGEWindowClientApiTests PRIVATE PlutoGE::Platform)
+add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)
+
+add_executable(PlutoGEEngineGraphicsApiTests EngineGraphicsApiTests.cpp)
+target_link_libraries(PlutoGEEngineGraphicsApiTests PRIVATE PlutoGE::Core)
+add_test(NAME PlutoGEEngineGraphicsApiTests COMMAND PlutoGEEngineGraphicsApiTests)
+
 add_executable(PlutoGEOpenGLRhiTests OpenGLRhiTests.cpp)
 target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Platform)
 target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
@@ -18,6 +26,12 @@ target_link_libraries(PlutoGEVulkanRhiTests PRIVATE PlutoGE::Render)
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+
+add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)
+target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+target_compile_definitions(PlutoGEVulkanPresentationTests PRIVATE
+    PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+add_test(NAME PlutoGEVulkanPresentationTests COMMAND PlutoGEVulkanPresentationTests)
 
 add_executable(PlutoGELargeMeshOptimizationTests
     LargeMeshOptimizationTests.cpp

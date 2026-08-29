@@ -6,6 +6,8 @@
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 
@@ -42,6 +44,7 @@ namespace PlutoGE::core
     struct EngineConfig
     {
         platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
+        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
         bool isEditorHost = false;
     };
 
@@ -71,6 +74,9 @@ namespace PlutoGE::core
 
         [[nodiscard]] platform::Window &GetWindow() { return m_window; }
         [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
+        [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() { return m_renderDevice.get(); }
+        [[nodiscard]] render::rhi::ISwapchain *GetSwapchain() { return m_swapchain.get(); }
+        [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return m_rhiRenderService; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
         [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return m_meshImporter; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
@@ -107,6 +113,9 @@ namespace PlutoGE::core
         EngineConfig m_config;
         platform::Window m_window;
         render::Renderer m_renderer;
+        std::unique_ptr<render::rhi::IRenderDevice> m_renderDevice;
+        std::unique_ptr<render::rhi::ISwapchain> m_swapchain;
+        render::RhiRenderService m_rhiRenderService;
         assets::AssetManager m_assetManager;
         assetimport::MeshImporter m_meshImporter;
         render::TextureManager m_textureManager;

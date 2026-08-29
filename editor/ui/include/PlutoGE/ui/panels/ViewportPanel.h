@@ -69,12 +69,15 @@ namespace PlutoGE::ui
         void SetEditorMovementEnabled(bool enabled) { m_editorMovementEnabled = enabled; }
         void SetEditorCameraData(const render::CameraData &cameraData);
         void ClearEditorCameraData();
+        void SetGraphicsApi(render::rhi::GraphicsApi graphicsApi);
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
         bool RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
         bool RenderViewSelectionGizmo(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
         void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
+        void InitializeRhiPreview();
+        void ShutdownRhiPreview();
 
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;

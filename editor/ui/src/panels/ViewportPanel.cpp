@@ -32,6 +32,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/rhi/RenderDeviceFactory.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanBootstrap.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
@@ -1844,6 +1845,94 @@ namespace PlutoGE::ui
         m_hasEditorCameraData = false;
     }
 
+    void ViewportPanel::SetGraphicsApi(render::rhi::GraphicsApi graphicsApi)
+    {
+        if (!m_config.editorViewport || m_config.graphicsApi == graphicsApi)
+            return;
+
+        ShutdownRhiPreview();
+        m_config.graphicsApi = graphicsApi;
+        m_useRhiPreview = true;
+        InitializeRhiPreview();
+    }
+
+    void ViewportPanel::InitializeRhiPreview()
+    {
+        try
+        {
+            auto creation = render::rhi::CreateRenderDevice(m_config.graphicsApi);
+            if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
+            {
+                m_vulkanAvailable = static_cast<bool>(creation);
+                m_vulkanStatus = creation ? "Vulkan available: " + creation.deviceName
+                                          : "Vulkan unavailable: " + creation.error;
+            }
+            else
+            {
+                const auto vulkanInfo = render::rhi::vulkan::ProbeVulkanDevice();
+                m_vulkanAvailable = vulkanInfo.available;
+                m_vulkanStatus = vulkanInfo.available
+                                      ? "Vulkan available: " + vulkanInfo.deviceName
+                                      : "Vulkan unavailable: " + vulkanInfo.error;
+            }
+            std::cout << "Viewport RHI: " << m_vulkanStatus << std::endl;
+            if (!creation)
+            {
+                throw std::runtime_error(creation.error.empty() ? "Failed to create the requested render device"
+                                                                 : creation.error);
+            }
+            m_activeRhiVulkan = creation.activeApi == render::rhi::GraphicsApi::Vulkan;
+            m_rhiDevice = std::move(creation.device);
+            m_basicRenderer = std::make_unique<render::BasicRenderer>();
+            render::BasicRendererShaderPackage shaders;
+            shaders.vertex.glsl = ReadRhiShaderText("BasicLit.vertex.glsl");
+            shaders.vertex.spirv = ReadRhiShaderBinary("BasicLit.vertex.spv");
+            shaders.fragment.glsl = ReadRhiShaderText("BasicLit.fragment.glsl");
+            shaders.fragment.spirv = ReadRhiShaderBinary("BasicLit.fragment.spv");
+            if (!m_basicRenderer->Initialize(*m_rhiDevice, shaders))
+            {
+                ShutdownRhiPreview();
+                m_useRhiPreview = false;
+            }
+            else
+            {
+                std::cout << "Viewport RHI active preview backend: "
+                          << (m_activeRhiVulkan ? "Vulkan (OpenGL readback bridge)" : "OpenGL")
+                          << std::endl;
+            }
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "Failed to initialize viewport RHI preview: " << error.what() << std::endl;
+            ShutdownRhiPreview();
+            m_useRhiPreview = false;
+        }
+    }
+
+    void ViewportPanel::ShutdownRhiPreview()
+    {
+        m_rhiMeshes.clear();
+        m_rhiSrgbTextures.clear();
+        m_rhiLinearTextures.clear();
+        if (m_basicRenderer)
+        {
+            m_basicRenderer->Shutdown();
+            m_basicRenderer.reset();
+        }
+        m_rhiDevice.reset();
+        m_rhiViewportTexture = 0;
+        m_activeRhiVulkan = false;
+        m_rhiSceneCommandCount = 0;
+        m_rhiDrawCount = 0;
+        m_rhiChangedPixelCount = 0;
+        if (m_vulkanBridgeTexture != 0)
+        {
+            const GLuint texture = static_cast<GLuint>(m_vulkanBridgeTexture);
+            glDeleteTextures(1, &texture);
+            m_vulkanBridgeTexture = 0;
+        }
+    }
+
     void ViewportPanel::Initialize()
     {
         m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
@@ -1867,54 +1956,7 @@ namespace PlutoGE::ui
 
         if (m_config.editorViewport)
         {
-            const auto vulkanInfo = render::rhi::vulkan::ProbeVulkanDevice();
-            m_vulkanAvailable = vulkanInfo.available;
-            m_vulkanStatus = vulkanInfo.available
-                                  ? "Vulkan available: " + vulkanInfo.deviceName
-                                  : "Vulkan unavailable: " + vulkanInfo.error;
-            std::cout << "Viewport RHI: " << m_vulkanStatus << std::endl;
-            try
-            {
-                // During the editor migration Vulkan renders off-screen and
-                // readback is uploaded to an OpenGL texture consumed by the
-                // existing ImGui backend. Native Vulkan presentation replaces
-                // this bridge once the editor window is created with NO_API.
-                if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan && m_vulkanAvailable)
-                {
-                    m_rhiDevice = std::make_unique<render::rhi::vulkan::VulkanDevice>();
-                    m_activeRhiVulkan = true;
-                }
-                else
-                {
-                    m_rhiDevice = std::make_unique<render::rhi::opengl::OpenGLDevice>();
-                    m_activeRhiVulkan = false;
-                }
-                m_basicRenderer = std::make_unique<render::BasicRenderer>();
-                render::BasicRendererShaderPackage shaders;
-                shaders.vertex.glsl = ReadRhiShaderText("BasicLit.vertex.glsl");
-                shaders.vertex.spirv = ReadRhiShaderBinary("BasicLit.vertex.spv");
-                shaders.fragment.glsl = ReadRhiShaderText("BasicLit.fragment.glsl");
-                shaders.fragment.spirv = ReadRhiShaderBinary("BasicLit.fragment.spv");
-                if (!m_basicRenderer->Initialize(*m_rhiDevice, shaders))
-                {
-                    m_basicRenderer.reset();
-                    m_rhiDevice.reset();
-                    m_useRhiPreview = false;
-                }
-                else
-                {
-                    std::cout << "Viewport RHI active preview backend: "
-                              << (m_activeRhiVulkan ? "Vulkan (OpenGL readback bridge)" : "OpenGL")
-                              << std::endl;
-                }
-            }
-            catch (const std::exception &error)
-            {
-                std::cerr << "Failed to initialize viewport RHI preview: " << error.what() << std::endl;
-                m_basicRenderer.reset();
-                m_rhiDevice.reset();
-                m_useRhiPreview = false;
-            }
+            InitializeRhiPreview();
         }
     }
 
@@ -4105,22 +4147,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::Shutdown()
     {
-        m_rhiMeshes.clear();
-        m_rhiSrgbTextures.clear();
-        m_rhiLinearTextures.clear();
-        if (m_basicRenderer)
-        {
-            m_basicRenderer->Shutdown();
-            m_basicRenderer.reset();
-        }
-        m_rhiDevice.reset();
-        m_rhiViewportTexture = 0;
-        if (m_vulkanBridgeTexture != 0)
-        {
-            const GLuint texture = static_cast<GLuint>(m_vulkanBridgeTexture);
-            glDeleteTextures(1, &texture);
-            m_vulkanBridgeTexture = 0;
-        }
+        ShutdownRhiPreview();
         if (m_renderTarget)
         {
             m_renderTarget->Cleanup();

@@ -1,6 +1,7 @@
 add_library(PlutoGEEditorUI
     src/EditorShell.cpp
     src/EditorProfiler.cpp
+    src/EditorCompositor.cpp
     src/panels/Panel.cpp
     src/panels/ConsolePanel.cpp
     src/panels/ContentBrowserPanel.cpp

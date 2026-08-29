@@ -2707,7 +2707,7 @@ namespace PlutoGE::ui
         m_statusMessage = "Ready";
         UpdateWindowTitle();
 
-        if (!m_panelManager.InitializeImGui(&m_engine.GetWindow()))
+        if (!m_panelManager.InitializeImGui(&m_engine.GetWindow(), m_engine.GetRenderDevice(), m_engine.GetSwapchain()))
         {
             m_editorCamera.postProcessEffects.clear();
             m_scene.reset();
@@ -2828,6 +2828,7 @@ namespace PlutoGE::ui
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
+        render::rhi::GraphicsApi projectGraphicsApi = render::rhi::GraphicsApi::OpenGL;
         assets::RuntimeUpscalerMode projectRuntimeUpscaler = assets::RuntimeUpscalerMode::None;
         float projectRuntimeRenderScale = 1.0f;
         float projectRuntimeUpscaleSharpness = 0.25f;
@@ -2860,6 +2861,7 @@ namespace PlutoGE::ui
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
             projectVSyncEnabled = manifest.vSyncEnabled;
+            projectGraphicsApi = manifest.graphicsApi;
             projectRuntimeUpscaler = manifest.runtimeUpscaler;
             projectRuntimeRenderScale = manifest.runtimeRenderScale;
             projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
@@ -2872,6 +2874,8 @@ namespace PlutoGE::ui
 
         while (!window.ShouldClose())
         {
+            viewportPanel->SetGraphicsApi(m_project ? m_project->GetManifest().graphicsApi
+                                                    : render::rhi::GraphicsApi::OpenGL);
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
@@ -3632,6 +3636,27 @@ namespace PlutoGE::ui
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
+                    const char *graphicsApiLabel = projectGraphicsApi == render::rhi::GraphicsApi::Vulkan
+                                                       ? "Vulkan"
+                                                       : "OpenGL";
+                    if (ImGui::BeginCombo("Graphics API", graphicsApiLabel))
+                    {
+                        constexpr std::array<const char *, 2> graphicsApiLabels = {"OpenGL", "Vulkan"};
+                        for (int apiIndex = 0; apiIndex < static_cast<int>(graphicsApiLabels.size()); ++apiIndex)
+                        {
+                            const auto api = static_cast<render::rhi::GraphicsApi>(apiIndex);
+                            const bool selected = projectGraphicsApi == api;
+                            if (ImGui::Selectable(graphicsApiLabels[apiIndex], selected))
+                                projectGraphicsApi = api;
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (projectGraphicsApi == render::rhi::GraphicsApi::Vulkan)
+                    {
+                        ImGui::TextDisabled("The editor switches its scene preview immediately; native Vulkan presentation is still in migration.");
+                    }
                     const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
                                                           ? "Spatial"
                                                           : "None";
@@ -3707,6 +3732,7 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        manifest.graphicsApi = projectGraphicsApi;
                         manifest.runtimeUpscaler = projectRuntimeUpscaler;
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
                         manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
@@ -3742,6 +3768,7 @@ namespace PlutoGE::ui
                         m_panelManager.SetEditorFont(manifest.editorFont);
                         projectEditorFontSize = manifest.editorFontSize;
                         projectEditorFont = manifest.editorFont;
+                        projectGraphicsApi = manifest.graphicsApi;
                         ImGui::CloseCurrentPopup();
                     }
 

@@ -2,6 +2,7 @@
 #include "../HandleRegistry.h"
 
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <limits>
@@ -237,6 +238,56 @@ namespace PlutoGE::render::rhi::opengl
         bool m_rendering = false;
     };
 
+    class OpenGLSwapchain final : public ISwapchain
+    {
+    public:
+        OpenGLSwapchain(OpenGLDevice::Impl &impl, const SwapchainDescriptor &descriptor)
+            : m_impl(impl), m_window(static_cast<GLFWwindow *>(descriptor.nativeWindow)),
+              m_width(descriptor.width), m_height(descriptor.height)
+        {
+            if (!m_window)
+                throw std::invalid_argument("OpenGL swapchain requires a GLFW window");
+            glfwSwapInterval(descriptor.vSync ? 1 : 0);
+        }
+
+        [[nodiscard]] Format GetFormat() const noexcept override { return Format::R8G8B8A8Srgb; }
+        [[nodiscard]] std::uint32_t GetWidth() const noexcept override { return m_width; }
+        [[nodiscard]] std::uint32_t GetHeight() const noexcept override { return m_height; }
+
+        bool Resize(std::uint32_t width, std::uint32_t height) override
+        {
+            m_width = width;
+            m_height = height;
+            return width != 0 && height != 0;
+        }
+
+        bool Present(TextureHandle sourceHandle) override
+        {
+            const auto *source = m_impl.textures.Get(sourceHandle);
+            if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || m_width == 0 || m_height == 0)
+                return false;
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl.framebuffer);
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, source->name, 0);
+            if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                return false;
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glBlitFramebuffer(0, 0,
+                              static_cast<GLint>(source->descriptor.width), static_cast<GLint>(source->descriptor.height),
+                              0, 0, static_cast<GLint>(m_width), static_cast<GLint>(m_height),
+                              GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glfwSwapBuffers(m_window);
+            return glGetError() == GL_NO_ERROR;
+        }
+
+    private:
+        OpenGLDevice::Impl &m_impl;
+        GLFWwindow *m_window = nullptr;
+        std::uint32_t m_width = 0;
+        std::uint32_t m_height = 0;
+    };
+
     OpenGLDevice::OpenGLDevice() : m_impl(std::make_unique<Impl>())
     {
         if (!glad_glGenBuffers)
@@ -258,6 +309,11 @@ namespace PlutoGE::render::rhi::opengl
         m_impl->buffers.ForEach([](auto &r) { glDeleteBuffers(1, &r.name); });
         if (m_impl->framebuffer)
             glDeleteFramebuffers(1, &m_impl->framebuffer);
+    }
+
+    std::unique_ptr<ISwapchain> OpenGLDevice::CreateSwapchain(const SwapchainDescriptor &descriptor)
+    {
+        return std::make_unique<OpenGLSwapchain>(*m_impl, descriptor);
     }
 
     BufferHandle OpenGLDevice::CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> data)

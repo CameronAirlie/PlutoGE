@@ -9,6 +9,12 @@
 
 namespace PlutoGE::platform
 {
+    enum class WindowClientApi
+    {
+        OpenGL,
+        None,
+    };
+
     struct WindowConfig
     {
         std::string title = "PlutoGE Window";
@@ -17,6 +23,7 @@ namespace PlutoGE::platform
         bool resizable = true;
         bool visible = true;
         bool fullscreen = false;
+        WindowClientApi clientApi = WindowClientApi::OpenGL;
         std::function<void(int, int)> resizeCallback = nullptr;
     };
 
@@ -40,6 +47,7 @@ namespace PlutoGE::platform
         [[nodiscard]] WindowExtents GetExtents() const;
         [[nodiscard]] const WindowConfig GetConfig() const;
         [[nodiscard]] void *GetWindow() const;
+        [[nodiscard]] WindowClientApi GetClientApi() const { return m_config.clientApi; }
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
         [[nodiscard]] bool IsCursorLocked() const;
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }

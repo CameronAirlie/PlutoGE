@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/PanelManager.h"
+#include "PlutoGE/ui/EditorCompositor.h"
 
 #include "PlutoGE/ui/panels/Panel.h"
 
@@ -30,6 +31,9 @@
 
 namespace PlutoGE::ui
 {
+    PanelManager::PanelManager() = default;
+    PanelManager::~PanelManager() = default;
+
     namespace
     {
         constexpr bool kEnableNativeMultiViewport = true;
@@ -225,8 +229,12 @@ namespace PlutoGE::ui
         }
     }
 
-    bool PanelManager::InitializeImGui(platform::Window *window)
+    bool PanelManager::InitializeImGui(platform::Window *window,
+                                       render::rhi::IRenderDevice *device,
+                                       render::rhi::ISwapchain *swapchain)
     {
+        if (!window || !device || !swapchain)
+            return false;
         m_window = window;
 
         IMGUI_CHECKVERSION();
@@ -255,8 +263,14 @@ namespace PlutoGE::ui
         SetEditorFont(m_editorFont);
         SetEditorFontSize(kDefaultEditorFontSize);
 
-        ImGui_ImplGlfw_InitForOpenGL(static_cast<GLFWwindow *>(window->GetWindow()), true);
-        ImGui_ImplOpenGL3_Init("#version 330 core");
+        m_compositor = CreateEditorCompositor(device->GetApi());
+        if (!m_compositor || !m_compositor->Initialize(*window, *device, *swapchain))
+        {
+            m_compositor.reset();
+            ImGui::DestroyContext();
+            m_window = nullptr;
+            return false;
+        }
 
         ApplyModernProfessionalTheme();
 
@@ -278,8 +292,9 @@ namespace PlutoGE::ui
         }
 
         ImGui::SaveIniSettingsToDisk(m_imguiIniPath.c_str());
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
+        if (m_compositor)
+            m_compositor->Shutdown();
+        m_compositor.reset();
         ImGui::DestroyContext();
         m_window = nullptr;
     }
@@ -364,8 +379,7 @@ namespace PlutoGE::ui
             io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
         }
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
+        m_compositor->BeginFrame();
         if (suppressImguiMouse)
         {
             io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
@@ -395,7 +409,7 @@ namespace PlutoGE::ui
         const auto endPanelUpdateStart = std::chrono::high_resolution_clock::now();
         const auto imguiRenderStart = std::chrono::high_resolution_clock::now();
         ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        m_compositor->RenderDrawData();
         const auto imguiRenderEnd = std::chrono::high_resolution_clock::now();
         m_timingStats.imguiRenderMs = DurationMs(imguiRenderStart, imguiRenderEnd);
         m_timingStats.platformViewportCount = ImGui::GetPlatformIO().Viewports.Size;
@@ -403,18 +417,14 @@ namespace PlutoGE::ui
         ImGuiIO &io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
-            GLFWwindow *backup_current_context = glfwGetCurrentContext();
-
             const auto platformUpdateStart = std::chrono::high_resolution_clock::now();
-            ImGui::UpdatePlatformWindows();
+            m_compositor->RenderPlatformWindows();
             const auto platformUpdateEnd = std::chrono::high_resolution_clock::now();
 
             const auto platformRenderStart = std::chrono::high_resolution_clock::now();
-            ImGui::RenderPlatformWindowsDefault();
             const auto platformRenderEnd = std::chrono::high_resolution_clock::now();
 
             const auto contextRestoreStart = std::chrono::high_resolution_clock::now();
-            glfwMakeContextCurrent(backup_current_context);
             const auto contextRestoreEnd = std::chrono::high_resolution_clock::now();
 
             m_timingStats.platformWindowsUpdateMs = DurationMs(platformUpdateStart, platformUpdateEnd);

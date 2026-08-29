@@ -11,6 +11,7 @@ include(FetchContent)
 
 # Vulkan is loaded dynamically through Volk, so development builds do not
 # require a machine-wide Vulkan SDK or a link-time dependency on vulkan-1.
+set(VULKAN_HEADERS_ENABLE_MODULE OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     vulkan_headers
     GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
@@ -95,12 +96,15 @@ add_library(PlutoGE_imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 add_library(PlutoGE::imgui ALIAS PlutoGE_imgui)
 target_link_libraries(PlutoGE_imgui PUBLIC
     PlutoGE::glad
     PlutoGE::glfw
+    volk
 )
+target_compile_definitions(PlutoGE_imgui PRIVATE IMGUI_IMPL_VULKAN_USE_VOLK)
 target_include_directories(PlutoGE_imgui PUBLIC
     ${imgui_SOURCE_DIR}
 )

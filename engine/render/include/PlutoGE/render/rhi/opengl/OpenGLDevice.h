@@ -7,6 +7,7 @@
 namespace PlutoGE::render::rhi::opengl
 {
     class OpenGLCommandContext;
+    class OpenGLSwapchain;
 
     class OpenGLDevice final : public IRenderDevice
     {
@@ -17,6 +18,7 @@ namespace PlutoGE::render::rhi::opengl
         OpenGLDevice &operator=(const OpenGLDevice &) = delete;
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::OpenGL; }
+        [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &descriptor) override;
@@ -33,6 +35,7 @@ namespace PlutoGE::render::rhi::opengl
 
     private:
         friend class OpenGLCommandContext;
+        friend class OpenGLSwapchain;
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };

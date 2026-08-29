@@ -2,6 +2,7 @@
 #include "../HandleRegistry.h"
 
 #include <volk.h>
+#include <GLFW/glfw3.h>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #define VMA_IMPLEMENTATION
@@ -103,10 +104,13 @@ namespace PlutoGE::render::rhi::vulkan
     struct VulkanDevice::Impl
     {
         VkInstance instance = VK_NULL_HANDLE;
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         VkDevice device = VK_NULL_HANDLE;
         VkQueue queue = VK_NULL_HANDLE;
+        VkQueue presentQueue = VK_NULL_HANDLE;
         std::uint32_t queueFamily = 0;
+        std::uint32_t presentQueueFamily = 0;
         VmaAllocator allocator = VK_NULL_HANDLE;
         VkCommandPool commandPool = VK_NULL_HANDLE;
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
@@ -316,13 +320,249 @@ namespace PlutoGE::render::rhi::vulkan
         bool m_rendering = false;
     };
 
-    VulkanDevice::VulkanDevice() : m_impl(std::make_unique<Impl>())
+    class VulkanSwapchain final : public ISwapchain
+    {
+    public:
+        VulkanSwapchain(VulkanDevice::Impl &impl, const SwapchainDescriptor &descriptor)
+            : m_impl(impl), m_width(descriptor.width), m_height(descriptor.height), m_vSync(descriptor.vSync)
+        {
+            if (!m_impl.surface)
+                throw std::logic_error("Vulkan device was not created for presentation");
+            for (auto &frame : m_frames)
+            {
+                VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+                pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                pool.queueFamilyIndex = m_impl.queueFamily;
+                Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &frame.commandPool), "vkCreateCommandPool(presentation)");
+                VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                allocation.commandPool = frame.commandPool; allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocation.commandBufferCount = 1;
+                Check(vkAllocateCommandBuffers(m_impl.device, &allocation, &frame.commandBuffer), "vkAllocateCommandBuffers(presentation)");
+                VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+                Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.imageAvailable), "vkCreateSemaphore(image available)");
+                Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.renderFinished), "vkCreateSemaphore(render finished)");
+                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+                Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(presentation)");
+            }
+            Recreate();
+        }
+
+        ~VulkanSwapchain() override
+        {
+            vkDeviceWaitIdle(m_impl.device);
+            DestroySwapchain();
+            for (auto &frame : m_frames)
+            {
+                if (frame.fence) vkDestroyFence(m_impl.device, frame.fence, nullptr);
+                if (frame.renderFinished) vkDestroySemaphore(m_impl.device, frame.renderFinished, nullptr);
+                if (frame.imageAvailable) vkDestroySemaphore(m_impl.device, frame.imageAvailable, nullptr);
+                if (frame.commandPool) vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
+            }
+        }
+
+        [[nodiscard]] Format GetFormat() const noexcept override { return m_format; }
+        [[nodiscard]] std::uint32_t GetWidth() const noexcept override { return m_width; }
+        [[nodiscard]] std::uint32_t GetHeight() const noexcept override { return m_height; }
+
+        bool Resize(std::uint32_t width, std::uint32_t height) override
+        {
+            if (width == 0 || height == 0)
+                return false;
+            m_width = width;
+            m_height = height;
+            Recreate();
+            return true;
+        }
+
+        bool Present(TextureHandle sourceHandle) override
+        {
+            auto *source = m_impl.textures.Get(sourceHandle);
+            if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || !m_swapchain)
+                return false;
+
+            auto &frame = m_frames[m_frameIndex];
+            Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            std::uint32_t imageIndex = 0;
+            VkResult acquired = vkAcquireNextImageKHR(m_impl.device, m_swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &imageIndex);
+            if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
+            {
+                Recreate();
+                return false;
+            }
+            if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+                Check(acquired, "vkAcquireNextImageKHR");
+
+            Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
+            Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(presentation)");
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            Check(vkBeginCommandBuffer(frame.commandBuffer, &begin), "vkBeginCommandBuffer(presentation)");
+            m_impl.Transition(frame.commandBuffer, *source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+
+            VkImageMemoryBarrier destination{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            destination.oldLayout = m_presented[imageIndex] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
+            destination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            destination.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            destination.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            destination.image = m_images[imageIndex];
+            destination.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            destination.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(frame.commandBuffer,
+                                 m_presented[imageIndex] ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &destination);
+
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            blit.srcOffsets[1] = {static_cast<std::int32_t>(source->descriptor.width), static_cast<std::int32_t>(source->descriptor.height), 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            blit.dstOffsets[1] = {static_cast<std::int32_t>(m_width), static_cast<std::int32_t>(m_height), 1};
+            vkCmdBlitImage(frame.commandBuffer, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           m_images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+            destination.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            destination.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            destination.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            destination.dstAccessMask = 0;
+            vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &destination);
+            Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer(presentation)");
+
+            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            submit.waitSemaphoreCount = 1; submit.pWaitSemaphores = &frame.imageAvailable; submit.pWaitDstStageMask = &waitStage;
+            submit.commandBufferCount = 1; submit.pCommandBuffers = &frame.commandBuffer;
+            submit.signalSemaphoreCount = 1; submit.pSignalSemaphores = &frame.renderFinished;
+            Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
+
+            VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+            present.waitSemaphoreCount = 1; present.pWaitSemaphores = &frame.renderFinished;
+            present.swapchainCount = 1; present.pSwapchains = &m_swapchain; present.pImageIndices = &imageIndex;
+            const VkResult result = vkQueuePresentKHR(m_impl.presentQueue, &present);
+            m_presented[imageIndex] = true;
+            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+            {
+                Recreate();
+                return true;
+            }
+            Check(result, "vkQueuePresentKHR");
+            m_frameIndex = (m_frameIndex + 1) % m_frames.size();
+            return true;
+        }
+
+    private:
+        void DestroySwapchain()
+        {
+            if (m_swapchain) vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
+            m_swapchain = VK_NULL_HANDLE;
+            m_images.clear();
+            m_presented.clear();
+        }
+
+        void Recreate()
+        {
+            vkDeviceWaitIdle(m_impl.device);
+            VkSurfaceCapabilitiesKHR capabilities{};
+            Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_impl.physicalDevice, m_impl.surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+            std::uint32_t formatCount = 0;
+            Check(vkGetPhysicalDeviceSurfaceFormatsKHR(m_impl.physicalDevice, m_impl.surface, &formatCount, nullptr), "vkGetPhysicalDeviceSurfaceFormatsKHR");
+            if (!formatCount) throw std::runtime_error("Vulkan surface has no supported formats");
+            std::vector<VkSurfaceFormatKHR> formats(formatCount);
+            Check(vkGetPhysicalDeviceSurfaceFormatsKHR(m_impl.physicalDevice, m_impl.surface, &formatCount, formats.data()), "vkGetPhysicalDeviceSurfaceFormatsKHR");
+            if (!(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+                throw std::runtime_error("Vulkan surface images do not support transfer destinations");
+            auto selected = formats.front();
+            for (const auto &candidate : formats)
+                if (candidate.format == VK_FORMAT_R8G8B8A8_SRGB || candidate.format == VK_FORMAT_B8G8R8A8_SRGB) { selected = candidate; break; }
+            m_format = selected.format == VK_FORMAT_R8G8B8A8_SRGB || selected.format == VK_FORMAT_B8G8R8A8_SRGB
+                           ? Format::R8G8B8A8Srgb : Format::R8G8B8A8Unorm;
+
+            VkExtent2D extent = capabilities.currentExtent;
+            if (extent.width == UINT32_MAX)
+            {
+                extent.width = std::clamp(m_width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+                extent.height = std::clamp(m_height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+            }
+            m_width = extent.width; m_height = extent.height;
+            std::uint32_t presentModeCount = 0;
+            Check(vkGetPhysicalDeviceSurfacePresentModesKHR(m_impl.physicalDevice, m_impl.surface, &presentModeCount, nullptr), "vkGetPhysicalDeviceSurfacePresentModesKHR");
+            std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+            Check(vkGetPhysicalDeviceSurfacePresentModesKHR(m_impl.physicalDevice, m_impl.surface, &presentModeCount, presentModes.data()), "vkGetPhysicalDeviceSurfacePresentModesKHR");
+            VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+            if (!m_vSync)
+            {
+                if (std::ranges::find(presentModes, VK_PRESENT_MODE_MAILBOX_KHR) != presentModes.end())
+                    presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+                else if (std::ranges::find(presentModes, VK_PRESENT_MODE_IMMEDIATE_KHR) != presentModes.end())
+                    presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+            }
+            VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+            constexpr std::array compositeCandidates{
+                VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR};
+            for (const auto candidate : compositeCandidates)
+                if (capabilities.supportedCompositeAlpha & candidate) { compositeAlpha = candidate; break; }
+            const std::uint32_t imageCount = std::min(capabilities.minImageCount + 1,
+                                                       capabilities.maxImageCount ? capabilities.maxImageCount : UINT32_MAX);
+            VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+            info.surface = m_impl.surface; info.minImageCount = imageCount; info.imageFormat = selected.format; info.imageColorSpace = selected.colorSpace;
+            info.imageExtent = extent; info.imageArrayLayers = 1; info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            const std::array queueFamilies{m_impl.queueFamily, m_impl.presentQueueFamily};
+            if (queueFamilies[0] != queueFamilies[1]) { info.imageSharingMode = VK_SHARING_MODE_CONCURRENT; info.queueFamilyIndexCount = 2; info.pQueueFamilyIndices = queueFamilies.data(); }
+            else info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.preTransform = capabilities.currentTransform; info.compositeAlpha = compositeAlpha;
+            info.presentMode = presentMode;
+            info.clipped = VK_TRUE; info.oldSwapchain = m_swapchain;
+            VkSwapchainKHR replacement = VK_NULL_HANDLE;
+            Check(vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement), "vkCreateSwapchainKHR");
+            if (m_swapchain) vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
+            m_swapchain = replacement;
+            std::uint32_t actualImageCount = 0;
+            Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, nullptr), "vkGetSwapchainImagesKHR");
+            m_images.resize(actualImageCount);
+            Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, m_images.data()), "vkGetSwapchainImagesKHR");
+            m_presented.assign(actualImageCount, false);
+        }
+
+        VulkanDevice::Impl &m_impl;
+        VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
+        struct FrameResources
+        {
+            VkCommandPool commandPool = VK_NULL_HANDLE;
+            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            VkSemaphore imageAvailable = VK_NULL_HANDLE;
+            VkSemaphore renderFinished = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
+        };
+        std::array<FrameResources, 2> m_frames;
+        std::size_t m_frameIndex = 0;
+        std::vector<VkImage> m_images;
+        std::vector<bool> m_presented;
+        Format m_format = Format::R8G8B8A8Srgb;
+        std::uint32_t m_width = 0;
+        std::uint32_t m_height = 0;
+        bool m_vSync = true;
+    };
+
+    VulkanDevice::VulkanDevice() : VulkanDevice(SwapchainDescriptor{}) {}
+
+    VulkanDevice::VulkanDevice(const SwapchainDescriptor &presentation) : m_impl(std::make_unique<Impl>())
     {
         Check(volkInitialize(), "volkInitialize");
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.pApplicationName = "PlutoGE"; app.pEngineName = "PlutoGE"; app.apiVersion = VK_API_VERSION_1_3;
         VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; instanceInfo.pApplicationInfo = &app;
+        std::uint32_t instanceExtensionCount = 0;
+        const char **instanceExtensions = nullptr;
+        if (presentation.nativeWindow)
+        {
+            instanceExtensions = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
+            if (!instanceExtensions || instanceExtensionCount == 0)
+                throw std::runtime_error("GLFW did not provide Vulkan surface extensions");
+            instanceInfo.enabledExtensionCount = instanceExtensionCount;
+            instanceInfo.ppEnabledExtensionNames = instanceExtensions;
+        }
         Check(vkCreateInstance(&instanceInfo, nullptr, &m_impl->instance), "vkCreateInstance");
         volkLoadInstance(m_impl->instance);
+        if (presentation.nativeWindow)
+            Check(glfwCreateWindowSurface(m_impl->instance, static_cast<GLFWwindow *>(presentation.nativeWindow), nullptr, &m_impl->surface), "glfwCreateWindowSurface");
         std::uint32_t count = 0; Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
         if (!count) throw std::runtime_error("No Vulkan physical device is available");
         std::vector<VkPhysicalDevice> devices(count); Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
@@ -330,15 +570,49 @@ namespace PlutoGE::render::rhi::vulkan
         {
             std::uint32_t familyCount = 0; vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, nullptr);
             std::vector<VkQueueFamilyProperties> families(familyCount); vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, families.data());
-            for (std::uint32_t i = 0; i < familyCount; ++i) if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { m_impl->physicalDevice = device; m_impl->queueFamily = i; break; }
+            for (std::uint32_t graphicsFamily = 0; graphicsFamily < familyCount; ++graphicsFamily)
+            {
+                if (!(families[graphicsFamily].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                    continue;
+                if (!m_impl->surface)
+                {
+                    m_impl->physicalDevice = device;
+                    m_impl->queueFamily = graphicsFamily;
+                    m_impl->presentQueueFamily = graphicsFamily;
+                    break;
+                }
+                for (std::uint32_t presentFamily = 0; presentFamily < familyCount; ++presentFamily)
+                {
+                    VkBool32 supportsPresentation = VK_TRUE;
+                    if (m_impl->surface)
+                        Check(vkGetPhysicalDeviceSurfaceSupportKHR(device, presentFamily, m_impl->surface, &supportsPresentation), "vkGetPhysicalDeviceSurfaceSupportKHR");
+                    if (!supportsPresentation)
+                        continue;
+                    m_impl->physicalDevice = device;
+                    m_impl->queueFamily = graphicsFamily;
+                    m_impl->presentQueueFamily = presentFamily;
+                    break;
+                }
+                if (m_impl->physicalDevice) break;
+            }
             if (m_impl->physicalDevice) break;
         }
         if (!m_impl->physicalDevice) throw std::runtime_error("No Vulkan graphics queue is available");
         VkPhysicalDeviceProperties properties{}; vkGetPhysicalDeviceProperties(m_impl->physicalDevice, &properties); m_impl->deviceName = properties.deviceName;
-        const float priority = 1.0f; VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queue.queueFamilyIndex = m_impl->queueFamily; queue.queueCount = 1; queue.pQueuePriorities = &priority;
+        const float priority = 1.0f;
+        std::array<VkDeviceQueueCreateInfo, 2> queues{};
+        queues[0] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queues[0].queueFamilyIndex = m_impl->queueFamily; queues[0].queueCount = 1; queues[0].pQueuePriorities = &priority;
+        std::uint32_t queueCount = 1;
+        if (m_impl->surface && m_impl->presentQueueFamily != m_impl->queueFamily)
+        {
+            queues[1] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queues[1].queueFamilyIndex = m_impl->presentQueueFamily; queues[1].queueCount = 1; queues[1].pQueuePriorities = &priority;
+            queueCount = 2;
+        }
         VkPhysicalDeviceDynamicRenderingFeatures dynamic{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES}; dynamic.dynamicRendering = VK_TRUE;
-        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; deviceInfo.pNext = &dynamic; deviceInfo.queueCreateInfoCount = 1; deviceInfo.pQueueCreateInfos = &queue;
-        Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice"); volkLoadDevice(m_impl->device); vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue);
+        const char *swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; deviceInfo.pNext = &dynamic; deviceInfo.queueCreateInfoCount = queueCount; deviceInfo.pQueueCreateInfos = queues.data();
+        if (m_impl->surface) { deviceInfo.enabledExtensionCount = 1; deviceInfo.ppEnabledExtensionNames = &swapchainExtension; }
+        Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice"); volkLoadDevice(m_impl->device); vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue); vkGetDeviceQueue(m_impl->device, m_impl->presentQueueFamily, 0, &m_impl->presentQueue);
         VmaVulkanFunctions functions{}; functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr; functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
         VmaAllocatorCreateInfo allocator{}; allocator.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT; allocator.vulkanApiVersion = VK_API_VERSION_1_3; allocator.instance = m_impl->instance; allocator.physicalDevice = m_impl->physicalDevice; allocator.device = m_impl->device; allocator.pVulkanFunctions = &functions;
         Check(vmaCreateAllocator(&allocator, &m_impl->allocator), "vmaCreateAllocator");
@@ -361,7 +635,13 @@ namespace PlutoGE::render::rhi::vulkan
         if (m_impl->commandPool) vkDestroyCommandPool(m_impl->device, m_impl->commandPool, nullptr);
         if (m_impl->allocator) vmaDestroyAllocator(m_impl->allocator);
         if (m_impl->device) vkDestroyDevice(m_impl->device, nullptr);
+        if (m_impl->surface) vkDestroySurfaceKHR(m_impl->instance, m_impl->surface, nullptr);
         if (m_impl->instance) vkDestroyInstance(m_impl->instance, nullptr);
+    }
+
+    std::unique_ptr<ISwapchain> VulkanDevice::CreateSwapchain(const SwapchainDescriptor &descriptor)
+    {
+        return std::make_unique<VulkanSwapchain>(*m_impl, descriptor);
     }
 
     BufferHandle VulkanDevice::CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> data)

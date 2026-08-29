@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/render/rhi/RenderDeviceFactory.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -191,24 +192,102 @@ namespace PlutoGE::core
     bool Engine::Initialize(const EngineConfig &config)
     {
         m_config = config;
+        m_config.windowConfig.clientApi = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan
+                                              ? platform::WindowClientApi::None
+                                              : platform::WindowClientApi::OpenGL;
 
         if (!m_window.Create(m_config.windowConfig))
         {
             std::cerr << "Failed to create window." << std::endl;
             return false;
         }
-
-        m_textureManager.SetWindow(&m_window);
-
-        render::RendererConfig rendererConfig;
-        rendererConfig.window = &m_window;
-        rendererConfig.enableProfiling = m_config.isEditorHost;
-        if (!m_renderer.Initialize(rendererConfig))
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL &&
+            !m_window.EnsureOpenGLContextCurrent(true))
         {
-            std::cerr << "Failed to initialize renderer." << std::endl;
-            m_textureManager.SetWindow(nullptr);
+            std::cerr << "Failed to initialize the OpenGL function dispatch." << std::endl;
             m_window.Close();
             return false;
+        }
+
+        const auto extents = m_window.GetExtents();
+        const render::rhi::SwapchainDescriptor presentation{
+            .nativeWindow = m_window.GetWindow(),
+            .width = static_cast<std::uint32_t>((std::max)(extents.width, 1)),
+            .height = static_cast<std::uint32_t>((std::max)(extents.height, 1)),
+            .vSync = true,
+        };
+        auto deviceCreation = render::rhi::CreateRenderDevice(m_config.graphicsApi, presentation);
+        if (!deviceCreation)
+        {
+            std::cerr << "Failed to create "
+                      << (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan ? "Vulkan" : "OpenGL")
+                      << " render device: " << deviceCreation.error << std::endl;
+            m_window.Close();
+            return false;
+        }
+        m_renderDevice = std::move(deviceCreation.device);
+        try
+        {
+            m_swapchain = m_renderDevice->CreateSwapchain(presentation);
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "Failed to create presentation swapchain: " << error.what() << std::endl;
+            m_renderDevice.reset();
+            m_window.Close();
+            return false;
+        }
+        if (!m_swapchain)
+        {
+            std::cerr << "The selected render device did not create a presentation swapchain." << std::endl;
+            m_renderDevice.reset();
+            m_window.Close();
+            return false;
+        }
+        try
+        {
+            if (!m_rhiRenderService.Initialize(*m_renderDevice, *m_swapchain))
+            {
+                std::cerr << "Failed to initialize the RHI render service." << std::endl;
+                m_swapchain.reset();
+                m_renderDevice.reset();
+                m_window.Close();
+                return false;
+            }
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "Failed to initialize the RHI render service: " << error.what() << std::endl;
+            m_swapchain.reset();
+            m_renderDevice.reset();
+            m_window.Close();
+            return false;
+        }
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
+        {
+            m_window.SetResizeCallback([this](int width, int height)
+            {
+                if (width > 0 && height > 0)
+                    static_cast<void>(m_rhiRenderService.Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
+            });
+        }
+
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
+        {
+            m_textureManager.SetWindow(&m_window);
+            render::RendererConfig rendererConfig;
+            rendererConfig.window = &m_window;
+            rendererConfig.enableProfiling = m_config.isEditorHost;
+            if (!m_renderer.Initialize(rendererConfig))
+            {
+                std::cerr << "Failed to initialize renderer." << std::endl;
+                m_textureManager.SetWindow(nullptr);
+                m_rhiRenderService.Shutdown();
+                m_swapchain.reset();
+                m_renderDevice.reset();
+                m_window.Close();
+                return false;
+            }
         }
 
         if (!m_audioSystem.Initialize())
@@ -623,8 +702,12 @@ namespace PlutoGE::core
         StopRuntime();
         m_scriptEngine.Shutdown();
         m_audioSystem.Shutdown();
-        m_renderer.Shutdown();
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
+            m_renderer.Shutdown();
         m_textureManager.SetWindow(nullptr);
+        m_rhiRenderService.Shutdown();
+        m_swapchain.reset();
+        m_renderDevice.reset();
         m_window.Close();
         m_isInitialized = false;
     }

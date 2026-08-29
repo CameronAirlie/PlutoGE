@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace PlutoGE::render::rhi
@@ -36,13 +37,23 @@ namespace PlutoGE::render::rhi
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
     };
 
+    struct SwapchainDescriptor
+    {
+        void *nativeWindow = nullptr;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        bool vSync = true;
+    };
+
     class ISwapchain
     {
     public:
         virtual ~ISwapchain() = default;
-        [[nodiscard]] virtual TextureHandle GetCurrentTexture() const = 0;
-        virtual void Resize(std::uint32_t width, std::uint32_t height) = 0;
-        virtual void Present() = 0;
+        [[nodiscard]] virtual Format GetFormat() const noexcept = 0;
+        [[nodiscard]] virtual std::uint32_t GetWidth() const noexcept = 0;
+        [[nodiscard]] virtual std::uint32_t GetHeight() const noexcept = 0;
+        virtual bool Resize(std::uint32_t width, std::uint32_t height) = 0;
+        virtual bool Present(TextureHandle source) = 0;
     };
 
     class IRenderDevice
@@ -50,6 +61,7 @@ namespace PlutoGE::render::rhi
     public:
         virtual ~IRenderDevice() = default;
         [[nodiscard]] virtual GraphicsApi GetApi() const noexcept = 0;
+        [[nodiscard]] virtual std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) = 0;
         [[nodiscard]] virtual BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
         [[nodiscard]] virtual TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
         [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDescriptor &descriptor) = 0;

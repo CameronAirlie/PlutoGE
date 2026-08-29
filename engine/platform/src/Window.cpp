@@ -87,12 +87,21 @@ namespace PlutoGE::platform
             return false;
         }
 
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwDefaultWindowHints();
+        if (m_config.clientApi == WindowClientApi::OpenGL)
+        {
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+            glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
+        }
+        else
+        {
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        }
 
         m_window = glfwCreateWindow(m_clientWidth, m_clientHeight, m_config.title.c_str(), m_config.fullscreen ? glfwGetPrimaryMonitor() : nullptr, nullptr);
         if (!m_window)
@@ -106,7 +115,8 @@ namespace PlutoGE::platform
         ApplyEmbeddedWindowIcon(static_cast<GLFWwindow *>(m_window));
 #endif
 
-        glfwMakeContextCurrent(m_window);
+        if (m_config.clientApi == WindowClientApi::OpenGL)
+            glfwMakeContextCurrent(m_window);
         glfwSetWindowUserPointer(m_window, this);
         glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
 
@@ -404,7 +414,7 @@ namespace PlutoGE::platform
 
     void Window::SetContextCurrent()
     {
-        if (m_window)
+        if (m_window && m_config.clientApi == WindowClientApi::OpenGL)
         {
             glfwMakeContextCurrent(static_cast<GLFWwindow *>(m_window));
         }
@@ -412,7 +422,7 @@ namespace PlutoGE::platform
 
     bool Window::EnsureOpenGLContextCurrent(bool reloadFunctions)
     {
-        if (!m_window)
+        if (!m_window || m_config.clientApi != WindowClientApi::OpenGL)
         {
             return false;
         }

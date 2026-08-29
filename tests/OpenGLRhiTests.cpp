@@ -161,6 +161,20 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
             std::cerr << "BasicRenderer cube produced a blank center pixel\n";
             return 8;
         }
+
+        auto swapchain = device.CreateSwapchain({
+            .nativeWindow = window.GetWindow(),
+            .width = 64,
+            .height = 64,
+            .vSync = false,
+        });
+        if (!swapchain || swapchain->GetFormat() != Format::R8G8B8A8Srgb ||
+            !swapchain->Resize(96, 64) || swapchain->GetWidth() != 96 || swapchain->GetHeight() != 64 ||
+            !swapchain->Present(basicRenderer.GetColorTexture()))
+        {
+            std::cerr << "OpenGL swapchain failed to present an RHI texture\n";
+            return 9;
+        }
     }
 
     window.Close();

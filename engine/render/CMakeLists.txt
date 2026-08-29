@@ -1,12 +1,14 @@
 add_library(PlutoGERender
     src/Renderer.cpp
     src/BasicRenderer.cpp
+    src/RhiRenderService.cpp
     src/TextureManager.cpp
     src/TexturePainter.cpp
     src/Shader.cpp
     src/Texture.cpp
     src/ShaderGraph.cpp
     src/Graphics.cpp
+    src/rhi/RenderDeviceFactory.cpp
     src/rhi/opengl/OpenGLDevice.cpp
     src/rhi/vulkan/VulkanBootstrap.cpp
     src/rhi/vulkan/VulkanDevice.cpp
@@ -82,6 +84,9 @@ endif()
 target_include_directories(PlutoGERender PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+target_compile_definitions(PlutoGERender PRIVATE
+    PLUTO_RHI_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
 target_link_libraries(PlutoGERender PUBLIC
     # Add dependencies here

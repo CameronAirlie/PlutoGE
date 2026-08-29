@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <memory>
 #include <vector>
 
 struct ImFont;
@@ -9,10 +10,16 @@ namespace PlutoGE::platform
 {
     class Window;
 }
+namespace PlutoGE::render::rhi
+{
+    class IRenderDevice;
+    class ISwapchain;
+}
 
 namespace PlutoGE::ui
 {
     class Panel;
+    class IEditorCompositor;
 
     struct PanelUpdateTiming
     {
@@ -38,10 +45,12 @@ namespace PlutoGE::ui
     class PanelManager
     {
     public:
-        PanelManager() = default;
-        ~PanelManager() = default;
+        PanelManager();
+        ~PanelManager();
 
-        bool InitializeImGui(platform::Window *window);
+        bool InitializeImGui(platform::Window *window,
+                             render::rhi::IRenderDevice *device,
+                             render::rhi::ISwapchain *swapchain);
         void ShutdownImGui();
 
         void AddPanel(Panel *panel);
@@ -72,5 +81,6 @@ namespace PlutoGE::ui
         ImFont *m_defaultFont = nullptr;
         std::string m_imguiIniPath;
         bool m_applyDefaultLayout = false;
+        std::unique_ptr<IEditorCompositor> m_compositor;
     };
 }

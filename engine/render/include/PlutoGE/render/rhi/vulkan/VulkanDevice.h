@@ -8,6 +8,7 @@
 namespace PlutoGE::render::rhi::vulkan
 {
     class VulkanCommandContext;
+    class VulkanSwapchain;
 
     // Initial off-screen Vulkan implementation. Submission is deliberately
     // synchronous until the swapchain/frame-in-flight layer is introduced.
@@ -15,11 +16,13 @@ namespace PlutoGE::render::rhi::vulkan
     {
     public:
         VulkanDevice();
+        explicit VulkanDevice(const SwapchainDescriptor &presentation);
         ~VulkanDevice() override;
         VulkanDevice(const VulkanDevice &) = delete;
         VulkanDevice &operator=(const VulkanDevice &) = delete;
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::Vulkan; }
+        [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &) override;
@@ -37,6 +40,7 @@ namespace PlutoGE::render::rhi::vulkan
 
     private:
         friend class VulkanCommandContext;
+        friend class VulkanSwapchain;
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };

@@ -43,6 +43,7 @@ namespace PlutoGE::render::rhi::opengl
             {
             case Format::R8G8B8A8Unorm: return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
             case Format::R8G8B8A8Srgb: return {GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE};
+            case Format::R32Float: return {GL_R32F, GL_RED, GL_FLOAT};
             case Format::D32Float: return {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT};
             default: throw std::invalid_argument("Unsupported RHI texture format");
             }

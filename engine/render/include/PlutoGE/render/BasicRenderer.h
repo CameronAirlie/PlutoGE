@@ -32,6 +32,8 @@ namespace PlutoGE::render
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
     };
 
     class BasicMesh
@@ -69,6 +71,7 @@ namespace PlutoGE::render
         std::uint32_t metallicChannel = 0;
         std::uint32_t roughnessChannel = 0;
         bool flipNormalY = false;
+        bool castsShadow = true;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
     };
@@ -80,6 +83,10 @@ namespace PlutoGE::render
         glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};
+        bool shadowsEnabled = false;
+        glm::mat4 lightViewProjection{1.0f};
+        float shadowDepthScale = 1.0f;
+        float shadowDepthBias = 0.0f;
     };
 
     class BasicRenderer
@@ -105,7 +112,9 @@ namespace PlutoGE::render
     private:
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
+        rhi::GraphicsPipeline m_shadowPipeline;
         rhi::Buffer m_cameraBuffer;
+        rhi::Buffer m_shadowCameraBuffer;
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;
@@ -116,6 +125,8 @@ namespace PlutoGE::render
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;
         rhi::Texture m_depthTarget;
+        rhi::Texture m_shadowColorTarget;
+        rhi::Texture m_shadowDepthTarget;
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
     };

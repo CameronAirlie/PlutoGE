@@ -8,7 +8,7 @@
 namespace PlutoGE::render::rhi
 {
     enum class GraphicsApi : std::uint8_t { OpenGL, Vulkan };
-    enum class Format : std::uint8_t { Undefined, R8G8B8A8Unorm, R8G8B8A8Srgb, D32Float, R32Uint, R32G32Float, R32G32B32Float, R32G32B32A32Float };
+    enum class Format : std::uint8_t { Undefined, R8G8B8A8Unorm, R8G8B8A8Srgb, R32Float, D32Float, R32Uint, R32G32Float, R32G32B32Float, R32G32B32A32Float };
     enum class BufferUsage : std::uint8_t { Vertex, Index, Uniform };
     enum class TextureUsage : std::uint8_t { Sampled, ColorAttachment, DepthStencilAttachment };
     enum class ShaderStage : std::uint8_t { Vertex, Fragment };
@@ -66,6 +66,7 @@ namespace PlutoGE::render::rhi
         Format format = Format::R8G8B8A8Unorm;
         TextureUsage usage = TextureUsage::Sampled;
         std::string debugName;
+        bool sampled = false;
     };
 
     struct GraphicsPipelineDescriptor
@@ -77,6 +78,7 @@ namespace PlutoGE::render::rhi
         };
         ShaderCode vertexShader;
         ShaderCode fragmentShader;
+        Format colorFormat = Format::R8G8B8A8Srgb;
         struct ResourceBinding
         {
             // slot is the backend-neutral command binding. set/binding mirror

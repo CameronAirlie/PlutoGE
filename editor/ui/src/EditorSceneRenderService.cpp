@@ -48,7 +48,9 @@ namespace PlutoGE::ui
             const render::ShaderArtifactLibrary shaderArtifacts;
             render::BasicRendererShaderPackage shaders{
                 .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
-                .fragment = shaderArtifacts.Load("BasicLit", "fragment")};
+                .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
+                .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
+                .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment")};
             if (!renderer->Initialize(*m_device, shaders))
                 throw std::runtime_error("Failed to initialize the editor scene renderer");
             m_sceneRenderer = std::move(renderer);
@@ -98,6 +100,7 @@ namespace PlutoGE::ui
                     lighting.directionalDirection = light->direction;
                     lighting.directionalColor = light->color;
                     lighting.directionalIntensity = light->intensity;
+                    lighting.shadowsEnabled = light->castsShadows;
                     break;
                 }
 

@@ -30,6 +30,8 @@ int main()
         BasicRendererShaderPackage shaders;
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
+        shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
+        shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64)) return 1;
 
@@ -62,6 +64,7 @@ int main()
         BasicLighting neutralLighting;
         neutralLighting.ambientIntensity = 1.0f;
         neutralLighting.directionalIntensity = 0.0f;
+        neutralLighting.shadowsEnabled = true;
         renderer.Render(projection * view, neutralLighting, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
 

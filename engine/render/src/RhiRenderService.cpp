@@ -9,7 +9,9 @@ namespace PlutoGE::render
         const ShaderArtifactLibrary shaderArtifacts;
         BasicRendererShaderPackage shaders{
             .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
-            .fragment = shaderArtifacts.Load("BasicLit", "fragment")};
+            .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
+            .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
+            .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment")};
 
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))

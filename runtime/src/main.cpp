@@ -605,6 +605,7 @@ int RunRuntime(int argc, char **argv)
                         lighting.directionalDirection = light->direction;
                         lighting.directionalColor = light->color;
                         lighting.directionalIntensity = light->intensity;
+                        lighting.shadowsEnabled = light->castsShadows;
                         break;
                     }
                 const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)

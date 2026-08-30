@@ -107,6 +107,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         render::BasicRendererShaderPackage shaders;
         shaders.vertex.glsl = ReadText("BasicLit.vertex.glsl");
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
+        shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
+        shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
         try
         {
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))

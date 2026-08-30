@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Texture.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <unordered_set>
 
@@ -97,6 +98,7 @@ namespace PlutoGE::render
                 indexCount = range.indexCount;
             }
             BasicDraw draw{.mesh = &mesh->second, .model = command.model,
+                           .castsShadow = command.castsShadow,
                            .firstIndex = firstIndex, .indexCount = indexCount};
             if (command.material)
             {
@@ -111,6 +113,7 @@ namespace PlutoGE::render
                 draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
                 draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
                 draw.flipNormalY = material.flipNormalY;
+                draw.castsShadow = draw.castsShadow && material.castsShadow;
                 draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
                                                       m_srgbTextures, activeSrgbTextures, "Scene albedo");
                 draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
@@ -139,7 +142,25 @@ namespace PlutoGE::render
             depthRangeConversion[3][2] = 0.5f;
             projection = depthRangeConversion * projection;
         }
-        m_renderer->Render(projection * cameraData.view, lighting, draws);
+        BasicLighting effectiveLighting = lighting;
+        if (effectiveLighting.shadowsEnabled)
+        {
+            const glm::vec3 center = effectiveLighting.cameraPosition;
+            glm::vec3 direction = effectiveLighting.directionalDirection;
+            if (glm::dot(direction, direction) < 0.000001f)
+                direction = {0.4f, -0.8f, 0.3f};
+            direction = glm::normalize(direction);
+            const glm::vec3 up = std::abs(direction.y) > 0.98f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+            effectiveLighting.lightViewProjection =
+                glm::orthoRH_ZO(-40.0f, 40.0f, -40.0f, 40.0f, 0.1f, 120.0f) *
+                glm::lookAtRH(center - direction * 60.0f, center, up);
+            if (m_device->GetApi() == rhi::GraphicsApi::OpenGL)
+            {
+                effectiveLighting.shadowDepthScale = 0.5f;
+                effectiveLighting.shadowDepthBias = 0.5f;
+            }
+        }
+        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws);
         return true;
     }
 

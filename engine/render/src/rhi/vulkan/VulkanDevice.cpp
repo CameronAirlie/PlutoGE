@@ -32,6 +32,7 @@ namespace PlutoGE::render::rhi::vulkan
             {
             case Format::R8G8B8A8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
             case Format::R8G8B8A8Srgb: return VK_FORMAT_R8G8B8A8_SRGB;
+            case Format::R32Float: return VK_FORMAT_R32_SFLOAT;
             case Format::D32Float: return VK_FORMAT_D32_SFLOAT;
             case Format::R32Uint: return VK_FORMAT_R32_UINT;
             case Format::R32G32Float: return VK_FORMAT_R32G32_SFLOAT;
@@ -272,7 +273,8 @@ namespace PlutoGE::render::rhi::vulkan
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
             if (!m_pipeline || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                throw std::logic_error("Vulkan sampled texture has an invalid layout");
+                m_impl.Transition(m_impl.commandBuffer, *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
             m_sampledTextures[slot] = textureHandle;
             m_samplers[slot] = samplerHandle;
         }
@@ -678,7 +680,12 @@ namespace PlutoGE::render::rhi::vulkan
                                  ? 1u + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>((std::max)(descriptor.width, descriptor.height)))))
                                  : 1u;
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; image.imageType = VK_IMAGE_TYPE_2D; image.extent = {descriptor.width, descriptor.height, 1}; image.mipLevels = resource.mipLevels; image.arrayLayers = 1; image.format = ToVkFormat(descriptor.format); image.tiling = VK_IMAGE_TILING_OPTIMAL; image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; image.samples = VK_SAMPLE_COUNT_1_BIT;
-        image.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (descriptor.usage == TextureUsage::Sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        image.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                      (descriptor.usage == TextureUsage::Sampled ? VK_IMAGE_USAGE_SAMPLED_BIT :
+                       descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT :
+                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        if (descriptor.sampled)
+            image.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
         VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         Check(vmaCreateImage(m_impl->allocator, &image, &allocation, &resource.image, &resource.allocation, nullptr), "vmaCreateImage");
         VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; view.image = resource.image; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = image.format; view.subresourceRange = {Aspect(resource), 0, resource.mipLevels, 0, 1};
@@ -794,7 +801,7 @@ namespace PlutoGE::render::rhi::vulkan
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = descriptor.depthTest; depth.depthWriteEnable = descriptor.depthWrite; depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
         VkPipelineColorBlendAttachmentState blend{}; blend.colorWriteMask = 0xf; VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blending.attachmentCount = 1; blending.pAttachments = &blend;
         std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}; VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dynamicState.dynamicStateCount = dynamicStates.size(); dynamicState.pDynamicStates = dynamicStates.data();
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; const VkFormat colorFormat = VK_FORMAT_R8G8B8A8_SRGB; rendering.colorAttachmentCount = 1; rendering.pColorAttachmentFormats = &colorFormat; rendering.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
+        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; const VkFormat colorFormat = ToVkFormat(descriptor.colorFormat); rendering.colorAttachmentCount = 1; rendering.pColorAttachmentFormats = &colorFormat; rendering.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
         VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; info.pNext = &rendering; info.stageCount = stages.size(); info.pStages = stages.data(); info.pVertexInputState = &vertexInput; info.pInputAssemblyState = &assembly; info.pViewportState = &viewport; info.pRasterizationState = &raster; info.pMultisampleState = &multisample; info.pDepthStencilState = &depth; info.pColorBlendState = &blending; info.pDynamicState = &dynamicState; info.layout = resource.layout;
         const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline); vkDestroyShaderModule(m_impl->device, vertex, nullptr); vkDestroyShaderModule(m_impl->device, fragment, nullptr); Check(result, "vkCreateGraphicsPipelines");
         return m_impl->pipelines.Insert(std::move(resource));

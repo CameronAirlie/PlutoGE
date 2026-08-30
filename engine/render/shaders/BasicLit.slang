@@ -21,6 +21,11 @@ struct VertexOutput
     float4 cameraPositionAmbient;
     float4 directionalDirectionIntensity;
     float4 directionalColor;
+    column_major float4x4 lightViewProjection;
+    uint shadowsEnabled;
+    float shadowDepthScale;
+    float shadowDepthBias;
+    float shadowPadding;
 };
 
 [[vk::binding(0, 2)]] cbuffer ObjectParameters : register(b0, space2)
@@ -50,6 +55,7 @@ struct VertexOutput
 [[vk::binding(2, 1)]] Sampler2D normalTexture : register(t2, space1);
 [[vk::binding(3, 1)]] Sampler2D metallicTexture : register(t3, space1);
 [[vk::binding(4, 1)]] Sampler2D roughnessTexture : register(t4, space1);
+[[vk::binding(5, 1)]] Sampler2D directionalShadowTexture : register(t5, space1);
 
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
@@ -106,6 +112,22 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float3 diffuse = sampledColor.rgb * (1.0 - materialMetallic) * ndotl;
     const float3 specular = f0 * pow(ndoth, specularPower) * ndotl;
     const float3 direct = (diffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
+    float shadowVisibility = 1.0;
+    if (shadowsEnabled != 0)
+    {
+        const float4 lightClip = mul(lightViewProjection, float4(input.worldPosition, 1.0));
+        const float3 shadowCoord = lightClip.xyz / lightClip.w;
+        const float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
+        if (all(shadowUv >= 0.0) && all(shadowUv <= 1.0) && shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
+        {
+            const float2 texel = 1.0 / float2(2048.0);
+            float visibleSamples = 0.0;
+            for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x)
+                    visibleSamples += shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <= directionalShadowTexture.Sample(shadowUv + float2(x, y) * texel).r ? 1.0 : 0.0;
+            shadowVisibility = visibleSamples / 9.0;
+        }
+    }
     const float3 ambient = sampledColor.rgb * cameraPositionAmbient.w;
-    return float4(ambient + direct + emission, sampledColor.a);
+    return float4(ambient + direct * shadowVisibility + emission, sampledColor.a);
 }

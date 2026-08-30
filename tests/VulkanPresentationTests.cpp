@@ -45,6 +45,8 @@ int main()
             render::BasicRendererShaderPackage shaders;
             shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
             shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
+            shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
+            shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
             render::BasicRenderer renderer;
             if (!renderer.Initialize(device, shaders) ||
                 !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))

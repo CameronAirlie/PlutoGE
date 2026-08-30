@@ -26,6 +26,7 @@ namespace
     {
     public:
         PlutoGE::render::rhi::GraphicsApi GetApi() const noexcept override { return PlutoGE::render::rhi::GraphicsApi::OpenGL; }
+        std::unique_ptr<PlutoGE::render::rhi::ISwapchain> CreateSwapchain(const PlutoGE::render::rhi::SwapchainDescriptor &) override { return {}; }
         PlutoGE::render::rhi::BufferHandle CreateBuffer(const PlutoGE::render::rhi::BufferDescriptor &, std::span<const std::byte>) override { return {0, 1}; }
         PlutoGE::render::rhi::TextureHandle CreateTexture(const PlutoGE::render::rhi::TextureDescriptor &, std::span<const std::byte>) override { return {0, 1}; }
         PlutoGE::render::rhi::SamplerHandle CreateSampler(const PlutoGE::render::rhi::SamplerDescriptor &) override { return {0, 1}; }

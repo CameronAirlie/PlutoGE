@@ -5,8 +5,10 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/SpatialUpscaler.h"
 
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <glm/gtc/matrix_inverse.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -398,6 +401,8 @@ int RunRuntime(int argc, char **argv)
             .visible = true,
             .fullscreen = false,
         }};
+    config.vSync = project->GetManifest().vSyncEnabled;
+    config.graphicsApi = project->GetManifest().graphicsApi;
 
     if (!engine.Initialize(config))
     {
@@ -408,7 +413,8 @@ int RunRuntime(int argc, char **argv)
         return 1;
     }
 
-    engine.GetRenderer().SetVSyncEnabled(project->GetManifest().vSyncEnabled);
+    if (config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::OpenGL)
+        engine.GetRenderer().SetVSyncEnabled(project->GetManifest().vSyncEnabled);
 
     if (!project->GetManifest().scriptAssembly.empty())
     {
@@ -499,9 +505,10 @@ int RunRuntime(int argc, char **argv)
     auto &renderer = engine.GetRenderer();
     auto &window = engine.GetWindow();
     const auto &runtimeManifest = project->GetManifest();
+    const bool useVulkanRenderer = config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan;
     const float runtimeRenderScale = std::clamp(runtimeManifest.runtimeRenderScale, 0.5f, 1.0f);
     const bool runtimeUpscalingEnabled =
-        runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
+        !useVulkanRenderer && runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
         runtimeRenderScale < 0.999f;
     std::unique_ptr<PlutoGE::render::RenderTarget> runtimeRenderTarget;
     PlutoGE::render::SpatialUpscaler runtimeUpscaler;
@@ -581,38 +588,73 @@ int RunRuntime(int argc, char **argv)
                 frameRenderTarget = runtimeRenderTarget.get();
         }
 
-        renderer.BeginFrame(frameRenderTarget);
-        if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get()))
+        if (useVulkanRenderer)
         {
-#ifdef _WIN32
-            PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
-#endif
-            renderer.RenderFrame(*cameraComponent, frameRenderTarget, scene->GetLights());
-        }
-        renderer.ClearRenderCommands();
-
-        if (frameRenderTarget)
-        {
-            renderer.EndFrame(frameRenderTarget);
-            if (!runtimeUpscaler.UpscaleToFramebuffer(
-                    *frameRenderTarget,
-                    windowExtents.width,
-                    windowExtents.height,
-                    {.sharpness = runtimeManifest.runtimeUpscaleSharpness}))
+            if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get());
+                cameraComponent && windowExtents.width > 0 && windowExtents.height > 0)
             {
-                PlutoGE::render::Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, frameRenderTarget->GetFramebufferID());
-                PlutoGE::render::Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                glBlitFramebuffer(0, 0, frameRenderTarget->GetWidth(), frameRenderTarget->GetHeight(),
-                                  0, 0, windowExtents.width, windowExtents.height,
-                                  GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                PlutoGE::render::Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+#ifdef _WIN32
+                PlutoGE::g_runtimeDiagnostics.currentPhase = "render Vulkan frame";
+#endif
+                const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
+                PlutoGE::render::BasicLighting lighting;
+                lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+                for (const auto *light : scene->GetLights())
+                    if (light && light->type == PlutoGE::scene::LightType::Directional)
+                    {
+                        lighting.directionalDirection = light->direction;
+                        lighting.directionalColor = light->color;
+                        lighting.directionalIntensity = light->intensity;
+                        break;
+                    }
+                const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
+                {
+                    const auto source = texture.GetRgba8Pixels();
+                    return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
+                                                  reinterpret_cast<const std::byte *>(source.data() + source.size()));
+                };
+                if (!engine.GetRhiRenderService().RenderSceneAndPresent(
+                        cameraData, lighting, renderer.GetSceneRenderCommands(), readTexturePixels))
+                {
+                    std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
+                    window.RequestClose();
+                }
             }
+            renderer.ClearRenderCommands();
         }
+        else
+        {
+            renderer.BeginFrame(frameRenderTarget);
+            if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get()))
+            {
+#ifdef _WIN32
+                PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
+#endif
+                renderer.RenderFrame(*cameraComponent, frameRenderTarget, scene->GetLights());
+            }
+            renderer.ClearRenderCommands();
+
+            if (frameRenderTarget)
+            {
+                renderer.EndFrame(frameRenderTarget);
+                if (!runtimeUpscaler.UpscaleToFramebuffer(
+                        *frameRenderTarget, windowExtents.width, windowExtents.height,
+                        {.sharpness = runtimeManifest.runtimeUpscaleSharpness}))
+                {
+                    PlutoGE::render::Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, frameRenderTarget->GetFramebufferID());
+                    PlutoGE::render::Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                    glBlitFramebuffer(0, 0, frameRenderTarget->GetWidth(), frameRenderTarget->GetHeight(),
+                                      0, 0, windowExtents.width, windowExtents.height,
+                                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                    PlutoGE::render::Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+                }
+            }
 
 #ifdef _WIN32
-        PlutoGE::g_runtimeDiagnostics.currentPhase = "end frame";
+            PlutoGE::g_runtimeDiagnostics.currentPhase = "end frame";
 #endif
-        renderer.EndFrame();
+            renderer.EndFrame();
+        }
 
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "poll events";

@@ -214,7 +214,7 @@ namespace PlutoGE::core
             .nativeWindow = m_window.GetWindow(),
             .width = static_cast<std::uint32_t>((std::max)(extents.width, 1)),
             .height = static_cast<std::uint32_t>((std::max)(extents.height, 1)),
-            .vSync = true,
+            .vSync = m_config.vSync,
         };
         auto deviceCreation = render::rhi::CreateRenderDevice(m_config.graphicsApi, presentation);
         if (!deviceCreation)

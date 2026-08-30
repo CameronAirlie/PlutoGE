@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <memory>
 
@@ -16,6 +17,10 @@ namespace PlutoGE::render
         [[nodiscard]] bool RenderAndPresent(const glm::mat4 &viewProjection,
                                             const BasicLighting &lighting,
                                             std::span<const BasicDraw> draws);
+        [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
+                                                 const BasicLighting &lighting,
+                                                 std::span<const RenderCommand> commands,
+                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {});
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
@@ -24,6 +29,7 @@ namespace PlutoGE::render
     private:
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;
+        std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
     };
 }

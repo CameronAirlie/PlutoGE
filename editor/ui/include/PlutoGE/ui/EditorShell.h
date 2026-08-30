@@ -32,6 +32,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::ui
 {
     class ProfilerPanel;
+    class EditorSceneRenderService;
 
     class EditorShell
     {
@@ -268,7 +269,7 @@ namespace PlutoGE::ui
             std::size_t retainedBytes = 0;
         };
 
-        EditorShell() = default;
+        EditorShell();
         ~EditorShell();
 
         void InitializeEditorCamera();
@@ -308,6 +309,7 @@ namespace PlutoGE::ui
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
+        std::unique_ptr<EditorSceneRenderService> m_editorSceneRenderService;
         EditorProfiler m_profiler;
 
         scene::Entity *m_selectedEntity = nullptr;

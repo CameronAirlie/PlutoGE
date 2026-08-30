@@ -45,6 +45,7 @@ namespace PlutoGE::core
     {
         platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
+        bool vSync = true;
         bool isEditorHost = false;
     };
 

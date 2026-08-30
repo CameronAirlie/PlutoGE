@@ -299,6 +299,22 @@ namespace PlutoGE::ui
         m_window = nullptr;
     }
 
+    EditorTextureHandle PanelManager::RegisterTexture(const EditorTextureDescriptor &descriptor)
+    {
+        return m_compositor ? m_compositor->RegisterTexture(descriptor) : EditorTextureHandle{};
+    }
+
+    void PanelManager::UnregisterTexture(EditorTextureHandle texture)
+    {
+        if (m_compositor)
+            m_compositor->UnregisterTexture(texture);
+    }
+
+    std::uint64_t PanelManager::GetImGuiTextureId(EditorTextureHandle texture) const noexcept
+    {
+        return m_compositor ? m_compositor->GetImGuiTextureId(texture) : 0;
+    }
+
     void PanelManager::SetEditorFontSize(float fontSize)
     {
         m_editorFontSize = std::clamp(fontSize, kMinEditorFontSize, kMaxEditorFontSize);

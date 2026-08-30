@@ -59,21 +59,40 @@ int main()
             BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(-0.65f, 0, 0))},
             BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(0.65f, 0, 0))},
         };
-        renderer.Render(projection * view, draws);
+        BasicLighting neutralLighting;
+        neutralLighting.ambientIntensity = 1.0f;
+        neutralLighting.directionalIntensity = 0.0f;
+        renderer.Render(projection * view, neutralLighting, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
 
         std::size_t changed = 0;
+        std::uint64_t red = 0, green = 0, blue = 0;
         for (std::size_t i = 0; i + 3 < pixels.size(); i += 4)
         {
             const auto r = std::to_integer<unsigned char>(pixels[i]);
             const auto g = std::to_integer<unsigned char>(pixels[i + 1]);
             const auto b = std::to_integer<unsigned char>(pixels[i + 2]);
-            if (r > 30 || g > 30 || b > 35) ++changed;
+            if (r > 30 || g > 30 || b > 35)
+            {
+                ++changed;
+                red += r;
+                green += g;
+                blue += b;
+            }
         }
         if (changed < 100)
         {
             std::cerr << "Vulkan BasicRenderer produced a blank image (" << changed << " changed pixels)\n";
             return 2;
+        }
+        // A white material under white lighting must remain neutral. This
+        // catches channel/order and constant-buffer layout regressions that can
+        // otherwise make every Vulkan viewport mesh appear red.
+        if (red > green + changed * 3 || red > blue + changed * 3)
+        {
+            std::cerr << "Vulkan BasicRenderer introduced a red channel bias ("
+                      << red << ", " << green << ", " << blue << ")\n";
+            return 4;
         }
         std::cout << "Vulkan mesh rendered on " << device.GetDeviceName() << " (" << changed << " changed pixels)\n";
     }

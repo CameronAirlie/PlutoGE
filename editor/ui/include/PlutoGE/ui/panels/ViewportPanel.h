@@ -1,14 +1,13 @@
 #pragma once
 
 #include "PlutoGE/render/Camera.h"
-#include "PlutoGE/render/BasicRenderer.h"
-#include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/render/rhi/Types.h"
 #include "PlutoGE/ui/panels/Panel.h"
+#include "PlutoGE/ui/EditorCompositor.h"
 
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
 #include <memory>
-#include <unordered_map>
 #include <span>
 #include <string>
 
@@ -32,6 +31,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::ui
 {
     class EditorShell;
+    class EditorSceneRenderService;
     class PanelManager;
     struct ViewportPanelConfig : public PanelConfig
     {
@@ -45,7 +45,7 @@ namespace PlutoGE::ui
     class ViewportPanel : public Panel
     {
     public:
-        explicit ViewportPanel(const ViewportPanelConfig &config);
+        ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService = nullptr);
         ~ViewportPanel() override;
 
         void Initialize() override;
@@ -78,6 +78,7 @@ namespace PlutoGE::ui
         void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
         void InitializeRhiPreview();
         void ShutdownRhiPreview();
+        void ReleaseRegisteredTexture();
 
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;
@@ -100,13 +101,10 @@ namespace PlutoGE::ui
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
         render::RenderTarget *m_scaledRenderTarget = nullptr;
         std::unique_ptr<render::SpatialUpscaler> m_upscaler;
-        std::unique_ptr<render::rhi::IRenderDevice> m_rhiDevice;
-        std::unique_ptr<render::BasicRenderer> m_basicRenderer;
-        std::unordered_map<const render::Mesh *, render::BasicMesh> m_rhiMeshes;
-        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiSrgbTextures;
-        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiLinearTextures;
+        EditorSceneRenderService *m_rhiRenderService = nullptr;
         std::uint64_t m_rhiViewportTexture = 0;
-        std::uint64_t m_vulkanBridgeTexture = 0;
+        std::uint64_t m_registeredNativeTexture = 0;
+        EditorTextureHandle m_registeredTexture;
         bool m_activeRhiVulkan = false;
         std::size_t m_rhiSceneCommandCount = 0;
         std::size_t m_rhiDrawCount = 0;

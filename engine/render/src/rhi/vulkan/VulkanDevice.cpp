@@ -728,7 +728,12 @@ namespace PlutoGE::render::rhi::vulkan
         auto module = [&](const auto &code) { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
         PipelineResource resource; resource.descriptor = descriptor;
-        const VkDescriptorSetLayoutBinding cameraBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        // BasicLit consumes camera/lighting data in both stages. Restricting the
+        // descriptor to the vertex stage leaves fragment reads undefined (and
+        // manifested as a strong red tint on affected Vulkan drivers).
+        const VkDescriptorSetLayoutBinding cameraBinding{
+            0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         const std::array<VkDescriptorSetLayoutBinding, 5> materialBindings{{
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},

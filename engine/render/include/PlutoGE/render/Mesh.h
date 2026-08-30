@@ -1157,6 +1157,10 @@ namespace PlutoGE::render
 
         void Initialize()
         {
+            // Mesh CPU data remains usable by the RHI when no OpenGL dispatch
+            // table exists (for example a GLFW_NO_API Vulkan runtime window).
+            if (!glad_glGenVertexArrays)
+                return;
             // Generate and bind VAO, VBO, and EBO here
             glGenVertexArrays(1, &m_VAO);
             glGenBuffers(1, &m_VBO);

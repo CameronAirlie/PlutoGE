@@ -6,6 +6,8 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <span>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -34,6 +36,7 @@ namespace PlutoGE::render
         int GetDepth() const { return m_depth; }
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
+        [[nodiscard]] std::span<const unsigned char> GetRgba8Pixels() const noexcept { return m_rgba8Pixels; }
 
         // Lazily creates a stable depth-only framebuffer view owned by this
         // texture. Cubemaps use one view per face; 2D textures ignore face.
@@ -56,6 +59,9 @@ namespace PlutoGE::render
         int m_height = 0;
         int m_depth = 0;
         int m_channels = 0; // Number of color channels (e.g., 3 for RGB, 4 for RGBA)
+        // Decoded source pixels are retained independently of the active GPU
+        // backend. This is the upload source for both OpenGL and Vulkan.
+        std::vector<unsigned char> m_rgba8Pixels;
         std::array<GLuint, 6> m_depthFramebuffers{};
 
     protected:

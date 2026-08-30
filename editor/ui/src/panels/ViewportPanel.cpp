@@ -8,6 +8,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TexturePainter.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
@@ -30,12 +31,7 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Renderer.h"
-#include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Graphics.h"
-#include "PlutoGE/render/rhi/RenderDeviceFactory.h"
-#include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
-#include "PlutoGE/render/rhi/vulkan/VulkanBootstrap.h"
-#include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
 #include <iostream>
@@ -47,8 +43,6 @@
 #include <optional>
 #include <memory>
 #include <filesystem>
-#include <fstream>
-#include <unordered_set>
 
 #include <imgui.h>
 #include <glad/glad.h>
@@ -60,8 +54,8 @@
 
 namespace PlutoGE::ui
 {
-    ViewportPanel::ViewportPanel(const ViewportPanelConfig &config)
-        : Panel(config), m_config(config)
+    ViewportPanel::ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService)
+        : Panel(config), m_config(config), m_rhiRenderService(renderService)
     {
     }
 
@@ -88,28 +82,6 @@ namespace PlutoGE::ui
             "Shadow Mask Filtered",
             "LOD",
         };
-
-        std::string ReadRhiShaderText(const char *fileName)
-        {
-            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary);
-            if (!input)
-                return {};
-            return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        }
-
-        std::vector<std::uint32_t> ReadRhiShaderBinary(const char *fileName)
-        {
-            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary | std::ios::ate);
-            if (!input)
-                return {};
-            const auto byteSize = input.tellg();
-            if (byteSize <= 0 || byteSize % static_cast<std::streamoff>(sizeof(std::uint32_t)) != 0)
-                return {};
-            std::vector<std::uint32_t> words(static_cast<std::size_t>(byteSize) / sizeof(std::uint32_t));
-            input.seekg(0);
-            input.read(reinterpret_cast<char *>(words.data()), byteSize);
-            return input ? words : std::vector<std::uint32_t>{};
-        }
 
         struct PickRay
         {
@@ -1858,79 +1830,35 @@ namespace PlutoGE::ui
 
     void ViewportPanel::InitializeRhiPreview()
     {
-        try
+        if (!m_rhiRenderService)
         {
-            auto creation = render::rhi::CreateRenderDevice(m_config.graphicsApi);
-            if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
-            {
-                m_vulkanAvailable = static_cast<bool>(creation);
-                m_vulkanStatus = creation ? "Vulkan available: " + creation.deviceName
-                                          : "Vulkan unavailable: " + creation.error;
-            }
-            else
-            {
-                const auto vulkanInfo = render::rhi::vulkan::ProbeVulkanDevice();
-                m_vulkanAvailable = vulkanInfo.available;
-                m_vulkanStatus = vulkanInfo.available
-                                      ? "Vulkan available: " + vulkanInfo.deviceName
-                                      : "Vulkan unavailable: " + vulkanInfo.error;
-            }
-            std::cout << "Viewport RHI: " << m_vulkanStatus << std::endl;
-            if (!creation)
-            {
-                throw std::runtime_error(creation.error.empty() ? "Failed to create the requested render device"
-                                                                 : creation.error);
-            }
-            m_activeRhiVulkan = creation.activeApi == render::rhi::GraphicsApi::Vulkan;
-            m_rhiDevice = std::move(creation.device);
-            m_basicRenderer = std::make_unique<render::BasicRenderer>();
-            render::BasicRendererShaderPackage shaders;
-            shaders.vertex.glsl = ReadRhiShaderText("BasicLit.vertex.glsl");
-            shaders.vertex.spirv = ReadRhiShaderBinary("BasicLit.vertex.spv");
-            shaders.fragment.glsl = ReadRhiShaderText("BasicLit.fragment.glsl");
-            shaders.fragment.spirv = ReadRhiShaderBinary("BasicLit.fragment.spv");
-            if (!m_basicRenderer->Initialize(*m_rhiDevice, shaders))
-            {
-                ShutdownRhiPreview();
-                m_useRhiPreview = false;
-            }
-            else
-            {
-                std::cout << "Viewport RHI active preview backend: "
-                          << (m_activeRhiVulkan ? "Vulkan (OpenGL readback bridge)" : "OpenGL")
-                          << std::endl;
-            }
-        }
-        catch (const std::exception &error)
-        {
-            std::cerr << "Failed to initialize viewport RHI preview: " << error.what() << std::endl;
-            ShutdownRhiPreview();
             m_useRhiPreview = false;
+            return;
         }
+        m_useRhiPreview = m_rhiRenderService->Initialize(m_config.graphicsApi);
+        m_vulkanAvailable = m_rhiRenderService->IsVulkanAvailable();
+        m_vulkanStatus = m_rhiRenderService->GetVulkanStatus();
+        m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
+        if (!m_useRhiPreview)
+            m_rhiViewportTexture = 0;
     }
 
     void ViewportPanel::ShutdownRhiPreview()
     {
-        m_rhiMeshes.clear();
-        m_rhiSrgbTextures.clear();
-        m_rhiLinearTextures.clear();
-        if (m_basicRenderer)
-        {
-            m_basicRenderer->Shutdown();
-            m_basicRenderer.reset();
-        }
-        m_rhiDevice.reset();
+        ReleaseRegisteredTexture();
         m_rhiViewportTexture = 0;
         m_activeRhiVulkan = false;
         m_rhiSceneCommandCount = 0;
         m_rhiDrawCount = 0;
         m_rhiChangedPixelCount = 0;
-        if (m_vulkanBridgeTexture != 0)
-        {
-            const GLuint texture = static_cast<GLuint>(m_vulkanBridgeTexture);
-            glDeleteTextures(1, &texture);
-            m_vulkanBridgeTexture = 0;
-        }
+    }
+
+    void ViewportPanel::ReleaseRegisteredTexture()
+    {
+        if (m_registeredTexture.IsValid())
+            EditorShell::GetInstance().GetPanelManager().UnregisterTexture(m_registeredTexture);
+        m_registeredTexture = {};
+        m_registeredNativeTexture = 0;
     }
 
     void ViewportPanel::Initialize()
@@ -2002,10 +1930,19 @@ namespace PlutoGE::ui
             return;
         }
 
-        const std::uint64_t displayedTexture = m_useRhiPreview && m_rhiViewportTexture != 0
-                                                   ? m_rhiViewportTexture
-                                                   : m_renderTarget->GetColorTextureID();
-        ImTextureID texId = (ImTextureID)(uintptr_t)displayedTexture;
+        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        const std::uint64_t displayedTexture = (m_useRhiPreview || requiresRhiViewport)
+                                                       ? m_rhiViewportTexture
+                                                       : m_renderTarget->GetColorTextureID();
+        if (displayedTexture != m_registeredNativeTexture)
+        {
+            ReleaseRegisteredTexture();
+            m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(
+                {.graphicsApi = render::rhi::GraphicsApi::OpenGL, .nativeHandle = displayedTexture});
+            m_registeredNativeTexture = displayedTexture;
+        }
+        const auto imguiTexture = EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_registeredTexture);
+        ImTextureID texId = static_cast<ImTextureID>(imguiTexture);
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
         const bool displayingVulkanReadback = m_useRhiPreview && m_activeRhiVulkan && m_rhiViewportTexture != 0;
         ImGui::Image(texId, imageSize,
@@ -2249,13 +2186,20 @@ namespace PlutoGE::ui
             overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
-                ImGui::MenuItem("RHI Scene Geometry Preview", nullptr, &m_useRhiPreview, m_basicRenderer != nullptr);
+                if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
+                {
+                    ImGui::TextDisabled("Vulkan scene renderer (project backend)");
+                    m_useRhiPreview = true;
+                }
+                else
+                    ImGui::MenuItem("RHI Scene Geometry Preview", nullptr, &m_useRhiPreview,
+                                    m_rhiRenderService && m_rhiRenderService->IsInitialized());
                 ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
                                     m_activeRhiVulkan ? " (readback bridge)" : "");
                 ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
                 ImGui::TextDisabled("%s", m_vulkanStatus.c_str());
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Vulkan device creation is working; viewport presentation is still being implemented.");
+                    ImGui::SetTooltip("The project graphics backend is authoritative for scene geometry.");
                 ImGui::Separator();
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
@@ -3868,249 +3812,33 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData, std::span<const render::RenderCommand> commands)
     {
-        if (!m_useRhiPreview || !m_basicRenderer || !m_rhiDevice || !m_renderTarget)
+        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
             return;
 
         const auto *target = GetSceneRenderTarget();
-        if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0 ||
-            !m_basicRenderer->Resize(static_cast<std::uint32_t>(target->GetWidth()), static_cast<std::uint32_t>(target->GetHeight())))
+        if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0)
             return;
 
-        std::vector<render::BasicDraw> draws;
-        m_rhiSceneCommandCount = commands.size();
-        draws.reserve(commands.size());
-        std::unordered_set<const render::Mesh *> activeMeshes;
-        std::unordered_set<const render::Texture *> activeSrgbTextures;
-        std::unordered_set<const render::Texture *> activeLinearTextures;
-        activeMeshes.reserve(commands.size());
-
-        const auto uploadTexture = [&](const render::Texture *source,
-                                       render::rhi::Format format,
-                                       std::unordered_map<const render::Texture *, render::rhi::Texture> &cache,
-                                       std::unordered_set<const render::Texture *> &activeTextures,
-                                       const char *debugName) -> render::rhi::TextureHandle
+        if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
+                                        static_cast<std::uint32_t>(target->GetHeight()),
+                                        cameraData, commands,
+                                        EditorShell::GetInstance().GetEngine().GetScene()))
         {
-            if (!source || source->GetType() != GL_TEXTURE_2D || source->GetTextureID() == 0 ||
-                source->GetWidth() <= 0 || source->GetHeight() <= 0)
-                return {};
-
-            activeTextures.insert(source);
-            if (const auto cached = cache.find(source); cached != cache.end())
-                return cached->second.Get();
-
-            const std::size_t pixelCount = static_cast<std::size_t>(source->GetWidth()) *
-                                           static_cast<std::size_t>(source->GetHeight());
-            std::vector<std::byte> rgbaPixels(pixelCount * 4);
-            glBindTexture(GL_TEXTURE_2D, source->GetTextureID());
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels.data());
-
-            auto uploaded = render::rhi::Texture(
-                *m_rhiDevice,
-                m_rhiDevice->CreateTexture(
-                    {static_cast<std::uint32_t>(source->GetWidth()),
-                     static_cast<std::uint32_t>(source->GetHeight()),
-                     format,
-                     render::rhi::TextureUsage::Sampled,
-                     debugName},
-                    rgbaPixels));
-            if (!uploaded)
-                return {};
-
-            return cache.emplace(source, std::move(uploaded)).first->second.Get();
-        };
-
-        for (const auto &command : commands)
-        {
-            if (!command.mesh)
-                continue;
-            activeMeshes.insert(command.mesh);
-
-            auto meshIt = m_rhiMeshes.find(command.mesh);
-            if (meshIt == m_rhiMeshes.end())
-            {
-                const auto &source = command.mesh->GetMeshData();
-                if (source.vertices.empty() || source.indices.empty())
-                    continue;
-                std::vector<render::BasicVertex> vertices;
-                vertices.reserve(source.vertices.size());
-                for (const auto &vertex : source.vertices)
-                    vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
-                auto uploaded = m_basicRenderer->CreateMesh({vertices, source.indices});
-                meshIt = m_rhiMeshes.emplace(command.mesh, std::move(uploaded)).first;
-            }
-
-            std::uint32_t firstIndex = 0;
-            std::uint32_t indexCount = 0;
-            if (command.submeshIndex < command.mesh->GetSubmeshCount())
-            {
-                const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
-                firstIndex = range.indexOffset;
-                indexCount = range.indexCount;
-            }
-
-            glm::vec4 baseColor(1.0f);
-            glm::vec2 uvScale(1.0f);
-            render::rhi::TextureHandle baseColorTexture;
-            render::rhi::TextureHandle normalTexture;
-            render::rhi::TextureHandle metallicTexture;
-            render::rhi::TextureHandle roughnessTexture;
-            float metallic = 0.0f;
-            float roughness = 1.0f;
-            glm::vec3 emission(0.0f);
-            float alphaCutoff = 0.5f;
-            std::uint32_t alphaMode = 0;
-            std::uint32_t metallicChannel = 0;
-            std::uint32_t roughnessChannel = 0;
-            bool flipNormalY = false;
-            if (command.material)
-            {
-                const auto &material = command.material->GetConfig();
-                baseColor = material.color;
-                uvScale = material.uvScale;
-                metallic = material.metallic;
-                roughness = material.roughness;
-                emission = material.emission;
-                alphaCutoff = material.alphaCutoff;
-                alphaMode = static_cast<std::uint32_t>(material.alphaMode);
-                metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
-                roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
-                flipNormalY = material.flipNormalY;
-                baseColorTexture = uploadTexture(material.albedoTexture, render::rhi::Format::R8G8B8A8Srgb,
-                                                 m_rhiSrgbTextures, activeSrgbTextures, "RHI material albedo");
-                normalTexture = uploadTexture(material.normalTexture, render::rhi::Format::R8G8B8A8Unorm,
-                                              m_rhiLinearTextures, activeLinearTextures, "RHI material normal");
-                metallicTexture = uploadTexture(material.metallicTexture, render::rhi::Format::R8G8B8A8Unorm,
-                                                m_rhiLinearTextures, activeLinearTextures, "RHI material metallic");
-                roughnessTexture = uploadTexture(material.roughnessTexture, render::rhi::Format::R8G8B8A8Unorm,
-                                                 m_rhiLinearTextures, activeLinearTextures, "RHI material roughness");
-            }
-
-            const auto appendDraw = [&](const glm::mat4 &model)
-            {
-                draws.push_back(render::BasicDraw{
-                    .mesh = &meshIt->second,
-                    .model = model,
-                    .baseColor = baseColor,
-                    .uvScale = uvScale,
-                    .baseColorTexture = baseColorTexture,
-                    .normalTexture = normalTexture,
-                    .metallicTexture = metallicTexture,
-                    .roughnessTexture = roughnessTexture,
-                    .metallic = metallic,
-                    .roughness = roughness,
-                    .emission = emission,
-                    .alphaCutoff = alphaCutoff,
-                    .alphaMode = alphaMode,
-                    .metallicChannel = metallicChannel,
-                    .roughnessChannel = roughnessChannel,
-                    .flipNormalY = flipNormalY,
-                    .firstIndex = firstIndex,
-                    .indexCount = indexCount,
-                });
-            };
-
-            if (command.instanceModels && !command.instanceModels->empty())
-            {
-                for (const auto &instanceModel : *command.instanceModels)
-                    appendDraw(instanceModel);
-            }
-            else
-            {
-                appendDraw(command.model);
-            }
-        }
-
-        const auto pruneTextureCache = [](auto &cache, const auto &activeTextures)
-        {
-            std::erase_if(cache, [&](const auto &entry) { return !activeTextures.contains(entry.first); });
-        };
-        pruneTextureCache(m_rhiSrgbTextures, activeSrgbTextures);
-        pruneTextureCache(m_rhiLinearTextures, activeLinearTextures);
-
-        for (auto meshIt = m_rhiMeshes.begin(); meshIt != m_rhiMeshes.end();)
-        {
-            if (!activeMeshes.contains(meshIt->first))
-                meshIt = m_rhiMeshes.erase(meshIt);
-            else
-                ++meshIt;
-        }
-
-        try
-        {
-            m_rhiDrawCount = draws.size();
-            glm::mat4 projection = cameraData.projection;
-            if (m_activeRhiVulkan)
-            {
-                // Existing editor cameras still emit OpenGL -1..1 NDC depth.
-                // Convert it to Vulkan's 0..1 range at the migration boundary.
-                glm::mat4 depthRangeConversion(1.0f);
-                depthRangeConversion[2][2] = 0.5f;
-                depthRangeConversion[3][2] = 0.5f;
-                projection = depthRangeConversion * projection;
-            }
-            render::BasicLighting lighting;
-            lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
-            if (auto *activeScene = EditorShell::GetInstance().GetEngine().GetScene())
-            {
-                for (const auto *light : activeScene->GetLights())
-                {
-                    if (!light || light->type != scene::LightType::Directional)
-                        continue;
-                    lighting.directionalDirection = light->direction;
-                    lighting.directionalColor = light->color;
-                    lighting.directionalIntensity = light->intensity;
-                    break;
-                }
-            }
-            m_basicRenderer->Render(projection * cameraData.view, lighting, draws);
-            if (m_activeRhiVulkan)
-            {
-                auto &vulkanDevice = static_cast<render::rhi::vulkan::VulkanDevice &>(*m_rhiDevice);
-                const auto pixels = vulkanDevice.ReadTextureRgba8(m_basicRenderer->GetColorTexture());
-                m_rhiChangedPixelCount = 0;
-                for (std::size_t pixel = 0; pixel + 3 < pixels.size(); pixel += 4)
-                {
-                    const int red = std::to_integer<unsigned char>(pixels[pixel]);
-                    const int green = std::to_integer<unsigned char>(pixels[pixel + 1]);
-                    const int blue = std::to_integer<unsigned char>(pixels[pixel + 2]);
-                    // BasicRenderer clears to approximately (10, 15, 23).
-                    if (std::abs(red - 10) > 3 || std::abs(green - 15) > 3 || std::abs(blue - 23) > 3)
-                        ++m_rhiChangedPixelCount;
-                }
-                if (m_vulkanBridgeTexture == 0)
-                {
-                    GLuint texture = 0;
-                    glGenTextures(1, &texture);
-                    m_vulkanBridgeTexture = texture;
-                }
-                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_vulkanBridgeTexture));
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8,
-                             static_cast<GLsizei>(m_basicRenderer->GetWidth()),
-                             static_cast<GLsizei>(m_basicRenderer->GetHeight()), 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                m_rhiViewportTexture = m_vulkanBridgeTexture;
-            }
-            else
-            {
-                auto &openGlDevice = static_cast<render::rhi::opengl::OpenGLDevice &>(*m_rhiDevice);
-                m_rhiViewportTexture = openGlDevice.GetTextureNativeHandle(m_basicRenderer->GetColorTexture());
-            }
-        }
-        catch (const std::exception &error)
-        {
-            std::cerr << "Viewport RHI render failed: " << error.what() << std::endl;
-            m_useRhiPreview = false;
+            // A Vulkan project must never silently display the legacy OpenGL
+            // scene as if it came from the selected backend. Keep the RHI path
+            // active so a transient failure can recover on the next frame.
+            m_useRhiPreview = requiresRhiViewport;
             m_rhiViewportTexture = 0;
+            return;
         }
+        m_rhiViewportTexture = m_rhiRenderService->GetViewportTexture();
+        m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
+        m_rhiSceneCommandCount = m_rhiRenderService->GetSceneCommandCount();
+        m_rhiDrawCount = m_rhiRenderService->GetDrawCount();
+        m_rhiChangedPixelCount = m_rhiRenderService->GetChangedPixelCount();
+        return;
 
-        // The legacy renderer and ImGui still share this context during the
-        // migration, so invalidate their cached assumptions after RHI work.
-        render::Graphics::ResetStateCache();
-        render::Graphics::BindFramebuffer(0);
     }
 
     render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const

@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include "PlutoGE/ui/EditorCompositor.h"
 
 struct ImFont;
 
@@ -69,6 +70,9 @@ namespace PlutoGE::ui
         [[nodiscard]] const std::string &GetEditorFont() const { return m_editorFont; }
 
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
+        [[nodiscard]] EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor);
+        void UnregisterTexture(EditorTextureHandle texture);
+        [[nodiscard]] std::uint64_t GetImGuiTextureId(EditorTextureHandle texture) const noexcept;
 
     private:
         std::vector<Panel *> m_panels;

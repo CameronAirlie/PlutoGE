@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ConsolePanel.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -926,6 +927,8 @@ namespace PlutoGE::ui
         }
 #endif
     }
+
+    EditorShell::EditorShell() = default;
 
     EditorShell::~EditorShell() = default;
 
@@ -2672,12 +2675,14 @@ namespace PlutoGE::ui
                 .visible = true,
                 .fullscreen = false,
             }};
+        config.vSync = false;
         config.isEditorHost = true;
         if (!m_engine.Initialize(config))
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
             return false;
         }
+        m_editorSceneRenderService = std::make_unique<EditorSceneRenderService>();
 
         scripting::SetScriptLogSink(
             [this](scripting::ScriptLogSeverity severity, std::string_view message)
@@ -2711,6 +2716,7 @@ namespace PlutoGE::ui
         {
             m_editorCamera.postProcessEffects.clear();
             m_scene.reset();
+            m_editorSceneRenderService.reset();
             m_engine.Shutdown();
             return false;
         }
@@ -2741,7 +2747,7 @@ namespace PlutoGE::ui
         viewportConfig.editorViewport = true;
         viewportConfig.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
                                                : render::rhi::GraphicsApi::OpenGL;
-        auto *viewportPanel = new ViewportPanel(viewportConfig);
+        auto *viewportPanel = new ViewportPanel(viewportConfig, m_editorSceneRenderService.get());
         viewportPanel->Initialize();
 
         auto *sceneHierarchyPanel = new SceneHierarchyPanel(PanelConfig{"Scene Hierarchy"});
@@ -3915,6 +3921,7 @@ namespace PlutoGE::ui
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();
+        m_editorSceneRenderService.reset();
         m_panelManager.ShutdownImGui();
         m_engine.Shutdown();
     }

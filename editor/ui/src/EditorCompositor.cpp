@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include <GLFW/glfw3.h>
+#include <vector>
 
 namespace PlutoGE::ui
 {
@@ -28,6 +29,7 @@ namespace PlutoGE::ui
 
             void Shutdown() override
             {
+                m_textures.clear();
                 ImGui_ImplOpenGL3_Shutdown();
                 ImGui_ImplGlfw_Shutdown();
                 m_window = nullptr;
@@ -52,13 +54,59 @@ namespace PlutoGE::ui
                 glfwMakeContextCurrent(previousContext);
             }
 
+            EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) override
+            {
+                if (descriptor.graphicsApi != render::rhi::GraphicsApi::OpenGL || descriptor.nativeHandle == 0)
+                    return {};
+                for (std::uint32_t index = 0; index < m_textures.size(); ++index)
+                {
+                    auto &entry = m_textures[index];
+                    if (entry.inUse)
+                        continue;
+                    entry.inUse = true;
+                    entry.nativeHandle = descriptor.nativeHandle;
+                    return {index, entry.generation};
+                }
+                m_textures.push_back({descriptor.nativeHandle, 1, true});
+                return {static_cast<std::uint32_t>(m_textures.size() - 1), 1};
+            }
+
+            void UnregisterTexture(EditorTextureHandle texture) override
+            {
+                if (!texture.IsValid() || texture.index >= m_textures.size())
+                    return;
+                auto &entry = m_textures[texture.index];
+                if (!entry.inUse || entry.generation != texture.generation)
+                    return;
+                entry.inUse = false;
+                entry.nativeHandle = 0;
+                if (++entry.generation == 0)
+                    entry.generation = 1;
+            }
+
+            std::uint64_t GetImGuiTextureId(EditorTextureHandle texture) const noexcept override
+            {
+                if (!texture.IsValid() || texture.index >= m_textures.size())
+                    return 0;
+                const auto &entry = m_textures[texture.index];
+                return entry.inUse && entry.generation == texture.generation ? entry.nativeHandle : 0;
+            }
+
             [[nodiscard]] render::rhi::GraphicsApi GetGraphicsApi() const noexcept override
             {
                 return render::rhi::GraphicsApi::OpenGL;
             }
 
         private:
+            struct TextureEntry
+            {
+                std::uint64_t nativeHandle = 0;
+                std::uint32_t generation = 1;
+                bool inUse = false;
+            };
+
             GLFWwindow *m_window = nullptr;
+            std::vector<TextureEntry> m_textures;
         };
     }
 

@@ -1,59 +1,54 @@
 #include "PlutoGE/render/RhiRenderService.h"
-
-#include <filesystem>
-#include <fstream>
-#include <sstream>
+#include "PlutoGE/render/ShaderArtifacts.h"
 
 namespace PlutoGE::render
 {
-    namespace
-    {
-        std::string ReadTextShader(const char *fileName)
-        {
-            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary);
-            std::ostringstream contents;
-            contents << input.rdbuf();
-            return contents.str();
-        }
-
-        std::vector<std::uint32_t> ReadSpirvShader(const char *fileName)
-        {
-            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary | std::ios::ate);
-            if (!input) return {};
-            const auto byteCount = input.tellg();
-            if (byteCount <= 0 || byteCount % static_cast<std::streamoff>(sizeof(std::uint32_t)) != 0)
-                return {};
-            std::vector<std::uint32_t> words(static_cast<std::size_t>(byteCount) / sizeof(std::uint32_t));
-            input.seekg(0);
-            input.read(reinterpret_cast<char *>(words.data()), byteCount);
-            return input ? words : std::vector<std::uint32_t>{};
-        }
-    }
-
     bool RhiRenderService::Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain)
     {
         Shutdown();
-        BasicRendererShaderPackage shaders;
-        shaders.vertex.glsl = ReadTextShader("BasicLit.vertex.glsl");
-        shaders.fragment.glsl = ReadTextShader("BasicLit.fragment.glsl");
-        shaders.vertex.spirv = ReadSpirvShader("BasicLit.vertex.spv");
-        shaders.fragment.spirv = ReadSpirvShader("BasicLit.fragment.spv");
+        const ShaderArtifactLibrary shaderArtifacts;
+        BasicRendererShaderPackage shaders{
+            .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
+            .fragment = shaderArtifacts.Load("BasicLit", "fragment")};
 
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))
             return false;
+        auto sceneRenderer = std::make_unique<RhiSceneRenderer>();
+        if (!sceneRenderer->Initialize(device, shaders))
+        {
+            renderer->Shutdown();
+            return false;
+        }
         m_graphicsApi = device.GetApi();
         m_swapchain = &swapchain;
         m_renderer = std::move(renderer);
+        m_sceneRenderer = std::move(sceneRenderer);
         return true;
     }
 
     void RhiRenderService::Shutdown()
     {
+        if (m_sceneRenderer)
+            m_sceneRenderer->Shutdown();
+        m_sceneRenderer.reset();
         if (m_renderer)
             m_renderer->Shutdown();
         m_renderer.reset();
         m_swapchain = nullptr;
+    }
+
+    bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
+                                                  const BasicLighting &lighting,
+                                                  std::span<const RenderCommand> commands,
+                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader)
+    {
+        if (!m_sceneRenderer || !m_swapchain)
+            return false;
+        if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
+                                     cameraData, lighting, commands, texturePixelReader))
+            return false;
+        return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }
 
     bool RhiRenderService::Resize(std::uint32_t width, std::uint32_t height)

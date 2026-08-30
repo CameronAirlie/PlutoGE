@@ -13,6 +13,7 @@ namespace PlutoGE::render
     class Mesh;
     class Texture;
     struct RenderCommand;
+    class IPostProcessEffect;
     namespace rhi { class IRenderDevice; }
 }
 
@@ -35,6 +36,7 @@ namespace PlutoGE::ui
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
                     std::span<const render::RenderCommand> commands,
+                    std::span<render::IPostProcessEffect *const> postProcessEffects,
                     const scene::Scene *scene);
 
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }

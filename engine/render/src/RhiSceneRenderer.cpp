@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,6 +38,7 @@ namespace PlutoGE::render
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height,
                                   const CameraData &cameraData, const BasicLighting &lighting,
                                   std::span<const RenderCommand> commands,
+                                  std::span<IPostProcessEffect *const> postProcessEffects,
                                   const TexturePixelReader &texturePixelReader)
     {
         if (!m_renderer || !m_device || width == 0 || height == 0 || !m_renderer->Resize(width, height))
@@ -156,7 +158,33 @@ namespace PlutoGE::render
                 effectiveLighting.shadowDepthBias = 0.5f;
             }
         }
-        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws);
+        std::vector<BasicPostProcessEffect> basicEffects;
+        for (const auto *effect : postProcessEffects)
+        {
+            if (!effect || !effect->IsEnabled())
+                continue;
+            BasicPostProcessEffect basicEffect;
+            if (effect->GetTypeName() == "ToneMapping")
+                basicEffect.type = BasicPostProcessEffectType::ToneMapping;
+            else if (effect->GetTypeName() == "GammaCorrection")
+                basicEffect.type = BasicPostProcessEffectType::GammaCorrection;
+            else
+                continue;
+            for (const auto &parameter : effect->GetParameters())
+            {
+                try
+                {
+                    if (parameter.name == "Exposure") basicEffect.exposure = std::stof(parameter.value);
+                    else if (parameter.name == "Gamma") basicEffect.gamma = std::stof(parameter.value);
+                }
+                catch (const std::exception &)
+                {
+                    // Keep the effect's safe defaults for malformed serialized values.
+                }
+            }
+            basicEffects.push_back(basicEffect);
+        }
+        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects);
         return true;
     }
 

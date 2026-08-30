@@ -19,6 +19,7 @@ namespace PlutoGE::render
     class Mesh;
     class Texture;
     struct RenderCommand;
+    class IPostProcessEffect;
     namespace rhi { class IRenderDevice; }
 }
 
@@ -52,7 +53,9 @@ namespace PlutoGE::ui
         void Render() override;
         void ClearFrame();
         void RenderFrame(scene::CameraComponent &cameraComponent);
-        void RenderRhiFrame(const render::CameraData &cameraData, std::span<const render::RenderCommand> commands);
+        void RenderRhiFrame(const render::CameraData &cameraData,
+                            std::span<const render::RenderCommand> commands,
+                            std::span<render::IPostProcessEffect *const> postProcessEffects);
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 

@@ -47,6 +47,10 @@ int main()
             shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
             shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
             shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
+            shaders.toneMappingVertex.spirv = ReadSpirv("ToneMapping.vertex.spv");
+            shaders.toneMappingFragment.spirv = ReadSpirv("ToneMapping.fragment.spv");
+            shaders.gammaCorrectionVertex.spirv = ReadSpirv("GammaCorrection.vertex.spv");
+            shaders.gammaCorrectionFragment.spirv = ReadSpirv("GammaCorrection.fragment.spv");
             render::BasicRenderer renderer;
             if (!renderer.Initialize(device, shaders) ||
                 !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))

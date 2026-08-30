@@ -8,7 +8,8 @@ struct FullscreenVertexOutput
 {
     float exposure;
     float gamma;
-    float2 toneMappingPadding;
+    uint flipY;
+    uint toneMappingPadding;
 };
 
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -40,7 +41,8 @@ float3 aces(float3 value)
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    float3 color = sceneTexture.Sample(input.uv).rgb * max(exposure, 0.0);
+    const float2 uv = float2(input.uv.x, flipY != 0 ? 1.0 - input.uv.y : input.uv.y);
+    float3 color = sceneTexture.Sample(uv).rgb * max(exposure, 0.0);
     color = aces(color);
     color = pow(max(color, 0.0), 1.0 / max(gamma, 0.001));
     return float4(color, 1.0);

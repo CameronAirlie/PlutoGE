@@ -34,6 +34,7 @@ namespace PlutoGE::render::rhi
         virtual void BindIndexBuffer(BufferHandle buffer, Format indexFormat = Format::R32Uint, std::size_t offset = 0) = 0;
         virtual void BindUniformBuffer(std::uint32_t slot, BufferHandle buffer) = 0;
         virtual void BindTexture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) = 0;
+        virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
     };
 

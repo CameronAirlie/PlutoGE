@@ -32,6 +32,10 @@ int main()
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
+        shaders.toneMappingVertex.spirv = ReadSpirv("ToneMapping.vertex.spv");
+        shaders.toneMappingFragment.spirv = ReadSpirv("ToneMapping.fragment.spv");
+        shaders.gammaCorrectionVertex.spirv = ReadSpirv("GammaCorrection.vertex.spv");
+        shaders.gammaCorrectionFragment.spirv = ReadSpirv("GammaCorrection.fragment.spv");
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64)) return 1;
 
@@ -96,6 +100,17 @@ int main()
             std::cerr << "Vulkan BasicRenderer introduced a red channel bias ("
                       << red << ", " << green << ", " << blue << ")\n";
             return 4;
+        }
+        const std::array postEffects{
+            BasicPostProcessEffect{BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
+            BasicPostProcessEffect{BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
+        };
+        renderer.Render(projection * view, neutralLighting, draws, postEffects);
+        const auto postProcessedPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        if (postProcessedPixels.size() != 96u * 64u * 4u)
+        {
+            std::cerr << "Vulkan post-process chain returned an invalid image\n";
+            return 6;
         }
 
         // Exercise the editor's persistent readback allocation across a

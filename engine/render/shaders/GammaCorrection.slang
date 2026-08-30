@@ -6,8 +6,10 @@ struct FullscreenVertexOutput
 
 [[vk::binding(0, 0)]] cbuffer GammaCorrectionParameters : register(b0, space0)
 {
+    float unusedExposure;
     float gamma;
-    float3 gammaCorrectionPadding;
+    uint flipY;
+    uint gammaCorrectionPadding;
 };
 
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -29,6 +31,7 @@ FullscreenVertexOutput vertexMain(uint vertexId : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float3 color = sceneTexture.Sample(input.uv).rgb;
+    const float2 uv = float2(input.uv.x, flipY != 0 ? 1.0 - input.uv.y : input.uv.y);
+    const float3 color = sceneTexture.Sample(uv).rgb;
     return float4(pow(max(color, 0.0), 1.0 / max(gamma, 0.001)), 1.0);
 }

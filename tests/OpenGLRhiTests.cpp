@@ -109,6 +109,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
+        shaders.toneMappingVertex.glsl = ReadText("ToneMapping.vertex.glsl");
+        shaders.toneMappingFragment.glsl = ReadText("ToneMapping.fragment.glsl");
+        shaders.gammaCorrectionVertex.glsl = ReadText("GammaCorrection.vertex.glsl");
+        shaders.gammaCorrectionFragment.glsl = ReadText("GammaCorrection.fragment.glsl");
         try
         {
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
@@ -162,6 +166,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         {
             std::cerr << "BasicRenderer cube produced a blank center pixel\n";
             return 8;
+        }
+        const std::array postEffects{
+            render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
+            render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
+        };
+        basicRenderer.Render(projection * view, render::BasicLighting{}, draws, postEffects);
+        centerPixel.fill(0);
+        glReadPixels(48, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, centerPixel.data());
+        if (glGetError() != GL_NO_ERROR ||
+            (centerPixel[0] < 20 && centerPixel[1] < 20 && centerPixel[2] < 20))
+        {
+            std::cerr << "Backend-neutral OpenGL post-process chain produced a blank image\n";
+            return 10;
         }
 
         auto swapchain = device.CreateSwapchain({

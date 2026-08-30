@@ -220,6 +220,13 @@ namespace PlutoGE::render::rhi::opengl
             glBindSampler(slot, sampler->name);
         }
 
+        void Draw(std::uint32_t count, std::uint32_t firstVertex) override
+        {
+            if (!m_rendering || !m_pipeline)
+                throw std::logic_error("RHI draw requires active rendering and a pipeline");
+            glDrawArrays(GL_TRIANGLES, static_cast<GLint>(firstVertex), static_cast<GLsizei>(count));
+        }
+
         void DrawIndexed(std::uint32_t count, std::uint32_t firstIndex, std::int32_t vertexOffset) override
         {
             if (!m_rendering || !m_pipeline)

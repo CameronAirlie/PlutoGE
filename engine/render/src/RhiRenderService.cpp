@@ -11,7 +11,11 @@ namespace PlutoGE::render
             .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
             .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
             .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
-            .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment")};
+            .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment"),
+            .toneMappingVertex = shaderArtifacts.Load("ToneMapping", "vertex"),
+            .toneMappingFragment = shaderArtifacts.Load("ToneMapping", "fragment"),
+            .gammaCorrectionVertex = shaderArtifacts.Load("GammaCorrection", "vertex"),
+            .gammaCorrectionFragment = shaderArtifacts.Load("GammaCorrection", "fragment")};
 
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))
@@ -48,7 +52,7 @@ namespace PlutoGE::render
         if (!m_sceneRenderer || !m_swapchain)
             return false;
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
-                                     cameraData, lighting, commands, texturePixelReader))
+                                     cameraData, lighting, commands, {}, texturePixelReader))
             return false;
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }

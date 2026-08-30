@@ -41,6 +41,15 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicFrameParameters) == 192);
 
+        struct alignas(16) BasicPostProcessParameters
+        {
+            float exposure = 1.0f;
+            float gamma = 2.2f;
+            std::uint32_t flipY = 0;
+            std::uint32_t padding = 0;
+        };
+        static_assert(sizeof(BasicPostProcessParameters) == 16);
+
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
         {
@@ -106,8 +115,31 @@ namespace PlutoGE::render
             shadowDescriptor.depthCompare = rhi::CompareOperation::Less;
             shadowDescriptor.debugName = "Directional shadow pipeline";
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
+            const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
+                                                       const char *debugName)
+            {
+                rhi::GraphicsPipelineDescriptor postDescriptor;
+                postDescriptor.vertexShader = vertex;
+                postDescriptor.fragmentShader = fragment;
+                postDescriptor.depthFormat = rhi::Format::Undefined;
+                postDescriptor.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                };
+                postDescriptor.cullMode = rhi::CullMode::None;
+                postDescriptor.depthTest = false;
+                postDescriptor.depthWrite = false;
+                postDescriptor.debugName = debugName;
+                return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(postDescriptor));
+            };
+            m_toneMappingPipeline = createPostProcessPipeline(
+                shaders.toneMappingVertex, shaders.toneMappingFragment, "Tone mapping post process");
+            m_gammaCorrectionPipeline = createPostProcessPipeline(
+                shaders.gammaCorrectionVertex, shaders.gammaCorrectionFragment, "Gamma correction post process");
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             m_shadowCameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
+            m_postProcessBuffer = rhi::Buffer(device, device.CreateBuffer(
+                {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform, "BasicRenderer post process"}));
 
             constexpr std::array<std::uint8_t, 4> neutralBaseColor = {255, 255, 255, 255};
             m_fallbackTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::Sampled, "BasicRenderer neutral base color"}, Bytes(std::span(neutralBaseColor))));
@@ -128,6 +160,7 @@ namespace PlutoGE::render
     void BasicRenderer::Shutdown()
     {
         m_depthTarget.Reset();
+        for (auto &target : m_postProcessTargets) target.Reset();
         m_colorTarget.Reset();
         m_shadowDepthTarget.Reset();
         m_shadowColorTarget.Reset();
@@ -139,11 +172,15 @@ namespace PlutoGE::render
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
         m_shadowCameraBuffer.Reset();
+        m_postProcessBuffer.Reset();
+        m_gammaCorrectionPipeline.Reset();
+        m_toneMappingPipeline.Reset();
         m_shadowPipeline.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
         m_width = 0;
         m_height = 0;
+        m_outputColor = {};
     }
 
     BasicMesh BasicRenderer::CreateMesh(const BasicMeshData &data)
@@ -168,10 +205,17 @@ namespace PlutoGE::render
             return true;
 
         rhi::Texture newColor(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "BasicRenderer color"}));
+            {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "BasicRenderer color", true}));
+        std::array<rhi::Texture, 2> newPostTargets{
+            rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "Post process ping", true})),
+            rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "Post process pong", true})),
+        };
         rhi::Texture newDepth(*m_device, m_device->CreateTexture(
             {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "BasicRenderer depth"}));
         m_colorTarget = std::move(newColor);
+        m_postProcessTargets = std::move(newPostTargets);
         m_depthTarget = std::move(newDepth);
         if (!m_shadowColorTarget || !m_shadowDepthTarget)
         {
@@ -182,6 +226,7 @@ namespace PlutoGE::render
         }
         m_width = width;
         m_height = height;
+        m_outputColor = m_colorTarget.Get();
         return true;
     }
 
@@ -190,7 +235,9 @@ namespace PlutoGE::render
         Render(viewProjection, BasicLighting{}, draws);
     }
 
-    void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws)
+    void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
+                               std::span<const BasicDraw> draws,
+                               std::span<const BasicPostProcessEffect> postProcessEffects)
     {
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
@@ -295,5 +342,36 @@ namespace PlutoGE::render
                 commands.DrawIndexed(drawCount, draw.firstIndex);
         }
         commands.EndRendering();
+
+        m_outputColor = m_colorTarget.Get();
+        std::size_t targetIndex = 0;
+        for (const auto &effect : postProcessEffects)
+        {
+            const auto pipeline = effect.type == BasicPostProcessEffectType::ToneMapping
+                                      ? m_toneMappingPipeline.Get()
+                                      : m_gammaCorrectionPipeline.Get();
+            if (!pipeline)
+                continue;
+            const BasicPostProcessParameters parameters{
+                effect.exposure,
+                (std::max)(effect.gamma, 0.001f),
+                m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u,
+                0u,
+            };
+            m_device->UpdateBuffer(m_postProcessBuffer.Get(), 0, Bytes(parameters));
+            auto &destination = m_postProcessTargets[targetIndex++ % m_postProcessTargets.size()];
+            rhi::RenderingInfo postInfo;
+            postInfo.colorAttachment = destination.Get();
+            postInfo.width = m_width;
+            postInfo.height = m_height;
+            postInfo.clearDepth = false;
+            commands.BeginRendering(postInfo);
+            commands.BindPipeline(pipeline);
+            commands.BindUniformBuffer(0, m_postProcessBuffer.Get());
+            commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+            m_outputColor = destination.Get();
+        }
     }
 }

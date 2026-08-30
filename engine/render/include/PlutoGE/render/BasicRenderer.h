@@ -34,6 +34,10 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode toneMappingVertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode toneMappingFragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode gammaCorrectionVertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode gammaCorrectionFragment;
     };
 
     class BasicMesh
@@ -90,6 +94,19 @@ namespace PlutoGE::render
         float shadowDepthBias = 0.0f;
     };
 
+    enum class BasicPostProcessEffectType : std::uint8_t
+    {
+        ToneMapping,
+        GammaCorrection,
+    };
+
+    struct BasicPostProcessEffect
+    {
+        BasicPostProcessEffectType type = BasicPostProcessEffectType::ToneMapping;
+        float exposure = 1.0f;
+        float gamma = 2.2f;
+    };
+
     class BasicRenderer
     {
     public:
@@ -103,9 +120,11 @@ namespace PlutoGE::render
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
         bool Resize(std::uint32_t width, std::uint32_t height);
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
-        void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws);
+        void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
+                    std::span<const BasicDraw> draws,
+                    std::span<const BasicPostProcessEffect> postProcessEffects = {});
 
-        [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_colorTarget.Get(); }
+        [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept { return m_height; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
@@ -114,8 +133,11 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
+        rhi::GraphicsPipeline m_toneMappingPipeline;
+        rhi::GraphicsPipeline m_gammaCorrectionPipeline;
         rhi::Buffer m_cameraBuffer;
         rhi::Buffer m_shadowCameraBuffer;
+        rhi::Buffer m_postProcessBuffer;
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;
@@ -125,10 +147,12 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;
+        std::array<rhi::Texture, 2> m_postProcessTargets;
         rhi::Texture m_depthTarget;
         rhi::Texture m_shadowColorTarget;
         rhi::Texture m_shadowDepthTarget;
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
+        rhi::TextureHandle m_outputColor;
     };
 }

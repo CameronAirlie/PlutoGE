@@ -12,6 +12,7 @@ namespace PlutoGE::render
 {
     class Mesh;
     class Texture;
+    class IPostProcessEffect;
     struct RenderCommand;
 
     // Backend-neutral scene translation and GPU asset cache shared by editor
@@ -27,6 +28,7 @@ namespace PlutoGE::render
         bool Render(std::uint32_t width, std::uint32_t height,
                     const CameraData &cameraData, const BasicLighting &lighting,
                     std::span<const RenderCommand> commands,
+                    std::span<IPostProcessEffect *const> postProcessEffects = {},
                     const TexturePixelReader &texturePixelReader = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;

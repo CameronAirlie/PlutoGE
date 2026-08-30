@@ -3158,9 +3158,8 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                const bool useVulkanViewport = m_project &&
-                    m_project->GetManifest().graphicsApi == render::rhi::GraphicsApi::Vulkan;
-                if (useVulkanViewport)
+                const bool useRhiViewport = m_project != nullptr;
+                if (useRhiViewport)
                     renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
                 else
                     renderer.RenderFrame(editorCameraData,
@@ -3170,7 +3169,8 @@ namespace PlutoGE::ui
                                          m_scene.get(),
                                          viewportPanel->IsGridVisible(),
                                          true);
-                viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommands());
+                viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommands(),
+                                              editorPostProcessEffects);
                 render::CameraData renderedEditorCameraData{};
                 if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))
                 {

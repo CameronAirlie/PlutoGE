@@ -79,6 +79,7 @@ namespace PlutoGE::render::rhi
         ShaderCode vertexShader;
         ShaderCode fragmentShader;
         Format colorFormat = Format::R8G8B8A8Srgb;
+        Format depthFormat = Format::D32Float;
         struct ResourceBinding
         {
             // slot is the backend-neutral command binding. set/binding mirror

@@ -3806,7 +3806,9 @@ namespace PlutoGE::ui
         PresentSceneRenderTarget();
     }
 
-    void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData, std::span<const render::RenderCommand> commands)
+    void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData,
+                                       std::span<const render::RenderCommand> commands,
+                                       std::span<render::IPostProcessEffect *const> postProcessEffects)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
@@ -3818,7 +3820,7 @@ namespace PlutoGE::ui
 
         if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
                                         static_cast<std::uint32_t>(target->GetHeight()),
-                                        cameraData, commands,
+                                        cameraData, commands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene()))
         {
             // A Vulkan project must never silently display the legacy OpenGL

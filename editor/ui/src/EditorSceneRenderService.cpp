@@ -49,7 +49,11 @@ namespace PlutoGE::ui
                 .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
                 .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
                 .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
-                .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment")};
+                .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment"),
+                .toneMappingVertex = shaderArtifacts.Load("ToneMapping", "vertex"),
+                .toneMappingFragment = shaderArtifacts.Load("ToneMapping", "fragment"),
+                .gammaCorrectionVertex = shaderArtifacts.Load("GammaCorrection", "vertex"),
+                .gammaCorrectionFragment = shaderArtifacts.Load("GammaCorrection", "fragment")};
             if (!renderer->Initialize(*m_device, shaders))
                 throw std::runtime_error("Failed to initialize the editor scene renderer");
             m_sceneRenderer = std::move(renderer);
@@ -86,6 +90,7 @@ namespace PlutoGE::ui
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
                                           const render::CameraData &cameraData,
                                           std::span<const render::RenderCommand> commands,
+                                          std::span<render::IPostProcessEffect *const> postProcessEffects,
                                           const scene::Scene *scene)
     {
         if (!m_sceneRenderer || !m_device)
@@ -123,7 +128,8 @@ namespace PlutoGE::ui
 
         try
         {
-            if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, readOpenGlTexture))
+            if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands,
+                                         postProcessEffects, readOpenGlTexture))
                 return false;
             const auto colorTexture = m_sceneRenderer->GetColorTexture();
             if (m_isVulkan)

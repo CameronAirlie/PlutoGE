@@ -35,9 +35,9 @@ namespace PlutoGE::render
             glm::vec4 directionalColor{1.0f};
             glm::mat4 lightViewProjection{1.0f};
             std::uint32_t shadowsEnabled = 0;
+            std::uint32_t shadowFlipY = 0;
             float shadowDepthScale = 1.0f;
             float shadowDepthBias = 0.0f;
-            float shadowPadding = 0.0f;
         };
         static_assert(sizeof(BasicFrameParameters) == 192);
 
@@ -101,6 +101,9 @@ namespace PlutoGE::render
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex}};
             shadowDescriptor.vertexLayout = descriptor.vertexLayout;
             shadowDescriptor.cullMode = rhi::CullMode::Front;
+            // The light projection is a conventional zero-to-one orthographic
+            // projection. Do not inherit the main camera's reverse-Z compare.
+            shadowDescriptor.depthCompare = rhi::CompareOperation::Less;
             shadowDescriptor.debugName = "Directional shadow pipeline";
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
@@ -199,9 +202,9 @@ namespace PlutoGE::render
             glm::vec4(lighting.directionalColor, 1.0f),
             lighting.lightViewProjection,
             lighting.shadowsEnabled ? 1u : 0u,
+            lighting.shadowFlipY ? 1u : 0u,
             lighting.shadowDepthScale,
             lighting.shadowDepthBias,
-            0.0f,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         auto &commands = m_device->GetImmediateContext();
@@ -214,6 +217,7 @@ namespace PlutoGE::render
             shadowInfo.width = 2048;
             shadowInfo.height = 2048;
             shadowInfo.clearColorValue[0] = 1.0f;
+            shadowInfo.clearDepthValue = 1.0f;
             commands.BeginRendering(shadowInfo);
             commands.BindPipeline(m_shadowPipeline.Get());
             commands.BindUniformBuffer(0, m_shadowCameraBuffer.Get());

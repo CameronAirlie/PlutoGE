@@ -85,6 +85,7 @@ namespace PlutoGE::render
         glm::vec3 directionalColor{1.0f};
         bool shadowsEnabled = false;
         glm::mat4 lightViewProjection{1.0f};
+        bool shadowFlipY = false;
         float shadowDepthScale = 1.0f;
         float shadowDepthBias = 0.0f;
     };

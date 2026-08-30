@@ -23,9 +23,9 @@ struct VertexOutput
     float4 directionalColor;
     column_major float4x4 lightViewProjection;
     uint shadowsEnabled;
+    uint shadowFlipY;
     float shadowDepthScale;
     float shadowDepthBias;
-    float shadowPadding;
 };
 
 [[vk::binding(0, 2)]] cbuffer ObjectParameters : register(b0, space2)
@@ -117,7 +117,9 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     {
         const float4 lightClip = mul(lightViewProjection, float4(input.worldPosition, 1.0));
         const float3 shadowCoord = lightClip.xyz / lightClip.w;
-        const float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
+        float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
+        if (shadowFlipY != 0)
+            shadowUv.y = 1.0 - shadowUv.y;
         if (all(shadowUv >= 0.0) && all(shadowUv <= 1.0) && shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
         {
             const float2 texel = 1.0 / float2(2048.0);

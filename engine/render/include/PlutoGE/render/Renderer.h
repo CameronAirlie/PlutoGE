@@ -265,6 +265,9 @@ namespace PlutoGE::render
         [[nodiscard]] std::size_t GetQueuedRenderCommandCount() const { return m_renderCommands.size(); }
         [[nodiscard]] const std::vector<RenderCommand> &GetSceneRenderCommands() const { return m_renderCommands; }
         [[nodiscard]] const std::vector<RenderCommand> &GetVisibleRenderCommands() const { return m_visibleRenderCommands; }
+        // Updates LOD selection and camera visibility without executing the
+        // legacy OpenGL pass graph. RHI backends use this shared scene-prep path.
+        void PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight);
         [[nodiscard]] bool GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
         [[nodiscard]] bool GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
 

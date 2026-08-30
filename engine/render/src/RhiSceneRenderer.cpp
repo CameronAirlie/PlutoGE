@@ -8,8 +8,6 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include <unordered_set>
-
 namespace PlutoGE::render
 {
     bool RhiSceneRenderer::Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders)
@@ -47,17 +45,12 @@ namespace PlutoGE::render
         m_sceneCommandCount = commands.size();
         std::vector<BasicDraw> draws;
         draws.reserve(commands.size());
-        std::unordered_set<const Mesh *> activeMeshes;
-        std::unordered_set<const Texture *> activeSrgbTextures;
-        std::unordered_set<const Texture *> activeLinearTextures;
-
         const auto uploadTexture = [&](const Texture *source, rhi::Format format,
-                                       auto &cache, auto &activeTextures,
+                                       auto &cache,
                                        const char *debugName) -> rhi::TextureHandle
         {
             if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0 || !texturePixelReader)
                 return {};
-            activeTextures.insert(source);
             if (const auto cached = cache.find(source); cached != cache.end())
                 return cached->second.Get();
             auto pixels = texturePixelReader(*source);
@@ -75,7 +68,6 @@ namespace PlutoGE::render
         {
             if (!command.mesh)
                 continue;
-            activeMeshes.insert(command.mesh);
             auto mesh = m_meshes.find(command.mesh);
             if (mesh == m_meshes.end())
             {
@@ -115,13 +107,13 @@ namespace PlutoGE::render
                 draw.flipNormalY = material.flipNormalY;
                 draw.castsShadow = draw.castsShadow && material.castsShadow;
                 draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
-                                                      m_srgbTextures, activeSrgbTextures, "Scene albedo");
+                                                      m_srgbTextures, "Scene albedo");
                 draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
-                                                   m_linearTextures, activeLinearTextures, "Scene normal");
+                                                   m_linearTextures, "Scene normal");
                 draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
-                                                     m_linearTextures, activeLinearTextures, "Scene metallic");
+                                                     m_linearTextures, "Scene metallic");
                 draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                      m_linearTextures, activeLinearTextures, "Scene roughness");
+                                                      m_linearTextures, "Scene roughness");
             }
             if (command.instanceModels && !command.instanceModels->empty())
                 for (const auto &model : *command.instanceModels) { draw.model = model; draws.push_back(draw); }
@@ -129,9 +121,11 @@ namespace PlutoGE::render
                 draws.push_back(draw);
         }
 
-        std::erase_if(m_meshes, [&](const auto &entry) { return !activeMeshes.contains(entry.first); });
-        std::erase_if(m_srgbTextures, [&](const auto &entry) { return !activeSrgbTextures.contains(entry.first); });
-        std::erase_if(m_linearTextures, [&](const auto &entry) { return !activeLinearTextures.contains(entry.first); });
+        // Visibility is transient. Evicting resources that are merely outside
+        // the current camera frustum makes camera rotation synchronously rebuild
+        // meshes, texture mip chains, staging buffers, and Vulkan submissions.
+        // Retain the scene cache for the renderer lifetime; Shutdown is the
+        // explicit ownership boundary used on project/backend changes.
 
         m_drawCount = draws.size();
         glm::mat4 projection = cameraData.projection;
@@ -154,7 +148,9 @@ namespace PlutoGE::render
             effectiveLighting.lightViewProjection =
                 glm::orthoRH_ZO(-40.0f, 40.0f, -40.0f, 40.0f, 0.1f, 120.0f) *
                 glm::lookAtRH(center - direction * 60.0f, center, up);
-            if (m_device->GetApi() == rhi::GraphicsApi::OpenGL)
+            if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
+                effectiveLighting.shadowFlipY = true;
+            else
             {
                 effectiveLighting.shadowDepthScale = 0.5f;
                 effectiveLighting.shadowDepthBias = 0.5f;

@@ -3158,13 +3158,18 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData,
-                                     sceneRenderTarget,
-                                     m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
-                                     &editorPostProcessEffects,
-                                     m_scene.get(),
-                                     viewportPanel->IsGridVisible(),
-                                     true);
+                const bool useVulkanViewport = m_project &&
+                    m_project->GetManifest().graphicsApi == render::rhi::GraphicsApi::Vulkan;
+                if (useVulkanViewport)
+                    renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
+                else
+                    renderer.RenderFrame(editorCameraData,
+                                         sceneRenderTarget,
+                                         m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
+                                         &editorPostProcessEffects,
+                                         m_scene.get(),
+                                         viewportPanel->IsGridVisible(),
+                                         true);
                 viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommands());
                 render::CameraData renderedEditorCameraData{};
                 if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))

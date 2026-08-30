@@ -1651,6 +1651,38 @@ namespace PlutoGE::render
         m_cpuFrameStats.shadowSubmittedTriangleCount += std::max(submittedTriangles, 0);
     }
 
+    void Renderer::PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight)
+    {
+        EnsureRenderCommandsSorted();
+        UpdateRenderCommandLods(cameraData, viewportHeight);
+        m_visibleRenderCommands.clear();
+        m_visibleRenderCommands.reserve(m_renderCommands.size());
+        std::size_t visibleInstanceScratchCursor = 0;
+        const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
+        const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+        for (const auto &[commandIndex, fullyInsideFrustum] : m_visibilityCandidates)
+        {
+            if (commandIndex >= m_renderCommands.size())
+                continue;
+            const auto &command = m_renderCommands[commandIndex];
+            if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
+            {
+                m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+                m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+            }
+            const auto &modelScratch = m_visibleInstanceModelPool[visibleInstanceScratchCursor];
+            const auto &previousModelScratch = m_visiblePreviousInstanceModelPool[visibleInstanceScratchCursor++];
+            RenderCommand visibleCommand = CullRenderCommandInstances(
+                command, cameraPosition, command.maxDrawDistance, &frustumPlanes,
+                fullyInsideFrustum, modelScratch, previousModelScratch);
+            if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
+                continue;
+            m_visibleRenderCommands.push_back(std::move(visibleCommand));
+        }
+        if (m_renderCommandsDirty)
+            std::sort(m_visibleRenderCommands.begin(), m_visibleRenderCommands.end(), CompareRenderCommandKeysImpl);
+    }
+
     void Renderer::RecordShadowCpuBreakdown(float targetBindMs, float casterBatchBuildMs,
                                              float bufferUploadMs, float drawSubmissionMs,
                                              float imageCopyMs, float measuredPassMs,

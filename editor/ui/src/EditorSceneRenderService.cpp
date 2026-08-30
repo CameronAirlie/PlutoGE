@@ -13,7 +13,6 @@
 #include <glad/glad.h>
 #include <glm/gtc/matrix_inverse.hpp>
 
-#include <cmath>
 #include <iostream>
 
 namespace PlutoGE::ui
@@ -78,9 +77,10 @@ namespace PlutoGE::ui
             glDeleteTextures(1, &texture);
         }
         m_vulkanBridgeTexture = 0;
+        m_vulkanBridgeWidth = 0;
+        m_vulkanBridgeHeight = 0;
         m_viewportTexture = 0;
         m_isVulkan = false;
-        m_changedPixelCount = 0;
     }
 
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
@@ -129,13 +129,13 @@ namespace PlutoGE::ui
             if (m_isVulkan)
             {
                 const auto pixels = static_cast<render::rhi::vulkan::VulkanDevice &>(*m_device)
-                                        .ReadTextureRgba8(colorTexture);
-                m_changedPixelCount = 0;
-                for (std::size_t pixel = 0; pixel + 3 < pixels.size(); pixel += 4)
-                    if (std::abs(std::to_integer<unsigned char>(pixels[pixel]) - 10) > 3 ||
-                        std::abs(std::to_integer<unsigned char>(pixels[pixel + 1]) - 15) > 3 ||
-                        std::abs(std::to_integer<unsigned char>(pixels[pixel + 2]) - 23) > 3)
-                        ++m_changedPixelCount;
+                                        .ReadTextureRgba8Buffered(colorTexture);
+                if (!pixels)
+                {
+                    render::Graphics::ResetStateCache();
+                    render::Graphics::BindFramebuffer(0);
+                    return m_viewportTexture != 0;
+                }
                 if (m_vulkanBridgeTexture == 0)
                 {
                     GLuint texture = 0;
@@ -147,8 +147,16 @@ namespace PlutoGE::ui
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, static_cast<GLsizei>(width),
-                             static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                if (m_vulkanBridgeWidth != width || m_vulkanBridgeHeight != height)
+                {
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, static_cast<GLsizei>(width),
+                                 static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels->data());
+                    m_vulkanBridgeWidth = width;
+                    m_vulkanBridgeHeight = height;
+                }
+                else
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(width),
+                                    static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels->data());
                 m_viewportTexture = m_vulkanBridgeTexture;
             }
             else

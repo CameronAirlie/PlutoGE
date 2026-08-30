@@ -1851,7 +1851,6 @@ namespace PlutoGE::ui
         m_activeRhiVulkan = false;
         m_rhiSceneCommandCount = 0;
         m_rhiDrawCount = 0;
-        m_rhiChangedPixelCount = 0;
     }
 
     void ViewportPanel::ReleaseRegisteredTexture()
@@ -1956,7 +1955,7 @@ namespace PlutoGE::ui
             const std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
                                          " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
                                          " | draws " + std::to_string(m_rhiDrawCount) +
-                                         (m_activeRhiVulkan ? " | changed pixels " + std::to_string(m_rhiChangedPixelCount) : "");
+                                         (m_activeRhiVulkan ? " | buffered readback" : "");
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
                 IM_COL32(120, 220, 255, 255), rhiLabel.c_str());
@@ -2187,14 +2186,10 @@ namespace PlutoGE::ui
             overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
-                if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
-                {
-                    ImGui::TextDisabled("Vulkan scene renderer (project backend)");
-                    m_useRhiPreview = true;
-                }
-                else
-                    ImGui::MenuItem("RHI Scene Geometry Preview", nullptr, &m_useRhiPreview,
-                                    m_rhiRenderService && m_rhiRenderService->IsInitialized());
+                // The project backend is authoritative. The old preview toggle
+                // allowed the viewport to silently diverge from project output
+                // and made OpenGL look like a fallback rather than a peer RHI.
+                m_useRhiPreview = m_rhiRenderService && m_rhiRenderService->IsInitialized();
                 ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
                                     m_activeRhiVulkan ? " (readback bridge)" : "");
                 ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
@@ -3837,7 +3832,6 @@ namespace PlutoGE::ui
         m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
         m_rhiSceneCommandCount = m_rhiRenderService->GetSceneCommandCount();
         m_rhiDrawCount = m_rhiRenderService->GetDrawCount();
-        m_rhiChangedPixelCount = m_rhiRenderService->GetChangedPixelCount();
         return;
 
     }

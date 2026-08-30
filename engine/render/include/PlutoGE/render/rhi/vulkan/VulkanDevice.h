@@ -3,6 +3,7 @@
 #include "PlutoGE/render/rhi/RenderDevice.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace PlutoGE::render::rhi::vulkan
@@ -36,6 +37,10 @@ namespace PlutoGE::render::rhi::vulkan
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);
+        // Enqueues a readback without waiting and returns the newest completed
+        // previous readback, if one is available. Intended for buffered editor
+        // presentation where retaining the previous frame is acceptable.
+        [[nodiscard]] std::optional<std::vector<std::byte>> ReadTextureRgba8Buffered(TextureHandle texture);
         [[nodiscard]] const std::string &GetDeviceName() const noexcept;
 
     private:

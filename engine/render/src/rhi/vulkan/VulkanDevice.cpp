@@ -132,6 +132,21 @@ namespace PlutoGE::render::rhi::vulkan
         VkCommandPool commandPool = VK_NULL_HANDLE;
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        struct ReadbackSlot
+        {
+            VkCommandPool commandPool = VK_NULL_HANDLE;
+            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            void *mapped = nullptr;
+            std::size_t byteCount = 0;
+            bool pending = false;
+            std::uint64_t sequence = 0;
+            TextureHandle source;
+        };
+        std::array<ReadbackSlot, 3> readbacks;
+        std::uint64_t nextReadbackSequence = 1;
         std::string deviceName;
         detail::HandleRegistry<BufferHandle, BufferResource> buffers;
         detail::HandleRegistry<TextureHandle, TextureResource> textures;
@@ -644,6 +659,15 @@ namespace PlutoGE::render::rhi::vulkan
     {
         if (!m_impl) return;
         if (m_impl->device) vkDeviceWaitIdle(m_impl->device);
+        for (auto &slot : m_impl->readbacks)
+        {
+            // VMA_ALLOCATION_CREATE_MAPPED_BIT owns the persistent mapping.
+            // No matching vmaMapMemory call was made, so destroying the
+            // allocation is also responsible for releasing that mapping.
+            if (slot.buffer) vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
+            if (slot.fence) vkDestroyFence(m_impl->device, slot.fence, nullptr);
+            if (slot.commandPool) vkDestroyCommandPool(m_impl->device, slot.commandPool, nullptr);
+        }
         m_impl->pipelines.ForEach([&](auto &r) { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r.layout, nullptr); for (auto l : r.setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); });
         m_impl->samplers.ForEach([&](auto &r) { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
         m_impl->textures.ForEach([&](auto &r) { vkDestroyImageView(m_impl->device, r.view, nullptr); vmaDestroyImage(m_impl->allocator, r.image, r.allocation); });
@@ -812,7 +836,24 @@ namespace PlutoGE::render::rhi::vulkan
         auto *resource = m_impl->buffers.Get(handle); if (!resource || offset > resource->size || data.size() > resource->size - offset) throw std::invalid_argument("Invalid Vulkan buffer update"); void *mapped = nullptr; Check(vmaMapMemory(m_impl->allocator, resource->allocation, &mapped), "vmaMapMemory"); std::memcpy(static_cast<std::byte *>(mapped) + offset, data.data(), data.size()); vmaFlushAllocation(m_impl->allocator, resource->allocation, offset, data.size()); vmaUnmapMemory(m_impl->allocator, resource->allocation);
     }
     void VulkanDevice::DestroyBuffer(BufferHandle h) { if (auto r = m_impl->buffers.Remove(h)) vmaDestroyBuffer(m_impl->allocator, r->buffer, r->allocation); }
-    void VulkanDevice::DestroyTexture(TextureHandle h) { if (auto r = m_impl->textures.Remove(h)) { vkDestroyImageView(m_impl->device, r->view, nullptr); vmaDestroyImage(m_impl->allocator, r->image, r->allocation); } }
+    void VulkanDevice::DestroyTexture(TextureHandle h)
+    {
+        // Resizing an editor target may retire an image while its buffered
+        // readback is still queued. Wait only for slots that reference this
+        // image rather than idling the whole device.
+        for (auto &slot : m_impl->readbacks)
+            if (slot.pending && slot.source == h)
+            {
+                Check(vkWaitForFences(m_impl->device, 1, &slot.fence, VK_TRUE, UINT64_MAX),
+                      "vkWaitForFences(readback destruction)");
+                slot.pending = false;
+            }
+        if (auto r = m_impl->textures.Remove(h))
+        {
+            vkDestroyImageView(m_impl->device, r->view, nullptr);
+            vmaDestroyImage(m_impl->allocator, r->image, r->allocation);
+        }
+    }
     void VulkanDevice::DestroySampler(SamplerHandle h) { if (auto r = m_impl->samplers.Remove(h)) vkDestroySampler(m_impl->device, r->sampler, nullptr); }
     void VulkanDevice::DestroyPipeline(PipelineHandle h) { if (auto r = m_impl->pipelines.Remove(h)) { vkDestroyPipeline(m_impl->device, r->pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr); for (auto l : r->setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); } }
     ICommandContext &VulkanDevice::GetImmediateContext() { return *m_impl->context; }
@@ -827,5 +868,94 @@ namespace PlutoGE::render::rhi::vulkan
         VkBuffer buffer{}; VmaAllocation memory{}; Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
         m_impl->Immediate([&](VkCommandBuffer command) { m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1}; vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy); });
         std::vector<std::byte> pixels(byteCount); void *mapped = nullptr; Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)"); vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount); std::memcpy(pixels.data(), mapped, byteCount); vmaUnmapMemory(m_impl->allocator, memory); vmaDestroyBuffer(m_impl->allocator, buffer, memory); return pixels;
+    }
+
+    std::optional<std::vector<std::byte>> VulkanDevice::ReadTextureRgba8Buffered(TextureHandle handle)
+    {
+        auto *texture = m_impl->textures.Get(handle);
+        if (!texture || texture->descriptor.format == Format::D32Float)
+            throw std::invalid_argument("Invalid Vulkan color texture readback");
+
+        const std::size_t byteCount = static_cast<std::size_t>(texture->descriptor.width) *
+                                      texture->descriptor.height * 4;
+        std::optional<std::vector<std::byte>> completed;
+        std::uint64_t completedSequence = 0;
+        for (auto &slot : m_impl->readbacks)
+        {
+            if (!slot.pending || vkGetFenceStatus(m_impl->device, slot.fence) != VK_SUCCESS)
+                continue;
+            vmaInvalidateAllocation(m_impl->allocator, slot.allocation, 0, slot.byteCount);
+            if (slot.byteCount == byteCount && slot.sequence >= completedSequence)
+            {
+                completed.emplace(slot.byteCount);
+                std::memcpy(completed->data(), slot.mapped, slot.byteCount);
+                completedSequence = slot.sequence;
+            }
+            slot.pending = false;
+        }
+
+        auto available = std::find_if(m_impl->readbacks.begin(), m_impl->readbacks.end(),
+                                      [](const auto &slot) { return !slot.pending; });
+        if (available == m_impl->readbacks.end())
+            return completed;
+
+        auto &slot = *available;
+        if (!slot.commandPool)
+        {
+            VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            pool.queueFamilyIndex = m_impl->queueFamily;
+            Check(vkCreateCommandPool(m_impl->device, &pool, nullptr, &slot.commandPool),
+                  "vkCreateCommandPool(readback)");
+            VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            command.commandPool = slot.commandPool;
+            command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            command.commandBufferCount = 1;
+            Check(vkAllocateCommandBuffers(m_impl->device, &command, &slot.commandBuffer),
+                  "vkAllocateCommandBuffers(readback)");
+            VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            Check(vkCreateFence(m_impl->device, &fence, nullptr, &slot.fence), "vkCreateFence(readback)");
+        }
+        if (slot.byteCount != byteCount)
+        {
+            if (slot.buffer) vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
+            slot.buffer = VK_NULL_HANDLE;
+            slot.allocation = VK_NULL_HANDLE;
+            slot.mapped = nullptr;
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = byteCount;
+            info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            VmaAllocationCreateInfo allocation{};
+            allocation.usage = VMA_MEMORY_USAGE_AUTO;
+            allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                               VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo allocationInfo{};
+            Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &slot.buffer,
+                                  &slot.allocation, &allocationInfo), "vmaCreateBuffer(buffered readback)");
+            slot.mapped = allocationInfo.pMappedData;
+            slot.byteCount = byteCount;
+        }
+
+        Check(vkResetFences(m_impl->device, 1, &slot.fence), "vkResetFences(readback)");
+        Check(vkResetCommandPool(m_impl->device, slot.commandPool, 0), "vkResetCommandPool(readback)");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        Check(vkBeginCommandBuffer(slot.commandBuffer, &begin), "vkBeginCommandBuffer(readback)");
+        m_impl->Transition(slot.commandBuffer, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1};
+        vkCmdCopyImageToBuffer(slot.commandBuffer, texture->image,
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.buffer, 1, &copy);
+        Check(vkEndCommandBuffer(slot.commandBuffer), "vkEndCommandBuffer(readback)");
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &slot.commandBuffer;
+        Check(vkQueueSubmit(m_impl->queue, 1, &submit, slot.fence), "vkQueueSubmit(readback)");
+        slot.pending = true;
+        slot.sequence = m_impl->nextReadbackSequence++;
+        slot.source = handle;
+        return completed;
     }
 }

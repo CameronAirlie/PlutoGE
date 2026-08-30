@@ -97,6 +97,16 @@ int main()
                       << red << ", " << green << ", " << blue << ")\n";
             return 4;
         }
+
+        // Exercise the editor's persistent readback allocation across a
+        // render-target resize. This also verifies that retiring the old
+        // texture waits for its targeted copy without violating VMA's
+        // persistent-map ownership.
+        (void)device.ReadTextureRgba8Buffered(renderer.GetColorTexture());
+        if (!renderer.Resize(64, 48))
+            return 5;
+        renderer.Render(projection * view, neutralLighting, draws);
+        (void)device.ReadTextureRgba8Buffered(renderer.GetColorTexture());
         std::cout << "Vulkan mesh rendered on " << device.GetDeviceName() << " (" << changed << " changed pixels)\n";
     }
     catch (const std::exception &error)

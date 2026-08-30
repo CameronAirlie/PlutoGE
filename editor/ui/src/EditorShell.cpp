@@ -3666,7 +3666,7 @@ namespace PlutoGE::ui
                     }
                     if (projectGraphicsApi == render::rhi::GraphicsApi::Vulkan)
                     {
-                        ImGui::TextDisabled("The editor switches its scene preview immediately; native Vulkan presentation is still in migration.");
+                        ImGui::TextDisabled("The project backend is authoritative. The editor shell still composites Vulkan scene output through OpenGL.");
                     }
                     const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
                                                           ? "Spatial"

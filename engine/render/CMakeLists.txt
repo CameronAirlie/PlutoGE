@@ -83,6 +83,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
 
     pluto_add_slang_graphics_shader(BasicLit "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(ToneMapping "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ToneMapping.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(GammaCorrection "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GammaCorrection.slang" vertexMain fragmentMain)
     get_property(PLUTO_RHI_SHADER_OUTPUTS GLOBAL PROPERTY PLUTO_RHI_SHADER_OUTPUTS)
     add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_RHI_SHADER_OUTPUTS})
     add_dependencies(PlutoGERender PlutoGERhiShaders)

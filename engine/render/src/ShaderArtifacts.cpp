@@ -34,6 +34,26 @@ namespace PlutoGE::render
         return result;
     }
 
+    BasicRendererShaderPackage ShaderArtifactLibrary::LoadBasicRendererPackage() const
+    {
+        BasicRendererShaderPackage result{
+            .vertex = Load("BasicLit", "vertex"),
+            .fragment = Load("BasicLit", "fragment"),
+            .shadowVertex = Load("DirectionalShadow", "vertex"),
+            .shadowFragment = Load("DirectionalShadow", "fragment")};
+        const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
+        {
+            result.postProcess[static_cast<std::size_t>(type)] = {
+                .vertex = Load(module, "vertex"), .fragment = Load(module, "fragment")};
+        };
+        addPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
+        addPostProcess(BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
+        addPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
+        addPostProcess(BasicPostProcessEffectType::ColorGrading, "ColorGrading");
+        addPostProcess(BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
+        return result;
+    }
+
     std::filesystem::path ShaderArtifactLibrary::DefaultRoot()
     {
         return PLUTO_RHI_SHADER_DIR;

@@ -1,15 +1,9 @@
-struct FullscreenVertexOutput
-{
-    float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-};
+#include "Fullscreen.slang"
+#include "PostProcessParameters.slang"
 
 [[vk::binding(0, 0)]] cbuffer GammaCorrectionParameters : register(b0, space0)
 {
-    float unusedExposure;
-    float gamma;
-    uint flipY;
-    uint gammaCorrectionPadding;
+    PostProcessParameterBlock pass;
 };
 
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -17,21 +11,13 @@ struct FullscreenVertexOutput
 [shader("vertex")]
 FullscreenVertexOutput vertexMain(uint vertexId : SV_VertexID)
 {
-    const float2 positions[3] = {
-        float2(-1.0, -1.0),
-        float2(3.0, -1.0),
-        float2(-1.0, 3.0)
-    };
-    FullscreenVertexOutput output;
-    output.position = float4(positions[vertexId], 0.0, 1.0);
-    output.uv = output.position.xy * 0.5 + 0.5;
-    return output;
+    return fullscreenVertex(vertexId);
 }
 
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float2 uv = float2(input.uv.x, flipY != 0 ? 1.0 - input.uv.y : input.uv.y);
+    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float3 color = sceneTexture.Sample(uv).rgb;
-    return float4(pow(max(color, 0.0), 1.0 / max(gamma, 0.001)), 1.0);
+    return float4(pow(max(color, 0.0), 1.0 / max(pass.gamma, 0.001)), 1.0);
 }

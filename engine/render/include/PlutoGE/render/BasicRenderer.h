@@ -12,6 +12,22 @@
 
 namespace PlutoGE::render
 {
+    enum class BasicPostProcessEffectType : std::uint8_t
+    {
+        ToneMapping,
+        GammaCorrection,
+        FXAA,
+        ColorGrading,
+        ChromaticAberration,
+        Count,
+    };
+
+    struct BasicPostProcessShaderPackage
+    {
+        rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
+    };
+
     struct BasicVertex
     {
         std::array<float, 3> position{};
@@ -34,10 +50,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
-        rhi::GraphicsPipelineDescriptor::ShaderCode toneMappingVertex;
-        rhi::GraphicsPipelineDescriptor::ShaderCode toneMappingFragment;
-        rhi::GraphicsPipelineDescriptor::ShaderCode gammaCorrectionVertex;
-        rhi::GraphicsPipelineDescriptor::ShaderCode gammaCorrectionFragment;
+        std::array<BasicPostProcessShaderPackage,
+                   static_cast<std::size_t>(BasicPostProcessEffectType::Count)> postProcess;
     };
 
     class BasicMesh
@@ -94,17 +108,15 @@ namespace PlutoGE::render
         float shadowDepthBias = 0.0f;
     };
 
-    enum class BasicPostProcessEffectType : std::uint8_t
-    {
-        ToneMapping,
-        GammaCorrection,
-    };
-
     struct BasicPostProcessEffect
     {
         BasicPostProcessEffectType type = BasicPostProcessEffectType::ToneMapping;
         float exposure = 1.0f;
         float gamma = 2.2f;
+        std::uint32_t quality = 0;
+        // Effect-specific values are deliberately grouped into aligned lanes.
+        // This keeps the GPU ABI stable while new single-input passes are added.
+        std::array<glm::vec4, 6> parameters{};
     };
 
     class BasicRenderer
@@ -133,8 +145,7 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
-        rhi::GraphicsPipeline m_toneMappingPipeline;
-        rhi::GraphicsPipeline m_gammaCorrectionPipeline;
+        std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
         rhi::Buffer m_shadowCameraBuffer;
         rhi::Buffer m_postProcessBuffer;
@@ -153,6 +164,7 @@ namespace PlutoGE::render
         rhi::Texture m_shadowDepthTarget;
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
+        std::uint64_t m_frameIndex = 0;
         rhi::TextureHandle m_outputColor;
     };
 }

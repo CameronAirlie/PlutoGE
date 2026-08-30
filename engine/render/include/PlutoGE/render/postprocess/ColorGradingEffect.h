@@ -6,6 +6,27 @@
 
 namespace PlutoGE::render
 {
+    struct ColorGradingSettings
+    {
+        float brightness;
+        float contrast;
+        float saturation;
+        float temperature;
+        float tint;
+        float vibrance;
+        float lift;
+        float gamma;
+        float gain;
+        float fade;
+        float vignette;
+        float grain;
+        glm::vec3 shadowColor;
+        float shadowColorStrength;
+        glm::vec3 highlightColor;
+        float highlightColorStrength;
+        float splitBalance;
+    };
+
     class Shader;
 
     class ColorGradingEffect : public ShaderPostProcessEffect
@@ -41,6 +62,14 @@ namespace PlutoGE::render
         float GetContrast() const { return m_contrast; }
         float GetSaturation() const { return m_saturation; }
         float GetTemperature() const { return m_temperature; }
+        [[nodiscard]] ColorGradingSettings GetSettings() const noexcept
+        {
+            return {m_brightness, m_contrast, m_saturation, m_temperature,
+                    m_tint, m_vibrance, m_lift, m_gamma,
+                    m_gain, m_fade, m_vignette, m_grain,
+                    m_shadowColor, m_shadowColorStrength,
+                    m_highlightColor, m_highlightColorStrength, m_splitBalance};
+        }
 
         void SetBrightness(float brightness) { m_brightness = brightness; }
         void SetContrast(float contrast) { m_contrast = contrast; }

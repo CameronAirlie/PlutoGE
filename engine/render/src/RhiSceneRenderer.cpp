@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
@@ -163,26 +164,8 @@ namespace PlutoGE::render
         {
             if (!effect || !effect->IsEnabled())
                 continue;
-            BasicPostProcessEffect basicEffect;
-            if (effect->GetTypeName() == "ToneMapping")
-                basicEffect.type = BasicPostProcessEffectType::ToneMapping;
-            else if (effect->GetTypeName() == "GammaCorrection")
-                basicEffect.type = BasicPostProcessEffectType::GammaCorrection;
-            else
-                continue;
-            for (const auto &parameter : effect->GetParameters())
-            {
-                try
-                {
-                    if (parameter.name == "Exposure") basicEffect.exposure = std::stof(parameter.value);
-                    else if (parameter.name == "Gamma") basicEffect.gamma = std::stof(parameter.value);
-                }
-                catch (const std::exception &)
-                {
-                    // Keep the effect's safe defaults for malformed serialized values.
-                }
-            }
-            basicEffects.push_back(basicEffect);
+            if (auto adapted = AdaptPostProcessEffect(*effect))
+                basicEffects.push_back(std::move(*adapted));
         }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects);
         return true;

@@ -45,15 +45,7 @@ namespace PlutoGE::ui
             m_device = std::move(creation.device);
             auto renderer = std::make_unique<render::RhiSceneRenderer>();
             const render::ShaderArtifactLibrary shaderArtifacts;
-            render::BasicRendererShaderPackage shaders{
-                .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
-                .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
-                .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
-                .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment"),
-                .toneMappingVertex = shaderArtifacts.Load("ToneMapping", "vertex"),
-                .toneMappingFragment = shaderArtifacts.Load("ToneMapping", "fragment"),
-                .gammaCorrectionVertex = shaderArtifacts.Load("GammaCorrection", "vertex"),
-                .gammaCorrectionFragment = shaderArtifacts.Load("GammaCorrection", "fragment")};
+            render::BasicRendererShaderPackage shaders = shaderArtifacts.LoadBasicRendererPackage();
             if (!renderer->Initialize(*m_device, shaders))
                 throw std::runtime_error("Failed to initialize the editor scene renderer");
             m_sceneRenderer = std::move(renderer);

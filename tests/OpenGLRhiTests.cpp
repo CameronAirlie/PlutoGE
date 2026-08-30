@@ -109,10 +109,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
-        shaders.toneMappingVertex.glsl = ReadText("ToneMapping.vertex.glsl");
-        shaders.toneMappingFragment.glsl = ReadText("ToneMapping.fragment.glsl");
-        shaders.gammaCorrectionVertex.glsl = ReadText("GammaCorrection.vertex.glsl");
-        shaders.gammaCorrectionFragment.glsl = ReadText("GammaCorrection.fragment.glsl");
+        const auto loadPostProcess = [&](render::BasicPostProcessEffectType type, const char *module)
+        {
+            auto &shader = shaders.postProcess[static_cast<std::size_t>(type)];
+            shader.vertex.glsl = ReadText((std::string(module) + ".vertex.glsl").c_str());
+            shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
+        };
+        loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
+        loadPostProcess(render::BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
+        loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
+        loadPostProcess(render::BasicPostProcessEffectType::ColorGrading, "ColorGrading");
+        loadPostProcess(render::BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
         try
         {
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
@@ -167,9 +174,18 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
             std::cerr << "BasicRenderer cube produced a blank center pixel\n";
             return 8;
         }
+        auto colorGrading = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ColorGrading};
+        colorGrading.parameters[0] = {0.0f, 1.05f, 1.05f, 0.04f};
+        colorGrading.parameters[1] = {0.0f, 0.05f, 0.0f, 1.0f};
+        colorGrading.parameters[2] = {1.0f, 0.0f, 0.1f, 0.01f};
+        auto chromaticAberration = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ChromaticAberration};
+        chromaticAberration.parameters[0].x = 0.003f;
         const std::array postEffects{
             render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
             render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
+            render::BasicPostProcessEffect{render::BasicPostProcessEffectType::FXAA, 1.0f, 2.2f, 1},
+            colorGrading,
+            chromaticAberration,
         };
         basicRenderer.Render(projection * view, render::BasicLighting{}, draws, postEffects);
         centerPixel.fill(0);

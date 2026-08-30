@@ -3,6 +3,8 @@ add_library(PlutoGERender
     src/BasicRenderer.cpp
     src/RhiRenderService.cpp
     src/RhiSceneRenderer.cpp
+    src/RhiPostProcessAdapter.cpp
+    src/PostProcessGraph.cpp
     src/TextureManager.cpp
     src/TexturePainter.cpp
     src/Shader.cpp
@@ -22,6 +24,7 @@ add_library(PlutoGERender
     src/postprocess/AutoExposureEffect.cpp
     src/postprocess/BloomEffect.cpp
     src/postprocess/ColorGradingEffect.cpp
+    src/postprocess/ChromaticAberrationEffect.cpp
     src/postprocess/SceneCompositeEffect.cpp
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp
@@ -75,7 +78,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -85,6 +88,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ToneMapping "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ToneMapping.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(GammaCorrection "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GammaCorrection.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(FXAA "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FXAA.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(ColorGrading "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorGrading.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(ChromaticAberration "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ChromaticAberration.slang" vertexMain fragmentMain)
     get_property(PLUTO_RHI_SHADER_OUTPUTS GLOBAL PROPERTY PLUTO_RHI_SHADER_OUTPUTS)
     add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_RHI_SHADER_OUTPUTS})
     add_dependencies(PlutoGERender PlutoGERhiShaders)

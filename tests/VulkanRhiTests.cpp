@@ -32,10 +32,17 @@ int main()
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
-        shaders.toneMappingVertex.spirv = ReadSpirv("ToneMapping.vertex.spv");
-        shaders.toneMappingFragment.spirv = ReadSpirv("ToneMapping.fragment.spv");
-        shaders.gammaCorrectionVertex.spirv = ReadSpirv("GammaCorrection.vertex.spv");
-        shaders.gammaCorrectionFragment.spirv = ReadSpirv("GammaCorrection.fragment.spv");
+        const auto loadPostProcess = [&](BasicPostProcessEffectType type, const char *module)
+        {
+            auto &shader = shaders.postProcess[static_cast<std::size_t>(type)];
+            shader.vertex.spirv = ReadSpirv((std::string(module) + ".vertex.spv").c_str());
+            shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
+        };
+        loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
+        loadPostProcess(BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
+        loadPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
+        loadPostProcess(BasicPostProcessEffectType::ColorGrading, "ColorGrading");
+        loadPostProcess(BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64)) return 1;
 
@@ -101,9 +108,18 @@ int main()
                       << red << ", " << green << ", " << blue << ")\n";
             return 4;
         }
+        auto colorGrading = BasicPostProcessEffect{BasicPostProcessEffectType::ColorGrading};
+        colorGrading.parameters[0] = {0.0f, 1.05f, 1.05f, 0.04f};
+        colorGrading.parameters[1] = {0.0f, 0.05f, 0.0f, 1.0f};
+        colorGrading.parameters[2] = {1.0f, 0.0f, 0.1f, 0.01f};
+        auto chromaticAberration = BasicPostProcessEffect{BasicPostProcessEffectType::ChromaticAberration};
+        chromaticAberration.parameters[0].x = 0.003f;
         const std::array postEffects{
             BasicPostProcessEffect{BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
             BasicPostProcessEffect{BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
+            BasicPostProcessEffect{BasicPostProcessEffectType::FXAA, 1.0f, 2.2f, 1},
+            colorGrading,
+            chromaticAberration,
         };
         renderer.Render(projection * view, neutralLighting, draws, postEffects);
         const auto postProcessedPixels = device.ReadTextureRgba8(renderer.GetColorTexture());

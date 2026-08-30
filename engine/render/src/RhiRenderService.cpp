@@ -7,15 +7,7 @@ namespace PlutoGE::render
     {
         Shutdown();
         const ShaderArtifactLibrary shaderArtifacts;
-        BasicRendererShaderPackage shaders{
-            .vertex = shaderArtifacts.Load("BasicLit", "vertex"),
-            .fragment = shaderArtifacts.Load("BasicLit", "fragment"),
-            .shadowVertex = shaderArtifacts.Load("DirectionalShadow", "vertex"),
-            .shadowFragment = shaderArtifacts.Load("DirectionalShadow", "fragment"),
-            .toneMappingVertex = shaderArtifacts.Load("ToneMapping", "vertex"),
-            .toneMappingFragment = shaderArtifacts.Load("ToneMapping", "fragment"),
-            .gammaCorrectionVertex = shaderArtifacts.Load("GammaCorrection", "vertex"),
-            .gammaCorrectionFragment = shaderArtifacts.Load("GammaCorrection", "fragment")};
+        BasicRendererShaderPackage shaders = shaderArtifacts.LoadBasicRendererPackage();
 
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))

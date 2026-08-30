@@ -47,10 +47,17 @@ int main()
             shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
             shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
             shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
-            shaders.toneMappingVertex.spirv = ReadSpirv("ToneMapping.vertex.spv");
-            shaders.toneMappingFragment.spirv = ReadSpirv("ToneMapping.fragment.spv");
-            shaders.gammaCorrectionVertex.spirv = ReadSpirv("GammaCorrection.vertex.spv");
-            shaders.gammaCorrectionFragment.spirv = ReadSpirv("GammaCorrection.fragment.spv");
+            const auto loadPostProcess = [&](render::BasicPostProcessEffectType type, const char *module)
+            {
+                auto &shader = shaders.postProcess[static_cast<std::size_t>(type)];
+                shader.vertex.spirv = ReadSpirv((std::string(module) + ".vertex.spv").c_str());
+                shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
+            };
+            loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
+            loadPostProcess(render::BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
+            loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
+            loadPostProcess(render::BasicPostProcessEffectType::ColorGrading, "ColorGrading");
+            loadPostProcess(render::BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
             render::BasicRenderer renderer;
             if (!renderer.Initialize(device, shaders) ||
                 !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))

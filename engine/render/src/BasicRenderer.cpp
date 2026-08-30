@@ -46,9 +46,13 @@ namespace PlutoGE::render
             float exposure = 1.0f;
             float gamma = 2.2f;
             std::uint32_t flipY = 0;
-            std::uint32_t padding = 0;
+            std::uint32_t quality = 0;
+            glm::vec2 inverseResolution{0.0f};
+            float time = 0.0f;
+            float padding = 0.0f;
+            std::array<glm::vec4, 6> parameters{};
         };
-        static_assert(sizeof(BasicPostProcessParameters) == 16);
+        static_assert(sizeof(BasicPostProcessParameters) == 128);
 
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
@@ -132,10 +136,12 @@ namespace PlutoGE::render
                 postDescriptor.debugName = debugName;
                 return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(postDescriptor));
             };
-            m_toneMappingPipeline = createPostProcessPipeline(
-                shaders.toneMappingVertex, shaders.toneMappingFragment, "Tone mapping post process");
-            m_gammaCorrectionPipeline = createPostProcessPipeline(
-                shaders.gammaCorrectionVertex, shaders.gammaCorrectionFragment, "Gamma correction post process");
+            constexpr std::array<const char *, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> debugNames{
+                "Tone mapping post process", "Gamma correction post process", "FXAA post process",
+                "Color grading post process", "Chromatic aberration post process"};
+            for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
+                m_postProcessPipelines[index] = createPostProcessPipeline(
+                    shaders.postProcess[index].vertex, shaders.postProcess[index].fragment, debugNames[index]);
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             m_shadowCameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
             m_postProcessBuffer = rhi::Buffer(device, device.CreateBuffer(
@@ -173,13 +179,13 @@ namespace PlutoGE::render
         m_cameraBuffer.Reset();
         m_shadowCameraBuffer.Reset();
         m_postProcessBuffer.Reset();
-        m_gammaCorrectionPipeline.Reset();
-        m_toneMappingPipeline.Reset();
+        for (auto &pipeline : m_postProcessPipelines) pipeline.Reset();
         m_shadowPipeline.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
         m_width = 0;
         m_height = 0;
+        m_frameIndex = 0;
         m_outputColor = {};
     }
 
@@ -347,16 +353,21 @@ namespace PlutoGE::render
         std::size_t targetIndex = 0;
         for (const auto &effect : postProcessEffects)
         {
-            const auto pipeline = effect.type == BasicPostProcessEffectType::ToneMapping
-                                      ? m_toneMappingPipeline.Get()
-                                      : m_gammaCorrectionPipeline.Get();
+            const auto effectIndex = static_cast<std::size_t>(effect.type);
+            if (effectIndex >= m_postProcessPipelines.size())
+                continue;
+            const auto pipeline = m_postProcessPipelines[effectIndex].Get();
             if (!pipeline)
                 continue;
             const BasicPostProcessParameters parameters{
                 effect.exposure,
                 (std::max)(effect.gamma, 0.001f),
                 m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u,
-                0u,
+                effect.quality,
+                glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
+                static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
+                0.0f,
+                effect.parameters,
             };
             m_device->UpdateBuffer(m_postProcessBuffer.Get(), 0, Bytes(parameters));
             auto &destination = m_postProcessTargets[targetIndex++ % m_postProcessTargets.size()];
@@ -373,5 +384,6 @@ namespace PlutoGE::render
             commands.EndRendering();
             m_outputColor = destination.Get();
         }
+        ++m_frameIndex;
     }
 }

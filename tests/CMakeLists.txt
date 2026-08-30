@@ -3,6 +3,20 @@ target_link_libraries(PlutoGERhiTypesTests PRIVATE PlutoGE::Render)
 target_include_directories(PlutoGERhiTypesTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGERhiTypesTests COMMAND PlutoGERhiTypesTests)
 
+add_executable(PlutoGERhiPostProcessAdapterTests RhiPostProcessAdapterTests.cpp)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGERhiPostProcessAdapterTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGERhiPostProcessAdapterTests PRIVATE
+        PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene PlutoGE::Import PlutoGE::Scripting)
+endif()
+add_test(NAME PlutoGERhiPostProcessAdapterTests COMMAND PlutoGERhiPostProcessAdapterTests)
+
+add_executable(PlutoGEPostProcessGraphTests PostProcessGraphTests.cpp)
+target_link_libraries(PlutoGEPostProcessGraphTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGEPostProcessGraphTests COMMAND PlutoGEPostProcessGraphTests)
+
 add_executable(PlutoGEWindowClientApiTests WindowClientApiTests.cpp)
 target_link_libraries(PlutoGEWindowClientApiTests PRIVATE PlutoGE::Platform)
 add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)

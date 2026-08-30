@@ -19,6 +19,7 @@ namespace
         void BindIndexBuffer(PlutoGE::render::rhi::BufferHandle, PlutoGE::render::rhi::Format, std::size_t) override {}
         void BindUniformBuffer(std::uint32_t, PlutoGE::render::rhi::BufferHandle) override {}
         void BindTexture(std::uint32_t, PlutoGE::render::rhi::TextureHandle, PlutoGE::render::rhi::SamplerHandle) override {}
+        void Draw(std::uint32_t, std::uint32_t) override {}
         void DrawIndexed(std::uint32_t, std::uint32_t, std::int32_t) override {}
     };
 

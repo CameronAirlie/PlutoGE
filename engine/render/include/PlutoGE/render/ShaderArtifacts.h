@@ -1,6 +1,6 @@
 #pragma once
 
-#include "PlutoGE/render/rhi/Types.h"
+#include "PlutoGE/render/BasicRenderer.h"
 
 #include <filesystem>
 #include <string_view>
@@ -16,6 +16,7 @@ namespace PlutoGE::render
 
         [[nodiscard]] rhi::GraphicsPipelineDescriptor::ShaderCode Load(
             std::string_view module, std::string_view stage) const;
+        [[nodiscard]] BasicRendererShaderPackage LoadBasicRendererPackage() const;
         [[nodiscard]] static std::filesystem::path DefaultRoot();
 
     private:

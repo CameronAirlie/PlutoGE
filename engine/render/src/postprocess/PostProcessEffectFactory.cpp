@@ -3,6 +3,7 @@
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
+#include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -43,6 +44,7 @@ namespace PlutoGE::render
             "LensFlare",
             "ToneMapping",
             "ColorGrading",
+            "ChromaticAberration",
             "SceneComposite",
             "FXAA",
             "GammaCorrection",
@@ -134,6 +136,11 @@ namespace PlutoGE::render
         if (typeName == "ColorGrading")
         {
             return std::make_unique<ColorGradingEffect>();
+        }
+
+        if (typeName == "ChromaticAberration")
+        {
+            return std::make_unique<ChromaticAberrationEffect>();
         }
 
         if (typeName == "GammaCorrection")

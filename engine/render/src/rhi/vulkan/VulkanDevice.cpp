@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 namespace PlutoGE::render::rhi::vulkan
@@ -67,6 +68,21 @@ namespace PlutoGE::render::rhi::vulkan
             return 0;
         }
 
+        float SrgbToLinear(std::uint8_t value)
+        {
+            const float encoded = static_cast<float>(value) / 255.0f;
+            return encoded <= 0.04045f ? encoded / 12.92f
+                                      : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
+        }
+
+        std::byte LinearToSrgb(float value)
+        {
+            const float linear = std::clamp(value, 0.0f, 1.0f);
+            const float encoded = linear <= 0.0031308f ? linear * 12.92f
+                                                       : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+            return static_cast<std::byte>(static_cast<std::uint8_t>(std::lround(encoded * 255.0f)));
+        }
+
         struct BufferResource
         {
             VkBuffer buffer = VK_NULL_HANDLE;
@@ -91,7 +107,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkPipeline pipeline = VK_NULL_HANDLE;
             VkPipelineLayout layout = VK_NULL_HANDLE;
-            std::array<VkDescriptorSetLayout, 3> setLayouts{};
+            std::vector<VkDescriptorSetLayout> setLayouts;
             GraphicsPipelineDescriptor descriptor;
         };
 
@@ -249,59 +265,60 @@ namespace PlutoGE::render::rhi::vulkan
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!m_pipeline || !resource || resource->usage != BufferUsage::Uniform) throw std::invalid_argument("Invalid Vulkan uniform binding");
-            if (slot == 0) m_cameraBuffer = handle;
-            else if (slot == 8) m_materialBuffer = handle;
-            else if (slot == 16) m_objectBuffer = handle;
-            else throw std::invalid_argument("Unsupported Vulkan uniform slot");
+            m_uniformBuffers[slot] = handle;
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
-            if (!m_pipeline || slot < 9 || slot > 12 || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
+            if (!m_pipeline || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 throw std::logic_error("Vulkan sampled texture has an invalid layout");
-            const std::size_t index = slot - 9;
-            m_sampledTextures[index] = textureHandle;
-            m_samplers[index] = samplerHandle;
+            m_sampledTextures[slot] = textureHandle;
+            m_samplers[slot] = samplerHandle;
         }
         void DrawIndexed(std::uint32_t count, std::uint32_t firstIndex, std::int32_t vertexOffset) override
         {
             if (!m_rendering || !m_pipeline) throw std::logic_error("Vulkan draw requires active rendering and pipeline");
-            auto *camera = m_impl.buffers.Get(m_cameraBuffer);
-            auto *material = m_impl.buffers.Get(m_materialBuffer);
-            auto *object = m_impl.buffers.Get(m_objectBuffer);
-            std::array<TextureResource *, 4> textures{};
-            std::array<SamplerResource *, 4> samplers{};
-            for (std::size_t i = 0; i < textures.size(); ++i)
-            {
-                textures[i] = m_impl.textures.Get(m_sampledTextures[i]);
-                samplers[i] = m_impl.samplers.Get(m_samplers[i]);
-            }
-            if (!camera || !material || !object ||
-                std::ranges::find(textures, nullptr) != textures.end() ||
-                std::ranges::find(samplers, nullptr) != samplers.end())
-                throw std::logic_error("Vulkan draw has incomplete resource bindings");
-            std::array<VkDescriptorSet, 3> sets{};
+            std::vector<VkDescriptorSet> sets(m_pipeline->setLayouts.size());
             VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             allocation.descriptorPool = m_impl.descriptorPool;
             allocation.descriptorSetCount = static_cast<std::uint32_t>(sets.size());
             allocation.pSetLayouts = m_pipeline->setLayouts.data();
             Check(vkAllocateDescriptorSets(m_impl.device, &allocation, sets.data()), "vkAllocateDescriptorSets(draw)");
-            std::array<VkDescriptorBufferInfo, 3> buffers{{{camera->buffer, 0, camera->size}, {material->buffer, 0, material->size}, {object->buffer, 0, object->size}}};
-            std::array<VkDescriptorImageInfo, 4> images{};
-            for (std::size_t i = 0; i < images.size(); ++i)
-                images[i] = {samplers[i]->sampler, textures[i]->view, textures[i]->layout};
-            std::array<VkWriteDescriptorSet, 7> writes{};
-            for (auto &write : writes) write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = sets[0]; writes[0].dstBinding = 0; writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].pBufferInfo = &buffers[0];
-            writes[1].dstSet = sets[1]; writes[1].dstBinding = 0; writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[1].pBufferInfo = &buffers[1];
-            for (std::size_t i = 0; i < images.size(); ++i)
+            std::vector<VkDescriptorBufferInfo> buffers;
+            std::vector<VkDescriptorImageInfo> images;
+            std::vector<VkWriteDescriptorSet> writes;
+            buffers.reserve(m_pipeline->descriptor.resourceBindings.size());
+            images.reserve(m_pipeline->descriptor.resourceBindings.size());
+            writes.reserve(m_pipeline->descriptor.resourceBindings.size());
+            for (const auto &binding : m_pipeline->descriptor.resourceBindings)
             {
-                writes[2 + i].dstSet = sets[1]; writes[2 + i].dstBinding = static_cast<std::uint32_t>(1 + i);
-                writes[2 + i].descriptorCount = 1; writes[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[2 + i].pImageInfo = &images[i];
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = sets.at(binding.set);
+                write.dstBinding = binding.binding;
+                write.descriptorCount = 1;
+                if (binding.type == ResourceBindingType::UniformBuffer)
+                {
+                    const auto found = m_uniformBuffers.find(binding.slot);
+                    auto *buffer = found == m_uniformBuffers.end() ? nullptr : m_impl.buffers.Get(found->second);
+                    if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                    buffers.push_back({buffer->buffer, 0, buffer->size});
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                    write.pBufferInfo = &buffers.back();
+                }
+                else
+                {
+                    const auto textureFound = m_sampledTextures.find(binding.slot);
+                    const auto samplerFound = m_samplers.find(binding.slot);
+                    auto *texture = textureFound == m_sampledTextures.end() ? nullptr : m_impl.textures.Get(textureFound->second);
+                    auto *sampler = samplerFound == m_samplers.end() ? nullptr : m_impl.samplers.Get(samplerFound->second);
+                    if (!texture || !sampler) throw std::logic_error("Vulkan draw has an incomplete texture binding");
+                    images.push_back({sampler->sampler, texture->view, texture->layout});
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    write.pImageInfo = &images.back();
+                }
+                writes.push_back(write);
             }
-            writes[6].dstSet = sets[2]; writes[6].dstBinding = 0; writes[6].descriptorCount = 1; writes[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[6].pBufferInfo = &buffers[2];
             vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
             vkCmdBindDescriptorSets(m_impl.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout, 0, static_cast<std::uint32_t>(sets.size()), sets.data(), 0, nullptr);
             vkCmdDrawIndexed(m_impl.commandBuffer, count, 1, firstIndex, vertexOffset, 0);
@@ -312,11 +329,9 @@ namespace PlutoGE::render::rhi::vulkan
         PipelineResource *m_pipeline = nullptr;
         TextureResource *m_color = nullptr;
         TextureResource *m_depth = nullptr;
-        BufferHandle m_cameraBuffer;
-        BufferHandle m_materialBuffer;
-        BufferHandle m_objectBuffer;
-        std::array<TextureHandle, 4> m_sampledTextures;
-        std::array<SamplerHandle, 4> m_samplers;
+        std::unordered_map<std::uint32_t, BufferHandle> m_uniformBuffers;
+        std::unordered_map<std::uint32_t, TextureHandle> m_sampledTextures;
+        std::unordered_map<std::uint32_t, SamplerHandle> m_samplers;
         bool m_rendering = false;
     };
 
@@ -693,14 +708,22 @@ namespace PlutoGE::render::rhi::vulkan
                         for (std::uint32_t channel = 0; channel < 4; ++channel)
                         {
                             unsigned int sum = 0;
+                            float linearSum = 0.0f;
                             for (std::uint32_t oy = 0; oy < 2; ++oy)
                                 for (std::uint32_t ox = 0; ox < 2; ++ox)
                                 {
                                     const auto sx = (std::min)(mipWidth - 1, x * 2 + ox);
                                     const auto sy = (std::min)(mipHeight - 1, y * 2 + oy);
-                                    sum += std::to_integer<unsigned char>(mipData[sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * 4 + channel]);
+                                    const auto sample = std::to_integer<std::uint8_t>(
+                                        mipData[sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * 4 + channel]);
+                                    sum += sample;
+                                    if (descriptor.format == Format::R8G8B8A8Srgb && channel < 3)
+                                        linearSum += SrgbToLinear(sample);
                                 }
-                            mipData[levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * 4 + channel] = static_cast<std::byte>(sum / 4);
+                            mipData[levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * 4 + channel] =
+                                descriptor.format == Format::R8G8B8A8Srgb && channel < 3
+                                    ? LinearToSrgb(linearSum * 0.25f)
+                                    : static_cast<std::byte>(sum / 4);
                         }
                     }
                 }
@@ -728,23 +751,38 @@ namespace PlutoGE::render::rhi::vulkan
         auto module = [&](const auto &code) { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
         PipelineResource resource; resource.descriptor = descriptor;
-        // BasicLit consumes camera/lighting data in both stages. Restricting the
-        // descriptor to the vertex stage leaves fragment reads undefined (and
-        // manifested as a strong red tint on affected Vulkan drivers).
-        const VkDescriptorSetLayoutBinding cameraBinding{
-            0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        const std::array<VkDescriptorSetLayoutBinding, 5> materialBindings{{
-            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
-        const VkDescriptorSetLayoutBinding objectBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
-        const std::array<const VkDescriptorSetLayoutBinding *, 3> setBindings{{&cameraBinding, materialBindings.data(), &objectBinding}};
-        const std::array<std::uint32_t, 3> bindingCounts{{1, 5, 1}};
-        for (std::size_t i = 0; i < 3; ++i) { VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; info.bindingCount = bindingCounts[i]; info.pBindings = setBindings[i]; Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[i]), "vkCreateDescriptorSetLayout"); }
-        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout.setLayoutCount = 3; layout.pSetLayouts = resource.setLayouts.data(); Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
+        if (descriptor.resourceBindings.empty())
+            throw std::invalid_argument("Vulkan pipeline requires declared shader resource bindings");
+        std::uint32_t maximumSet = 0;
+        for (const auto &binding : descriptor.resourceBindings)
+            maximumSet = (std::max)(maximumSet, binding.set);
+        std::vector<std::vector<VkDescriptorSetLayoutBinding>> bindingsBySet(maximumSet + 1);
+        for (const auto &binding : descriptor.resourceBindings)
+        {
+            const VkShaderStageFlags stages =
+                binding.stages == ShaderStageMask::Vertex ? VK_SHADER_STAGE_VERTEX_BIT :
+                binding.stages == ShaderStageMask::Fragment ? VK_SHADER_STAGE_FRAGMENT_BIT :
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            bindingsBySet[binding.set].push_back({
+                binding.binding,
+                binding.type == ResourceBindingType::UniformBuffer
+                    ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                    : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                1, stages, nullptr});
+        }
+        resource.setLayouts.resize(bindingsBySet.size());
+        for (std::size_t set = 0; set < bindingsBySet.size(); ++set)
+        {
+            VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            setInfo.bindingCount = static_cast<std::uint32_t>(bindingsBySet[set].size());
+            setInfo.pBindings = bindingsBySet[set].data();
+            Check(vkCreateDescriptorSetLayout(m_impl->device, &setInfo, nullptr, &resource.setLayouts[set]),
+                  "vkCreateDescriptorSetLayout");
+        }
+        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layout.setLayoutCount = static_cast<std::uint32_t>(resource.setLayouts.size());
+        layout.pSetLayouts = resource.setLayouts.data();
+        Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"}}};
         std::vector<VkVertexInputAttributeDescription> attributes; for (const auto &a : descriptor.vertexLayout.attributes) attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});

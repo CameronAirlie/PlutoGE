@@ -63,6 +63,15 @@ namespace PlutoGE::render
             rhi::GraphicsPipelineDescriptor descriptor;
             descriptor.vertexShader = shaders.vertex;
             descriptor.fragmentShader = shaders.fragment;
+            descriptor.resourceBindings = {
+                {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                {9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {10, 1, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {11, 1, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {12, 1, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
+            };
             descriptor.vertexLayout = {
                 .stride = sizeof(BasicVertex),
                 .attributes = {

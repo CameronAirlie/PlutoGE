@@ -1819,7 +1819,8 @@ namespace PlutoGE::ui
 
     void ViewportPanel::SetGraphicsApi(render::rhi::GraphicsApi graphicsApi)
     {
-        if (!m_config.editorViewport || m_config.graphicsApi == graphicsApi)
+        if (!m_config.editorViewport ||
+            (m_config.graphicsApi == graphicsApi && m_rhiRenderService && m_rhiRenderService->IsInitialized()))
             return;
 
         ShutdownRhiPreview();
@@ -1882,10 +1883,10 @@ namespace PlutoGE::ui
         m_scaledRenderTarget = new render::RenderTarget(renderConfig);
         m_upscaler = std::make_unique<render::SpatialUpscaler>();
 
-        if (m_config.editorViewport)
-        {
-            InitializeRhiPreview();
-        }
+        // The project can be loaded after the editor shell is initialized. The
+        // first SetGraphicsApi call initializes the service once the manifest's
+        // authoritative backend is known, avoiding an unnecessary OpenGL device
+        // followed immediately by Vulkan reinitialization.
     }
 
     void ViewportPanel::Render()

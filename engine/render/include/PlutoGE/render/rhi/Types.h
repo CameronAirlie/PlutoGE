@@ -12,6 +12,8 @@ namespace PlutoGE::render::rhi
     enum class BufferUsage : std::uint8_t { Vertex, Index, Uniform };
     enum class TextureUsage : std::uint8_t { Sampled, ColorAttachment, DepthStencilAttachment };
     enum class ShaderStage : std::uint8_t { Vertex, Fragment };
+    enum class ShaderStageMask : std::uint8_t { Vertex = 1, Fragment = 2, AllGraphics = 3 };
+    enum class ResourceBindingType : std::uint8_t { UniformBuffer, SampledTexture };
     enum class PrimitiveTopology : std::uint8_t { TriangleList };
     enum class CullMode : std::uint8_t { None, Front, Back };
     enum class CompareOperation : std::uint8_t { Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always };
@@ -75,6 +77,17 @@ namespace PlutoGE::render::rhi
         };
         ShaderCode vertexShader;
         ShaderCode fragmentShader;
+        struct ResourceBinding
+        {
+            // slot is the backend-neutral command binding. set/binding mirror
+            // the declarations emitted by Slang for Vulkan.
+            std::uint32_t slot = 0;
+            std::uint32_t set = 0;
+            std::uint32_t binding = 0;
+            ResourceBindingType type = ResourceBindingType::UniformBuffer;
+            ShaderStageMask stages = ShaderStageMask::AllGraphics;
+        };
+        std::vector<ResourceBinding> resourceBindings;
         VertexLayout vertexLayout;
         PrimitiveTopology topology = PrimitiveTopology::TriangleList;
         CullMode cullMode = CullMode::Back;

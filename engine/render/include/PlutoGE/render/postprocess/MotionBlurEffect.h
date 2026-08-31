@@ -13,6 +13,12 @@ namespace PlutoGE::render
         Cinematic,
     };
 
+    struct MotionBlurSettings
+    {
+        MotionBlurQuality quality;
+        float strength, shutterFraction, maxBlurRadius, velocityThreshold, depthSeparationScale, centerWeight;
+    };
+
     class MotionBlurEffect : public ShaderPostProcessEffect
     {
     public:
@@ -25,6 +31,9 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Motion Blur"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        [[nodiscard]] MotionBlurSettings GetSettings() const noexcept
+        { return {m_quality, m_strength, m_shutterFraction, m_maxBlurRadius,
+                  m_velocityThreshold, m_depthSeparationScale, m_centerWeight}; }
 
     private:
         Shader *m_shader = nullptr;

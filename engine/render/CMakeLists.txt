@@ -5,6 +5,8 @@ add_library(PlutoGERender
     src/RhiSceneRenderer.cpp
     src/RhiPostProcessAdapter.cpp
     src/PostProcessGraph.cpp
+    src/PostProcessResourcePool.cpp
+    src/PostProcessGraphExecutor.cpp
     src/TextureManager.cpp
     src/TexturePainter.cpp
     src/Shader.cpp
@@ -91,6 +93,12 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(FXAA "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FXAA.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ColorGrading "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorGrading.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ChromaticAberration "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ChromaticAberration.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(LensFlare "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LensFlare.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(MotionBlur "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MotionBlur.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BloomPrefilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain prefilterMain)
+    pluto_add_slang_graphics_shader(BloomDownsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain downsampleMain)
+    pluto_add_slang_graphics_shader(BloomUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain upsampleMain)
+    pluto_add_slang_graphics_shader(BloomComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain compositeMain)
     get_property(PLUTO_RHI_SHADER_OUTPUTS GLOBAL PROPERTY PLUTO_RHI_SHADER_OUTPUTS)
     add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_RHI_SHADER_OUTPUTS})
     add_dependencies(PlutoGERender PlutoGERhiShaders)

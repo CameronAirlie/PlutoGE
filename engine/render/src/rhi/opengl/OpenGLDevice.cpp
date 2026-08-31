@@ -109,28 +109,41 @@ namespace PlutoGE::render::rhi::opengl
                 throw std::logic_error("OpenGL RHI rendering is already active");
             m_rendering = true;
 
-            if (!info.colorAttachment && !info.depthAttachment)
+            if (info.colorAttachments.empty() && !info.depthAttachment)
             {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
             else
             {
                 glBindFramebuffer(GL_FRAMEBUFFER, m_impl.framebuffer);
-                const auto *color = m_impl.textures.Get(info.colorAttachment);
                 const auto *depth = m_impl.textures.Get(info.depthAttachment);
-                if (info.colorAttachment && !color)
-                    throw std::invalid_argument("Invalid or stale RHI color attachment");
                 if (info.depthAttachment && !depth)
                     throw std::invalid_argument("Invalid or stale RHI depth attachment");
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color ? color->name : 0, 0);
+                std::vector<GLenum> drawBuffers;
+                drawBuffers.reserve(info.colorAttachments.size());
+                for (std::size_t index = info.colorAttachments.size(); index < m_activeColorAttachmentCount; ++index)
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + index), GL_TEXTURE_2D, 0, 0);
+                for (std::size_t index = 0; index < info.colorAttachments.size(); ++index)
+                {
+                    const auto *color = m_impl.textures.Get(info.colorAttachments[index]);
+                    if (!color) throw std::invalid_argument("Invalid or stale RHI color attachment");
+                    const auto attachment = static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + index);
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, color->name, 0);
+                    drawBuffers.push_back(attachment);
+                }
+                m_activeColorAttachmentCount = info.colorAttachments.size();
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth ? depth->name : 0, 0);
-                glDrawBuffer(color ? GL_COLOR_ATTACHMENT0 : GL_NONE);
-                glReadBuffer(color ? GL_COLOR_ATTACHMENT0 : GL_NONE);
+                if (drawBuffers.empty()) glDrawBuffer(GL_NONE);
+                else glDrawBuffers(static_cast<GLsizei>(drawBuffers.size()), drawBuffers.data());
+                glReadBuffer(drawBuffers.empty() ? GL_NONE : drawBuffers.front());
                 if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     throw std::runtime_error("RHI render target framebuffer is incomplete");
             }
 
             glViewport(0, 0, static_cast<GLsizei>(info.width), static_cast<GLsizei>(info.height));
+            // The editor shares this context with ImGui and the legacy renderer.
+            // Never inherit a UI clip rectangle into an RHI render pass.
+            glDisable(GL_SCISSOR_TEST);
             GLbitfield clearMask = 0;
             if (info.clearColor)
             {
@@ -166,6 +179,7 @@ namespace PlutoGE::render::rhi::opengl
             glBindVertexArray(pipeline->vertexArray);
             pipeline->descriptor.depthTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
             glDepthMask(pipeline->descriptor.depthWrite ? GL_TRUE : GL_FALSE);
+            pipeline->descriptor.blend.enabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
             const auto compare = pipeline->descriptor.depthCompare == CompareOperation::GreaterOrEqual ? GL_GEQUAL : GL_LESS;
             glDepthFunc(compare);
             if (pipeline->descriptor.cullMode == CullMode::None)
@@ -244,6 +258,7 @@ namespace PlutoGE::render::rhi::opengl
         PipelineResource *m_pipeline = nullptr;
         std::size_t m_indexOffset = 0;
         bool m_rendering = false;
+        std::size_t m_activeColorAttachmentCount = 0;
     };
 
     class OpenGLSwapchain final : public ISwapchain

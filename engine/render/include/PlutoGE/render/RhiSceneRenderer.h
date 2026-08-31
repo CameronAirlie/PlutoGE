@@ -32,6 +32,10 @@ namespace PlutoGE::render
                     const TexturePixelReader &texturePixelReader = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;
+        [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept;
+        [[nodiscard]] rhi::TextureHandle GetNormalTexture() const noexcept;
+        [[nodiscard]] rhi::TextureHandle GetMaterialTexture() const noexcept;
+        [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept;
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneCommandCount; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_drawCount; }
 

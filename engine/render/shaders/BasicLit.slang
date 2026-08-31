@@ -13,6 +13,16 @@ struct VertexOutput
     float2 uv : TEXCOORD0;
     float3 worldPosition : TEXCOORD1;
     float4 worldTangent : TEXCOORD2;
+    float4 currentClip : TEXCOORD3;
+    float4 previousClip : TEXCOORD4;
+};
+
+struct FragmentOutput
+{
+    float4 color : SV_Target0;
+    float4 normal : SV_Target1;
+    float4 material : SV_Target2;
+    float4 motion : SV_Target3;
 };
 
 [[vk::binding(0, 0)]] cbuffer CameraParameters : register(b0, space0)
@@ -26,11 +36,13 @@ struct VertexOutput
     uint shadowFlipY;
     float shadowDepthScale;
     float shadowDepthBias;
+    column_major float4x4 previousViewProjection;
 };
 
 [[vk::binding(0, 2)]] cbuffer ObjectParameters : register(b0, space2)
 {
     column_major float4x4 model;
+    column_major float4x4 previousModel;
 };
 
 [[vk::binding(0, 1)]] cbuffer MaterialParameters : register(b0, space1)
@@ -69,6 +81,8 @@ VertexOutput vertexMain(VertexInput input)
         localTangent = normalize(cross(tangentAxis, input.normal));
     }
     output.position = mul(viewProjection, worldPosition);
+    output.currentClip = output.position;
+    output.previousClip = mul(previousViewProjection, mul(previousModel, float4(input.position, 1.0)));
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
@@ -77,7 +91,7 @@ VertexOutput vertexMain(VertexInput input)
 }
 
 [shader("fragment")]
-float4 fragmentMain(VertexOutput input) : SV_Target
+FragmentOutput fragmentMain(VertexOutput input)
 {
     const float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
     if (alphaMode == 1 && sampledColor.a < alphaCutoff)
@@ -131,5 +145,12 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         }
     }
     const float3 ambient = sampledColor.rgb * cameraPositionAmbient.w;
-    return float4(ambient + direct * shadowVisibility + emission, sampledColor.a);
+    FragmentOutput output;
+    output.color = float4(ambient + direct * shadowVisibility + emission, sampledColor.a);
+    output.normal = float4(normal * 0.5 + 0.5, 1.0);
+    output.material = float4(materialMetallic, materialRoughness, length(emission), sampledColor.a);
+    const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
+    const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
+    output.motion = float4((currentNdc - previousNdc) * 0.25 + 0.5, 0.0, 1.0);
+    return output;
 }

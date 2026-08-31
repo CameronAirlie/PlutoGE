@@ -51,6 +51,13 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
         addPostProcess(BasicPostProcessEffectType::ColorGrading, "ColorGrading");
         addPostProcess(BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
+        addPostProcess(BasicPostProcessEffectType::LensFlare, "LensFlare");
+        addPostProcess(BasicPostProcessEffectType::MotionBlur, "MotionBlur");
+        constexpr std::array<std::string_view, 4> bloomModules{
+            "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
+        for (std::size_t index = 0; index < bloomModules.size(); ++index)
+            result.bloom[index] = {.vertex = Load(bloomModules[index], "vertex"),
+                                   .fragment = Load(bloomModules[index], "fragment")};
         return result;
     }
 

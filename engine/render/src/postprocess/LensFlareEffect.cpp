@@ -59,6 +59,8 @@ namespace PlutoGE::render
         }
     }
 
+    LensFlareEffect::LensFlareEffect() = default;
+
     LensFlareEffect::~LensFlareEffect()
     {
         if (m_brightTarget)

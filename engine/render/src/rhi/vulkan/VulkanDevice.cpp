@@ -198,27 +198,38 @@ namespace PlutoGE::render::rhi::vulkan
         void BeginRendering(const RenderingInfo &info) override
         {
             if (m_rendering) throw std::logic_error("Vulkan rendering is already active");
-            m_color = m_impl.textures.Get(info.colorAttachment);
+            m_colors.clear();
+            for (const auto handle : info.colorAttachments)
+            {
+                auto *color = m_impl.textures.Get(handle);
+                if (!color) throw std::invalid_argument("Invalid Vulkan color attachment");
+                m_colors.push_back(color);
+            }
             m_depth = m_impl.textures.Get(info.depthAttachment);
-            if (!m_color || (info.depthAttachment && !m_depth))
+            if ((m_colors.empty() && !m_depth) || (info.depthAttachment && !m_depth))
                 throw std::invalid_argument("Invalid Vulkan render attachments");
             Check(vkResetCommandBuffer(m_impl.commandBuffer, 0), "vkResetCommandBuffer");
             Check(vkResetDescriptorPool(m_impl.device, m_impl.descriptorPool, 0), "vkResetDescriptorPool");
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             Check(vkBeginCommandBuffer(m_impl.commandBuffer, &begin), "vkBeginCommandBuffer");
-            m_impl.Transition(m_impl.commandBuffer, *m_color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            for (auto *color : m_colors)
+                m_impl.Transition(m_impl.commandBuffer, *color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             if (m_depth)
                 m_impl.Transition(m_impl.commandBuffer, *m_depth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
-            VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-            color.imageView = m_color->view;
-            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            color.loadOp = info.clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            std::memcpy(color.clearValue.color.float32, info.clearColorValue, sizeof(info.clearColorValue));
+            std::vector<VkRenderingAttachmentInfo> colors(m_colors.size());
+            for (std::size_t index = 0; index < m_colors.size(); ++index)
+            {
+                colors[index] = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                colors[index].imageView = m_colors[index]->view;
+                colors[index].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                colors[index].loadOp = info.clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+                colors[index].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                std::memcpy(colors[index].clearValue.color.float32, info.clearColorValue, sizeof(info.clearColorValue));
+            }
             VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
             depth.imageView = m_depth ? m_depth->view : VK_NULL_HANDLE;
             depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -228,8 +239,8 @@ namespace PlutoGE::render::rhi::vulkan
             VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
             rendering.renderArea.extent = {info.width, info.height};
             rendering.layerCount = 1;
-            rendering.colorAttachmentCount = 1;
-            rendering.pColorAttachments = &color;
+            rendering.colorAttachmentCount = static_cast<std::uint32_t>(colors.size());
+            rendering.pColorAttachments = colors.data();
             rendering.pDepthAttachment = m_depth ? &depth : nullptr;
             vkCmdBeginRendering(m_impl.commandBuffer, &rendering);
             SetViewport({0, 0, static_cast<float>(info.width), static_cast<float>(info.height), 0, 1});
@@ -357,7 +368,7 @@ namespace PlutoGE::render::rhi::vulkan
 
         VulkanDevice::Impl &m_impl;
         PipelineResource *m_pipeline = nullptr;
-        TextureResource *m_color = nullptr;
+        std::vector<TextureResource *> m_colors;
         TextureResource *m_depth = nullptr;
         std::unordered_map<std::uint32_t, BufferHandle> m_uniformBuffers;
         std::unordered_map<std::uint32_t, TextureHandle> m_sampledTextures;
@@ -836,9 +847,10 @@ namespace PlutoGE::render::rhi::vulkan
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = descriptor.cullMode == CullMode::None ? VK_CULL_MODE_NONE : descriptor.cullMode == CullMode::Front ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT; raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth = 1;
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = descriptor.depthTest; depth.depthWriteEnable = descriptor.depthWrite; depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
-        VkPipelineColorBlendAttachmentState blend{}; blend.colorWriteMask = 0xf; VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blending.attachmentCount = 1; blending.pAttachments = &blend;
+        const std::size_t colorAttachmentCount = descriptor.colorFormats.empty() ? 1 : descriptor.colorFormats.size();
+        std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount); for (auto &blend : blendAttachments) blend.colorWriteMask = 0xf; VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blending.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size()); blending.pAttachments = blendAttachments.data();
         std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}; VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dynamicState.dynamicStateCount = dynamicStates.size(); dynamicState.pDynamicStates = dynamicStates.data();
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; const VkFormat colorFormat = ToVkFormat(descriptor.colorFormat); rendering.colorAttachmentCount = 1; rendering.pColorAttachmentFormats = &colorFormat; rendering.depthAttachmentFormat = descriptor.depthFormat == Format::Undefined ? VK_FORMAT_UNDEFINED : ToVkFormat(descriptor.depthFormat);
+        std::vector<VkFormat> colorFormats; if (descriptor.colorFormats.empty()) colorFormats.push_back(ToVkFormat(descriptor.colorFormat)); else for (const auto format : descriptor.colorFormats) colorFormats.push_back(ToVkFormat(format)); VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; rendering.colorAttachmentCount = static_cast<std::uint32_t>(colorFormats.size()); rendering.pColorAttachmentFormats = colorFormats.data(); rendering.depthAttachmentFormat = descriptor.depthFormat == Format::Undefined ? VK_FORMAT_UNDEFINED : ToVkFormat(descriptor.depthFormat);
         VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; info.pNext = &rendering; info.stageCount = stages.size(); info.pStages = stages.data(); info.pVertexInputState = &vertexInput; info.pInputAssemblyState = &assembly; info.pViewportState = &viewport; info.pRasterizationState = &raster; info.pMultisampleState = &multisample; info.pDepthStencilState = &depth; info.pColorBlendState = &blending; info.pDynamicState = &dynamicState; info.layout = resource.layout;
         const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline); vkDestroyShaderModule(m_impl->device, vertex, nullptr); vkDestroyShaderModule(m_impl->device, fragment, nullptr); Check(result, "vkCreateGraphicsPipelines");
         return m_impl->pipelines.Insert(std::move(resource));

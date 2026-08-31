@@ -12,6 +12,8 @@
 
 namespace PlutoGE::render
 {
+    class PostProcessResourcePool;
+
     enum class BasicPostProcessEffectType : std::uint8_t
     {
         ToneMapping,
@@ -19,6 +21,9 @@ namespace PlutoGE::render
         FXAA,
         ColorGrading,
         ChromaticAberration,
+        Bloom,
+        LensFlare,
+        MotionBlur,
         Count,
     };
 
@@ -52,6 +57,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)> postProcess;
+        std::array<BasicPostProcessShaderPackage, 4> bloom;
     };
 
     class BasicMesh
@@ -122,8 +128,8 @@ namespace PlutoGE::render
     class BasicRenderer
     {
     public:
-        BasicRenderer() = default;
-        ~BasicRenderer() = default;
+        BasicRenderer();
+        ~BasicRenderer();
         BasicRenderer(const BasicRenderer &) = delete;
         BasicRenderer &operator=(const BasicRenderer &) = delete;
 
@@ -137,18 +143,28 @@ namespace PlutoGE::render
                     std::span<const BasicPostProcessEffect> postProcessEffects = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
+        [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
+        [[nodiscard]] rhi::TextureHandle GetNormalTexture() const noexcept { return m_normalTarget.Get(); }
+        [[nodiscard]] rhi::TextureHandle GetMaterialTexture() const noexcept { return m_materialTarget.Get(); }
+        [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept { return m_motionTarget.Get(); }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept { return m_height; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
 
     private:
+        [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
+                                                     const BasicPostProcessEffect &effect);
+        [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
+
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
         rhi::Buffer m_shadowCameraBuffer;
-        rhi::Buffer m_postProcessBuffer;
+        // Each recorded draw owns stable parameters until backend submission.
+        // Reusing one buffer causes every Vulkan draw to observe the last upload.
+        std::vector<rhi::Buffer> m_postProcessBuffers;
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;
@@ -158,13 +174,22 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;
+        rhi::Texture m_normalTarget;
+        rhi::Texture m_materialTarget;
+        rhi::Texture m_motionTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
+        std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
+        std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
+        std::size_t m_postProcessBufferCursor = 0;
         rhi::Texture m_depthTarget;
         rhi::Texture m_shadowColorTarget;
         rhi::Texture m_shadowDepthTarget;
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
         std::uint64_t m_frameIndex = 0;
+        glm::mat4 m_previousViewProjection{1.0f};
+        std::vector<glm::mat4> m_previousModels;
+        bool m_hasPreviousFrame = false;
         rhi::TextureHandle m_outputColor;
     };
 }

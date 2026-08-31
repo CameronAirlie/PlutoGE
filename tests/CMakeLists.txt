@@ -17,6 +17,10 @@ add_executable(PlutoGEPostProcessGraphTests PostProcessGraphTests.cpp)
 target_link_libraries(PlutoGEPostProcessGraphTests PRIVATE PlutoGE::Render)
 add_test(NAME PlutoGEPostProcessGraphTests COMMAND PlutoGEPostProcessGraphTests)
 
+add_executable(PlutoGEPostProcessResourcePoolTests PostProcessResourcePoolTests.cpp)
+target_link_libraries(PlutoGEPostProcessResourcePoolTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGEPostProcessResourcePoolTests COMMAND PlutoGEPostProcessResourcePoolTests)
+
 add_executable(PlutoGEWindowClientApiTests WindowClientApiTests.cpp)
 target_link_libraries(PlutoGEWindowClientApiTests PRIVATE PlutoGE::Platform)
 add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)

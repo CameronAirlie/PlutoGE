@@ -7,6 +7,7 @@
 
 namespace PlutoGE::render
 {
+    struct LensFlareSettings { float intensity; float threshold; float scale; float ghostDispersal; };
     class Shader;
     class Texture;
     class RenderTarget;
@@ -14,7 +15,7 @@ namespace PlutoGE::render
     class LensFlareEffect : public ShaderPostProcessEffect
     {
     public:
-        LensFlareEffect() = default;
+        LensFlareEffect();
         ~LensFlareEffect() override;
 
         void Initialize() override;
@@ -23,6 +24,8 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Lens Flare"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        [[nodiscard]] LensFlareSettings GetSettings() const noexcept
+        { return {m_intensity, m_threshold, m_scale, m_ghostDispersal}; }
 
     private:
         Texture *ResolveFlareTexture();

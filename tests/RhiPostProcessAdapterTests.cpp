@@ -1,6 +1,7 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
+#include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -63,11 +64,20 @@ int main()
         !CreatePostProcessEffect("ChromaticAberration"))
         return 6;
 
+    BloomEffect bloom;
+    bloom.ApplyParameters({
+        {.name = "Intensity", .type = PostProcessParameterType::Float, .value = "1.25"},
+        {.name = "Iterations", .type = PostProcessParameterType::Int, .value = "4"}});
+    const auto bloomPacket = AdaptPostProcessEffect(bloom);
+    if (!bloomPacket || bloomPacket->type != BasicPostProcessEffectType::Bloom ||
+        !Near(bloomPacket->parameters[0].x, 1.25f) || bloomPacket->quality != 4)
+        return 7;
+
     if (!IsRhiPostProcessEffectSupported("FXAA") ||
         !IsRhiPostProcessEffectSupported("ColorGrading") ||
         !IsRhiPostProcessEffectSupported("ChromaticAberration") ||
-        IsRhiPostProcessEffectSupported("Bloom"))
-        return 7;
+        !IsRhiPostProcessEffectSupported("Bloom"))
+        return 8;
 
     std::cout << "RHI post-process adapters preserve typed effect parameters\n";
     return 0;

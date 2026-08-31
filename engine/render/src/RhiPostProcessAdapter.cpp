@@ -1,9 +1,12 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
+#include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
+#include "PlutoGE/render/postprocess/LensFlareEffect.h"
+#include "PlutoGE/render/postprocess/MotionBlurEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 
@@ -80,12 +83,52 @@ namespace PlutoGE::render
             });
         }
 
+        std::optional<BasicPostProcessEffect> AdaptBloom(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<BloomEffect>(effect, [](const BloomEffect &typed)
+            {
+                const auto settings = typed.GetSettings();
+                BasicPostProcessEffect result{BasicPostProcessEffectType::Bloom};
+                result.parameters[0] = {settings.intensity, settings.threshold, settings.softKnee, settings.radius};
+                result.quality = static_cast<std::uint32_t>(settings.iterations);
+                return result;
+            });
+        }
+
+        std::optional<BasicPostProcessEffect> AdaptLensFlare(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<LensFlareEffect>(effect, [](const LensFlareEffect &typed)
+            {
+                const auto settings = typed.GetSettings();
+                BasicPostProcessEffect result{BasicPostProcessEffectType::LensFlare};
+                result.parameters[0] = {settings.intensity, settings.threshold, settings.scale, settings.ghostDispersal};
+                return result;
+            });
+        }
+
+        std::optional<BasicPostProcessEffect> AdaptMotionBlur(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<MotionBlurEffect>(effect, [](const MotionBlurEffect &typed)
+            {
+                const auto settings = typed.GetSettings();
+                BasicPostProcessEffect result{BasicPostProcessEffectType::MotionBlur};
+                result.quality = static_cast<std::uint32_t>(settings.quality);
+                result.parameters[0] = {settings.strength, settings.shutterFraction,
+                                        settings.maxBlurRadius, settings.velocityThreshold};
+                result.parameters[1] = {settings.centerWeight, settings.depthSeparationScale, 0.0f, 0.0f};
+                return result;
+            });
+        }
+
         constexpr std::array kAdapters{
             AdapterRegistration{"ToneMapping", AdaptToneMapping},
             AdapterRegistration{"GammaCorrection", AdaptGammaCorrection},
             AdapterRegistration{"FXAA", AdaptFxaa},
             AdapterRegistration{"ColorGrading", AdaptColorGrading},
             AdapterRegistration{"ChromaticAberration", AdaptChromaticAberration},
+            AdapterRegistration{"Bloom", AdaptBloom},
+            AdapterRegistration{"LensFlare", AdaptLensFlare},
+            AdapterRegistration{"MotionBlur", AdaptMotionBlur},
         };
     }
 

@@ -36,13 +36,43 @@ namespace PlutoGE::render
     struct PostProcessPassDescriptor
     {
         std::string name;
-        std::vector<PostProcessResourceId> reads;
+        std::string implementation;
+        enum class InputSemantic : std::uint8_t
+        {
+            SceneColor,
+            Depth,
+            Normal,
+            Material,
+            Motion,
+            History,
+            Auxiliary0,
+            Auxiliary1,
+        };
+        struct Input
+        {
+            InputSemantic semantic = InputSemantic::SceneColor;
+            PostProcessResourceId resource;
+        };
+        std::vector<Input> inputs;
         std::vector<PostProcessResourceId> writes;
     };
 
+    [[nodiscard]] constexpr std::uint32_t PostProcessInputSlot(PostProcessPassDescriptor::InputSemantic semantic)
+    {
+        return 1u + static_cast<std::uint32_t>(semantic);
+    }
+
     struct CompiledPostProcessGraph
     {
+        struct ResourceLifetime
+        {
+            static constexpr std::size_t Unused = static_cast<std::size_t>(-1);
+            std::size_t firstPass = Unused;
+            std::size_t lastPass = Unused;
+            [[nodiscard]] bool IsUsed() const noexcept { return firstPass != Unused; }
+        };
         std::vector<std::size_t> passOrder;
+        std::vector<ResourceLifetime> resourceLifetimes;
     };
 
     class PostProcessGraph

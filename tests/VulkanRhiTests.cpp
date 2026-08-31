@@ -43,6 +43,15 @@ int main()
         loadPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
         loadPostProcess(BasicPostProcessEffectType::ColorGrading, "ColorGrading");
         loadPostProcess(BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
+        loadPostProcess(BasicPostProcessEffectType::LensFlare, "LensFlare");
+        loadPostProcess(BasicPostProcessEffectType::MotionBlur, "MotionBlur");
+        constexpr std::array<const char *, 4> bloomModules{
+            "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
+        for (std::size_t index = 0; index < bloomModules.size(); ++index)
+        {
+            shaders.bloom[index].vertex.spirv = ReadSpirv((std::string(bloomModules[index]) + ".vertex.spv").c_str());
+            shaders.bloom[index].fragment.spirv = ReadSpirv((std::string(bloomModules[index]) + ".fragment.spv").c_str());
+        }
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64)) return 1;
 
@@ -78,6 +87,14 @@ int main()
         neutralLighting.shadowsEnabled = true;
         renderer.Render(projection * view, neutralLighting, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        const auto normalPixels = device.ReadTextureRgba8(renderer.GetNormalTexture());
+        const auto materialPixels = device.ReadTextureRgba8(renderer.GetMaterialTexture());
+        const auto motionPixels = device.ReadTextureRgba8(renderer.GetMotionTexture());
+        if (normalPixels.size() != pixels.size() || materialPixels.size() != pixels.size() || motionPixels.size() != pixels.size())
+        {
+            std::cerr << "Vulkan G-buffer attachments returned inconsistent extents\n";
+            return 7;
+        }
 
         std::size_t changed = 0;
         std::uint64_t red = 0, green = 0, blue = 0;
@@ -114,7 +131,18 @@ int main()
         colorGrading.parameters[2] = {1.0f, 0.0f, 0.1f, 0.01f};
         auto chromaticAberration = BasicPostProcessEffect{BasicPostProcessEffectType::ChromaticAberration};
         chromaticAberration.parameters[0].x = 0.003f;
+        auto bloom = BasicPostProcessEffect{BasicPostProcessEffectType::Bloom};
+        bloom.quality = 4;
+        bloom.parameters[0] = {0.35f, 0.8f, 0.5f, 1.0f};
+        auto lensFlare = BasicPostProcessEffect{BasicPostProcessEffectType::LensFlare};
+        lensFlare.parameters[0] = {0.2f, 0.8f, 1.0f, 0.55f};
+        auto motionBlur = BasicPostProcessEffect{BasicPostProcessEffectType::MotionBlur};
+        motionBlur.parameters[0] = {1.0f, 0.5f, 20.0f, 0.35f};
+        motionBlur.parameters[1].x = 1.0f;
         const std::array postEffects{
+            bloom,
+            lensFlare,
+            motionBlur,
             BasicPostProcessEffect{BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
             BasicPostProcessEffect{BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
             BasicPostProcessEffect{BasicPostProcessEffectType::FXAA, 1.0f, 2.2f, 1},

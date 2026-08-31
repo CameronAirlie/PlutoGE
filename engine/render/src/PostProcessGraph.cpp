@@ -23,6 +23,7 @@ namespace PlutoGE::render
     {
         if (descriptor.name.empty())
             throw std::invalid_argument("Post-process passes require a name");
+        if (descriptor.implementation.empty()) descriptor.implementation = descriptor.name;
         if (descriptor.writes.empty())
             throw std::invalid_argument("Post-process passes must declare an output");
         const auto validate = [this](PostProcessResourceId id)
@@ -30,11 +31,22 @@ namespace PlutoGE::render
             if (!id || id.value >= m_resources.size())
                 throw std::out_of_range("Post-process pass references an invalid resource");
         };
-        for (const auto id : descriptor.reads) validate(id);
+        for (const auto &input : descriptor.inputs) validate(input.resource);
         for (const auto id : descriptor.writes) validate(id);
-        for (const auto read : descriptor.reads)
-            if (std::find(descriptor.writes.begin(), descriptor.writes.end(), read) != descriptor.writes.end())
+        const auto &primaryOutput = m_resources[descriptor.writes.front().value];
+        for (const auto output : descriptor.writes)
+            if (m_resources[output.value].widthScale != primaryOutput.widthScale ||
+                m_resources[output.value].heightScale != primaryOutput.heightScale)
+                throw std::invalid_argument("Post-process pass outputs must have matching dimensions");
+        for (std::size_t index = 0; index < descriptor.inputs.size(); ++index)
+        {
+            const auto &input = descriptor.inputs[index];
+            if (std::find(descriptor.writes.begin(), descriptor.writes.end(), input.resource) != descriptor.writes.end())
                 throw std::invalid_argument("Post-process passes cannot read and write the same immutable resource");
+            for (std::size_t previous = 0; previous < index; ++previous)
+                if (descriptor.inputs[previous].semantic == input.semantic)
+                    throw std::invalid_argument("Post-process input semantics must be unique within a pass");
+        }
         m_passes.push_back(std::move(descriptor));
         return m_passes.size() - 1;
     }
@@ -55,8 +67,9 @@ namespace PlutoGE::render
         std::vector<std::vector<std::size_t>> edges(m_passes.size());
         std::vector<std::size_t> indegree(m_passes.size());
         for (std::size_t passIndex = 0; passIndex < m_passes.size(); ++passIndex)
-            for (const auto input : m_passes[passIndex].reads)
+            for (const auto &inputBinding : m_passes[passIndex].inputs)
             {
+                const auto input = inputBinding.resource;
                 const auto producer = writer[input.value];
                 if (producer == static_cast<std::size_t>(-1))
                 {
@@ -82,6 +95,19 @@ namespace PlutoGE::render
         }
         if (result.passOrder.size() != m_passes.size())
             throw std::logic_error("Post-process graph contains a dependency cycle");
+        result.resourceLifetimes.resize(m_resources.size());
+        for (std::size_t scheduledIndex = 0; scheduledIndex < result.passOrder.size(); ++scheduledIndex)
+        {
+            const auto &pass = m_passes[result.passOrder[scheduledIndex]];
+            const auto recordUse = [&](PostProcessResourceId id)
+            {
+                auto &lifetime = result.resourceLifetimes[id.value];
+                if (!lifetime.IsUsed()) lifetime.firstPass = scheduledIndex;
+                lifetime.lastPass = scheduledIndex;
+            };
+            for (const auto &input : pass.inputs) recordUse(input.resource);
+            for (const auto output : pass.writes) recordUse(output);
+        }
         return result;
     }
 

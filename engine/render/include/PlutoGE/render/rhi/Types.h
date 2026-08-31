@@ -79,6 +79,8 @@ namespace PlutoGE::render::rhi
         ShaderCode vertexShader;
         ShaderCode fragmentShader;
         Format colorFormat = Format::R8G8B8A8Srgb;
+        // Empty preserves the single-target colorFormat compatibility path.
+        std::vector<Format> colorFormats;
         Format depthFormat = Format::D32Float;
         struct ResourceBinding
         {

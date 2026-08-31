@@ -57,6 +57,7 @@ int main()
         Buffer vertexBuffer(device, device.CreateBuffer({.size = sizeof(vertices), .usage = BufferUsage::Vertex, .debugName = "Test triangle vertices"}, Bytes(vertices)));
         Buffer indexBuffer(device, device.CreateBuffer({.size = sizeof(indices), .usage = BufferUsage::Index, .debugName = "Test triangle indices"}, Bytes(indices)));
         Texture color(device, device.CreateTexture({.width = 64, .height = 64, .format = Format::R8G8B8A8Unorm, .usage = TextureUsage::ColorAttachment, .debugName = "Test color"}));
+        Texture auxiliaryColor(device, device.CreateTexture({.width = 64, .height = 64, .format = Format::R8G8B8A8Unorm, .usage = TextureUsage::ColorAttachment, .debugName = "Test auxiliary color"}));
         Texture depth(device, device.CreateTexture({.width = 64, .height = 64, .format = Format::D32Float, .usage = TextureUsage::DepthStencilAttachment, .debugName = "Test depth"}));
 
         GraphicsPipelineDescriptor pipelineDescriptor;
@@ -68,7 +69,9 @@ void main() { gl_Position = vec4(position, 1.0); vertexColor = color; })";
         pipelineDescriptor.fragmentShader.glsl = R"(#version 430 core
 in vec3 vertexColor;
 layout(location=0) out vec4 outputColor;
-void main() { outputColor = vec4(vertexColor, 1.0); })";
+layout(location=1) out vec4 auxiliaryColor;
+void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - vertexColor, 1.0); })";
+        pipelineDescriptor.colorFormats = {Format::R8G8B8A8Unorm, Format::R8G8B8A8Unorm};
         pipelineDescriptor.vertexLayout = {
             .stride = 6 * sizeof(float),
             .attributes = {{0, Format::R32G32B32Float, 0}, {1, Format::R32G32B32Float, 3 * sizeof(float)}},
@@ -78,7 +81,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
 
         auto &commands = device.GetImmediateContext();
         RenderingInfo renderingInfo;
-        renderingInfo.colorAttachment = color.Get();
+        renderingInfo.colorAttachments = {color.Get(), auxiliaryColor.Get()};
         renderingInfo.depthAttachment = depth.Get();
         renderingInfo.width = 64;
         renderingInfo.height = 64;
@@ -102,6 +105,15 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
             std::cerr << "RHI draw produced a blank center pixel\n";
             return 5;
         }
+        glReadBuffer(GL_COLOR_ATTACHMENT1);
+        centerPixel.fill(0);
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, centerPixel.data());
+        if (glGetError() != GL_NO_ERROR || (centerPixel[0] <= 10 && centerPixel[1] <= 10 && centerPixel[2] <= 10))
+        {
+            std::cerr << "OpenGL RHI second color attachment was not written\n";
+            return 11;
+        }
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
@@ -120,6 +132,15 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
         loadPostProcess(render::BasicPostProcessEffectType::ColorGrading, "ColorGrading");
         loadPostProcess(render::BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
+        loadPostProcess(render::BasicPostProcessEffectType::LensFlare, "LensFlare");
+        loadPostProcess(render::BasicPostProcessEffectType::MotionBlur, "MotionBlur");
+        constexpr std::array<const char *, 4> bloomModules{
+            "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
+        for (std::size_t index = 0; index < bloomModules.size(); ++index)
+        {
+            shaders.bloom[index].vertex.glsl = ReadText((std::string(bloomModules[index]) + ".vertex.glsl").c_str());
+            shaders.bloom[index].fragment.glsl = ReadText((std::string(bloomModules[index]) + ".fragment.glsl").c_str());
+        }
         try
         {
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
@@ -160,6 +181,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         projection[3][2] = farPlane * nearPlane / (farPlane - nearPlane);
         const glm::mat4 view = glm::lookAtRH(glm::vec3(2.5f, 1.8f, 3.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
         const std::array draws = {render::BasicDraw{&cube, glm::mat4(1.0f)}};
+        // Model the shared editor context after a clipped ImGui draw. The RHI
+        // render pass must establish its own raster state rather than inherit
+        // a zero-area UI scissor.
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, 0, 0);
         basicRenderer.Render(projection * view, draws);
 
         centerPixel.fill(0);
@@ -180,7 +206,18 @@ void main() { outputColor = vec4(vertexColor, 1.0); })";
         colorGrading.parameters[2] = {1.0f, 0.0f, 0.1f, 0.01f};
         auto chromaticAberration = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ChromaticAberration};
         chromaticAberration.parameters[0].x = 0.003f;
+        auto bloom = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::Bloom};
+        bloom.quality = 4;
+        bloom.parameters[0] = {0.35f, 0.8f, 0.5f, 1.0f};
+        auto lensFlare = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::LensFlare};
+        lensFlare.parameters[0] = {0.2f, 0.8f, 1.0f, 0.55f};
+        auto motionBlur = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::MotionBlur};
+        motionBlur.parameters[0] = {1.0f, 0.5f, 20.0f, 0.35f};
+        motionBlur.parameters[1].x = 1.0f;
         const std::array postEffects{
+            bloom,
+            lensFlare,
+            motionBlur,
             render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ToneMapping, 1.0f, 2.2f},
             render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection, 1.0f, 2.2f},
             render::BasicPostProcessEffect{render::BasicPostProcessEffectType::FXAA, 1.0f, 2.2f, 1},

@@ -10,6 +10,9 @@
 
 namespace PlutoGE::render
 {
+    BloomEffect::BloomEffect() = default;
+    BloomEffect::~BloomEffect() = default;
+
     namespace
     {
         constexpr int kSourceTextureSlot = 0;

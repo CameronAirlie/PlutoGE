@@ -132,13 +132,14 @@ namespace PlutoGE::render
 
         m_drawCount = draws.size();
         glm::mat4 projection = cameraData.projection;
-        if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
-        {
-            glm::mat4 depthRangeConversion(1.0f);
-            depthRangeConversion[2][2] = 0.5f;
-            depthRangeConversion[3][2] = 0.5f;
-            projection = depthRangeConversion * projection;
-        }
+        // CameraData uses GLM's negative-one-to-one clip depth. Both RHI
+        // backends use zero-to-one: Vulkan natively and OpenGL through
+        // glClipControl. Applying this only to Vulkan clipped the reverse-Z
+        // OpenGL scene before rasterization and produced a black viewport.
+        glm::mat4 depthRangeConversion(1.0f);
+        depthRangeConversion[2][2] = 0.5f;
+        depthRangeConversion[3][2] = 0.5f;
+        projection = depthRangeConversion * projection;
         BasicLighting effectiveLighting = lighting;
         if (effectiveLighting.shadowsEnabled)
         {
@@ -175,4 +176,9 @@ namespace PlutoGE::render
     {
         return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{};
     }
+
+    rhi::TextureHandle RhiSceneRenderer::GetDepthTexture() const noexcept { return m_renderer ? m_renderer->GetDepthTexture() : rhi::TextureHandle{}; }
+    rhi::TextureHandle RhiSceneRenderer::GetNormalTexture() const noexcept { return m_renderer ? m_renderer->GetNormalTexture() : rhi::TextureHandle{}; }
+    rhi::TextureHandle RhiSceneRenderer::GetMaterialTexture() const noexcept { return m_renderer ? m_renderer->GetMaterialTexture() : rhi::TextureHandle{}; }
+    rhi::TextureHandle RhiSceneRenderer::GetMotionTexture() const noexcept { return m_renderer ? m_renderer->GetMotionTexture() : rhi::TextureHandle{}; }
 }

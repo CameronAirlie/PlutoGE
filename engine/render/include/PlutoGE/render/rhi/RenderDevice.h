@@ -6,12 +6,13 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace PlutoGE::render::rhi
 {
     struct RenderingInfo
     {
-        TextureHandle colorAttachment;
+        std::vector<TextureHandle> colorAttachments;
         TextureHandle depthAttachment;
         std::uint32_t width = 0;
         std::uint32_t height = 0;

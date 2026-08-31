@@ -36,12 +36,14 @@ namespace PlutoGE::ui
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
                     std::span<const render::RenderCommand> commands,
+                    std::span<const render::RenderCommand> shadowCommands,
                     std::span<render::IPostProcessEffect *const> postProcessEffects,
                     const scene::Scene *scene);
 
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
         [[nodiscard]] bool IsVulkan() const noexcept { return m_isVulkan; }
-        [[nodiscard]] std::uint64_t GetViewportTexture() const noexcept { return m_viewportTexture; }
+        [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() const noexcept { return m_device.get(); }
+        [[nodiscard]] render::rhi::TextureHandle GetViewportTexture() const noexcept { return m_viewportTexture; }
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetSceneCommandCount() : 0; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetDrawCount() : 0; }
         [[nodiscard]] bool IsVulkanAvailable() const noexcept { return m_vulkanAvailable; }
@@ -50,10 +52,7 @@ namespace PlutoGE::ui
     private:
         std::unique_ptr<render::rhi::IRenderDevice> m_device;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;
-        std::uint64_t m_viewportTexture = 0;
-        std::uint64_t m_vulkanBridgeTexture = 0;
-        std::uint32_t m_vulkanBridgeWidth = 0;
-        std::uint32_t m_vulkanBridgeHeight = 0;
+        render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;
         bool m_vulkanAvailable = false;
         std::string m_vulkanStatus = "Vulkan not probed";

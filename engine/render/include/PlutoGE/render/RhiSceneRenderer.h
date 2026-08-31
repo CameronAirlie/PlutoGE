@@ -28,6 +28,7 @@ namespace PlutoGE::render
         bool Render(std::uint32_t width, std::uint32_t height,
                     const CameraData &cameraData, const BasicLighting &lighting,
                     std::span<const RenderCommand> commands,
+                    std::span<const RenderCommand> shadowCommands,
                     std::span<IPostProcessEffect *const> postProcessEffects = {},
                     const TexturePixelReader &texturePixelReader = {});
 

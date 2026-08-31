@@ -90,12 +90,17 @@ namespace PlutoGE::render
         float metallic = 0.0f;
         float roughness = 1.0f;
         glm::vec3 emission{0.0f};
+        float subsurface = 0.0f;
+        glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};
+        float subsurfaceRadius = 1.0f;
         float alphaCutoff = 0.5f;
         std::uint32_t alphaMode = 0;
         std::uint32_t metallicChannel = 0;
         std::uint32_t roughnessChannel = 0;
         bool flipNormalY = false;
         bool castsShadow = true;
+        glm::vec3 shadowBoundsCenter{0.0f};
+        float shadowBoundsRadius = -1.0f;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
     };
@@ -108,10 +113,28 @@ namespace PlutoGE::render
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};
         bool shadowsEnabled = false;
-        glm::mat4 lightViewProjection{1.0f};
+        std::array<glm::mat4, 4> shadowMatrices{
+            glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+        glm::vec4 shadowCascadeSplits{0.0f};
         bool shadowFlipY = false;
         float shadowDepthScale = 1.0f;
         float shadowDepthBias = 0.0f;
+        std::uint32_t shadowResolution = 2048;
+        std::uint32_t shadowCascadeCount = 4;
+        float shadowCascadeResolutionFalloff = 0.75f;
+        float shadowNearCascadeDistance = 8.0f;
+        float shadowSplitLambda = 0.9f;
+        float shadowCascadeBlendDistance = 4.0f;
+        float shadowSoftness = 1.5f;
+        bool shadowFilterEnabled = true;
+        float shadowFilterRenderScale = 0.5f;
+        std::uint32_t shadowFilterRadius = 2;
+        float shadowFilterDepthScale = 0.015f;
+        float shadowFilterMinDepthScale = 0.05f;
+        float shadowFilterNormalThreshold = 0.72f;
+        float shadowFilterNormalSoftness = 0.26f;
+        float shadowDistance = 150.0f;
+        float shadowCasterDistance = 0.0f;
     };
 
     struct BasicPostProcessEffect
@@ -140,7 +163,8 @@ namespace PlutoGE::render
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                     std::span<const BasicDraw> draws,
-                    std::span<const BasicPostProcessEffect> postProcessEffects = {});
+                    std::span<const BasicPostProcessEffect> postProcessEffects = {},
+                    std::span<const BasicDraw> shadowDraws = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -155,13 +179,15 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect);
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
+        void EnsureShadowTargets(const BasicLighting &lighting);
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
-        rhi::Buffer m_shadowCameraBuffer;
+        std::array<rhi::Buffer, 4> m_shadowCameraBuffers;
+        std::array<std::vector<rhi::Buffer>, 4> m_shadowObjectBuffers;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;
@@ -182,8 +208,9 @@ namespace PlutoGE::render
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
         std::size_t m_postProcessBufferCursor = 0;
         rhi::Texture m_depthTarget;
-        rhi::Texture m_shadowColorTarget;
-        rhi::Texture m_shadowDepthTarget;
+        std::array<rhi::Texture, 4> m_shadowColorTargets;
+        std::array<rhi::Texture, 4> m_shadowDepthTargets;
+        std::array<std::uint32_t, 4> m_shadowResolutions{};
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
         std::uint64_t m_frameIndex = 0;

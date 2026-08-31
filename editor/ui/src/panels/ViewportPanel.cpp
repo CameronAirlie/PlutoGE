@@ -1841,13 +1841,13 @@ namespace PlutoGE::ui
         m_vulkanStatus = m_rhiRenderService->GetVulkanStatus();
         m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
         if (!m_useRhiPreview)
-            m_rhiViewportTexture = 0;
+            m_rhiViewportTexture = {};
     }
 
     void ViewportPanel::ShutdownRhiPreview()
     {
         ReleaseRegisteredTexture();
-        m_rhiViewportTexture = 0;
+        m_rhiViewportTexture = {};
         m_activeRhiVulkan = false;
         m_rhiSceneCommandCount = 0;
         m_rhiDrawCount = 0;
@@ -1858,6 +1858,7 @@ namespace PlutoGE::ui
         if (m_registeredTexture.IsValid())
             EditorShell::GetInstance().GetPanelManager().UnregisterTexture(m_registeredTexture);
         m_registeredTexture = {};
+        m_registeredRhiTexture = {};
         m_registeredNativeTexture = 0;
     }
 
@@ -1931,23 +1932,44 @@ namespace PlutoGE::ui
         }
 
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        const std::uint64_t displayedTexture = (m_useRhiPreview || requiresRhiViewport)
-                                                       ? m_rhiViewportTexture
-                                                       : m_renderTarget->GetColorTextureID();
-        if (displayedTexture != m_registeredNativeTexture)
+        const bool displayRhiTexture = m_useRhiPreview || requiresRhiViewport;
+        const auto *rhiRenderTarget = displayRhiTexture ? GetSceneRenderTarget() : nullptr;
+        const std::uint32_t rhiTextureWidth = rhiRenderTarget
+                                                  ? static_cast<std::uint32_t>(std::max(rhiRenderTarget->GetWidth(), 0))
+                                                  : 0;
+        const std::uint32_t rhiTextureHeight = rhiRenderTarget
+                                                   ? static_cast<std::uint32_t>(std::max(rhiRenderTarget->GetHeight(), 0))
+                                                   : 0;
+        const std::uint64_t displayedNativeTexture = displayRhiTexture ? 0 : m_renderTarget->GetColorTextureID();
+        const bool registeredTextureChanged = displayedNativeTexture != m_registeredNativeTexture ||
+                                              (displayRhiTexture && m_rhiViewportTexture != m_registeredRhiTexture);
+        if (registeredTextureChanged)
         {
             ReleaseRegisteredTexture();
-            m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(
-                {.graphicsApi = render::rhi::GraphicsApi::OpenGL, .nativeHandle = displayedTexture});
-            m_registeredNativeTexture = displayedTexture;
+            const EditorTextureDescriptor descriptor = displayRhiTexture
+                ? EditorTextureDescriptor{.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
+                                          .texture = m_rhiViewportTexture,
+                                          .width = rhiTextureWidth,
+                                          .height = rhiTextureHeight}
+                : EditorTextureDescriptor{.nativeOpenGlTexture = displayedNativeTexture};
+            m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(descriptor);
+            m_registeredRhiTexture = displayRhiTexture ? m_rhiViewportTexture : render::rhi::TextureHandle{};
+            m_registeredNativeTexture = displayedNativeTexture;
         }
+        if (displayRhiTexture && m_registeredTexture.IsValid())
+            EditorShell::GetInstance().GetPanelManager().UpdateTexture(
+                m_registeredTexture,
+                {.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
+                 .texture = m_rhiViewportTexture,
+                 .width = rhiTextureWidth,
+                 .height = rhiTextureHeight});
         const auto imguiTexture = EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_registeredTexture);
         ImTextureID texId = static_cast<ImTextureID>(imguiTexture);
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
-        const bool displayingVulkanReadback = m_useRhiPreview && m_activeRhiVulkan && m_rhiViewportTexture != 0;
+        const bool displayingVulkan = m_useRhiPreview && m_activeRhiVulkan && m_rhiViewportTexture.IsValid();
         ImGui::Image(texId, imageSize,
-                     displayingVulkanReadback ? ImVec2(0, 0) : ImVec2(0, 1),
-                     displayingVulkanReadback ? ImVec2(1, 1) : ImVec2(1, 0));
+                     displayingVulkan ? ImVec2(0, 0) : ImVec2(0, 1),
+                     displayingVulkan ? ImVec2(1, 1) : ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
         if (m_useRhiPreview)
@@ -1955,7 +1977,7 @@ namespace PlutoGE::ui
             const std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
                                          " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
                                          " | draws " + std::to_string(m_rhiDrawCount) +
-                                         (m_activeRhiVulkan ? " | buffered readback" : "");
+                                         (m_activeRhiVulkan ? " | compositor import" : "");
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
                 IM_COL32(120, 220, 255, 255), rhiLabel.c_str());
@@ -2191,7 +2213,7 @@ namespace PlutoGE::ui
                 // and made OpenGL look like a fallback rather than a peer RHI.
                 m_useRhiPreview = m_rhiRenderService && m_rhiRenderService->IsInitialized();
                 ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
-                                    m_activeRhiVulkan ? " (readback bridge)" : "");
+                                    m_activeRhiVulkan ? " (editor compositor import)" : "");
                 ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
                 ImGui::TextDisabled("%s", m_vulkanStatus.c_str());
                 if (ImGui::IsItemHovered())
@@ -3808,6 +3830,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData,
                                        std::span<const render::RenderCommand> commands,
+                                       std::span<const render::RenderCommand> shadowCommands,
                                        std::span<render::IPostProcessEffect *const> postProcessEffects)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
@@ -3820,14 +3843,14 @@ namespace PlutoGE::ui
 
         if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
                                         static_cast<std::uint32_t>(target->GetHeight()),
-                                        cameraData, commands, postProcessEffects,
+                                        cameraData, commands, shadowCommands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene()))
         {
             // A Vulkan project must never silently display the legacy OpenGL
             // scene as if it came from the selected backend. Keep the RHI path
             // active so a transient failure can recover on the next frame.
             m_useRhiPreview = requiresRhiViewport;
-            m_rhiViewportTexture = 0;
+            m_rhiViewportTexture = {};
             return;
         }
         m_rhiViewportTexture = m_rhiRenderService->GetViewportTexture();

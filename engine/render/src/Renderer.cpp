@@ -59,8 +59,7 @@ namespace PlutoGE::render
         bool IsShadowCasterCommand(const RenderCommand &command)
         {
             return command.mesh && command.material && command.castsShadow &&
-                   command.material->GetConfig().castsShadow &&
-                   command.material->GetConfig().alphaMode != AlphaMode::Blend;
+                   command.material->GetConfig().castsShadow;
         }
 
         bool ShadowTransformsEqual(const glm::mat4 &a, const glm::mat4 &b,
@@ -1353,8 +1352,7 @@ namespace PlutoGE::render
         // a separately camera-culled list for the geometry passes.
         return command.castsShadow &&
                command.material &&
-               command.material->GetConfig().castsShadow &&
-               command.material->GetConfig().alphaMode != AlphaMode::Blend;
+               command.material->GetConfig().castsShadow;
     }
 
     bool Renderer::CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b)

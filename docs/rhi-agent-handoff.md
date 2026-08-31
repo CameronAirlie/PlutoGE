@@ -109,7 +109,7 @@ The Debug editor executable currently fails to link because the build combines r
 
 ### 2. Extract editor rendering ownership
 
-`ViewportPanel` currently owns the RHI device, `BasicRenderer`, mesh cache, material texture caches, and the Vulkan/OpenGL readback bridge. This is temporary and should not accumulate more responsibilities.
+`EditorSceneRenderService` owns the selected RHI device, scene renderer, and uploaded-asset caches. `ViewportPanel` receives only an RHI texture reference and passes it to the editor compositor; it does not own or translate backend-native resources.
 
 Introduce an editor-owned render service above panels with:
 
@@ -156,8 +156,8 @@ Once scene rendering is sufficiently useful:
 1. Create the GLFW window with `GLFW_NO_API` for Vulkan projects.
 2. Implement Vulkan surface, present queue, swapchain recreation, and frames in flight.
 3. Add an ImGui backend abstraction and Vulkan implementation.
-4. Register the Vulkan viewport image directly with ImGui.
-5. Remove CPU readback and OpenGL upload from the Vulkan viewport path.
+4. Implement the Vulkan editor compositor and register Vulkan viewport images directly with ImGui.
+5. Keep compositor registration device/API checked so cross-API fallbacks cannot be reintroduced.
 6. Confine remaining OpenGL code to `rhi/opengl` until parity is proven.
 
 ## Known missing rendering features
@@ -170,7 +170,7 @@ Once scene rendering is sufficiently useful:
 - Post-processing parity.
 - GPU skinning/animation.
 - Native Vulkan editor swapchain and ImGui rendering.
-- GPU-native viewport sharing; current Vulkan path performs synchronous CPU readback.
+- Vulkan ImGui compositor support; the viewport service now exposes a native RHI image and deliberately rejects cross-API registration.
 
 ## Engineering constraints
 

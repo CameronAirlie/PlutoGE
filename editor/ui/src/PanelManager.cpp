@@ -304,6 +304,12 @@ namespace PlutoGE::ui
         return m_compositor ? m_compositor->RegisterTexture(descriptor) : EditorTextureHandle{};
     }
 
+    void PanelManager::UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor)
+    {
+        if (m_compositor)
+            m_compositor->UpdateTexture(texture, descriptor);
+    }
+
     void PanelManager::UnregisterTexture(EditorTextureHandle texture)
     {
         if (m_compositor)

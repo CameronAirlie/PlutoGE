@@ -19,8 +19,13 @@ namespace PlutoGE::ui
 
     struct EditorTextureDescriptor
     {
-        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
-        std::uint64_t nativeHandle = 0;
+        render::rhi::IRenderDevice *device = nullptr;
+        render::rhi::TextureHandle texture;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        // Transitional input for editor-owned legacy OpenGL render targets.
+        // RHI viewport images always use device + texture above.
+        std::uint64_t nativeOpenGlTexture = 0;
     };
 
     class IEditorCompositor
@@ -35,6 +40,7 @@ namespace PlutoGE::ui
         virtual void RenderDrawData() = 0;
         virtual void RenderPlatformWindows() = 0;
         [[nodiscard]] virtual EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) = 0;
+        virtual void UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor) = 0;
         virtual void UnregisterTexture(EditorTextureHandle texture) = 0;
         [[nodiscard]] virtual std::uint64_t GetImGuiTextureId(EditorTextureHandle texture) const noexcept = 0;
         [[nodiscard]] virtual render::rhi::GraphicsApi GetGraphicsApi() const noexcept = 0;

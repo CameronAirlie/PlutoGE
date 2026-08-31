@@ -55,6 +55,7 @@ namespace PlutoGE::ui
         void RenderFrame(scene::CameraComponent &cameraComponent);
         void RenderRhiFrame(const render::CameraData &cameraData,
                             std::span<const render::RenderCommand> commands,
+                            std::span<const render::RenderCommand> shadowCommands,
                             std::span<render::IPostProcessEffect *const> postProcessEffects);
         void Shutdown() override;
         bool ShouldRenderFrame() const;
@@ -105,7 +106,8 @@ namespace PlutoGE::ui
         render::RenderTarget *m_scaledRenderTarget = nullptr;
         std::unique_ptr<render::SpatialUpscaler> m_upscaler;
         EditorSceneRenderService *m_rhiRenderService = nullptr;
-        std::uint64_t m_rhiViewportTexture = 0;
+        render::rhi::TextureHandle m_rhiViewportTexture;
+        render::rhi::TextureHandle m_registeredRhiTexture;
         std::uint64_t m_registeredNativeTexture = 0;
         EditorTextureHandle m_registeredTexture;
         bool m_activeRhiVulkan = false;

@@ -44,7 +44,7 @@ namespace PlutoGE::render
         if (!m_sceneRenderer || !m_swapchain)
             return false;
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
-                                     cameraData, lighting, commands, {}, texturePixelReader))
+                                     cameraData, lighting, commands, commands, {}, texturePixelReader))
             return false;
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }

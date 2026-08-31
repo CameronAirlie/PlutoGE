@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <algorithm>
+#include <cmath>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -28,8 +29,10 @@ namespace PlutoGE::render
             std::uint32_t roughnessChannel = 0;
             std::uint32_t flipNormalY = 0;
             std::uint32_t padding = 0;
+            glm::vec4 subsurfaceColorStrength{1.0f, 0.35f, 0.2f, 0.0f};
+            glm::vec4 subsurfaceRadiusPadding{1.0f, 0.0f, 0.0f, 0.0f};
         };
-        static_assert(sizeof(BasicMaterialParameters) == 80);
+        static_assert(sizeof(BasicMaterialParameters) == 112);
 
         struct alignas(16) BasicFrameParameters
         {
@@ -37,14 +40,20 @@ namespace PlutoGE::render
             glm::vec4 cameraPositionAmbient{0.0f, 0.0f, 0.0f, 0.3f};
             glm::vec4 directionalDirectionIntensity{0.4f, -0.8f, 0.3f, 1.0f};
             glm::vec4 directionalColor{1.0f};
-            glm::mat4 lightViewProjection{1.0f};
+            std::array<glm::mat4, 4> shadowMatrices{
+                glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
             std::uint32_t shadowsEnabled = 0;
             std::uint32_t shadowFlipY = 0;
             float shadowDepthScale = 1.0f;
             float shadowDepthBias = 0.0f;
+            std::array<glm::vec4, 4> shadowInverseResolutions{};
+            glm::vec4 shadowCascadeSplits{0.0f};
+            glm::vec4 shadowCascadeParameters{0.0f}; // count, blend distance, softness, padding
+            glm::vec4 shadowFilterParameters{0.0f}; // enabled, radius, render scale, depth scale
+            glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
             glm::mat4 previousViewProjection{1.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 256);
+        static_assert(sizeof(BasicFrameParameters) == 576);
 
         struct alignas(16) BasicObjectParameters { glm::mat4 model{1.0f}; glm::mat4 previousModel{1.0f}; };
 
@@ -71,6 +80,29 @@ namespace PlutoGE::render
         std::span<const std::byte> Bytes(std::span<const T, Extent> values)
         {
             return std::as_bytes(values);
+        }
+
+        bool IntersectsShadowFrustum(const BasicDraw &draw, const glm::mat4 &viewProjection)
+        {
+            if (draw.shadowBoundsRadius < 0.0f || !std::isfinite(draw.shadowBoundsRadius))
+                return true;
+            const auto row = [&](int index)
+            {
+                return glm::vec4(viewProjection[0][index], viewProjection[1][index],
+                                 viewProjection[2][index], viewProjection[3][index]);
+            };
+            const glm::vec4 row0 = row(0), row1 = row(1), row2 = row(2), row3 = row(3);
+            const std::array planes{row3 + row0, row3 - row0, row3 + row1,
+                                    row3 - row1, row2, row3 - row2};
+            for (const auto &plane : planes)
+            {
+                const float normalLength = glm::length(glm::vec3(plane));
+                if (normalLength > 0.000001f &&
+                    glm::dot(glm::vec3(plane), draw.shadowBoundsCenter) + plane.w <
+                        -draw.shadowBoundsRadius * normalLength)
+                    return false;
+            }
+            return true;
         }
     }
 
@@ -101,6 +133,9 @@ namespace PlutoGE::render
                 {11, 1, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {12, 1, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {13, 1, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {14, 1, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {15, 1, 7, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {16, 1, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
             };
             descriptor.vertexLayout = {
@@ -125,7 +160,10 @@ namespace PlutoGE::render
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex}};
             shadowDescriptor.vertexLayout = descriptor.vertexLayout;
-            shadowDescriptor.cullMode = rhi::CullMode::Front;
+            // Scene assets do not yet carry a normalized winding/two-sided
+            // contract into the RHI packet. Front-face culling drops thin and
+            // mirrored casters entirely, so preserve correctness here.
+            shadowDescriptor.cullMode = rhi::CullMode::None;
             // The light projection is a conventional zero-to-one orthographic
             // projection. Do not inherit the main camera's reverse-Z compare.
             shadowDescriptor.depthCompare = rhi::CompareOperation::Less;
@@ -194,7 +232,9 @@ namespace PlutoGE::render
                 m_bloomPipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(bloomDescriptor));
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
-            m_shadowCameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
+            for (auto &buffer : m_shadowCameraBuffers)
+                buffer = rhi::Buffer(device, device.CreateBuffer(
+                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
             m_postProcessResourcePool = std::make_unique<PostProcessResourcePool>(device);
 
             constexpr std::array<std::uint8_t, 4> neutralBaseColor = {255, 255, 255, 255};
@@ -219,8 +259,9 @@ namespace PlutoGE::render
         for (auto &target : m_postProcessTargets) target.Reset();
         m_colorTarget.Reset();
         m_normalTarget.Reset(); m_materialTarget.Reset(); m_motionTarget.Reset();
-        m_shadowDepthTarget.Reset();
-        m_shadowColorTarget.Reset();
+        for (auto &target : m_shadowDepthTargets) target.Reset();
+        for (auto &target : m_shadowColorTargets) target.Reset();
+        m_shadowResolutions.fill(0);
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
         m_fallbackNormalTexture.Reset();
@@ -228,7 +269,8 @@ namespace PlutoGE::render
         m_objectBuffers.clear();
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
-        m_shadowCameraBuffer.Reset();
+        for (auto &buffer : m_shadowCameraBuffers) buffer.Reset();
+        for (auto &buffers : m_shadowObjectBuffers) buffers.clear();
         m_postProcessBuffers.clear();
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines) pipeline.Reset();
@@ -284,19 +326,36 @@ namespace PlutoGE::render
             {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_postProcessTargets = std::move(newPostTargets);
         m_depthTarget = std::move(newDepth);
-        if (!m_shadowColorTarget || !m_shadowDepthTarget)
-        {
-            m_shadowColorTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {2048, 2048, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment, "Directional shadow values", true}));
-            m_shadowDepthTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {2048, 2048, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "Directional shadow depth"}));
-        }
         m_width = width;
         m_height = height;
         m_hasPreviousFrame = false;
         m_previousModels.clear();
         m_outputColor = m_colorTarget.Get();
         return true;
+    }
+
+    void BasicRenderer::EnsureShadowTargets(const BasicLighting &lighting)
+    {
+        const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
+        for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+        {
+            if (cascade >= cascadeCount)
+                continue;
+            const float scale = std::pow(std::clamp(lighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
+                                         static_cast<float>(cascade));
+            const std::uint32_t resolution = std::clamp(
+                static_cast<std::uint32_t>(std::lround(lighting.shadowResolution * scale)), 256u, 8192u);
+            if (m_shadowColorTargets[cascade] && m_shadowDepthTargets[cascade] &&
+                m_shadowResolutions[cascade] == resolution)
+                continue;
+            m_shadowColorTargets[cascade] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {resolution, resolution, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                 "Directional shadow cascade", true}));
+            m_shadowDepthTargets[cascade] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
+                 "Directional shadow cascade depth"}));
+            m_shadowResolutions[cascade] = resolution;
+        }
     }
 
     void BasicRenderer::Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws)
@@ -306,55 +365,84 @@ namespace PlutoGE::render
 
     void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                                std::span<const BasicDraw> draws,
-                               std::span<const BasicPostProcessEffect> postProcessEffects)
+                               std::span<const BasicPostProcessEffect> postProcessEffects,
+                               std::span<const BasicDraw> shadowDraws)
     {
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
+
+        EnsureShadowTargets(lighting);
+
+        std::array<glm::vec4, 4> inverseShadowResolutions{};
+        for (std::size_t cascade = 0; cascade < inverseShadowResolutions.size(); ++cascade)
+        {
+            const float inverseResolution = 1.0f / static_cast<float>(std::max(m_shadowResolutions[cascade], 1u));
+            inverseShadowResolutions[cascade] = glm::vec4(inverseResolution, inverseResolution, 0.0f, 0.0f);
+        }
 
         const BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
             glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
             glm::vec4(lighting.directionalColor, 1.0f),
-            lighting.lightViewProjection,
+            lighting.shadowMatrices,
             lighting.shadowsEnabled ? 1u : 0u,
             lighting.shadowFlipY ? 1u : 0u,
             lighting.shadowDepthScale,
             lighting.shadowDepthBias,
+            inverseShadowResolutions,
+            lighting.shadowCascadeSplits,
+            glm::vec4(static_cast<float>(std::clamp(lighting.shadowCascadeCount, 1u, 4u)),
+                      std::max(lighting.shadowCascadeBlendDistance, 0.0f),
+                      std::max(lighting.shadowSoftness, 0.0f), 0.0f),
+            glm::vec4(lighting.shadowFilterEnabled ? 1.0f : 0.0f,
+                      static_cast<float>(std::clamp(lighting.shadowFilterRadius, 0u, 4u)),
+                      std::clamp(lighting.shadowFilterRenderScale, 0.25f, 1.0f),
+                      std::max(lighting.shadowFilterDepthScale, 0.0f)),
+            glm::vec4(std::max(lighting.shadowFilterMinDepthScale, 0.001f),
+                      std::clamp(lighting.shadowFilterNormalThreshold, -1.0f, 1.0f),
+                      std::max(lighting.shadowFilterNormalSoftness, 0.001f), 0.0f),
             m_hasPreviousFrame ? m_previousViewProjection : viewProjection,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         auto &commands = m_device->GetImmediateContext();
+        if (shadowDraws.empty()) shadowDraws = draws;
         if (lighting.shadowsEnabled)
         {
-            m_device->UpdateBuffer(m_shadowCameraBuffer.Get(), 0, Bytes(lighting.lightViewProjection));
-            rhi::RenderingInfo shadowInfo;
-            shadowInfo.colorAttachments = {m_shadowColorTarget.Get()};
-            shadowInfo.depthAttachment = m_shadowDepthTarget.Get();
-            shadowInfo.width = 2048;
-            shadowInfo.height = 2048;
-            shadowInfo.clearColorValue[0] = 1.0f;
-            shadowInfo.clearDepthValue = 1.0f;
-            commands.BeginRendering(shadowInfo);
-            commands.BindPipeline(m_shadowPipeline.Get());
-            commands.BindUniformBuffer(0, m_shadowCameraBuffer.Get());
-            std::size_t shadowDrawIndex = 0;
-            for (const auto &draw : draws)
+            const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
+            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
             {
-                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow) continue;
-                if (shadowDrawIndex == m_objectBuffers.size())
-                    m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                        {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
-                auto &objectBuffer = m_objectBuffers[shadowDrawIndex++];
-                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
-                commands.BindUniformBuffer(16, objectBuffer.Get());
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
-                const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
-                if (count) commands.DrawIndexed(count, draw.firstIndex);
+                m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
+                rhi::RenderingInfo shadowInfo;
+                shadowInfo.colorAttachments = {m_shadowColorTargets[cascade].Get()};
+                shadowInfo.depthAttachment = m_shadowDepthTargets[cascade].Get();
+                shadowInfo.width = m_shadowResolutions[cascade];
+                shadowInfo.height = m_shadowResolutions[cascade];
+                shadowInfo.clearColorValue[0] = 1.0f;
+                shadowInfo.clearDepthValue = 1.0f;
+                commands.BeginRendering(shadowInfo);
+                commands.BindPipeline(m_shadowPipeline.Get());
+                commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
+                std::size_t shadowDrawIndex = 0;
+                auto &shadowObjectBuffers = m_shadowObjectBuffers[cascade];
+                for (const auto &draw : shadowDraws)
+                {
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
+                        !IntersectsShadowFrustum(draw, lighting.shadowMatrices[cascade])) continue;
+                    if (shadowDrawIndex == shadowObjectBuffers.size())
+                        shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
+                    auto &objectBuffer = shadowObjectBuffers[shadowDrawIndex++];
+                    m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
+                    commands.BindUniformBuffer(16, objectBuffer.Get());
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                    const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
+                    if (count) commands.DrawIndexed(count, draw.firstIndex);
+                }
+                commands.EndRendering();
             }
-            commands.EndRendering();
         }
         rhi::RenderingInfo renderingInfo;
         renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(), m_motionTarget.Get()};
@@ -394,7 +482,10 @@ namespace PlutoGE::render
                 draw.metallicTexture ? 1u : 0u,
                 draw.roughnessTexture ? 1u : 0u,
                 draw.metallicChannel, draw.roughnessChannel,
-                draw.flipNormalY ? 1u : 0u};
+                draw.flipNormalY ? 1u : 0u, 0u,
+                glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
+                          std::clamp(draw.subsurface, 0.0f, 1.0f)),
+                glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f)};
             auto &materialBuffer = m_materialBuffers[drawIndex - 1];
             m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
             commands.BindUniformBuffer(8, materialBuffer.Get());
@@ -402,7 +493,10 @@ namespace PlutoGE::render
             commands.BindTexture(10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
             commands.BindTexture(11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
             commands.BindTexture(12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(13, m_shadowColorTarget.Get(), m_fallbackSampler.Get());
+            commands.BindTexture(13, m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
+            commands.BindTexture(14, m_shadowColorTargets[1] ? m_shadowColorTargets[1].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
+            commands.BindTexture(15, m_shadowColorTargets[2] ? m_shadowColorTargets[2].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
+            commands.BindTexture(16, m_shadowColorTargets[3] ? m_shadowColorTargets[3].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount

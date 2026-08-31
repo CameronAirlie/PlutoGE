@@ -3170,6 +3170,7 @@ namespace PlutoGE::ui
                                          viewportPanel->IsGridVisible(),
                                          true);
                 viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommands(),
+                                              renderer.GetSceneRenderCommands(),
                                               editorPostProcessEffects);
                 render::CameraData renderedEditorCameraData{};
                 if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))
@@ -3666,7 +3667,7 @@ namespace PlutoGE::ui
                     }
                     if (projectGraphicsApi == render::rhi::GraphicsApi::Vulkan)
                     {
-                        ImGui::TextDisabled("The project backend is authoritative. The editor shell still composites Vulkan scene output through OpenGL.");
+                        ImGui::TextDisabled("The project backend is authoritative; editor presentation is handled by the active compositor backend.");
                     }
                     const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
                                                           ? "Spatial"

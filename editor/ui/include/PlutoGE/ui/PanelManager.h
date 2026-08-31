@@ -71,6 +71,7 @@ namespace PlutoGE::ui
 
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
         [[nodiscard]] EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor);
+        void UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor);
         void UnregisterTexture(EditorTextureHandle texture);
         [[nodiscard]] std::uint64_t GetImGuiTextureId(EditorTextureHandle texture) const noexcept;
 

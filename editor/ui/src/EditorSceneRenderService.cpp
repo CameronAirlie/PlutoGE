@@ -81,6 +81,7 @@ namespace PlutoGE::ui
 
         render::BasicLighting lighting;
         lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+        lighting.view = cameraData.view;
         if (scene)
             for (const auto *light : scene->GetLights())
                 if (light && light->type == scene::LightType::Directional)

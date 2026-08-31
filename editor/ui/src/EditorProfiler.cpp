@@ -168,6 +168,18 @@ namespace PlutoGE::ui
                    << frameTimingStats.gameViewportHeight << "\n";
         }
         report << "Rendered viewport pixels: " << frameTimingStats.renderedViewportPixels << "\n";
+        const auto &rhi = frameTimingStats.rhiTimingStats;
+        report << "RHI GPU frame: " << (rhi.hasGpuResult ? std::to_string(rhi.frameGpuMs) + " ms" : "pending") << "\n";
+        report << "RHI frame fence wait: " << rhi.frameFenceWaitMs << " ms\n";
+        report << "RHI descriptor allocation calls: " << rhi.descriptorAllocationCalls << "\n";
+        report << "RHI descriptor sets allocated: " << rhi.descriptorSetsAllocated << "\n";
+        report << "RHI descriptor writes: " << rhi.descriptorWrites << "\n";
+        report << "RHI descriptor preparation CPU: " << rhi.descriptorCpuMs << " ms\n";
+        report << "RHI uniform upload: " << rhi.uniformBytesUploaded << " bytes in "
+               << rhi.uniformUploadCpuMs << " ms CPU\n";
+        for (const auto &scope : rhi.gpuScopes)
+            report << scope.name << ": " << scope.milliseconds << " ms GPU, "
+                   << scope.cpuMilliseconds << " ms CPU recording\n";
         report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";
         report << "Editor UI total: " << frameTimingStats.editorUiMs << " ms\n";
         report << "ImGui frame begin: " << timingStats.beginPanelUpdateMs << " ms\n";

@@ -191,6 +191,20 @@ namespace PlutoGE::ui
         }
         ImGui::Text("Rendered viewport pixels: %llu",
                     static_cast<unsigned long long>(frameTimingStats.renderedViewportPixels));
+        const auto &rhi = frameTimingStats.rhiTimingStats;
+        if (rhi.hasGpuResult) ImGui::Text("RHI GPU frame: %.2f ms", rhi.frameGpuMs);
+        else ImGui::TextUnformatted("RHI GPU frame: pending");
+        ImGui::Text("RHI frame fence wait: %.2f ms", rhi.frameFenceWaitMs);
+        ImGui::Text("RHI descriptors: %llu allocation calls, %llu sets, %llu writes",
+                    static_cast<unsigned long long>(rhi.descriptorAllocationCalls),
+                    static_cast<unsigned long long>(rhi.descriptorSetsAllocated),
+                    static_cast<unsigned long long>(rhi.descriptorWrites));
+        ImGui::Text("RHI descriptor preparation CPU: %.2f ms", rhi.descriptorCpuMs);
+        ImGui::Text("RHI uniform upload: %llu bytes, %.2f ms CPU",
+                    static_cast<unsigned long long>(rhi.uniformBytesUploaded), rhi.uniformUploadCpuMs);
+        for (const auto &scope : rhi.gpuScopes)
+            ImGui::Text("%s: %.2f ms GPU, %.2f ms CPU recording", scope.name.c_str(),
+                        scope.milliseconds, scope.cpuMilliseconds);
         ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);
         ImGui::Text("Editor UI total: %.2f ms", frameTimingStats.editorUiMs);
         ImGui::Text("ImGui frame begin: %.2f ms", timingStats.beginPanelUpdateMs);

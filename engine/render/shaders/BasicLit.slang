@@ -41,6 +41,7 @@ struct FragmentOutput
     float4 shadowCascadeParameters;
     float4 shadowFilterParameters;
     float4 shadowFilterEdgeParameters;
+    column_major float4x4 view;
     column_major float4x4 previousViewProjection;
 };
 
@@ -95,7 +96,9 @@ float evaluateShadowCascade(int cascade, float3 worldPosition)
     if (shadowFlipY != 0) shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
-    const float2 texel = shadowInverseResolutions[cascade].xy * shadowCascadeParameters.z;
+    const float configuredFilterRadius = shadowFilterParameters.x > 0.5 ? shadowFilterParameters.y : 0.0;
+    const float2 texel = shadowInverseResolutions[cascade].xy *
+                         max(shadowCascadeParameters.z, configuredFilterRadius);
     float visibleSamples = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
@@ -114,41 +117,6 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition)
         return 1.0;
     return shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <=
            sampleShadowCascade(cascade, shadowUv) ? 1.0 : 0.0;
-}
-
-float filterShadowScreenSpace(int cascade, float3 worldPosition, float3 normal, float centerVisibility)
-{
-    const int radius = clamp((int)shadowFilterParameters.y, 0, 4);
-    if (shadowFilterParameters.x < 0.5 || radius == 0) return centerVisibility;
-    const float3 positionDx = ddx(worldPosition) / shadowFilterParameters.z;
-    const float3 positionDy = ddy(worldPosition) / shadowFilterParameters.z;
-    const float3 normalDx = ddx(normal) / shadowFilterParameters.z;
-    const float3 normalDy = ddy(normal) / shadowFilterParameters.z;
-    const float centerDepth = length(worldPosition - cameraPositionAmbient.xyz);
-    const float depthThreshold = max(centerDepth * shadowFilterParameters.w,
-                                     shadowFilterEdgeParameters.x);
-    float visibility = centerVisibility;
-    float totalWeight = 1.0;
-    // A fixed 3x3 footprint bounds filtering cost independently of the
-    // configured radius. Radius controls tap spacing, not sample count.
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-        {
-            if (x == 0 && y == 0) continue;
-            const float sampleX = x * radius;
-            const float sampleY = y * radius;
-            const float3 samplePosition = worldPosition + positionDx * sampleX + positionDy * sampleY;
-            const float3 sampleNormal = normalize(normal + normalDx * sampleX + normalDy * sampleY);
-            const float depthDelta = abs(length(samplePosition - cameraPositionAmbient.xyz) - centerDepth);
-            const float depthWeight = saturate(1.0 - depthDelta / depthThreshold);
-            const float normalWeight = smoothstep(shadowFilterEdgeParameters.y - shadowFilterEdgeParameters.z,
-                                                  shadowFilterEdgeParameters.y + shadowFilterEdgeParameters.z,
-                                                  dot(normal, sampleNormal));
-            const float weight = depthWeight * normalWeight;
-            visibility += evaluateShadowCascadeTap(cascade, samplePosition) * weight;
-            totalWeight += weight;
-        }
-    return visibility / max(totalWeight, 0.0001);
 }
 
 [shader("vertex")]
@@ -220,7 +188,7 @@ FragmentOutput fragmentMain(VertexOutput input)
     float shadowVisibility = 1.0;
     if (shadowsEnabled != 0)
     {
-        const float receiverDistance = length(input.worldPosition - cameraPositionAmbient.xyz);
+        const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
         const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
         int cascade = cascadeCount - 1;
         for (int index = 0; index < cascadeCount; ++index)
@@ -228,7 +196,6 @@ FragmentOutput fragmentMain(VertexOutput input)
             if (receiverDistance <= shadowCascadeSplits[index]) { cascade = index; break; }
         }
         shadowVisibility = evaluateShadowCascade(cascade, input.worldPosition);
-        shadowVisibility = filterShadowScreenSpace(cascade, input.worldPosition, normal, shadowVisibility);
         if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
         {
             const float blend = saturate((receiverDistance -

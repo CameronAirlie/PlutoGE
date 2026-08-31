@@ -18,7 +18,8 @@ namespace PlutoGE::render
                                                const BasicLighting &lighting,
                                                float cascadeNear,
                                                float shadowDistance,
-                                               float casterDistance)
+                                               float casterDistance,
+                                               std::uint32_t shadowResolution)
         {
             const glm::mat4 inverseView = glm::inverse(camera.view);
             const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
@@ -27,8 +28,13 @@ namespace PlutoGE::render
             const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
             const float nearDistance = std::max(cascadeNear, camera.nearPlane);
             const float farDistance = std::max(shadowDistance, nearDistance + 0.01f);
-            const float inverseProjectionX = 1.0f / std::max(std::abs(camera.projection[0][0]), 0.0001f);
-            const float inverseProjectionY = 1.0f / std::max(std::abs(camera.projection[1][1]), 0.0001f);
+            const float projectionX = std::max(std::abs(camera.projection[0][0]), 0.0001f);
+            const float projectionY = std::max(std::abs(camera.projection[1][1]), 0.0001f);
+            const float aspect = projectionY / projectionX;
+            // Match the legacy path: narrow/FOV-animated cameras use a stable
+            // conservative 90-degree fit, while wider cameras keep their fit.
+            const float inverseProjectionY = 1.0f / std::min(projectionY, 1.0f);
+            const float inverseProjectionX = inverseProjectionY * aspect;
 
             std::array<glm::vec3, 8> corners{};
             std::size_t cornerIndex = 0;
@@ -46,6 +52,10 @@ namespace PlutoGE::render
             glm::vec3 center(0.0f);
             for (const auto &corner : corners) center += corner;
             center /= static_cast<float>(corners.size());
+            float radius = 0.0f;
+            for (const auto &corner : corners)
+                radius = std::max(radius, glm::length(corner - center));
+            radius = std::ceil(std::max(radius, 0.1f) * 16.0f) / 16.0f;
             glm::vec3 lightDirection = lighting.directionalDirection;
             if (glm::dot(lightDirection, lightDirection) < 0.000001f)
                 lightDirection = {0.4f, -0.8f, 0.3f};
@@ -53,29 +63,24 @@ namespace PlutoGE::render
             const glm::vec3 lightUp = std::abs(lightDirection.y) > 0.98f
                                           ? glm::vec3(0.0f, 0.0f, 1.0f)
                                           : glm::vec3(0.0f, 1.0f, 0.0f);
-            const float lightOffset = std::max(casterDistance, farDistance);
+            const float lightOffset = std::max(casterDistance, farDistance) + radius + 1.0f;
             const glm::mat4 lightView = glm::lookAtRH(center - lightDirection * lightOffset, center, lightUp);
-
-            glm::vec3 minimum(std::numeric_limits<float>::max());
-            glm::vec3 maximum(std::numeric_limits<float>::lowest());
-            for (const auto &corner : corners)
-            {
-                const glm::vec3 lightSpaceCorner = glm::vec3(lightView * glm::vec4(corner, 1.0f));
-                minimum = glm::min(minimum, lightSpaceCorner);
-                maximum = glm::max(maximum, lightSpaceCorner);
-            }
-            // Include configured off-frustum casters toward the light and leave
-            // a small receiver margin to avoid clipping grazing geometry.
-            minimum.z -= lightOffset;
-            maximum.z += farDistance * 0.05f;
-            const glm::vec2 extent = glm::max(glm::vec2(maximum - minimum), glm::vec2(0.01f));
-            const glm::vec2 texelSize = extent / static_cast<float>(std::max(lighting.shadowResolution, 1u));
-            glm::vec2 lightSpaceCenter = (glm::vec2(minimum) + glm::vec2(maximum)) * 0.5f;
-            lightSpaceCenter = glm::round(lightSpaceCenter / texelSize) * texelSize;
-            minimum.x = lightSpaceCenter.x - extent.x * 0.5f;
-            maximum.x = lightSpaceCenter.x + extent.x * 0.5f;
-            minimum.y = lightSpaceCenter.y - extent.y * 0.5f;
-            maximum.y = lightSpaceCenter.y + extent.y * 0.5f;
+            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(center, 1.0f));
+            const float guard = (std::max(lighting.shadowSoftness, 1.0f) + 1.0f) *
+                                (radius * 2.0f / std::max(shadowResolution, 1u)) + 0.01f;
+            glm::vec3 minimum = lightSpaceCenter - glm::vec3(radius + guard, radius + guard, radius);
+            glm::vec3 maximum = lightSpaceCenter + glm::vec3(radius + guard, radius + guard, radius);
+            minimum.z -= std::max(casterDistance, farDistance);
+            const glm::vec2 extent(maximum.x - minimum.x, maximum.y - minimum.y);
+            const glm::vec2 texelSize = extent / static_cast<float>(std::max(shadowResolution, 1u));
+            // Anchor the grid to absolute world zero, not the moving cascade
+            // centre. This is the key phase-stability rule used by GLSL CSM.
+            const glm::vec2 worldAnchor = glm::vec2(lightView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            const glm::vec2 snappedMinimum = worldAnchor -
+                glm::round((worldAnchor - glm::vec2(minimum)) / texelSize) * texelSize;
+            const glm::vec2 snapOffset = snappedMinimum - glm::vec2(minimum);
+            minimum.x += snapOffset.x; maximum.x += snapOffset.x;
+            minimum.y += snapOffset.y; maximum.y += snapOffset.y;
             return glm::orthoRH_ZO(minimum.x, maximum.x, minimum.y, maximum.y,
                                    std::max(-maximum.z, 0.01f), std::max(-minimum.z, 0.02f)) * lightView;
         }
@@ -260,7 +265,11 @@ namespace PlutoGE::render
                                                        : effectiveLighting.shadowCascadeSplits[cascade - 1];
                 effectiveLighting.shadowMatrices[cascade] = BuildDirectionalShadowMatrix(
                     cameraData, effectiveLighting, cascadeNear,
-                    effectiveLighting.shadowCascadeSplits[cascade], casterDistance);
+                    effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
+                    std::clamp(static_cast<std::uint32_t>(std::lround(
+                        effectiveLighting.shadowResolution * std::pow(
+                            std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
+                            static_cast<float>(cascade)))), 256u, 8192u));
             }
             if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
                 effectiveLighting.shadowFlipY = true;

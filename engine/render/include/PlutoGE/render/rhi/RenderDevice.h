@@ -6,10 +6,27 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace PlutoGE::render::rhi
 {
+    struct RenderDeviceTimingStats
+    {
+        struct GpuScope { std::string name; float milliseconds = 0.0f; float cpuMilliseconds = 0.0f; };
+        float frameGpuMs = 0.0f;
+        float frameFenceWaitMs = 0.0f;
+        std::uint64_t descriptorAllocationCalls = 0;
+        std::uint64_t descriptorSetsAllocated = 0;
+        std::uint64_t descriptorWrites = 0;
+        std::uint64_t uniformBytesUploaded = 0;
+        float descriptorCpuMs = 0.0f;
+        float uniformUploadCpuMs = 0.0f;
+        std::vector<GpuScope> gpuScopes;
+        bool hasGpuResult = false;
+    };
+
     struct RenderingInfo
     {
         std::vector<TextureHandle> colorAttachments;
@@ -26,6 +43,9 @@ namespace PlutoGE::render::rhi
     {
     public:
         virtual ~ICommandContext() = default;
+        virtual void BeginFrame() {}
+        virtual void BeginGpuScope(std::string_view) {}
+        virtual void EndGpuScope() {}
         virtual void BeginRendering(const RenderingInfo &info) = 0;
         virtual void EndRendering() = 0;
         virtual void SetViewport(const Viewport &viewport) = 0;
@@ -37,6 +57,9 @@ namespace PlutoGE::render::rhi
         virtual void BindTexture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) = 0;
         virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
+        // Submit all rendering recorded since the previous call. Explicit APIs
+        // use this as the frame boundary; immediate APIs may make it a no-op.
+        virtual void Submit() {}
     };
 
     struct SwapchainDescriptor
@@ -74,6 +97,7 @@ namespace PlutoGE::render::rhi
         virtual void DestroySampler(SamplerHandle sampler) = 0;
         virtual void DestroyPipeline(PipelineHandle pipeline) = 0;
         [[nodiscard]] virtual ICommandContext &GetImmediateContext() = 0;
+        [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats() const { return {}; }
     };
 
     class IShaderCompiler

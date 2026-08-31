@@ -310,6 +310,7 @@ namespace PlutoGE::ui
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
         std::unique_ptr<EditorSceneRenderService> m_editorSceneRenderService;
+        std::unique_ptr<EditorSceneRenderService> m_gameSceneRenderService;
         EditorProfiler m_profiler;
 
         scene::Entity *m_selectedEntity = nullptr;

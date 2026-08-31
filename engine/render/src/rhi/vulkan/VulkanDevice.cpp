@@ -11,7 +11,9 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -88,6 +90,9 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkBuffer buffer = VK_NULL_HANDLE;
             VmaAllocation allocation = VK_NULL_HANDLE;
+            std::vector<std::byte> uniformData;
+            std::array<VkDeviceSize, 3> uniformOffsets{VK_WHOLE_SIZE, VK_WHOLE_SIZE, VK_WHOLE_SIZE};
+            std::array<std::uint64_t, 3> uniformEpochs{};
             std::size_t size = 0;
             BufferUsage usage{};
         };
@@ -109,6 +114,8 @@ namespace PlutoGE::render::rhi::vulkan
             VkPipeline pipeline = VK_NULL_HANDLE;
             VkPipelineLayout layout = VK_NULL_HANDLE;
             std::vector<VkDescriptorSetLayout> setLayouts;
+            std::vector<bool> populatedSets;
+            std::vector<std::vector<GraphicsPipelineDescriptor::ResourceBinding>> bindingsBySet;
             GraphicsPipelineDescriptor descriptor;
         };
 
@@ -147,12 +154,65 @@ namespace PlutoGE::render::rhi::vulkan
         };
         std::array<ReadbackSlot, 3> readbacks;
         std::uint64_t nextReadbackSequence = 1;
+        std::size_t activeFrameIndex = 0;
+        struct UniformArena
+        {
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            void *mapped = nullptr;
+            VkDeviceSize cursor = 0;
+            VkDeviceSize dirtyStart = VK_WHOLE_SIZE;
+            VkDeviceSize dirtyEnd = 0;
+            std::uint64_t epoch = 1;
+        };
+        std::array<UniformArena, 3> uniformArenas;
+        VkDeviceSize uniformAlignment = 256;
+        static constexpr VkDeviceSize UniformArenaSize = 32ull * 1024ull * 1024ull;
         std::string deviceName;
+        float timestampPeriodNs = 1.0f;
+        RenderDeviceTimingStats timingStats;
         detail::HandleRegistry<BufferHandle, BufferResource> buffers;
         detail::HandleRegistry<TextureHandle, TextureResource> textures;
         detail::HandleRegistry<SamplerHandle, SamplerResource> samplers;
         detail::HandleRegistry<PipelineHandle, PipelineResource> pipelines;
         std::unique_ptr<VulkanCommandContext> context;
+
+        void BeginUniformFrame(std::size_t frameIndex)
+        {
+            activeFrameIndex = frameIndex;
+            auto &arena = uniformArenas[frameIndex];
+            arena.cursor = 0;
+            arena.dirtyStart = VK_WHOLE_SIZE;
+            arena.dirtyEnd = 0;
+            ++arena.epoch;
+            if (arena.epoch == 0) arena.epoch = 1;
+        }
+
+        VkDeviceSize EnsureUniformResident(BufferResource &resource)
+        {
+            auto &arena = uniformArenas[activeFrameIndex];
+            if (resource.uniformEpochs[activeFrameIndex] == arena.epoch)
+                return resource.uniformOffsets[activeFrameIndex];
+            const auto aligned = (arena.cursor + uniformAlignment - 1) & ~(uniformAlignment - 1);
+            if (aligned + resource.size > UniformArenaSize)
+                throw std::runtime_error("Vulkan per-frame uniform arena exhausted");
+            std::memcpy(static_cast<std::byte *>(arena.mapped) + aligned,
+                        resource.uniformData.data(), resource.size);
+            arena.dirtyStart = std::min(arena.dirtyStart, aligned);
+            arena.dirtyEnd = std::max(arena.dirtyEnd, aligned + resource.size);
+            arena.cursor = aligned + resource.size;
+            resource.uniformOffsets[activeFrameIndex] = aligned;
+            resource.uniformEpochs[activeFrameIndex] = arena.epoch;
+            timingStats.uniformBytesUploaded += resource.size;
+            return aligned;
+        }
+
+        void FlushUniformArena()
+        {
+            auto &arena = uniformArenas[activeFrameIndex];
+            if (arena.dirtyStart == VK_WHOLE_SIZE || arena.dirtyEnd <= arena.dirtyStart) return;
+            vmaFlushAllocation(allocator, arena.allocation, arena.dirtyStart, arena.dirtyEnd - arena.dirtyStart);
+        }
 
         void Immediate(const auto &record)
         {
@@ -193,7 +253,86 @@ namespace PlutoGE::render::rhi::vulkan
     class VulkanCommandContext final : public ICommandContext
     {
     public:
-        explicit VulkanCommandContext(VulkanDevice::Impl &impl) : m_impl(impl) {}
+        explicit VulkanCommandContext(VulkanDevice::Impl &impl) : m_impl(impl)
+        {
+            for (auto &frame : m_frames)
+            {
+                VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+                pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                pool.queueFamilyIndex = m_impl.queueFamily;
+                Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &frame.commandPool), "vkCreateCommandPool(frame)");
+                VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                command.commandPool = frame.commandPool;
+                command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                command.commandBufferCount = 1;
+                Check(vkAllocateCommandBuffers(m_impl.device, &command, &frame.commandBuffer), "vkAllocateCommandBuffers(frame)");
+                std::array<VkDescriptorPoolSize, 2> sizes{{
+                    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
+                    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
+                VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+                descriptors.maxSets = 32768;
+                descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+                descriptors.pPoolSizes = sizes.data();
+                Check(vkCreateDescriptorPool(m_impl.device, &descriptors, nullptr, &frame.descriptorPool),
+                      "vkCreateDescriptorPool(frame)");
+                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+                Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(frame)");
+                VkQueryPoolCreateInfo queries{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+                queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
+                queries.queryCount = MaxTimestampQueries;
+                Check(vkCreateQueryPool(m_impl.device, &queries, nullptr, &frame.queryPool), "vkCreateQueryPool(frame)");
+            }
+        }
+
+        ~VulkanCommandContext() override
+        {
+            for (auto &frame : m_frames)
+            {
+                if (frame.fence) vkDestroyFence(m_impl.device, frame.fence, nullptr);
+                if (frame.queryPool) vkDestroyQueryPool(m_impl.device, frame.queryPool, nullptr);
+                if (frame.descriptorPool) vkDestroyDescriptorPool(m_impl.device, frame.descriptorPool, nullptr);
+                if (frame.commandPool) vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
+            }
+        }
+
+        void BeginFrame() override
+        {
+            if (m_recording) throw std::logic_error("Vulkan frame is already recording");
+            auto &frame = m_frames[m_frameIndex];
+            const auto waitStart = std::chrono::steady_clock::now();
+            Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(frame)");
+            m_impl.timingStats.frameFenceWaitMs = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - waitStart).count();
+            ResolveTimestamps(frame);
+            m_impl.timingStats.descriptorAllocationCalls = 0;
+            m_impl.timingStats.descriptorSetsAllocated = 0;
+            m_impl.timingStats.descriptorWrites = 0;
+            m_impl.timingStats.uniformBytesUploaded = 0;
+            m_impl.timingStats.descriptorCpuMs = 0.0f;
+            m_impl.timingStats.uniformUploadCpuMs = 0.0f;
+            Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
+            Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(frame)");
+            Check(vkResetDescriptorPool(m_impl.device, frame.descriptorPool, 0), "vkResetDescriptorPool(frame)");
+            m_impl.BeginUniformFrame(m_frameIndex);
+            m_emptyDescriptorSets.clear();
+            m_descriptorSetCache.clear();
+            m_lastDescriptorKeyValid.fill(false);
+            m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_boundDynamicOffsetCounts.fill(0);
+            m_boundPipelineLayout = VK_NULL_HANDLE;
+            m_pipeline = nullptr;
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            Check(vkBeginCommandBuffer(frame.commandBuffer, &begin), "vkBeginCommandBuffer(frame)");
+            vkCmdResetQueryPool(frame.commandBuffer, frame.queryPool, 0, MaxTimestampQueries);
+            vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, 0);
+            frame.nextQuery = 2;
+            frame.scopes.clear();
+            frame.hasTimestamps = false;
+            m_impl.activeFrameIndex = m_frameIndex;
+            m_recording = true;
+        }
 
         void BeginRendering(const RenderingInfo &info) override
         {
@@ -208,16 +347,12 @@ namespace PlutoGE::render::rhi::vulkan
             m_depth = m_impl.textures.Get(info.depthAttachment);
             if ((m_colors.empty() && !m_depth) || (info.depthAttachment && !m_depth))
                 throw std::invalid_argument("Invalid Vulkan render attachments");
-            Check(vkResetCommandBuffer(m_impl.commandBuffer, 0), "vkResetCommandBuffer");
-            Check(vkResetDescriptorPool(m_impl.device, m_impl.descriptorPool, 0), "vkResetDescriptorPool");
-            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            Check(vkBeginCommandBuffer(m_impl.commandBuffer, &begin), "vkBeginCommandBuffer");
+            if (!m_recording) throw std::logic_error("Vulkan rendering requires BeginFrame");
             for (auto *color : m_colors)
-                m_impl.Transition(m_impl.commandBuffer, *color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                m_impl.Transition(CommandBuffer(), *color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             if (m_depth)
-                m_impl.Transition(m_impl.commandBuffer, *m_depth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                m_impl.Transition(CommandBuffer(), *m_depth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
             std::vector<VkRenderingAttachmentInfo> colors(m_colors.size());
@@ -242,7 +377,7 @@ namespace PlutoGE::render::rhi::vulkan
             rendering.colorAttachmentCount = static_cast<std::uint32_t>(colors.size());
             rendering.pColorAttachments = colors.data();
             rendering.pDepthAttachment = m_depth ? &depth : nullptr;
-            vkCmdBeginRendering(m_impl.commandBuffer, &rendering);
+            vkCmdBeginRendering(CommandBuffer(), &rendering);
             SetViewport({0, 0, static_cast<float>(info.width), static_cast<float>(info.height), 0, 1});
             SetScissor({0, 0, info.width, info.height});
             m_rendering = true;
@@ -251,57 +386,104 @@ namespace PlutoGE::render::rhi::vulkan
         void EndRendering() override
         {
             if (!m_rendering) throw std::logic_error("Vulkan rendering is not active");
-            vkCmdEndRendering(m_impl.commandBuffer);
-            Check(vkEndCommandBuffer(m_impl.commandBuffer), "vkEndCommandBuffer");
+            vkCmdEndRendering(CommandBuffer());
+            m_rendering = false;
+        }
+
+        void BeginGpuScope(std::string_view name) override
+        {
+            auto &frame = m_frames[m_frameIndex];
+            if (!m_recording || m_activeScope || frame.nextQuery + 1 >= MaxTimestampQueries) return;
+            m_activeScope = true;
+            m_activeScopeName.assign(name);
+            m_activeScopeStart = frame.nextQuery++;
+            m_activeScopeCpuStart = std::chrono::steady_clock::now();
+            vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, m_activeScopeStart);
+        }
+
+        void EndGpuScope() override
+        {
+            if (!m_activeScope) return;
+            auto &frame = m_frames[m_frameIndex];
+            const auto end = frame.nextQuery++;
+            vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, end);
+            const float cpuMs = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - m_activeScopeCpuStart).count();
+            frame.scopes.push_back({m_activeScopeName, m_activeScopeStart, end, cpuMs});
+            m_activeScope = false;
+        }
+
+        void Submit() override
+        {
+            if (m_rendering) throw std::logic_error("Cannot submit while Vulkan rendering is active");
+            if (!m_recording) return;
+            auto &frame = m_frames[m_frameIndex];
+            if (m_activeScope) EndGpuScope();
+            m_impl.FlushUniformArena();
+            vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
+            frame.hasTimestamps = true;
+            Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer");
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
-            submit.pCommandBuffers = &m_impl.commandBuffer;
-            Check(vkQueueSubmit(m_impl.queue, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit");
-            Check(vkQueueWaitIdle(m_impl.queue), "vkQueueWaitIdle");
-            m_rendering = false;
+            submit.pCommandBuffers = &frame.commandBuffer;
+            Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(frame)");
+            m_recording = false;
+            m_frameIndex = (m_frameIndex + 1) % m_frames.size();
         }
 
         void SetViewport(const Viewport &v) override
         {
             VkViewport viewport{v.x, v.y + v.height, v.width, -v.height, v.minDepth, v.maxDepth};
-            vkCmdSetViewport(m_impl.commandBuffer, 0, 1, &viewport);
+            vkCmdSetViewport(CommandBuffer(), 0, 1, &viewport);
         }
         void SetScissor(const Scissor &s) override
         {
             VkRect2D scissor{{s.x, s.y}, {s.width, s.height}};
-            vkCmdSetScissor(m_impl.commandBuffer, 0, 1, &scissor);
+            vkCmdSetScissor(CommandBuffer(), 0, 1, &scissor);
         }
         void BindPipeline(PipelineHandle handle) override
         {
-            m_pipeline = m_impl.pipelines.Get(handle);
-            if (!m_pipeline) throw std::invalid_argument("Invalid or stale Vulkan pipeline");
-            vkCmdBindPipeline(m_impl.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->pipeline);
+            auto *pipeline = m_impl.pipelines.Get(handle);
+            if (!pipeline) throw std::invalid_argument("Invalid or stale Vulkan pipeline");
+            if (m_pipeline != pipeline)
+            {
+                if (!m_pipeline || m_pipeline->layout != pipeline->layout)
+                {
+                    m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+                    m_boundDynamicOffsetCounts.fill(0);
+                    m_boundPipelineLayout = pipeline->layout;
+                }
+                m_pipeline = pipeline;
+                vkCmdBindPipeline(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->pipeline);
+            }
         }
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!resource || resource->usage != BufferUsage::Vertex) throw std::invalid_argument("Invalid Vulkan vertex buffer");
             const VkDeviceSize vkOffset = offset;
-            vkCmdBindVertexBuffers(m_impl.commandBuffer, 0, 1, &resource->buffer, &vkOffset);
+            vkCmdBindVertexBuffers(CommandBuffer(), 0, 1, &resource->buffer, &vkOffset);
         }
         void BindIndexBuffer(BufferHandle handle, Format format, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!resource || resource->usage != BufferUsage::Index || format != Format::R32Uint) throw std::invalid_argument("Invalid Vulkan index buffer");
-            vkCmdBindIndexBuffer(m_impl.commandBuffer, resource->buffer, offset, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(CommandBuffer(), resource->buffer, offset, VK_INDEX_TYPE_UINT32);
         }
         void BindUniformBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *resource = m_impl.buffers.Get(handle);
-            if (!m_pipeline || !resource || resource->usage != BufferUsage::Uniform) throw std::invalid_argument("Invalid Vulkan uniform binding");
+            if (!m_pipeline || slot >= MaxResourceSlots || !resource || resource->usage != BufferUsage::Uniform)
+                throw std::invalid_argument("Invalid Vulkan uniform binding");
             m_uniformBuffers[slot] = handle;
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
-            if (!m_pipeline || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
+            if (!m_pipeline || slot >= MaxResourceSlots || !texture || !sampler)
+                throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                m_impl.Transition(m_impl.commandBuffer, *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
             m_sampledTextures[slot] = textureHandle;
             m_samplers[slot] = samplerHandle;
@@ -309,71 +491,242 @@ namespace PlutoGE::render::rhi::vulkan
         void Draw(std::uint32_t count, std::uint32_t firstVertex) override
         {
             PrepareDraw();
-            vkCmdDraw(m_impl.commandBuffer, count, 1, firstVertex, 0);
+            vkCmdDraw(CommandBuffer(), count, 1, firstVertex, 0);
         }
 
         void DrawIndexed(std::uint32_t count, std::uint32_t firstIndex, std::int32_t vertexOffset) override
         {
             PrepareDraw();
-            vkCmdDrawIndexed(m_impl.commandBuffer, count, 1, firstIndex, vertexOffset, 0);
+            vkCmdDrawIndexed(CommandBuffer(), count, 1, firstIndex, vertexOffset, 0);
         }
 
     private:
+        struct DescriptorSetKey
+        {
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            std::array<std::uint64_t, 32> resources{};
+            std::uint8_t resourceCount = 0;
+            bool operator==(const DescriptorSetKey &) const = default;
+        };
+        struct DescriptorSetKeyHash
+        {
+            std::size_t operator()(const DescriptorSetKey &key) const noexcept
+            {
+                std::size_t hash = std::hash<VkDescriptorSetLayout>{}(key.layout);
+                for (std::uint8_t index = 0; index < key.resourceCount; ++index)
+                    hash ^= std::hash<std::uint64_t>{}(key.resources[index]) + 0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+                return hash;
+            }
+        };
+        template <typename Tag>
+        static std::uint64_t EncodeHandle(Handle<Tag> handle) noexcept
+        {
+            return (static_cast<std::uint64_t>(handle.generation) << 32u) | handle.index;
+        }
+
         void PrepareDraw()
         {
+            const auto descriptorStart = std::chrono::steady_clock::now();
             if (!m_rendering || !m_pipeline) throw std::logic_error("Vulkan draw requires active rendering and pipeline");
-            std::vector<VkDescriptorSet> sets(m_pipeline->setLayouts.size());
-            VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-            allocation.descriptorPool = m_impl.descriptorPool;
-            allocation.descriptorSetCount = static_cast<std::uint32_t>(sets.size());
-            allocation.pSetLayouts = m_pipeline->setLayouts.data();
-            Check(vkAllocateDescriptorSets(m_impl.device, &allocation, sets.data()), "vkAllocateDescriptorSets(draw)");
-            std::vector<VkDescriptorBufferInfo> buffers;
-            std::vector<VkDescriptorImageInfo> images;
-            std::vector<VkWriteDescriptorSet> writes;
-            buffers.reserve(m_pipeline->descriptor.resourceBindings.size());
-            images.reserve(m_pipeline->descriptor.resourceBindings.size());
-            writes.reserve(m_pipeline->descriptor.resourceBindings.size());
-            for (const auto &binding : m_pipeline->descriptor.resourceBindings)
+            const auto setCount = m_pipeline->setLayouts.size();
+            if (setCount > MaxDescriptorSets || m_pipeline->descriptor.resourceBindings.size() > MaxDescriptorBindings)
+                throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
+            std::array<VkDescriptorSet, MaxDescriptorSets> sets{};
+            std::array<bool, MaxDescriptorSets> newlyAllocated{};
+            std::array<DescriptorSetKey, MaxDescriptorSets> keys{};
+            std::array<std::uint32_t, MaxDescriptorBindings> dynamicOffsets{};
+            std::array<std::size_t, MaxDescriptorSets> dynamicOffsetStarts{};
+            std::array<std::size_t, MaxDescriptorSets> dynamicOffsetCounts{};
+            std::size_t dynamicOffsetCount = 0;
+            std::array<VkDescriptorSetLayout, MaxDescriptorSets> layoutsToAllocate{};
+            std::array<std::size_t, MaxDescriptorSets> allocatedSetIndices{};
+            std::size_t allocationCount = 0;
+            for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
             {
-                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                write.dstSet = sets.at(binding.set);
-                write.dstBinding = binding.binding;
-                write.descriptorCount = 1;
-                if (binding.type == ResourceBindingType::UniformBuffer)
+                const auto layout = m_pipeline->setLayouts[setIndex];
+                auto &key = keys[setIndex];
+                key.layout = layout;
+                dynamicOffsetStarts[setIndex] = dynamicOffsetCount;
+                for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
                 {
-                    const auto found = m_uniformBuffers.find(binding.slot);
-                    auto *buffer = found == m_uniformBuffers.end() ? nullptr : m_impl.buffers.Get(found->second);
-                    if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
-                    buffers.push_back({buffer->buffer, 0, buffer->size});
-                    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                    write.pBufferInfo = &buffers.back();
+                    if (binding.type == ResourceBindingType::UniformBuffer)
+                    {
+                        auto *buffer = binding.slot < MaxResourceSlots
+                            ? m_impl.buffers.Get(m_uniformBuffers[binding.slot]) : nullptr;
+                        if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                        const auto offset = m_impl.EnsureUniformResident(*buffer);
+                        if (offset > std::numeric_limits<std::uint32_t>::max())
+                            throw std::runtime_error("Vulkan dynamic uniform offset exceeds uint32 range");
+                        dynamicOffsets[dynamicOffsetCount++] = static_cast<std::uint32_t>(offset);
+                        key.resources[key.resourceCount++] = buffer->size;
+                    }
+                    else
+                    {
+                        if (binding.slot >= MaxResourceSlots || !m_sampledTextures[binding.slot] || !m_samplers[binding.slot])
+                            throw std::logic_error("Vulkan draw has an incomplete texture binding");
+                        if (key.resourceCount + 2 > key.resources.size())
+                            throw std::logic_error("Vulkan descriptor set exceeds fixed cache key capacity");
+                        key.resources[key.resourceCount++] = EncodeHandle(m_sampledTextures[binding.slot]);
+                        key.resources[key.resourceCount++] = EncodeHandle(m_samplers[binding.slot]);
+                    }
                 }
-                else
+                dynamicOffsetCounts[setIndex] = dynamicOffsetCount - dynamicOffsetStarts[setIndex];
+                if (m_lastDescriptorKeyValid[setIndex] && m_lastDescriptorKeys[setIndex] == key)
                 {
-                    const auto textureFound = m_sampledTextures.find(binding.slot);
-                    const auto samplerFound = m_samplers.find(binding.slot);
-                    auto *texture = textureFound == m_sampledTextures.end() ? nullptr : m_impl.textures.Get(textureFound->second);
-                    auto *sampler = samplerFound == m_samplers.end() ? nullptr : m_impl.samplers.Get(samplerFound->second);
-                    if (!texture || !sampler) throw std::logic_error("Vulkan draw has an incomplete texture binding");
-                    images.push_back({sampler->sampler, texture->view, texture->layout});
-                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                    write.pImageInfo = &images.back();
+                    sets[setIndex] = m_lastDescriptorSets[setIndex];
+                    continue;
                 }
-                writes.push_back(write);
+                if (const auto found = m_descriptorSetCache.find(key); found != m_descriptorSetCache.end())
+                {
+                    sets[setIndex] = found->second;
+                    m_lastDescriptorKeys[setIndex] = key;
+                    m_lastDescriptorSets[setIndex] = found->second;
+                    m_lastDescriptorKeyValid[setIndex] = true;
+                    continue;
+                }
+                layoutsToAllocate[allocationCount] = layout;
+                allocatedSetIndices[allocationCount++] = setIndex;
             }
-            vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-            vkCmdBindDescriptorSets(m_impl.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout, 0, static_cast<std::uint32_t>(sets.size()), sets.data(), 0, nullptr);
+            if (allocationCount != 0)
+            {
+                std::array<VkDescriptorSet, MaxDescriptorSets> allocatedSets{};
+                VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                allocation.descriptorPool = DescriptorPool();
+                allocation.descriptorSetCount = static_cast<std::uint32_t>(allocationCount);
+                allocation.pSetLayouts = layoutsToAllocate.data();
+                Check(vkAllocateDescriptorSets(m_impl.device, &allocation, allocatedSets.data()),
+                      "vkAllocateDescriptorSets(draw)");
+                ++m_impl.timingStats.descriptorAllocationCalls;
+                m_impl.timingStats.descriptorSetsAllocated += allocationCount;
+                for (std::size_t allocationIndex = 0; allocationIndex < allocationCount; ++allocationIndex)
+                {
+                    const auto setIndex = allocatedSetIndices[allocationIndex];
+                    sets[setIndex] = allocatedSets[allocationIndex];
+                    newlyAllocated[setIndex] = true;
+                    m_descriptorSetCache.emplace(keys[setIndex], allocatedSets[allocationIndex]);
+                    m_lastDescriptorKeys[setIndex] = keys[setIndex];
+                    m_lastDescriptorSets[setIndex] = allocatedSets[allocationIndex];
+                    m_lastDescriptorKeyValid[setIndex] = true;
+                }
+            }
+            std::array<VkDescriptorBufferInfo, MaxDescriptorBindings> buffers{};
+            std::array<VkDescriptorImageInfo, MaxDescriptorBindings> images{};
+            std::array<VkWriteDescriptorSet, MaxDescriptorBindings> writes{};
+            std::size_t bufferCount = 0, imageCount = 0, writeCount = 0;
+            for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
+            {
+                if (!newlyAllocated[setIndex]) continue;
+                for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
+                {
+                    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    write.dstSet = sets[setIndex];
+                    write.dstBinding = binding.binding;
+                    write.descriptorCount = 1;
+                    if (binding.type == ResourceBindingType::UniformBuffer)
+                    {
+                        auto *buffer = m_impl.buffers.Get(m_uniformBuffers[binding.slot]);
+                        buffers[bufferCount] = {m_impl.uniformArenas[m_impl.activeFrameIndex].buffer, 0, buffer->size};
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                        write.pBufferInfo = &buffers[bufferCount++];
+                    }
+                    else
+                    {
+                        auto *texture = m_impl.textures.Get(m_sampledTextures[binding.slot]);
+                        auto *sampler = m_impl.samplers.Get(m_samplers[binding.slot]);
+                        images[imageCount] = {sampler->sampler, texture->view, texture->layout};
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                        write.pImageInfo = &images[imageCount++];
+                    }
+                    writes[writeCount++] = write;
+                }
+            }
+            vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writeCount), writes.data(), 0, nullptr);
+            m_impl.timingStats.descriptorWrites += writeCount;
+            for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
+            {
+                const auto offsetStart = dynamicOffsetStarts[setIndex];
+                const auto offsetCount = dynamicOffsetCounts[setIndex];
+                const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
+                    std::equal(dynamicOffsets.begin() + offsetStart,
+                               dynamicOffsets.begin() + offsetStart + offsetCount,
+                               m_boundDynamicOffsets[setIndex].begin());
+                if (m_boundPipelineLayout == m_pipeline->layout &&
+                    m_boundDescriptorSets[setIndex] == sets[setIndex] && offsetsMatch)
+                    continue;
+                vkCmdBindDescriptorSets(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                                        static_cast<std::uint32_t>(setIndex), 1, &sets[setIndex],
+                                        static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
+                m_boundDescriptorSets[setIndex] = sets[setIndex];
+                m_boundDynamicOffsetCounts[setIndex] = offsetCount;
+                std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
+                            m_boundDynamicOffsets[setIndex].begin());
+            }
+            m_boundPipelineLayout = m_pipeline->layout;
+            m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - descriptorStart).count();
         }
 
         VulkanDevice::Impl &m_impl;
+        struct FrameResources
+        {
+            VkCommandPool commandPool = VK_NULL_HANDLE;
+            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
+            VkQueryPool queryPool = VK_NULL_HANDLE;
+            struct Scope { std::string name; std::uint32_t start = 0; std::uint32_t end = 0; float cpuMs = 0.0f; };
+            std::vector<Scope> scopes;
+            std::uint32_t nextQuery = 2;
+            bool hasTimestamps = false;
+        };
+        static constexpr std::size_t FrameCount = 3;
+        static constexpr std::size_t MaxDescriptorSets = 32;
+        static constexpr std::size_t MaxDescriptorBindings = 32;
+        static constexpr std::size_t MaxResourceSlots = 32;
+        static constexpr std::uint32_t MaxTimestampQueries = 32;
+        void ResolveTimestamps(FrameResources &frame)
+        {
+            if (!frame.hasTimestamps) return;
+            std::array<std::uint64_t, MaxTimestampQueries> values{};
+            Check(vkGetQueryPoolResults(m_impl.device, frame.queryPool, 0, frame.nextQuery,
+                                        sizeof(values), values.data(), sizeof(std::uint64_t),
+                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),
+                  "vkGetQueryPoolResults(frame)");
+            const auto milliseconds = [&](std::uint32_t start, std::uint32_t end)
+            {
+                return static_cast<float>(values[end] - values[start]) * m_impl.timestampPeriodNs * 1.0e-6f;
+            };
+            m_impl.timingStats.frameGpuMs = milliseconds(0, 1);
+            m_impl.timingStats.gpuScopes.clear();
+            for (const auto &scope : frame.scopes)
+                m_impl.timingStats.gpuScopes.push_back({scope.name, milliseconds(scope.start, scope.end), scope.cpuMs});
+            m_impl.timingStats.hasGpuResult = true;
+        }
+        [[nodiscard]] VkCommandBuffer CommandBuffer() const { return m_frames[m_frameIndex].commandBuffer; }
+        [[nodiscard]] VkDescriptorPool DescriptorPool() const { return m_frames[m_frameIndex].descriptorPool; }
+        std::array<FrameResources, FrameCount> m_frames;
+        std::size_t m_frameIndex = 0;
         PipelineResource *m_pipeline = nullptr;
         std::vector<TextureResource *> m_colors;
         TextureResource *m_depth = nullptr;
-        std::unordered_map<std::uint32_t, BufferHandle> m_uniformBuffers;
-        std::unordered_map<std::uint32_t, TextureHandle> m_sampledTextures;
-        std::unordered_map<std::uint32_t, SamplerHandle> m_samplers;
+        std::array<BufferHandle, MaxResourceSlots> m_uniformBuffers{};
+        std::array<TextureHandle, MaxResourceSlots> m_sampledTextures{};
+        std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
+        std::unordered_map<VkDescriptorSetLayout, VkDescriptorSet> m_emptyDescriptorSets;
+        std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash> m_descriptorSetCache;
+        std::array<DescriptorSetKey, MaxDescriptorSets> m_lastDescriptorKeys{};
+        std::array<VkDescriptorSet, MaxDescriptorSets> m_lastDescriptorSets{};
+        std::array<bool, MaxDescriptorSets> m_lastDescriptorKeyValid{};
+        std::array<VkDescriptorSet, MaxDescriptorSets> m_boundDescriptorSets{};
+        std::array<std::array<std::uint32_t, MaxDescriptorBindings>, MaxDescriptorSets> m_boundDynamicOffsets{};
+        std::array<std::size_t, MaxDescriptorSets> m_boundDynamicOffsetCounts{};
+        VkPipelineLayout m_boundPipelineLayout = VK_NULL_HANDLE;
+        bool m_recording = false;
         bool m_rendering = false;
+        bool m_activeScope = false;
+        std::string m_activeScopeName;
+        std::uint32_t m_activeScopeStart = 0;
+        std::chrono::steady_clock::time_point m_activeScopeCpuStart{};
     };
 
     class VulkanSwapchain final : public ISwapchain
@@ -654,7 +1007,7 @@ namespace PlutoGE::render::rhi::vulkan
             if (m_impl->physicalDevice) break;
         }
         if (!m_impl->physicalDevice) throw std::runtime_error("No Vulkan graphics queue is available");
-        VkPhysicalDeviceProperties properties{}; vkGetPhysicalDeviceProperties(m_impl->physicalDevice, &properties); m_impl->deviceName = properties.deviceName;
+        VkPhysicalDeviceProperties properties{}; vkGetPhysicalDeviceProperties(m_impl->physicalDevice, &properties); m_impl->deviceName = properties.deviceName; m_impl->timestampPeriodNs = properties.limits.timestampPeriod;
         const float priority = 1.0f;
         std::array<VkDeviceQueueCreateInfo, 2> queues{};
         queues[0] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queues[0].queueFamilyIndex = m_impl->queueFamily; queues[0].queueCount = 1; queues[0].pQueuePriorities = &priority;
@@ -672,10 +1025,26 @@ namespace PlutoGE::render::rhi::vulkan
         VmaVulkanFunctions functions{}; functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr; functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
         VmaAllocatorCreateInfo allocator{}; allocator.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT; allocator.vulkanApiVersion = VK_API_VERSION_1_3; allocator.instance = m_impl->instance; allocator.physicalDevice = m_impl->physicalDevice; allocator.device = m_impl->device; allocator.pVulkanFunctions = &functions;
         Check(vmaCreateAllocator(&allocator, &m_impl->allocator), "vmaCreateAllocator");
+        m_impl->uniformAlignment = std::max<VkDeviceSize>(properties.limits.minUniformBufferOffsetAlignment, 1);
+        for (auto &arena : m_impl->uniformArenas)
+        {
+            VkBufferCreateInfo uniformBuffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            uniformBuffer.size = Impl::UniformArenaSize;
+            uniformBuffer.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            VmaAllocationCreateInfo uniformAllocation{};
+            uniformAllocation.usage = VMA_MEMORY_USAGE_AUTO;
+            uniformAllocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo allocationInfo{};
+            Check(vmaCreateBuffer(m_impl->allocator, &uniformBuffer, &uniformAllocation,
+                                  &arena.buffer, &arena.allocation, &allocationInfo),
+                  "vmaCreateBuffer(uniform arena)");
+            arena.mapped = allocationInfo.pMappedData;
+        }
         VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; pool.queueFamilyIndex = m_impl->queueFamily; Check(vkCreateCommandPool(m_impl->device, &pool, nullptr, &m_impl->commandPool), "vkCreateCommandPool");
         VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO}; command.commandPool = m_impl->commandPool; command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; command.commandBufferCount = 1; Check(vkAllocateCommandBuffers(m_impl->device, &command, &m_impl->commandBuffer), "vkAllocateCommandBuffers");
-        std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096}}};
-        VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; descriptors.maxSets = 12288; descriptors.poolSizeCount = sizes.size(); descriptors.pPoolSizes = sizes.data(); Check(vkCreateDescriptorPool(m_impl->device, &descriptors, nullptr, &m_impl->descriptorPool), "vkCreateDescriptorPool");
+        std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
+        VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; descriptors.maxSets = 32768; descriptors.poolSizeCount = sizes.size(); descriptors.pPoolSizes = sizes.data(); Check(vkCreateDescriptorPool(m_impl->device, &descriptors, nullptr, &m_impl->descriptorPool), "vkCreateDescriptorPool");
         m_impl->context = std::make_unique<VulkanCommandContext>(*m_impl);
     }
 
@@ -683,6 +1052,7 @@ namespace PlutoGE::render::rhi::vulkan
     {
         if (!m_impl) return;
         if (m_impl->device) vkDeviceWaitIdle(m_impl->device);
+        m_impl->context.reset();
         for (auto &slot : m_impl->readbacks)
         {
             // VMA_ALLOCATION_CREATE_MAPPED_BIT owns the persistent mapping.
@@ -695,7 +1065,12 @@ namespace PlutoGE::render::rhi::vulkan
         m_impl->pipelines.ForEach([&](auto &r) { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r.layout, nullptr); for (auto l : r.setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); });
         m_impl->samplers.ForEach([&](auto &r) { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
         m_impl->textures.ForEach([&](auto &r) { vkDestroyImageView(m_impl->device, r.view, nullptr); vmaDestroyImage(m_impl->allocator, r.image, r.allocation); });
-        m_impl->buffers.ForEach([&](auto &r) { vmaDestroyBuffer(m_impl->allocator, r.buffer, r.allocation); });
+        m_impl->buffers.ForEach([&](auto &r) {
+            if (r.buffer)
+                vmaDestroyBuffer(m_impl->allocator, r.buffer, r.allocation);
+        });
+        for (auto &arena : m_impl->uniformArenas)
+            if (arena.buffer) vmaDestroyBuffer(m_impl->allocator, arena.buffer, arena.allocation);
         if (m_impl->descriptorPool) vkDestroyDescriptorPool(m_impl->device, m_impl->descriptorPool, nullptr);
         if (m_impl->commandPool) vkDestroyCommandPool(m_impl->device, m_impl->commandPool, nullptr);
         if (m_impl->allocator) vmaDestroyAllocator(m_impl->allocator);
@@ -714,9 +1089,25 @@ namespace PlutoGE::render::rhi::vulkan
         if (!descriptor.size || data.size() > descriptor.size) throw std::invalid_argument("Invalid Vulkan buffer size/data");
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; info.size = descriptor.size; info.usage = BufferUsageFlags(descriptor.usage) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO; allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        VmaAllocationInfo allocationInfo{}; BufferResource resource; resource.size = descriptor.size; resource.usage = descriptor.usage;
-        Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &resource.buffer, &resource.allocation, &allocationInfo), "vmaCreateBuffer");
-        if (!data.empty()) { std::memcpy(allocationInfo.pMappedData, data.data(), data.size()); vmaFlushAllocation(m_impl->allocator, resource.allocation, 0, data.size()); }
+        BufferResource resource; resource.size = descriptor.size; resource.usage = descriptor.usage;
+        if (descriptor.usage == BufferUsage::Uniform)
+        {
+            resource.uniformData.resize(descriptor.size);
+            if (!data.empty()) std::memcpy(resource.uniformData.data(), data.data(), data.size());
+            return m_impl->buffers.Insert(std::move(resource));
+        }
+        for (std::size_t frame = 0; frame < 1; ++frame)
+        {
+            VmaAllocationInfo allocationInfo{};
+            VkBuffer *buffer = &resource.buffer;
+            VmaAllocation *memory = &resource.allocation;
+            Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, buffer, memory, &allocationInfo), "vmaCreateBuffer");
+            if (!data.empty())
+            {
+                std::memcpy(allocationInfo.pMappedData, data.data(), data.size());
+                vmaFlushAllocation(m_impl->allocator, *memory, 0, data.size());
+            }
+        }
         return m_impl->buffers.Insert(std::move(resource));
     }
 
@@ -821,13 +1212,19 @@ namespace PlutoGE::render::rhi::vulkan
             bindingsBySet[binding.set].push_back({
                 binding.binding,
                 binding.type == ResourceBindingType::UniformBuffer
-                    ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                    ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                     : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 1, stages, nullptr});
         }
         resource.setLayouts.resize(bindingsBySet.size());
+        resource.populatedSets.resize(bindingsBySet.size());
+        resource.bindingsBySet.resize(bindingsBySet.size());
+        for (const auto &binding : descriptor.resourceBindings)
+            resource.bindingsBySet[binding.set].push_back(binding);
         for (std::size_t set = 0; set < bindingsBySet.size(); ++set)
         {
+            std::ranges::sort(resource.bindingsBySet[set], {}, &GraphicsPipelineDescriptor::ResourceBinding::binding);
+            resource.populatedSets[set] = !bindingsBySet[set].empty();
             VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             setInfo.bindingCount = static_cast<std::uint32_t>(bindingsBySet[set].size());
             setInfo.pBindings = bindingsBySet[set].data();
@@ -858,9 +1255,44 @@ namespace PlutoGE::render::rhi::vulkan
 
     void VulkanDevice::UpdateBuffer(BufferHandle handle, std::size_t offset, std::span<const std::byte> data)
     {
-        auto *resource = m_impl->buffers.Get(handle); if (!resource || offset > resource->size || data.size() > resource->size - offset) throw std::invalid_argument("Invalid Vulkan buffer update"); void *mapped = nullptr; Check(vmaMapMemory(m_impl->allocator, resource->allocation, &mapped), "vmaMapMemory"); std::memcpy(static_cast<std::byte *>(mapped) + offset, data.data(), data.size()); vmaFlushAllocation(m_impl->allocator, resource->allocation, offset, data.size()); vmaUnmapMemory(m_impl->allocator, resource->allocation);
+        auto *resource = m_impl->buffers.Get(handle);
+        if (!resource || offset > resource->size || data.size() > resource->size - offset)
+            throw std::invalid_argument("Invalid Vulkan buffer update");
+        if (resource->usage == BufferUsage::Uniform)
+        {
+            const auto uploadStart = std::chrono::steady_clock::now();
+            auto &arena = m_impl->uniformArenas[m_impl->activeFrameIndex];
+            const bool wasResident = resource->uniformEpochs[m_impl->activeFrameIndex] == arena.epoch;
+            std::memcpy(resource->uniformData.data() + offset, data.data(), data.size());
+            const auto arenaOffset = m_impl->EnsureUniformResident(*resource);
+            if (wasResident && !data.empty())
+            {
+                const auto dirtyStart = arenaOffset + offset;
+                std::memcpy(static_cast<std::byte *>(arena.mapped) + dirtyStart, data.data(), data.size());
+                arena.dirtyStart = std::min(arena.dirtyStart, dirtyStart);
+                arena.dirtyEnd = std::max(arena.dirtyEnd, dirtyStart + data.size());
+                m_impl->timingStats.uniformBytesUploaded += data.size();
+            }
+            m_impl->timingStats.uniformUploadCpuMs += std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - uploadStart).count();
+            return;
+        }
+        const auto allocation = resource->allocation;
+        void *mapped = nullptr;
+        Check(vmaMapMemory(m_impl->allocator, allocation, &mapped), "vmaMapMemory");
+        std::memcpy(static_cast<std::byte *>(mapped) + offset, data.data(), data.size());
+        vmaFlushAllocation(m_impl->allocator, allocation, offset, data.size());
+        vmaUnmapMemory(m_impl->allocator, allocation);
     }
-    void VulkanDevice::DestroyBuffer(BufferHandle h) { if (auto r = m_impl->buffers.Remove(h)) vmaDestroyBuffer(m_impl->allocator, r->buffer, r->allocation); }
+    void VulkanDevice::DestroyBuffer(BufferHandle h)
+    {
+        if (auto r = m_impl->buffers.Remove(h))
+        {
+            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(buffer destruction)");
+            if (r->buffer)
+                vmaDestroyBuffer(m_impl->allocator, r->buffer, r->allocation);
+        }
+    }
     void VulkanDevice::DestroyTexture(TextureHandle h)
     {
         // Resizing an editor target may retire an image while its buffered
@@ -875,13 +1307,15 @@ namespace PlutoGE::render::rhi::vulkan
             }
         if (auto r = m_impl->textures.Remove(h))
         {
+            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(texture destruction)");
             vkDestroyImageView(m_impl->device, r->view, nullptr);
             vmaDestroyImage(m_impl->allocator, r->image, r->allocation);
         }
     }
-    void VulkanDevice::DestroySampler(SamplerHandle h) { if (auto r = m_impl->samplers.Remove(h)) vkDestroySampler(m_impl->device, r->sampler, nullptr); }
-    void VulkanDevice::DestroyPipeline(PipelineHandle h) { if (auto r = m_impl->pipelines.Remove(h)) { vkDestroyPipeline(m_impl->device, r->pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr); for (auto l : r->setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); } }
+    void VulkanDevice::DestroySampler(SamplerHandle h) { if (auto r = m_impl->samplers.Remove(h)) { Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(sampler destruction)"); vkDestroySampler(m_impl->device, r->sampler, nullptr); } }
+    void VulkanDevice::DestroyPipeline(PipelineHandle h) { if (auto r = m_impl->pipelines.Remove(h)) { Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(pipeline destruction)"); vkDestroyPipeline(m_impl->device, r->pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr); for (auto l : r->setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); } }
     ICommandContext &VulkanDevice::GetImmediateContext() { return *m_impl->context; }
+    RenderDeviceTimingStats VulkanDevice::GetTimingStats() const { return m_impl->timingStats; }
     const std::string &VulkanDevice::GetDeviceName() const noexcept { return m_impl->deviceName; }
 
     std::vector<std::byte> VulkanDevice::ReadTextureRgba8(TextureHandle handle)

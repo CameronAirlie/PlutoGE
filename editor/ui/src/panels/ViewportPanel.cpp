@@ -1819,8 +1819,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::SetGraphicsApi(render::rhi::GraphicsApi graphicsApi)
     {
-        if (!m_config.editorViewport ||
-            (m_config.graphicsApi == graphicsApi && m_rhiRenderService && m_rhiRenderService->IsInitialized()))
+        if (m_config.graphicsApi == graphicsApi && m_rhiRenderService && m_rhiRenderService->IsInitialized())
             return;
 
         ShutdownRhiPreview();
@@ -3811,7 +3810,6 @@ namespace PlutoGE::ui
         auto *activeScene = editorShell.GetEngine().GetScene();
         auto &renderer = editorShell.GetEngine().GetRenderer();
         auto *sceneRenderTarget = GetSceneRenderTarget();
-        renderer.BeginFrame(sceneRenderTarget);
         std::vector<render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
         for (const auto &effect : cameraComponent.GetPostProcessEffects())
@@ -3819,12 +3817,21 @@ namespace PlutoGE::ui
             postProcessEffects.push_back(effect.get());
         }
 
-        renderer.RenderFrame(cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight()),
-                             sceneRenderTarget,
-                             activeScene ? activeScene->GetLights() : std::vector<scene::Light *>{},
-                             &postProcessEffects,
-                             activeScene);
-        renderer.EndFrame(sceneRenderTarget);
+        const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+        if (m_useRhiPreview && m_rhiRenderService && m_rhiRenderService->IsInitialized())
+        {
+            renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
+            RenderRhiFrame(cameraData, renderer.GetVisibleRenderCommands(), renderer.GetSceneRenderCommands(),
+                           postProcessEffects);
+        }
+        else
+        {
+            renderer.BeginFrame(sceneRenderTarget);
+            renderer.RenderFrame(cameraData, sceneRenderTarget,
+                                 activeScene ? activeScene->GetLights() : std::vector<scene::Light *>{},
+                                 &postProcessEffects, activeScene);
+            renderer.EndFrame(sceneRenderTarget);
+        }
         PresentSceneRenderTarget();
     }
 

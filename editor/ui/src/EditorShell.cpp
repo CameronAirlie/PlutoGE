@@ -2683,6 +2683,7 @@ namespace PlutoGE::ui
             return false;
         }
         m_editorSceneRenderService = std::make_unique<EditorSceneRenderService>();
+        m_gameSceneRenderService = std::make_unique<EditorSceneRenderService>();
 
         scripting::SetScriptLogSink(
             [this](scripting::ScriptLogSeverity severity, std::string_view message)
@@ -2716,6 +2717,7 @@ namespace PlutoGE::ui
         {
             m_editorCamera.postProcessEffects.clear();
             m_scene.reset();
+            m_gameSceneRenderService.reset();
             m_editorSceneRenderService.reset();
             m_engine.Shutdown();
             return false;
@@ -2762,12 +2764,14 @@ namespace PlutoGE::ui
         viewportConfig2.name = "Game Viewport";
         viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
+        viewportConfig2.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
+                                                : render::rhi::GraphicsApi::OpenGL;
         if (m_project && m_project->GetManifest().runtimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
         {
             viewportConfig2.initialRenderScale = m_project->GetManifest().runtimeRenderScale;
             viewportConfig2.initialUpscaleSharpness = m_project->GetManifest().runtimeUpscaleSharpness;
         }
-        auto viewportPanel2 = new ViewportPanel(viewportConfig2);
+        auto viewportPanel2 = new ViewportPanel(viewportConfig2, m_gameSceneRenderService.get());
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
 
@@ -2882,6 +2886,8 @@ namespace PlutoGE::ui
         {
             viewportPanel->SetGraphicsApi(m_project ? m_project->GetManifest().graphicsApi
                                                     : render::rhi::GraphicsApi::OpenGL);
+            viewportPanel2->SetGraphicsApi(m_project ? m_project->GetManifest().graphicsApi
+                                                     : render::rhi::GraphicsApi::OpenGL);
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
@@ -3201,6 +3207,8 @@ namespace PlutoGE::ui
             }
             const auto viewportRenderEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.viewportRenderMs = std::chrono::duration<float, std::milli>(viewportRenderEnd - viewportRenderStart).count();
+            if (m_editorSceneRenderService && m_editorSceneRenderService->GetRenderDevice())
+                frameTimingStats.rhiTimingStats = m_editorSceneRenderService->GetRenderDevice()->GetTimingStats();
 
             renderer.ClearRenderCommands();
 
@@ -3927,6 +3935,7 @@ namespace PlutoGE::ui
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();
+        m_gameSceneRenderService.reset();
         m_editorSceneRenderService.reset();
         m_panelManager.ShutdownImGui();
         m_engine.Shutdown();

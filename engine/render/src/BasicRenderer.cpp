@@ -51,9 +51,10 @@ namespace PlutoGE::render
             glm::vec4 shadowCascadeParameters{0.0f}; // count, blend distance, softness, padding
             glm::vec4 shadowFilterParameters{0.0f}; // enabled, radius, render scale, depth scale
             glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
+            glm::mat4 view{1.0f};
             glm::mat4 previousViewProjection{1.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 576);
+        static_assert(sizeof(BasicFrameParameters) == 640);
 
         struct alignas(16) BasicObjectParameters { glm::mat4 model{1.0f}; glm::mat4 previousModel{1.0f}; };
 
@@ -270,7 +271,7 @@ namespace PlutoGE::render
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
         for (auto &buffer : m_shadowCameraBuffers) buffer.Reset();
-        for (auto &buffers : m_shadowObjectBuffers) buffers.clear();
+        m_shadowObjectBuffers.clear();
         m_postProcessBuffers.clear();
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines) pipeline.Reset();
@@ -372,6 +373,8 @@ namespace PlutoGE::render
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
         EnsureShadowTargets(lighting);
+        auto &commands = m_device->GetImmediateContext();
+        commands.BeginFrame();
 
         std::array<glm::vec4, 4> inverseShadowResolutions{};
         for (std::size_t cascade = 0; cascade < inverseShadowResolutions.size(); ++cascade)
@@ -402,16 +405,28 @@ namespace PlutoGE::render
             glm::vec4(std::max(lighting.shadowFilterMinDepthScale, 0.001f),
                       std::clamp(lighting.shadowFilterNormalThreshold, -1.0f, 1.0f),
                       std::max(lighting.shadowFilterNormalSoftness, 0.001f), 0.0f),
+            lighting.view,
             m_hasPreviousFrame ? m_previousViewProjection : viewProjection,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
-        auto &commands = m_device->GetImmediateContext();
         if (shadowDraws.empty()) shadowDraws = draws;
         if (lighting.shadowsEnabled)
         {
+            while (m_shadowObjectBuffers.size() < shadowDraws.size())
+                m_shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                    {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
+            for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
+            {
+                const auto &draw = shadowDraws[drawIndex];
+                if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow)
+                    m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
+                                           Bytes(BasicObjectParameters{draw.model, draw.model}));
+            }
             const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
             {
+                const auto scopeName = "RHI Shadow Cascade " + std::to_string(cascade);
+                commands.BeginGpuScope(scopeName);
                 m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
                 rhi::RenderingInfo shadowInfo;
                 shadowInfo.colorAttachments = {m_shadowColorTargets[cascade].Get()};
@@ -423,18 +438,12 @@ namespace PlutoGE::render
                 commands.BeginRendering(shadowInfo);
                 commands.BindPipeline(m_shadowPipeline.Get());
                 commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
-                std::size_t shadowDrawIndex = 0;
-                auto &shadowObjectBuffers = m_shadowObjectBuffers[cascade];
-                for (const auto &draw : shadowDraws)
+                for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
                 {
+                    const auto &draw = shadowDraws[drawIndex];
                     if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
                         !IntersectsShadowFrustum(draw, lighting.shadowMatrices[cascade])) continue;
-                    if (shadowDrawIndex == shadowObjectBuffers.size())
-                        shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
-                    auto &objectBuffer = shadowObjectBuffers[shadowDrawIndex++];
-                    m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
-                    commands.BindUniformBuffer(16, objectBuffer.Get());
+                    commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
                     commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                     commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                     const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
@@ -442,6 +451,7 @@ namespace PlutoGE::render
                     if (count) commands.DrawIndexed(count, draw.firstIndex);
                 }
                 commands.EndRendering();
+                commands.EndGpuScope();
             }
         }
         rhi::RenderingInfo renderingInfo;
@@ -452,6 +462,7 @@ namespace PlutoGE::render
         renderingInfo.clearColorValue[0] = 0.04f;
         renderingInfo.clearColorValue[1] = 0.06f;
         renderingInfo.clearColorValue[2] = 0.09f;
+        commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
         commands.BindPipeline(m_pipeline.Get());
         commands.BindUniformBuffer(0, m_cameraBuffer.Get());
@@ -508,8 +519,10 @@ namespace PlutoGE::render
                 commands.DrawIndexed(drawCount, draw.firstIndex);
         }
         commands.EndRendering();
+        commands.EndGpuScope();
 
         m_outputColor = m_colorTarget.Get();
+        commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;
         std::size_t targetIndex = 0;
         for (const auto &effect : postProcessEffects)
@@ -553,11 +566,13 @@ namespace PlutoGE::render
             commands.EndRendering();
             m_outputColor = destination.Get();
         }
+        commands.EndGpuScope();
         ++m_frameIndex;
         m_previousViewProjection = viewProjection;
         m_previousModels.clear();
         for (const auto &draw : draws) if (draw.mesh && draw.mesh->IsValid()) m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
+        commands.Submit();
     }
 
     rhi::Buffer &BasicRenderer::AcquirePostProcessBuffer(std::size_t index)

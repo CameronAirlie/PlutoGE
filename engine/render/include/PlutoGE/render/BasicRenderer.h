@@ -108,6 +108,7 @@ namespace PlutoGE::render
     struct BasicLighting
     {
         glm::vec3 cameraPosition{0.0f};
+        glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
         glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
         float directionalIntensity = 1.0f;
@@ -187,7 +188,9 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
         std::array<rhi::Buffer, 4> m_shadowCameraBuffers;
-        std::array<std::vector<rhi::Buffer>, 4> m_shadowObjectBuffers;
+        // Shadow object transforms are cascade-independent and are uploaded
+        // once per caster, then referenced by every intersecting cascade.
+        std::vector<rhi::Buffer> m_shadowObjectBuffers;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;

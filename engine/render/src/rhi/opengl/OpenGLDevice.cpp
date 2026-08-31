@@ -253,6 +253,8 @@ namespace PlutoGE::render::rhi::opengl
                                reinterpret_cast<const void *>(m_indexOffset + firstIndex * sizeof(std::uint32_t)));
         }
 
+        void Submit() override {}
+
     private:
         OpenGLDevice::Impl &m_impl;
         PipelineResource *m_pipeline = nullptr;

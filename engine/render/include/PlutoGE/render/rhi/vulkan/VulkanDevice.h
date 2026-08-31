@@ -34,6 +34,7 @@ namespace PlutoGE::render::rhi::vulkan
         void DestroySampler(SamplerHandle) override;
         void DestroyPipeline(PipelineHandle) override;
         [[nodiscard]] ICommandContext &GetImmediateContext() override;
+        [[nodiscard]] RenderDeviceTimingStats GetTimingStats() const override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);

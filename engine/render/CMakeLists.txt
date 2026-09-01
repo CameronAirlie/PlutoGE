@@ -80,7 +80,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -96,6 +96,14 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(LensFlare "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LensFlare.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(MotionBlur "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MotionBlur.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DepthOfField "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DepthOfField.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(TAA "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TAA.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(AutoExposureMeter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain meterMain)
+    pluto_add_slang_graphics_shader(AutoExposureApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain applyMain)
+    pluto_add_slang_graphics_shader(SSAO "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(SSGI "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(SSR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(SceneComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BloomPrefilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain prefilterMain)
     pluto_add_slang_graphics_shader(BloomDownsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain downsampleMain)
     pluto_add_slang_graphics_shader(BloomUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain upsampleMain)

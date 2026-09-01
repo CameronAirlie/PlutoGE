@@ -27,6 +27,18 @@ namespace PlutoGE::render
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
         RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
         bool OutputsIndirectOnly() const { return m_outputMode != 0; }
+        struct Settings
+        {
+            float intensity, rayDistance, stepSize, thickness, depthPhi, normalPhi;
+            int sampleCount, stepCount, blurRadius;
+            bool halfResolution, indirectOnly;
+        };
+        [[nodiscard]] Settings GetSettings() const noexcept
+        {
+            return {m_intensity, m_rayDistance, m_stepSize, m_thickness, m_depthPhi,
+                    m_normalPhi, m_sampleCount, m_stepCount, m_blurRadius,
+                    m_halfResolution, m_outputMode != 0};
+        }
 
     private:
         static constexpr int kMaxBlurRadius = 4;

@@ -20,6 +20,18 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Screen Space Reflections"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        struct Settings
+        {
+            float intensity, maxRayDistance, thickness, startOffset, edgeFade;
+            float fresnelPower, metallicBoost;
+            int stepCount, binarySearchSteps;
+        };
+        [[nodiscard]] Settings GetSettings() const noexcept
+        {
+            return {m_intensity, m_maxRayDistance, m_thickness, m_startOffset,
+                    m_edgeFade, m_fresnelPower, m_metallicBoost,
+                    m_stepCount, m_binarySearchSteps};
+        }
 
     private:
         void EnsureTraceTarget(int width, int height);

@@ -25,8 +25,83 @@ namespace PlutoGE::render
         LensFlare,
         MotionBlur,
         DepthOfField,
+        AutoExposure,
+        TAA,
+        SSAO,
+        SSGI,
+        SSR,
+        VolumetricFog,
+        SceneComposite,
         Count,
     };
+
+    enum class BasicPostProcessInput : std::uint8_t
+    {
+        None = 0,
+        Depth = 1u << 0u,
+        Normal = 1u << 1u,
+        Material = 1u << 2u,
+        Motion = 1u << 3u,
+        History = 1u << 4u,
+    };
+
+    enum class BasicPostProcessStage : std::uint8_t
+    {
+        ScreenSpaceDeferred,
+        Camera,
+    };
+
+    [[nodiscard]] constexpr BasicPostProcessStage StageFor(BasicPostProcessEffectType type) noexcept
+    {
+        switch (type)
+        {
+        case BasicPostProcessEffectType::SSAO:
+        case BasicPostProcessEffectType::SSGI:
+        case BasicPostProcessEffectType::SSR:
+        case BasicPostProcessEffectType::VolumetricFog:
+        case BasicPostProcessEffectType::SceneComposite:
+            return BasicPostProcessStage::ScreenSpaceDeferred;
+        default:
+            return BasicPostProcessStage::Camera;
+        }
+    }
+
+    [[nodiscard]] constexpr BasicPostProcessInput operator|(BasicPostProcessInput lhs,
+                                                             BasicPostProcessInput rhs) noexcept
+    {
+        return static_cast<BasicPostProcessInput>(static_cast<std::uint8_t>(lhs) |
+                                                  static_cast<std::uint8_t>(rhs));
+    }
+
+    [[nodiscard]] constexpr bool HasInput(BasicPostProcessInput inputs,
+                                           BasicPostProcessInput input) noexcept
+    {
+        return (static_cast<std::uint8_t>(inputs) & static_cast<std::uint8_t>(input)) != 0;
+    }
+
+    [[nodiscard]] constexpr BasicPostProcessInput InputsFor(BasicPostProcessEffectType type) noexcept
+    {
+        switch (type)
+        {
+        case BasicPostProcessEffectType::MotionBlur: return BasicPostProcessInput::Motion;
+        case BasicPostProcessEffectType::DepthOfField: return BasicPostProcessInput::Depth;
+        case BasicPostProcessEffectType::TAA:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
+                   BasicPostProcessInput::Motion | BasicPostProcessInput::History;
+        case BasicPostProcessEffectType::SSAO:
+        case BasicPostProcessEffectType::SSGI:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
+        case BasicPostProcessEffectType::SSR:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
+                   BasicPostProcessInput::Material;
+        case BasicPostProcessEffectType::VolumetricFog:
+            return BasicPostProcessInput::Depth;
+        case BasicPostProcessEffectType::SceneComposite:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
+                   BasicPostProcessInput::Material | BasicPostProcessInput::Motion;
+        default: return BasicPostProcessInput::None;
+        }
+    }
 
     struct BasicPostProcessShaderPackage
     {
@@ -59,6 +134,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)> postProcess;
         std::array<BasicPostProcessShaderPackage, 4> bloom;
+        std::array<BasicPostProcessShaderPackage, 2> autoExposure;
     };
 
     class BasicMesh
@@ -180,6 +256,9 @@ namespace PlutoGE::render
     private:
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect);
+        [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,
+                                                            const BasicPostProcessEffect &effect,
+                                                            rhi::ICommandContext &commands);
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
         void EnsureShadowTargets(const BasicLighting &lighting);
 
@@ -208,9 +287,16 @@ namespace PlutoGE::render
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
+        std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
+        std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
+        std::array<rhi::Texture, 2> m_exposureHistoryTargets;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
         std::size_t m_postProcessBufferCursor = 0;
+        std::uint8_t m_taaHistoryIndex = 0;
+        bool m_taaHistoryValid = false;
+        std::uint8_t m_exposureHistoryIndex = 0;
+        bool m_exposureHistoryValid = false;
         rhi::Texture m_depthTarget;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;

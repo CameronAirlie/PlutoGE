@@ -10,6 +10,8 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+
 namespace PlutoGE::render
 {
     namespace
@@ -288,9 +290,18 @@ namespace PlutoGE::render
             {
                 if (adapted->type == BasicPostProcessEffectType::DepthOfField)
                     adapted->parameters[2] = {cameraData.nearPlane, cameraData.farPlane, 0.0f, 0.0f};
+                if (HasInput(InputsFor(adapted->type), BasicPostProcessInput::Depth))
+                {
+                    adapted->parameters[5].x = cameraData.nearPlane;
+                    adapted->parameters[5].y = cameraData.farPlane;
+                }
                 basicEffects.push_back(std::move(*adapted));
             }
         }
+        std::stable_sort(basicEffects.begin(), basicEffects.end(), [](const auto &lhs, const auto &rhs)
+        {
+            return StageFor(lhs.type) < StageFor(rhs.type);
+        });
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws);
         return true;
     }

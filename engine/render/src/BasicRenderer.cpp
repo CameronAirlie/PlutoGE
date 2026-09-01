@@ -201,12 +201,19 @@ namespace PlutoGE::render
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 };
-                if (type == BasicPostProcessEffectType::MotionBlur)
-                    postDescriptor.resourceBindings.push_back(
-                        {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                if (type == BasicPostProcessEffectType::DepthOfField)
-                    postDescriptor.resourceBindings.push_back(
-                        {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                const auto inputs = InputsFor(type);
+                const auto addInput = [&](BasicPostProcessInput input, std::uint32_t slot)
+                {
+                    if (HasInput(inputs, input))
+                        postDescriptor.resourceBindings.push_back(
+                            {slot, 0, slot, rhi::ResourceBindingType::SampledTexture,
+                             rhi::ShaderStageMask::Fragment});
+                };
+                addInput(BasicPostProcessInput::Depth, 2);
+                addInput(BasicPostProcessInput::Normal, 3);
+                addInput(BasicPostProcessInput::Material, 4);
+                addInput(BasicPostProcessInput::Motion, 5);
+                addInput(BasicPostProcessInput::History, 6);
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
@@ -216,7 +223,10 @@ namespace PlutoGE::render
             constexpr std::array<const char *, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> debugNames{
                 "Tone mapping post process", "Gamma correction post process", "FXAA post process",
                 "Color grading post process", "Chromatic aberration post process", "Bloom graph",
-                "Lens flare post process", "Motion blur post process", "Depth of field post process"};
+                "Lens flare post process", "Motion blur post process", "Depth of field post process",
+                "Auto exposure post process", "Temporal anti-aliasing post process",
+                "Screen-space ambient occlusion", "Screen-space global illumination",
+                "Screen-space reflections", "Volumetric fog", "Scene composite"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
@@ -225,6 +235,32 @@ namespace PlutoGE::render
                 m_postProcessPipelines[index] = createPostProcessPipeline(
                     shaders.postProcess[index].vertex, shaders.postProcess[index].fragment, debugNames[index],
                     static_cast<BasicPostProcessEffectType>(index));
+            }
+            constexpr std::array<const char *, 2> exposureNames{
+                "Auto exposure metering", "Auto exposure application"};
+            for (std::size_t index = 0; index < m_autoExposurePipelines.size(); ++index)
+            {
+                const auto &stage = shaders.autoExposure[index];
+                if ((stage.vertex.glsl.empty() && stage.vertex.spirv.empty()) ||
+                    (stage.fragment.glsl.empty() && stage.fragment.spirv.empty()))
+                    continue;
+                rhi::GraphicsPipelineDescriptor exposureDescriptor;
+                exposureDescriptor.vertexShader = stage.vertex;
+                exposureDescriptor.fragmentShader = stage.fragment;
+                exposureDescriptor.depthFormat = rhi::Format::Undefined;
+                exposureDescriptor.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                };
+                exposureDescriptor.cullMode = rhi::CullMode::None;
+                exposureDescriptor.depthTest = false;
+                exposureDescriptor.depthWrite = false;
+                exposureDescriptor.colorFormat = index == 0 ? rhi::Format::R32Float
+                                                             : rhi::Format::R8G8B8A8Srgb;
+                exposureDescriptor.debugName = exposureNames[index];
+                m_autoExposurePipelines[index] = rhi::GraphicsPipeline(
+                    device, device.CreateGraphicsPipeline(exposureDescriptor));
             }
             constexpr std::array<const char *, 4> bloomNames{
                 "Bloom prefilter", "Bloom downsample", "Bloom upsample", "Bloom composite"};
@@ -281,6 +317,8 @@ namespace PlutoGE::render
     {
         m_depthTarget.Reset();
         for (auto &target : m_postProcessTargets) target.Reset();
+        for (auto &target : m_taaHistoryTargets) target.Reset();
+        for (auto &target : m_exposureHistoryTargets) target.Reset();
         m_colorTarget.Reset();
         m_normalTarget.Reset(); m_materialTarget.Reset(); m_motionTarget.Reset();
         for (auto &target : m_shadowDepthTargets) target.Reset();
@@ -298,6 +336,7 @@ namespace PlutoGE::render
         m_postProcessBuffers.clear();
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines) pipeline.Reset();
+        for (auto &pipeline : m_autoExposurePipelines) pipeline.Reset();
         for (auto &pipeline : m_postProcessPipelines) pipeline.Reset();
         m_shadowPipeline.Reset();
         m_pipeline.Reset();
@@ -308,6 +347,10 @@ namespace PlutoGE::render
         m_previousModels.clear(); m_hasPreviousFrame = false; m_previousViewProjection = glm::mat4(1.0f);
         m_outputColor = {};
         m_postProcessBufferCursor = 0;
+        m_taaHistoryIndex = 0;
+        m_taaHistoryValid = false;
+        m_exposureHistoryIndex = 0;
+        m_exposureHistoryValid = false;
     }
 
     BasicMesh BasicRenderer::CreateMesh(const BasicMeshData &data)
@@ -349,6 +392,18 @@ namespace PlutoGE::render
         m_motionTarget = rhi::Texture(*m_device, m_device->CreateTexture(
             {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_postProcessTargets = std::move(newPostTargets);
+        for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
+            m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment,
+                 index == 0 ? "TAA history A" : "TAA history B", true}));
+        m_taaHistoryIndex = 0;
+        m_taaHistoryValid = false;
+        for (std::size_t index = 0; index < m_exposureHistoryTargets.size(); ++index)
+            m_exposureHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {1, 1, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                 index == 0 ? "Exposure history A" : "Exposure history B", true}));
+        m_exposureHistoryIndex = 0;
+        m_exposureHistoryValid = false;
         m_depthTarget = std::move(newDepth);
         m_width = width;
         m_height = height;
@@ -549,11 +604,26 @@ namespace PlutoGE::render
         commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;
         std::size_t targetIndex = 0;
+        const bool hasTaa = std::ranges::any_of(postProcessEffects, [](const auto &effect)
+        {
+            return effect.type == BasicPostProcessEffectType::TAA;
+        });
+        const bool hasAutoExposure = std::ranges::any_of(postProcessEffects, [](const auto &effect)
+        {
+            return effect.type == BasicPostProcessEffectType::AutoExposure;
+        });
+        if (!hasTaa) m_taaHistoryValid = false;
+        if (!hasAutoExposure) m_exposureHistoryValid = false;
         for (const auto &effect : postProcessEffects)
         {
             if (effect.type == BasicPostProcessEffectType::Bloom)
             {
                 m_outputColor = RenderBloom(m_outputColor, effect);
+                continue;
+            }
+            if (effect.type == BasicPostProcessEffectType::AutoExposure)
+            {
+                m_outputColor = RenderAutoExposure(m_outputColor, effect, commands);
                 continue;
             }
             const auto effectIndex = static_cast<std::size_t>(effect.type);
@@ -562,6 +632,9 @@ namespace PlutoGE::render
             const auto pipeline = m_postProcessPipelines[effectIndex].Get();
             if (!pipeline)
                 continue;
+            auto effectParameters = effect.parameters;
+            if (effect.type == BasicPostProcessEffectType::TAA)
+                effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
             const BasicPostProcessParameters parameters{
                 effect.exposure,
                 (std::max)(effect.gamma, 0.001f),
@@ -570,13 +643,32 @@ namespace PlutoGE::render
                 glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
                 static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
                 0.0f,
-                effect.parameters,
+                effectParameters,
             };
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
-            auto &destination = m_postProcessTargets[targetIndex++ % m_postProcessTargets.size()];
+            rhi::Texture *destination = nullptr;
+            if (effect.type == BasicPostProcessEffectType::TAA)
+                destination = &m_taaHistoryTargets[1u - m_taaHistoryIndex];
+            else
+            {
+                // Specialised passes (for example auto exposure and bloom) do not
+                // participate in this cursor. Always select by actual texture identity
+                // so a later pass never samples from its active color attachment.
+                for (std::size_t attempt = 0; attempt < m_postProcessTargets.size(); ++attempt)
+                {
+                    auto &candidate = m_postProcessTargets[targetIndex++ % m_postProcessTargets.size()];
+                    if (candidate.Get() != m_outputColor)
+                    {
+                        destination = &candidate;
+                        break;
+                    }
+                }
+            }
+            if (!destination)
+                continue;
             rhi::RenderingInfo postInfo;
-            postInfo.colorAttachments = {destination.Get()};
+            postInfo.colorAttachments = {destination->Get()};
             postInfo.width = m_width;
             postInfo.height = m_height;
             postInfo.clearDepth = false;
@@ -584,13 +676,27 @@ namespace PlutoGE::render
             commands.BindPipeline(pipeline);
             commands.BindUniformBuffer(0, parameterBuffer.Get());
             commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
-            if (effect.type == BasicPostProcessEffectType::MotionBlur)
-                commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
-            if (effect.type == BasicPostProcessEffectType::DepthOfField)
+            const auto inputs = InputsFor(effect.type);
+            if (HasInput(inputs, BasicPostProcessInput::Depth))
                 commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
+            if (HasInput(inputs, BasicPostProcessInput::Normal))
+                commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
+            if (HasInput(inputs, BasicPostProcessInput::Material))
+                commands.BindTexture(4, m_materialTarget.Get(), m_fallbackSampler.Get());
+            if (HasInput(inputs, BasicPostProcessInput::Motion))
+                commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
+            if (HasInput(inputs, BasicPostProcessInput::History))
+                commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get()
+                                                          : m_outputColor,
+                                     m_fallbackSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
-            m_outputColor = destination.Get();
+            m_outputColor = destination->Get();
+            if (effect.type == BasicPostProcessEffectType::TAA)
+            {
+                m_taaHistoryIndex = 1u - m_taaHistoryIndex;
+                m_taaHistoryValid = true;
+            }
         }
         commands.EndGpuScope();
         ++m_frameIndex;
@@ -608,6 +714,64 @@ namespace PlutoGE::render
                 {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform,
                  "BasicRenderer post-process pass parameters"}));
         return m_postProcessBuffers[index];
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderAutoExposure(rhi::TextureHandle source,
+                                                          const BasicPostProcessEffect &effect,
+                                                          rhi::ICommandContext &commands)
+    {
+        if (!source || !m_autoExposurePipelines[0] || !m_autoExposurePipelines[1] ||
+            !m_exposureHistoryTargets[0] || !m_exposureHistoryTargets[1])
+            return source;
+
+        auto parameters = effect.parameters;
+        parameters[5].w = m_exposureHistoryValid ? 1.0f : 0.0f;
+        const BasicPostProcessParameters block{
+            effect.exposure, std::max(effect.gamma, 0.001f),
+            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
+            glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
+            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters};
+        auto &meterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(meterBuffer.Get(), 0, Bytes(block));
+
+        auto &writeExposure = m_exposureHistoryTargets[1u - m_exposureHistoryIndex];
+        rhi::RenderingInfo meterInfo;
+        meterInfo.colorAttachments = {writeExposure.Get()};
+        meterInfo.width = 1;
+        meterInfo.height = 1;
+        meterInfo.clearDepth = false;
+        commands.BeginRendering(meterInfo);
+        commands.BindPipeline(m_autoExposurePipelines[0].Get());
+        commands.BindUniformBuffer(0, meterBuffer.Get());
+        commands.BindTexture(1, source, m_fallbackSampler.Get());
+        commands.BindTexture(6, m_exposureHistoryValid
+                                    ? m_exposureHistoryTargets[m_exposureHistoryIndex].Get()
+                                    : source,
+                             m_fallbackSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        rhi::Texture *destination = &m_postProcessTargets[0];
+        if (destination->Get() == source)
+            destination = &m_postProcessTargets[1];
+        auto &applyBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(applyBuffer.Get(), 0, Bytes(block));
+        rhi::RenderingInfo applyInfo;
+        applyInfo.colorAttachments = {destination->Get()};
+        applyInfo.width = m_width;
+        applyInfo.height = m_height;
+        applyInfo.clearDepth = false;
+        commands.BeginRendering(applyInfo);
+        commands.BindPipeline(m_autoExposurePipelines[1].Get());
+        commands.BindUniformBuffer(0, applyBuffer.Get());
+        commands.BindTexture(1, source, m_fallbackSampler.Get());
+        commands.BindTexture(6, writeExposure.Get(), m_fallbackSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        m_exposureHistoryIndex = 1u - m_exposureHistoryIndex;
+        m_exposureHistoryValid = true;
+        return destination->Get();
     }
 
     rhi::TextureHandle BasicRenderer::RenderBloom(rhi::TextureHandle source,

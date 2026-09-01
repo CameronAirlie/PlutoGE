@@ -54,6 +54,16 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::LensFlare, "LensFlare");
         addPostProcess(BasicPostProcessEffectType::MotionBlur, "MotionBlur");
         addPostProcess(BasicPostProcessEffectType::DepthOfField, "DepthOfField");
+        addPostProcess(BasicPostProcessEffectType::TAA, "TAA");
+        addPostProcess(BasicPostProcessEffectType::SSAO, "SSAO");
+        addPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
+        addPostProcess(BasicPostProcessEffectType::SSR, "SSR");
+        addPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
+        addPostProcess(BasicPostProcessEffectType::SceneComposite, "SceneComposite");
+        result.autoExposure[0] = {.vertex = Load("AutoExposureMeter", "vertex"),
+                                  .fragment = Load("AutoExposureMeter", "fragment")};
+        result.autoExposure[1] = {.vertex = Load("AutoExposureApply", "vertex"),
+                                  .fragment = Load("AutoExposureApply", "fragment")};
         constexpr std::array<std::string_view, 4> bloomModules{
             "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
         for (std::size_t index = 0; index < bloomModules.size(); ++index)

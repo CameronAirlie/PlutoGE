@@ -3,10 +3,17 @@
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
+#include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
+#include "PlutoGE/render/postprocess/SSAOEffect.h"
+#include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/SSREffect.h"
+#include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
+#include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,6 +101,53 @@ int main()
         depthOfFieldPacket->parameters[1].w != 0.0f ||
         !IsRhiPostProcessEffectSupported("DepthOfField"))
         return 9;
+
+    AutoExposureEffect autoExposure;
+    autoExposure.ApplyParameters({
+        {.name = "Key Value", .type = PostProcessParameterType::Float, .value = "0.22"},
+        {.name = "Max Exposure", .type = PostProcessParameterType::Float, .value = "3.5"}});
+    const auto exposurePacket = AdaptPostProcessEffect(autoExposure);
+    if (!exposurePacket || exposurePacket->type != BasicPostProcessEffectType::AutoExposure ||
+        !Near(exposurePacket->parameters[0].x, 0.22f) ||
+        !Near(exposurePacket->parameters[0].z, 3.5f))
+        return 10;
+
+    TAAEffect taa({.historyWeight = 0.88f, .sharpening = 0.2f, .quality = 1});
+    const auto taaPacket = AdaptPostProcessEffect(taa);
+    if (!taaPacket || taaPacket->type != BasicPostProcessEffectType::TAA ||
+        !Near(taaPacket->parameters[0].x, 0.88f) ||
+        !Near(taaPacket->parameters[0].w, 0.2f) || taaPacket->quality != 1 ||
+        !IsRhiPostProcessEffectSupported("AutoExposure") ||
+        !IsRhiPostProcessEffectSupported("TAA"))
+        return 11;
+
+    SSAOEffect ssao;
+    SSGIEffect ssgi;
+    SSREffect ssr;
+    VolumetricFogEffect fog;
+    SceneCompositeEffect composite;
+    const auto ssaoPacket = AdaptPostProcessEffect(ssao);
+    const auto ssgiPacket = AdaptPostProcessEffect(ssgi);
+    const auto ssrPacket = AdaptPostProcessEffect(ssr);
+    const auto fogPacket = AdaptPostProcessEffect(fog);
+    const auto compositePacket = AdaptPostProcessEffect(composite);
+    if (!ssaoPacket || !ssgiPacket || !ssrPacket || !fogPacket || !compositePacket ||
+        ssaoPacket->type != BasicPostProcessEffectType::SSAO ||
+        ssgiPacket->type != BasicPostProcessEffectType::SSGI ||
+        ssrPacket->type != BasicPostProcessEffectType::SSR ||
+        fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
+        compositePacket->type != BasicPostProcessEffectType::SceneComposite)
+        return 12;
+
+    if (StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::ScreenSpaceDeferred ||
+        StageFor(BasicPostProcessEffectType::TAA) != BasicPostProcessStage::Camera ||
+        !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::Material) ||
+        !HasInput(InputsFor(BasicPostProcessEffectType::TAA), BasicPostProcessInput::History))
+        return 13;
+
+    for (const char *type : {"SSAO", "LSAO", "SSGI", "SSR", "VolumetricFog", "SceneComposite"})
+        if (!IsRhiPostProcessEffectSupported(type))
+            return 14;
 
     std::cout << "RHI post-process adapters preserve typed effect parameters\n";
     return 0;

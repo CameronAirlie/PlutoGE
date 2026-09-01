@@ -25,6 +25,21 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Volumetric Fog"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        struct Settings
+        {
+            glm::vec3 color;
+            float density, heightFalloff, heightOffset, maxDistance, scattering;
+            float anisotropy, ambientContribution, directionalContribution, maxOpacity;
+            int stepCount, shadowStepStride;
+            bool halfResolution;
+        };
+        [[nodiscard]] Settings GetSettings() const noexcept
+        {
+            return {m_fogColor, m_density, m_heightFalloff, m_heightOffset, m_maxDistance,
+                    m_scattering, m_anisotropy, m_ambientContribution,
+                    m_directionalContribution, m_maxOpacity, m_stepCount,
+                    m_shadowStepStride, m_halfResolution};
+        }
 
     private:
         void EnsureInternalTarget(int width, int height);

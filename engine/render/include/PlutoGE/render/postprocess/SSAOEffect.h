@@ -43,6 +43,13 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return m_displayName; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        [[nodiscard]] SSAOEffectConfig GetConfig() const
+        {
+            return {m_typeName, m_displayName, m_radius, m_bias, m_intensity, m_power,
+                    m_temporalBlend, m_historyDepthThreshold, m_historyNormalThreshold,
+                    m_sampleCount, m_blurRadius, m_halfResolution};
+        }
+        [[nodiscard]] bool IsAoOnly() const noexcept { return m_outputMode != 0; }
 
     private:
         static constexpr int kKernelSize = 32;

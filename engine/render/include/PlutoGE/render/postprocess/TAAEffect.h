@@ -44,6 +44,7 @@ namespace PlutoGE::render
 
         CameraData PrepareCameraData(const CameraData &cameraData, int width, int height, std::uint64_t frameSequence);
         void ResetHistory();
+        [[nodiscard]] const TAAEffectConfig &GetConfig() const noexcept { return m_config; }
 
     private:
         static constexpr int kJitterSampleCount = 16;

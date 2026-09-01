@@ -323,9 +323,9 @@ namespace PlutoGE::render
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
-        // Diagnostic: keep ordinary post-process outputs physically distinct so
-        // the viewport investigation can rule out ping-pong attachment reuse.
-        std::vector<rhi::Texture> m_uniquePostProcessTargets;
+        // Reusing ping-pong attachments within a recorded Vulkan chain produced
+        // screen-tile corruption. Keep one stable output per ordinary pass.
+        std::vector<rhi::Texture> m_postProcessPassTargets;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;

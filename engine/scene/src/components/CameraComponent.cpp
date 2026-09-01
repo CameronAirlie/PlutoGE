@@ -24,6 +24,14 @@ namespace PlutoGE::scene
         constexpr const char *kEffectPrefix = "PostProcessEffects.";
         constexpr const char *kEffectParamsPrefix = "Params.";
 
+        bool EnsurePostProcessMutationContext()
+        {
+            auto &engine = core::Engine::GetInstance();
+            auto &window = engine.GetWindow();
+            return engine.GetConfig().graphicsApi != render::rhi::GraphicsApi::OpenGL ||
+                   !window.IsOpen() || window.EnsureOpenGLContextCurrent(true);
+        }
+
         PropertyType ToScenePropertyType(render::PostProcessParameterType parameterType)
         {
             switch (parameterType)
@@ -122,11 +130,7 @@ namespace PlutoGE::scene
 
     CameraComponent::~CameraComponent()
     {
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (window.IsOpen())
-        {
-            window.EnsureOpenGLContextCurrent(true);
-        }
+        EnsurePostProcessMutationContext();
     }
 
     void CameraComponent::Update(float deltaTime)
@@ -176,8 +180,7 @@ namespace PlutoGE::scene
 
     void CameraComponent::ClearPostProcessEffects()
     {
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        if (!EnsurePostProcessMutationContext())
         {
             return;
         }
@@ -191,8 +194,7 @@ namespace PlutoGE::scene
             return false;
         }
 
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        if (!EnsurePostProcessMutationContext())
         {
             return false;
         }
@@ -236,8 +238,7 @@ namespace PlutoGE::scene
 
     bool CameraComponent::SetPostProcessPresetAssetReference(std::string assetReference)
     {
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        if (!EnsurePostProcessMutationContext())
         {
             return false;
         }

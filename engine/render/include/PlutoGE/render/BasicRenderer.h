@@ -316,12 +316,16 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Sampler m_screenSampler;
+        rhi::Sampler m_shadowSampler;
         rhi::Texture m_colorTarget;
         rhi::Texture m_displayTarget;
         rhi::Texture m_normalTarget;
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
+        // Diagnostic: keep ordinary post-process outputs physically distinct so
+        // the viewport investigation can rule out ping-pong attachment reuse.
+        std::vector<rhi::Texture> m_uniquePostProcessTargets;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;

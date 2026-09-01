@@ -149,8 +149,22 @@ namespace PlutoGE::render::rhi::opengl
             GLbitfield clearMask = 0;
             if (info.clearColor)
             {
-                glClearColor(info.clearColorValue[0], info.clearColorValue[1], info.clearColorValue[2], info.clearColorValue[3]);
-                clearMask |= GL_COLOR_BUFFER_BIT;
+                if (!info.colorAttachments.empty() && !info.clearColorValues.empty())
+                {
+                    for (std::size_t index = 0; index < info.colorAttachments.size(); ++index)
+                    {
+                        const float *clearValue = index < info.clearColorValues.size()
+                                                      ? info.clearColorValues[index].data()
+                                                      : info.clearColorValue;
+                        glClearBufferfv(GL_COLOR, static_cast<GLint>(index), clearValue);
+                    }
+                }
+                else
+                {
+                    glClearColor(info.clearColorValue[0], info.clearColorValue[1],
+                                 info.clearColorValue[2], info.clearColorValue[3]);
+                    clearMask |= GL_COLOR_BUFFER_BIT;
+                }
             }
             if (info.clearDepth)
             {

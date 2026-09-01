@@ -13,6 +13,30 @@ FullscreenVertexOutput vertexMain(uint vertexId : SV_VertexID) { return fullscre
 
 float luma(float3 color) { return dot(color, float3(0.2126, 0.7152, 0.0722)); }
 
+float2 responsiveEncodedMotion(float2 uv)
+{
+    float closestDepth = depthTexture.Sample(uv).r;
+    float2 bestMotion = motionTexture.Sample(uv).xy;
+    const float2 offsets[4] = {
+        float2(-1.0, 0.0), float2(1.0, 0.0),
+        float2(0.0, -1.0), float2(0.0, 1.0)
+    };
+    for (uint index = 0; index < 4; ++index)
+    {
+        const float2 sampleUv = saturate(uv + offsets[index] * pass.inverseResolution);
+        const float sampleDepth = depthTexture.Sample(sampleUv).r;
+        // Reverse-Z: the largest depth belongs to the nearest surface. Dilate
+        // its velocity by one pixel so rasterized silhouette gaps do not pick
+        // the background velocity and lose temporal coverage.
+        if (sampleDepth > closestDepth)
+        {
+            closestDepth = sampleDepth;
+            bestMotion = motionTexture.Sample(sampleUv).xy;
+        }
+    }
+    return bestMotion;
+}
+
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
@@ -26,7 +50,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (pass.parameters[5].w < 0.5)
         return float4(current.rgb, currentDepth);
 
-    const float2 encodedMotion = (motionTexture.Sample(currentUv).xy * 2.0 - 1.0) *
+    const float2 encodedMotion = (responsiveEncodedMotion(currentUv) * 2.0 - 1.0) *
                                  textureOrientation;
     const float2 motion = encodedMotion + currentJitterUv - previousJitterUv;
     const float2 historyUv = uv - motion;

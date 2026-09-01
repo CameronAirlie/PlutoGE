@@ -368,7 +368,11 @@ namespace PlutoGE::render::rhi::vulkan
                 colors[index].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
                 colors[index].loadOp = info.clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
                 colors[index].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                std::memcpy(colors[index].clearValue.color.float32, info.clearColorValue, sizeof(info.clearColorValue));
+                const float *clearValue = index < info.clearColorValues.size()
+                                              ? info.clearColorValues[index].data()
+                                              : info.clearColorValue;
+                std::memcpy(colors[index].clearValue.color.float32, clearValue,
+                            sizeof(info.clearColorValue));
             }
             VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
             depth.imageView = m_depth ? m_depth->view : VK_NULL_HANDLE;

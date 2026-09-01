@@ -614,6 +614,12 @@ namespace PlutoGE::render
         renderingInfo.clearColorValue[0] = 0.04f;
         renderingInfo.clearColorValue[1] = 0.06f;
         renderingInfo.clearColorValue[2] = 0.09f;
+        renderingInfo.clearColorValues = {
+            {0.04f, 0.06f, 0.09f, 1.0f}, // Scene color.
+            {0.5f, 0.5f, 1.0f, 1.0f},   // Neutral encoded normal.
+            {0.0f, 1.0f, 0.0f, 1.0f},   // Non-metallic, fully rough material.
+            {0.5f, 0.5f, 0.0f, 1.0f},   // Encoded zero motion.
+        };
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
         commands.BindPipeline(m_pipeline.Get());

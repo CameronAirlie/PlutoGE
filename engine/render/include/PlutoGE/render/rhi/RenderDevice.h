@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/rhi/Types.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -36,6 +37,9 @@ namespace PlutoGE::render::rhi
         bool clearColor = true;
         bool clearDepth = true;
         float clearColorValue[4] = {0, 0, 0, 1};
+        // Optional values indexed by color attachment. When omitted, the
+        // legacy clearColorValue is applied to every attachment.
+        std::vector<std::array<float, 4>> clearColorValues;
         float clearDepthValue = 0.0f;
     };
 

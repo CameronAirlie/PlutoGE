@@ -25,7 +25,8 @@ struct FragmentOutput
     float4 motion : SV_Target3;
 };
 
-[[vk::binding(0, 0)]] cbuffer CameraParameters : register(b0, space0)
+[[vk::binding(0, 0)]]
+cbuffer CameraParameters : register(b0, space0)
 {
     column_major float4x4 viewProjection;
     float4 cameraPositionAmbient;
@@ -45,13 +46,15 @@ struct FragmentOutput
     column_major float4x4 previousViewProjection;
 };
 
-[[vk::binding(0, 2)]] cbuffer ObjectParameters : register(b0, space2)
+[[vk::binding(0, 2)]]
+cbuffer ObjectParameters : register(b0, space2)
 {
     column_major float4x4 model;
     column_major float4x4 previousModel;
 };
 
-[[vk::binding(0, 1)]] cbuffer MaterialParameters : register(b0, space1)
+[[vk::binding(0, 1)]]
+cbuffer MaterialParameters : register(b0, space1)
 {
     float4 baseColor;
     float2 uvScale;
@@ -71,20 +74,31 @@ struct FragmentOutput
     float4 subsurfaceRadiusPadding;
 };
 
-[[vk::binding(1, 1)]] Sampler2D baseColorTexture : register(t1, space1);
-[[vk::binding(2, 1)]] Sampler2D normalTexture : register(t2, space1);
-[[vk::binding(3, 1)]] Sampler2D metallicTexture : register(t3, space1);
-[[vk::binding(4, 1)]] Sampler2D roughnessTexture : register(t4, space1);
-[[vk::binding(5, 1)]] Sampler2D directionalShadowTexture : register(t5, space1);
-[[vk::binding(6, 1)]] Sampler2D directionalShadowTexture1 : register(t6, space1);
-[[vk::binding(7, 1)]] Sampler2D directionalShadowTexture2 : register(t7, space1);
-[[vk::binding(8, 1)]] Sampler2D directionalShadowTexture3 : register(t8, space1);
+[[vk::binding(1, 1)]]
+Sampler2D baseColorTexture : register(t1, space1);
+[[vk::binding(2, 1)]]
+Sampler2D normalTexture : register(t2, space1);
+[[vk::binding(3, 1)]]
+Sampler2D metallicTexture : register(t3, space1);
+[[vk::binding(4, 1)]]
+Sampler2D roughnessTexture : register(t4, space1);
+[[vk::binding(5, 1)]]
+Sampler2D directionalShadowTexture : register(t5, space1);
+[[vk::binding(6, 1)]]
+Sampler2D directionalShadowTexture1 : register(t6, space1);
+[[vk::binding(7, 1)]]
+Sampler2D directionalShadowTexture2 : register(t7, space1);
+[[vk::binding(8, 1)]]
+Sampler2D directionalShadowTexture3 : register(t8, space1);
 
 float sampleShadowCascade(int cascade, float2 uv)
 {
-    if (cascade == 0) return directionalShadowTexture.Sample(uv).r;
-    if (cascade == 1) return directionalShadowTexture1.Sample(uv).r;
-    if (cascade == 2) return directionalShadowTexture2.Sample(uv).r;
+    if (cascade == 0)
+        return directionalShadowTexture.Sample(uv).r;
+    if (cascade == 1)
+        return directionalShadowTexture1.Sample(uv).r;
+    if (cascade == 2)
+        return directionalShadowTexture2.Sample(uv).r;
     return directionalShadowTexture3.Sample(uv).r;
 }
 
@@ -93,7 +107,8 @@ float evaluateShadowCascade(int cascade, float3 worldPosition)
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
     float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
-    if (shadowFlipY != 0) shadowUv.y = 1.0 - shadowUv.y;
+    if (shadowFlipY != 0)
+        shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
     const float configuredFilterRadius = shadowFilterParameters.x > 0.5 ? shadowFilterParameters.y : 0.0;
@@ -103,7 +118,9 @@ float evaluateShadowCascade(int cascade, float3 worldPosition)
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
             visibleSamples += shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <=
-                              sampleShadowCascade(cascade, shadowUv + float2(x, y) * texel) ? 1.0 : 0.0;
+                                      sampleShadowCascade(cascade, shadowUv + float2(x, y) * texel)
+                                  ? 1.0
+                                  : 0.0;
     return visibleSamples / 9.0;
 }
 
@@ -112,11 +129,14 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition)
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
     float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
-    if (shadowFlipY != 0) shadowUv.y = 1.0 - shadowUv.y;
+    if (shadowFlipY != 0)
+        shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
     return shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <=
-           sampleShadowCascade(cascade, shadowUv) ? 1.0 : 0.0;
+                   sampleShadowCascade(cascade, shadowUv)
+               ? 1.0
+               : 0.0;
 }
 
 [shader("vertex")]
@@ -169,13 +189,25 @@ FragmentOutput fragmentMain(VertexOutput input)
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float3 halfDirection = normalize(lightDirection + viewDirection);
     const float ndotl = saturate(dot(normal, lightDirection));
+    const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
     const float ndoth = saturate(dot(normal, halfDirection));
-    const float perceptualRoughness = materialRoughness;
-    const float specularPower = lerp(256.0, 4.0, perceptualRoughness);
+    const float hdotv = saturate(dot(halfDirection, viewDirection));
     const float3 f0 = lerp(float3(0.04), sampledColor.rgb, materialMetallic);
-    const float3 diffuse = sampledColor.rgb * (1.0 - materialMetallic) * ndotl;
-    const float3 specular = f0 * pow(ndoth, specularPower) * ndotl;
-    const float3 direct = (diffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
+    const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - hdotv, 5.0);
+    const float alpha = materialRoughness * materialRoughness;
+    const float alphaSquared = alpha * alpha;
+    const float distributionDenominator = ndoth * ndoth * (alphaSquared - 1.0) + 1.0;
+    const float distribution = alphaSquared /
+                               max(3.14159265 * distributionDenominator * distributionDenominator, 0.0001);
+    const float geometryK = (materialRoughness + 1.0) * (materialRoughness + 1.0) / 8.0;
+    const float geometryView = ndotv / (ndotv * (1.0 - geometryK) + geometryK);
+    const float geometryLight = ndotl / (ndotl * (1.0 - geometryK) + geometryK);
+    const float3 specular = distribution * geometryView * geometryLight * fresnel /
+                            max(4.0 * ndotv * ndotl, 0.0001);
+    const float3 diffuseWeight = (1.0 - fresnel) * (1.0 - materialMetallic);
+    const float3 diffuse = diffuseWeight * sampledColor.rgb / 3.14159265;
+    const float3 direct = (diffuse + specular) * directionalColor.rgb *
+                          directionalDirectionIntensity.w * ndotl;
     const float subsurfaceStrength = saturate(subsurfaceColorStrength.w) * (1.0 - materialMetallic);
     const float subsurfaceRadius = max(subsurfaceRadiusPadding.x, 0.001);
     const float wrappedNdotL = saturate((dot(normal, lightDirection) + subsurfaceRadius * 0.25) /
@@ -193,19 +225,24 @@ FragmentOutput fragmentMain(VertexOutput input)
         int cascade = cascadeCount - 1;
         for (int index = 0; index < cascadeCount; ++index)
         {
-            if (receiverDistance <= shadowCascadeSplits[index]) { cascade = index; break; }
+            if (receiverDistance <= shadowCascadeSplits[index])
+            {
+                cascade = index;
+                break;
+            }
         }
         shadowVisibility = evaluateShadowCascade(cascade, input.worldPosition);
         if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
         {
             const float blend = saturate((receiverDistance -
-                (shadowCascadeSplits[cascade] - shadowCascadeParameters.y)) / shadowCascadeParameters.y);
+                                          (shadowCascadeSplits[cascade] - shadowCascadeParameters.y)) /
+                                         shadowCascadeParameters.y);
             if (blend > 0.0)
                 shadowVisibility = lerp(shadowVisibility,
-                    evaluateShadowCascade(cascade + 1, input.worldPosition), blend);
+                                        evaluateShadowCascade(cascade + 1, input.worldPosition), blend);
         }
     }
-    const float3 ambient = sampledColor.rgb * cameraPositionAmbient.w;
+    const float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
     FragmentOutput output;
     output.color = float4(ambient + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
                           sampledColor.a);

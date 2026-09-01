@@ -34,10 +34,10 @@ namespace PlutoGE::ui
                                         : render::rhi::vulkan::ProbeVulkanDevice();
             m_vulkanAvailable = vulkanInfo.available;
             m_vulkanStatus = vulkanInfo.available ? "Vulkan available: " + vulkanInfo.deviceName
-                                                   : "Vulkan unavailable: " + vulkanInfo.error;
+                                                  : "Vulkan unavailable: " + vulkanInfo.error;
             if (!creation)
                 throw std::runtime_error(creation.error.empty() ? "Failed to create the requested render device"
-                                                                 : creation.error);
+                                                                : creation.error);
 
             m_isVulkan = creation.activeApi == render::rhi::GraphicsApi::Vulkan;
             m_device = std::move(creation.device);
@@ -82,6 +82,8 @@ namespace PlutoGE::ui
         render::BasicLighting lighting;
         lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         lighting.view = cameraData.view;
+        lighting.ambientIntensity = 0.0f;
+        lighting.directionalIntensity = 0.0f;
         if (scene)
             for (const auto *light : scene->GetLights())
                 if (light && light->type == scene::LightType::Directional)

@@ -83,28 +83,48 @@ namespace PlutoGE::render
             return std::as_bytes(values);
         }
 
-        bool IntersectsShadowFrustum(const BasicDraw &draw, const glm::mat4 &viewProjection)
+        struct ShadowFrustum
         {
-            if (draw.shadowBoundsRadius < 0.0f || !std::isfinite(draw.shadowBoundsRadius))
-                return true;
-            const auto row = [&](int index)
+            struct Plane
             {
-                return glm::vec4(viewProjection[0][index], viewProjection[1][index],
-                                 viewProjection[2][index], viewProjection[3][index]);
+                glm::vec3 normal{0.0f};
+                float distance = 0.0f;
             };
-            const glm::vec4 row0 = row(0), row1 = row(1), row2 = row(2), row3 = row(3);
-            const std::array planes{row3 + row0, row3 - row0, row3 + row1,
-                                    row3 - row1, row2, row3 - row2};
-            for (const auto &plane : planes)
+
+            std::array<Plane, 6> planes{};
+
+            explicit ShadowFrustum(const glm::mat4 &viewProjection)
             {
-                const float normalLength = glm::length(glm::vec3(plane));
-                if (normalLength > 0.000001f &&
-                    glm::dot(glm::vec3(plane), draw.shadowBoundsCenter) + plane.w <
-                        -draw.shadowBoundsRadius * normalLength)
-                    return false;
+                const auto row = [&](int index)
+                {
+                    return glm::vec4(viewProjection[0][index], viewProjection[1][index],
+                                     viewProjection[2][index], viewProjection[3][index]);
+                };
+                const glm::vec4 row0 = row(0), row1 = row(1), row2 = row(2), row3 = row(3);
+                const std::array equations{row3 + row0, row3 - row0, row3 + row1,
+                                           row3 - row1, row2, row3 - row2};
+                for (std::size_t index = 0; index < equations.size(); ++index)
+                {
+                    const auto normal = glm::vec3(equations[index]);
+                    const float length = glm::length(normal);
+                    if (length > 0.000001f)
+                        planes[index] = {normal / length, equations[index].w / length};
+                }
             }
-            return true;
-        }
+
+            [[nodiscard]] bool Intersects(const BasicDraw &draw) const
+            {
+                if (draw.shadowBoundsRadius < 0.0f || !std::isfinite(draw.shadowBoundsRadius))
+                    return true;
+                for (const auto &plane : planes)
+                {
+                    if (glm::dot(plane.normal, draw.shadowBoundsCenter) + plane.distance <
+                        -draw.shadowBoundsRadius)
+                        return false;
+                }
+                return true;
+            }
+        };
     }
 
     BasicRenderer::BasicRenderer() = default;
@@ -426,6 +446,7 @@ namespace PlutoGE::render
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
             {
                 const auto scopeName = "RHI Shadow Cascade " + std::to_string(cascade);
+                const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
                 commands.BeginGpuScope(scopeName);
                 m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
                 rhi::RenderingInfo shadowInfo;
@@ -442,7 +463,7 @@ namespace PlutoGE::render
                 {
                     const auto &draw = shadowDraws[drawIndex];
                     if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
-                        !IntersectsShadowFrustum(draw, lighting.shadowMatrices[cascade])) continue;
+                        !shadowFrustum.Intersects(draw)) continue;
                     commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
                     commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                     commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());

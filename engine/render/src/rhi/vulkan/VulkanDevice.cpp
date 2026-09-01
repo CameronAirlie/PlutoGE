@@ -321,6 +321,11 @@ namespace PlutoGE::render::rhi::vulkan
             m_boundDescriptorSets.fill(VK_NULL_HANDLE);
             m_boundDynamicOffsetCounts.fill(0);
             m_boundPipelineLayout = VK_NULL_HANDLE;
+            m_descriptorBindingsDirty = true;
+            m_boundVertexBuffer = {};
+            m_boundIndexBuffer = {};
+            m_boundVertexOffset = 0;
+            m_boundIndexOffset = 0;
             m_pipeline = nullptr;
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -454,6 +459,7 @@ namespace PlutoGE::render::rhi::vulkan
                     m_boundPipelineLayout = pipeline->layout;
                 }
                 m_pipeline = pipeline;
+                m_descriptorBindingsDirty = true;
                 vkCmdBindPipeline(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->pipeline);
             }
         }
@@ -461,20 +467,31 @@ namespace PlutoGE::render::rhi::vulkan
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!resource || resource->usage != BufferUsage::Vertex) throw std::invalid_argument("Invalid Vulkan vertex buffer");
+            if (m_boundVertexBuffer == handle && m_boundVertexOffset == offset) return;
             const VkDeviceSize vkOffset = offset;
             vkCmdBindVertexBuffers(CommandBuffer(), 0, 1, &resource->buffer, &vkOffset);
+            m_boundVertexBuffer = handle;
+            m_boundVertexOffset = offset;
         }
         void BindIndexBuffer(BufferHandle handle, Format format, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!resource || resource->usage != BufferUsage::Index || format != Format::R32Uint) throw std::invalid_argument("Invalid Vulkan index buffer");
+            if (m_boundIndexBuffer == handle && m_boundIndexOffset == offset) return;
             vkCmdBindIndexBuffer(CommandBuffer(), resource->buffer, offset, VK_INDEX_TYPE_UINT32);
+            m_boundIndexBuffer = handle;
+            m_boundIndexOffset = offset;
         }
         void BindUniformBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!m_pipeline || slot >= MaxResourceSlots || !resource || resource->usage != BufferUsage::Uniform)
                 throw std::invalid_argument("Invalid Vulkan uniform binding");
+            auto *previous = m_impl.buffers.Get(m_uniformBuffers[slot]);
+            // Dynamic offsets select the individual buffer contents. The descriptor itself only
+            // changes when its range changes, so equally-sized per-draw buffers can share a set.
+            if (!previous || previous->size != resource->size)
+                m_descriptorBindingsDirty = true;
             m_uniformBuffers[slot] = handle;
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
@@ -485,6 +502,8 @@ namespace PlutoGE::render::rhi::vulkan
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            if (m_sampledTextures[slot] != textureHandle || m_samplers[slot] != samplerHandle)
+                m_descriptorBindingsDirty = true;
             m_sampledTextures[slot] = textureHandle;
             m_samplers[slot] = samplerHandle;
         }
@@ -531,6 +550,13 @@ namespace PlutoGE::render::rhi::vulkan
             const auto setCount = m_pipeline->setLayouts.size();
             if (setCount > MaxDescriptorSets || m_pipeline->descriptor.resourceBindings.size() > MaxDescriptorBindings)
                 throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
+            if (!m_descriptorBindingsDirty)
+            {
+                BindPreparedDescriptorSets();
+                m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
+                    std::chrono::steady_clock::now() - descriptorStart).count();
+                return;
+            }
             std::array<VkDescriptorSet, MaxDescriptorSets> sets{};
             std::array<bool, MaxDescriptorSets> newlyAllocated{};
             std::array<DescriptorSetKey, MaxDescriptorSets> keys{};
@@ -662,8 +688,47 @@ namespace PlutoGE::render::rhi::vulkan
                             m_boundDynamicOffsets[setIndex].begin());
             }
             m_boundPipelineLayout = m_pipeline->layout;
+            std::copy_n(sets.begin(), setCount, m_preparedDescriptorSets.begin());
+            m_descriptorBindingsDirty = false;
             m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - descriptorStart).count();
+        }
+
+        void BindPreparedDescriptorSets()
+        {
+            std::array<std::uint32_t, MaxDescriptorBindings> dynamicOffsets{};
+            std::size_t dynamicOffsetCount = 0;
+            for (std::size_t setIndex = 0; setIndex < m_pipeline->setLayouts.size(); ++setIndex)
+            {
+                const auto offsetStart = dynamicOffsetCount;
+                for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
+                {
+                    if (binding.type != ResourceBindingType::UniformBuffer) continue;
+                    auto *buffer = binding.slot < MaxResourceSlots
+                        ? m_impl.buffers.Get(m_uniformBuffers[binding.slot]) : nullptr;
+                    if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                    const auto offset = m_impl.EnsureUniformResident(*buffer);
+                    if (offset > std::numeric_limits<std::uint32_t>::max())
+                        throw std::runtime_error("Vulkan dynamic uniform offset exceeds uint32 range");
+                    dynamicOffsets[dynamicOffsetCount++] = static_cast<std::uint32_t>(offset);
+                }
+                const auto offsetCount = dynamicOffsetCount - offsetStart;
+                const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
+                    std::equal(dynamicOffsets.begin() + offsetStart,
+                               dynamicOffsets.begin() + dynamicOffsetCount,
+                               m_boundDynamicOffsets[setIndex].begin());
+                if (m_boundPipelineLayout == m_pipeline->layout &&
+                    m_boundDescriptorSets[setIndex] == m_preparedDescriptorSets[setIndex] && offsetsMatch)
+                    continue;
+                vkCmdBindDescriptorSets(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                                        static_cast<std::uint32_t>(setIndex), 1, &m_preparedDescriptorSets[setIndex],
+                                        static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
+                m_boundDescriptorSets[setIndex] = m_preparedDescriptorSets[setIndex];
+                m_boundDynamicOffsetCounts[setIndex] = offsetCount;
+                std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
+                            m_boundDynamicOffsets[setIndex].begin());
+            }
+            m_boundPipelineLayout = m_pipeline->layout;
         }
 
         VulkanDevice::Impl &m_impl;
@@ -718,9 +783,15 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<VkDescriptorSet, MaxDescriptorSets> m_lastDescriptorSets{};
         std::array<bool, MaxDescriptorSets> m_lastDescriptorKeyValid{};
         std::array<VkDescriptorSet, MaxDescriptorSets> m_boundDescriptorSets{};
+        std::array<VkDescriptorSet, MaxDescriptorSets> m_preparedDescriptorSets{};
         std::array<std::array<std::uint32_t, MaxDescriptorBindings>, MaxDescriptorSets> m_boundDynamicOffsets{};
         std::array<std::size_t, MaxDescriptorSets> m_boundDynamicOffsetCounts{};
+        BufferHandle m_boundVertexBuffer{};
+        BufferHandle m_boundIndexBuffer{};
+        std::size_t m_boundVertexOffset = 0;
+        std::size_t m_boundIndexOffset = 0;
         VkPipelineLayout m_boundPipelineLayout = VK_NULL_HANDLE;
+        bool m_descriptorBindingsDirty = true;
         bool m_recording = false;
         bool m_rendering = false;
         bool m_activeScope = false;

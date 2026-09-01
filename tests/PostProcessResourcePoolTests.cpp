@@ -1,6 +1,7 @@
 #include "PlutoGE/render/PostProcessResourcePool.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 
+#include <stdexcept>
 #include <vector>
 
 namespace

@@ -493,6 +493,10 @@ namespace PlutoGE::render::rhi::vulkan
             if (!previous || previous->size != resource->size)
                 m_descriptorBindingsDirty = true;
             m_uniformBuffers[slot] = handle;
+            const auto offset = m_impl.EnsureUniformResident(*resource);
+            if (offset > std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("Vulkan dynamic uniform offset exceeds uint32 range");
+            m_uniformDynamicOffsets[slot] = static_cast<std::uint32_t>(offset);
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
@@ -580,10 +584,7 @@ namespace PlutoGE::render::rhi::vulkan
                         auto *buffer = binding.slot < MaxResourceSlots
                             ? m_impl.buffers.Get(m_uniformBuffers[binding.slot]) : nullptr;
                         if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
-                        const auto offset = m_impl.EnsureUniformResident(*buffer);
-                        if (offset > std::numeric_limits<std::uint32_t>::max())
-                            throw std::runtime_error("Vulkan dynamic uniform offset exceeds uint32 range");
-                        dynamicOffsets[dynamicOffsetCount++] = static_cast<std::uint32_t>(offset);
+                        dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                         key.resources[key.resourceCount++] = buffer->size;
                     }
                     else
@@ -704,13 +705,9 @@ namespace PlutoGE::render::rhi::vulkan
                 for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
                 {
                     if (binding.type != ResourceBindingType::UniformBuffer) continue;
-                    auto *buffer = binding.slot < MaxResourceSlots
-                        ? m_impl.buffers.Get(m_uniformBuffers[binding.slot]) : nullptr;
-                    if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
-                    const auto offset = m_impl.EnsureUniformResident(*buffer);
-                    if (offset > std::numeric_limits<std::uint32_t>::max())
-                        throw std::runtime_error("Vulkan dynamic uniform offset exceeds uint32 range");
-                    dynamicOffsets[dynamicOffsetCount++] = static_cast<std::uint32_t>(offset);
+                    if (binding.slot >= MaxResourceSlots || !m_uniformBuffers[binding.slot])
+                        throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                    dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                 }
                 const auto offsetCount = dynamicOffsetCount - offsetStart;
                 const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
@@ -775,6 +772,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<TextureResource *> m_colors;
         TextureResource *m_depth = nullptr;
         std::array<BufferHandle, MaxResourceSlots> m_uniformBuffers{};
+        std::array<std::uint32_t, MaxResourceSlots> m_uniformDynamicOffsets{};
         std::array<TextureHandle, MaxResourceSlots> m_sampledTextures{};
         std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
         std::unordered_map<VkDescriptorSetLayout, VkDescriptorSet> m_emptyDescriptorSets;

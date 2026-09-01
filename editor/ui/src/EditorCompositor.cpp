@@ -264,6 +264,11 @@ namespace PlutoGE::ui
                     if (m_drawData)
                         ImGui_ImplVulkan_RenderDrawData(m_drawData, static_cast<VkCommandBuffer>(commandContext));
                     m_drawData = nullptr; });
+                swapchain.SetOverlayPreparation([this](void *commandContext)
+                                                {
+                    for (const auto &entry : m_textures)
+                        if (entry.inUse)
+                            m_device->PrepareTextureForEditorSampling(commandContext, entry.texture); });
                 return true;
             }
 
@@ -272,7 +277,10 @@ namespace PlutoGE::ui
                 if (m_context.device)
                     vkDeviceWaitIdle(m_context.device);
                 if (m_swapchain)
+                {
+                    m_swapchain->SetOverlayPreparation({});
                     m_swapchain->SetOverlayRecorder({});
+                }
                 for (const auto &entry : m_textures)
                     if (entry.inUse && entry.descriptorSet)
                         ImGui_ImplVulkan_RemoveTexture(entry.descriptorSet);

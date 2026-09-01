@@ -832,10 +832,10 @@ namespace PlutoGE::ui
                     {
                         const glm::vec3 center = entity->GetWorldPosition();
                         const float radius = audioVolume->GetRadius();
-                        const glm::vec3 right=glm::vec3(world[0])*radius, up=glm::vec3(world[1])*radius, forward=glm::vec3(world[2])*radius;
-                        DrawWorldCircle(drawList,center,right,up,cameraData,viewportMin,viewportSize,color);
-                        DrawWorldCircle(drawList,center,right,forward,cameraData,viewportMin,viewportSize,color);
-                        DrawWorldCircle(drawList,center,up,forward,cameraData,viewportMin,viewportSize,color);
+                        const glm::vec3 right = glm::vec3(world[0]) * radius, up = glm::vec3(world[1]) * radius, forward = glm::vec3(world[2]) * radius;
+                        DrawWorldCircle(drawList, center, right, up, cameraData, viewportMin, viewportSize, color);
+                        DrawWorldCircle(drawList, center, right, forward, cameraData, viewportMin, viewportSize, color);
+                        DrawWorldCircle(drawList, center, up, forward, cameraData, viewportMin, viewportSize, color);
                     }
                 }
 
@@ -844,7 +844,7 @@ namespace PlutoGE::ui
                     if (cloudComponent->IsEnabled())
                     {
                         const glm::mat4 volumeTransform = entity->GetWorldTransform() *
-                            glm::scale(glm::mat4(1.0f), cloudComponent->GetSize());
+                                                          glm::scale(glm::mat4(1.0f), cloudComponent->GetSize());
                         DrawWireBox(drawList, volumeTransform, cameraData, viewportMin, viewportSize,
                                     IM_COL32(175, 150, 255, 220), 1.75f);
                     }
@@ -1872,7 +1872,7 @@ namespace PlutoGE::ui
             .clearColor = m_config.clearColor,
         };
         m_renderTarget = new render::RenderTarget(renderConfig);
-        if (!m_renderTarget->IsInitialized())
+        if (!m_renderTarget->IsInitialized() && m_config.graphicsApi != render::rhi::GraphicsApi::Vulkan)
         {
             std::cerr << "Failed to initialize RenderTarget in ViewportPanel" << std::endl;
         }
@@ -1894,7 +1894,8 @@ namespace PlutoGE::ui
         m_isViewportFocused = false;
         m_viewportSize = glm::vec2(0.0f);
 
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !requiresRhiViewport))
             return;
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
@@ -1914,7 +1915,7 @@ namespace PlutoGE::ui
         }
         if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
         {
-            if (!m_renderTarget->Resize(newWidth, newHeight))
+            if (!m_renderTarget->Resize(newWidth, newHeight) && !requiresRhiViewport)
             {
                 std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
                 return;
@@ -1924,13 +1925,12 @@ namespace PlutoGE::ui
         const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
         const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
         if (m_scaledRenderTarget && (scaledWidth != m_scaledRenderTarget->GetWidth() || scaledHeight != m_scaledRenderTarget->GetHeight()) &&
-            m_resizeStableFrames >= kResizeDebounceFrames && !m_scaledRenderTarget->Resize(scaledWidth, scaledHeight))
+            m_resizeStableFrames >= kResizeDebounceFrames && !m_scaledRenderTarget->Resize(scaledWidth, scaledHeight) && !requiresRhiViewport)
         {
             std::cerr << "Failed to resize scaled RenderTarget in ViewportPanel" << std::endl;
             return;
         }
 
-        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         const bool displayRhiTexture = m_useRhiPreview || requiresRhiViewport;
         const auto *rhiRenderTarget = displayRhiTexture ? GetSceneRenderTarget() : nullptr;
         const std::uint32_t rhiTextureWidth = rhiRenderTarget
@@ -1946,11 +1946,11 @@ namespace PlutoGE::ui
         {
             ReleaseRegisteredTexture();
             const EditorTextureDescriptor descriptor = displayRhiTexture
-                ? EditorTextureDescriptor{.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
-                                          .texture = m_rhiViewportTexture,
-                                          .width = rhiTextureWidth,
-                                          .height = rhiTextureHeight}
-                : EditorTextureDescriptor{.nativeOpenGlTexture = displayedNativeTexture};
+                                                           ? EditorTextureDescriptor{.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
+                                                                                     .texture = m_rhiViewportTexture,
+                                                                                     .width = rhiTextureWidth,
+                                                                                     .height = rhiTextureHeight}
+                                                           : EditorTextureDescriptor{.nativeOpenGlTexture = displayedNativeTexture};
             m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(descriptor);
             m_registeredRhiTexture = displayRhiTexture ? m_rhiViewportTexture : render::rhi::TextureHandle{};
             m_registeredNativeTexture = displayedNativeTexture;
@@ -2384,7 +2384,12 @@ namespace PlutoGE::ui
         drawList->AddCircleFilled(center, 39.0f, IM_COL32(25, 27, 34, 205));
         drawList->AddCircle(center, 39.0f, IM_COL32(110, 115, 130, 180), 0, 1.0f);
 
-        struct ProjectedAxis { const AxisEndpoint *axis; ImVec2 endpoint; float depth; };
+        struct ProjectedAxis
+        {
+            const AxisEndpoint *axis;
+            ImVec2 endpoint;
+            float depth;
+        };
         ProjectedAxis projected[IM_ARRAYSIZE(axes)];
         for (int index = 0; index < IM_ARRAYSIZE(axes); ++index)
         {
@@ -2395,7 +2400,8 @@ namespace PlutoGE::ui
                                 viewDirection.z};
         }
         std::sort(std::begin(projected), std::end(projected),
-                  [](const ProjectedAxis &left, const ProjectedAxis &right) { return left.depth < right.depth; });
+                  [](const ProjectedAxis &left, const ProjectedAxis &right)
+                  { return left.depth < right.depth; });
 
         bool hovered = false;
         const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -2415,12 +2421,36 @@ namespace PlutoGE::ui
             if (endpointHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 const glm::vec3 direction = item.axis->direction;
-                if (direction.x > 0.5f) { camera.yawDegrees = 90.0f; camera.pitchDegrees = 0.0f; }
-                else if (direction.x < -0.5f) { camera.yawDegrees = -90.0f; camera.pitchDegrees = 0.0f; }
-                else if (direction.y > 0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = -90.0f; }
-                else if (direction.y < -0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = 90.0f; }
-                else if (direction.z > 0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = 0.0f; }
-                else { camera.yawDegrees = 180.0f; camera.pitchDegrees = 0.0f; }
+                if (direction.x > 0.5f)
+                {
+                    camera.yawDegrees = 90.0f;
+                    camera.pitchDegrees = 0.0f;
+                }
+                else if (direction.x < -0.5f)
+                {
+                    camera.yawDegrees = -90.0f;
+                    camera.pitchDegrees = 0.0f;
+                }
+                else if (direction.y > 0.5f)
+                {
+                    camera.yawDegrees = 0.0f;
+                    camera.pitchDegrees = -90.0f;
+                }
+                else if (direction.y < -0.5f)
+                {
+                    camera.yawDegrees = 0.0f;
+                    camera.pitchDegrees = 90.0f;
+                }
+                else if (direction.z > 0.5f)
+                {
+                    camera.yawDegrees = 0.0f;
+                    camera.pitchDegrees = 0.0f;
+                }
+                else
+                {
+                    camera.yawDegrees = 180.0f;
+                    camera.pitchDegrees = 0.0f;
+                }
                 FrameSceneOrthographic(EditorShell::GetInstance(), viewportSize);
             }
         }
@@ -2456,16 +2486,16 @@ namespace PlutoGE::ui
         const render::CameraData cameraData = cachedCameraValid ? m_editorCameraData : freshCameraData;
         const float viewportAspect = viewportSize.x / viewportSize.y;
         const glm::mat4 gizmoProjection = editorCamera.orthographic
-                                               ? glm::ortho(-editorCamera.orthographicSize * viewportAspect,
-                                                            editorCamera.orthographicSize * viewportAspect,
-                                                            -editorCamera.orthographicSize,
-                                                            editorCamera.orthographicSize,
-                                                            editorCamera.camera.GetNearPlane(),
-                                                            editorCamera.camera.GetFarPlane())
-                                               : glm::perspective(glm::radians(editorCamera.camera.GetFOV()),
-                                                                  viewportAspect,
-                                                                  editorCamera.camera.GetNearPlane(),
-                                                                  editorCamera.camera.GetFarPlane());
+                                              ? glm::ortho(-editorCamera.orthographicSize * viewportAspect,
+                                                           editorCamera.orthographicSize * viewportAspect,
+                                                           -editorCamera.orthographicSize,
+                                                           editorCamera.orthographicSize,
+                                                           editorCamera.camera.GetNearPlane(),
+                                                           editorCamera.camera.GetFarPlane())
+                                              : glm::perspective(glm::radians(editorCamera.camera.GetFOV()),
+                                                                 viewportAspect,
+                                                                 editorCamera.camera.GetNearPlane(),
+                                                                 editorCamera.camera.GetFarPlane());
 
         ImGuizmo::SetOrthographic(editorCamera.orthographic);
         ImGuizmo::Enable(true);
@@ -2535,21 +2565,25 @@ namespace PlutoGE::ui
                     for (std::size_t index = 0; index < points.size(); index += stride)
                     {
                         const glm::vec3 center = points[index] + glm::vec3(0.0f, 0.035f, 0.0f);
-                        const auto c0=ProjectWorldPoint(center+glm::vec3(-halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
-                        const auto c1=ProjectWorldPoint(center+glm::vec3( halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
-                        const auto c2=ProjectWorldPoint(center+glm::vec3( halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
-                        const auto c3=ProjectWorldPoint(center+glm::vec3(-halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
-                        if(!c0.visible||!c1.visible||!c2.visible||!c3.visible) continue;
-                        drawList->AddQuadFilled(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(35,205,125,72));
-                        drawList->AddQuad(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(70,245,165,135),0.75f);
+                        const auto c0 = ProjectWorldPoint(center + glm::vec3(-halfCell, 0, -halfCell), cameraData, viewportMin, viewportSize);
+                        const auto c1 = ProjectWorldPoint(center + glm::vec3(halfCell, 0, -halfCell), cameraData, viewportMin, viewportSize);
+                        const auto c2 = ProjectWorldPoint(center + glm::vec3(halfCell, 0, halfCell), cameraData, viewportMin, viewportSize);
+                        const auto c3 = ProjectWorldPoint(center + glm::vec3(-halfCell, 0, halfCell), cameraData, viewportMin, viewportSize);
+                        if (!c0.visible || !c1.visible || !c2.visible || !c3.visible)
+                            continue;
+                        drawList->AddQuadFilled(c0.screen, c1.screen, c2.screen, c3.screen, IM_COL32(35, 205, 125, 72));
+                        drawList->AddQuad(c0.screen, c1.screen, c2.screen, c3.screen, IM_COL32(70, 245, 165, 135), 0.75f);
                     }
                 };
                 const auto visit = [&](scene::Entity *entity, const auto &self) -> void
                 {
-                    if (auto *mesh = entity->GetComponent<scene::NavigationMeshComponent>()) drawNavigation(mesh->GetNavigation());
-                    for (auto *child : entity->GetChildren()) self(child, self);
+                    if (auto *mesh = entity->GetComponent<scene::NavigationMeshComponent>())
+                        drawNavigation(mesh->GetNavigation());
+                    for (auto *child : entity->GetChildren())
+                        self(child, self);
                 };
-                for (auto *root : activeScene->GetRootEntities()) visit(root, visit);
+                for (auto *root : activeScene->GetRootEntities())
+                    visit(root, visit);
             }
 
             if (m_showAgentPaths)
@@ -2688,8 +2722,8 @@ namespace PlutoGE::ui
                 if (resizeTarget != 0)
                 {
                     const glm::mat4 boundsTransform = selectedEntity->GetWorldTransform() *
-                        glm::translate(glm::mat4(1.0f), localCenter) *
-                        glm::scale(glm::mat4(1.0f), authoredSize);
+                                                      glm::translate(glm::mat4(1.0f), localCenter) *
+                                                      glm::scale(glm::mat4(1.0f), authoredSize);
                     const glm::vec3 worldCenter(boundsTransform[3]);
                     const auto projectedCenter = ProjectWorldPoint(worldCenter, cameraData, viewportMin, viewportSize);
                     const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -2743,9 +2777,10 @@ namespace PlutoGE::ui
                         const ImVec2 point = projectedHandles[handleIndex].screen;
                         const float radius = active || hovered ? 6.0f : 4.5f;
                         drawList->AddCircleFilled(point, radius,
-                                                  active ? IM_COL32(255, 215, 70, 255)
-                                                         : hovered ? IM_COL32(245, 250, 255, 255)
-                                                                   : IM_COL32(80, 205, 245, 245), 12);
+                                                  active    ? IM_COL32(255, 215, 70, 255)
+                                                  : hovered ? IM_COL32(245, 250, 255, 255)
+                                                            : IM_COL32(80, 205, 245, 245),
+                                                  12);
                         drawList->AddCircle(point, radius, IM_COL32(25, 55, 70, 255), 12, 1.5f);
                     }
                     drawList->PopClipRect();
@@ -2795,9 +2830,9 @@ namespace PlutoGE::ui
                                 collider->SetRadius(newSize[m_resizeHandleAxis] * 0.5f);
                             selectedEntity->AddPrefabOverride(m_resizeHandleAxis == 1 && collider->GetShape() == scene::ColliderShape::Capsule
                                                                   ? "Component:ColliderComponent:Height"
-                                                                  : collider->GetShape() == scene::ColliderShape::Box
-                                                                        ? "Component:ColliderComponent:Size"
-                                                                        : "Component:ColliderComponent:Radius");
+                                                              : collider->GetShape() == scene::ColliderShape::Box
+                                                                  ? "Component:ColliderComponent:Size"
+                                                                  : "Component:ColliderComponent:Radius");
                         }
                         else if (resizeTarget == 2)
                         {
@@ -2886,8 +2921,7 @@ namespace PlutoGE::ui
                                     const glm::vec3 localHit(glm::inverse(selectedEntity->GetWorldTransform()) * glm::vec4(worldHit, 1.0f));
                                     const float width = std::max(1.0f, static_cast<float>(terrain->GetWidth() - 1) * terrain->GetCellSize());
                                     const float depth = std::max(1.0f, static_cast<float>(terrain->GetDepth() - 1) * terrain->GetCellSize());
-                                    hit = MeshUvHit{{localHit.x / width, localHit.z / depth}, worldHit, texture,
-                                                    glm::length(worldHit - ray->origin)};
+                                    hit = MeshUvHit{{localHit.x / width, localHit.z / depth}, worldHit, texture, glm::length(worldHit - ray->origin)};
                                 }
                             }
                         }
@@ -3016,12 +3050,14 @@ namespace PlutoGE::ui
                     const auto entityId = s_foliageStrokeEntityId;
                     const std::size_t retainedBytes = (s_foliageStrokeBefore.size() + after.size()) * sizeof(std::vector<scene::FoliageInstance>) +
                                                       [&]()
-                                                      {
-                                                          std::size_t bytes = 0;
-                                                          for (const auto &instances : s_foliageStrokeBefore) bytes += instances.size() * sizeof(scene::FoliageInstance);
-                                                          for (const auto &instances : after) bytes += instances.size() * sizeof(scene::FoliageInstance);
-                                                          return bytes;
-                                                      }();
+                    {
+                        std::size_t bytes = 0;
+                        for (const auto &instances : s_foliageStrokeBefore)
+                            bytes += instances.size() * sizeof(scene::FoliageInstance);
+                        for (const auto &instances : after)
+                            bytes += instances.size() * sizeof(scene::FoliageInstance);
+                        return bytes;
+                    }();
                     editorShell.PushSceneEditCommand(
                         "Paint Foliage",
                         [entityId, snapshot = std::move(s_foliageStrokeBefore)]()
@@ -3029,7 +3065,8 @@ namespace PlutoGE::ui
                             auto *scene = EditorShell::GetInstance().GetScene();
                             auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
                             auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
-                            if (!foliage) return false;
+                            if (!foliage)
+                                return false;
                             foliage->RestoreInstanceSnapshot(snapshot);
                             EditorShell::GetInstance().MarkSceneDirty();
                             return true;
@@ -3039,7 +3076,8 @@ namespace PlutoGE::ui
                             auto *scene = EditorShell::GetInstance().GetScene();
                             auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
                             auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
-                            if (!foliage) return false;
+                            if (!foliage)
+                                return false;
                             foliage->RestoreInstanceSnapshot(snapshot);
                             EditorShell::GetInstance().MarkSceneDirty();
                             return true;
@@ -3803,7 +3841,8 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
     {
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !requiresRhiViewport))
             return;
 
         auto &editorShell = EditorShell::GetInstance();
@@ -3865,7 +3904,6 @@ namespace PlutoGE::ui
         m_rhiSceneCommandCount = m_rhiRenderService->GetSceneCommandCount();
         m_rhiDrawCount = m_rhiRenderService->GetDrawCount();
         return;
-
     }
 
     render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const
@@ -3877,6 +3915,8 @@ namespace PlutoGE::ui
 
     void ViewportPanel::PresentSceneRenderTarget()
     {
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
+            return;
         auto *source = GetSceneRenderTarget();
         if (!source || source == m_renderTarget || !m_renderTarget || !m_upscaler)
             return;
@@ -3887,12 +3927,16 @@ namespace PlutoGE::ui
 
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        return IsOpen() && WasVisibleLastFrame() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+        const bool targetReady = m_renderTarget &&
+                                 (m_renderTarget->IsInitialized() || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
+        return IsOpen() && WasVisibleLastFrame() && targetReady &&
+               m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
     }
 
     void ViewportPanel::ClearFrame()
     {
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan ||
+            !m_renderTarget || !m_renderTarget->IsInitialized())
             return;
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();

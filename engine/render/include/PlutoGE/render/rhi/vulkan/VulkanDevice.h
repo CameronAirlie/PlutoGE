@@ -58,6 +58,7 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] const std::string &GetDeviceName() const noexcept;
         [[nodiscard]] std::optional<VulkanEditorContext> GetEditorContext(const ISwapchain &swapchain) const noexcept;
         [[nodiscard]] VkImageView GetTextureImageView(TextureHandle texture) const noexcept;
+        void PrepareTextureForEditorSampling(void *nativeCommandContext, TextureHandle texture);
 
     private:
         friend class VulkanCommandContext;

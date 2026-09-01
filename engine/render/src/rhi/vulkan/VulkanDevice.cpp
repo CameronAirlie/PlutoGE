@@ -987,6 +987,11 @@ namespace PlutoGE::render::rhi::vulkan
             m_overlayRecorder = std::move(recorder);
         }
 
+        void SetOverlayPreparation(OverlayRecorder recorder) override
+        {
+            m_overlayPreparation = std::move(recorder);
+        }
+
         [[nodiscard]] VkFormat GetNativeFormat() const noexcept { return m_nativeFormat; }
         [[nodiscard]] std::uint32_t GetImageCount() const noexcept { return static_cast<std::uint32_t>(m_images.size()); }
 
@@ -1055,6 +1060,8 @@ namespace PlutoGE::render::rhi::vulkan
                                  0, 0, nullptr, 0, nullptr, 1, &destination);
             if (m_overlayRecorder)
             {
+                if (m_overlayPreparation)
+                    m_overlayPreparation(frame.commandBuffer);
                 VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
                 color.imageView = m_imageViews[imageIndex];
                 color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1137,11 +1144,18 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::runtime_error("Vulkan surface images do not support color attachments");
             auto selected = formats.front();
             for (const auto &candidate : formats)
-                if (candidate.format == VK_FORMAT_R8G8B8A8_SRGB || candidate.format == VK_FORMAT_B8G8R8A8_SRGB)
+                if (candidate.format == VK_FORMAT_R8G8B8A8_UNORM || candidate.format == VK_FORMAT_B8G8R8A8_UNORM)
                 {
                     selected = candidate;
                     break;
                 }
+            if (selected.format != VK_FORMAT_R8G8B8A8_UNORM && selected.format != VK_FORMAT_B8G8R8A8_UNORM)
+                for (const auto &candidate : formats)
+                    if (candidate.format == VK_FORMAT_R8G8B8A8_SRGB || candidate.format == VK_FORMAT_B8G8R8A8_SRGB)
+                    {
+                        selected = candidate;
+                        break;
+                    }
             m_format = selected.format == VK_FORMAT_R8G8B8A8_SRGB || selected.format == VK_FORMAT_B8G8R8A8_SRGB
                            ? Format::R8G8B8A8Srgb
                            : Format::R8G8B8A8Unorm;
@@ -1239,6 +1253,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<VkImageView> m_imageViews;
         VkFormat m_nativeFormat = VK_FORMAT_UNDEFINED;
         OverlayRecorder m_overlayRecorder;
+        OverlayRecorder m_overlayPreparation;
         std::vector<bool> m_presented;
         Format m_format = Format::R8G8B8A8Srgb;
         std::uint32_t m_width = 0;
@@ -1791,6 +1806,16 @@ namespace PlutoGE::render::rhi::vulkan
     {
         const auto *resource = m_impl->textures.Get(texture);
         return resource ? resource->view : VK_NULL_HANDLE;
+    }
+
+    void VulkanDevice::PrepareTextureForEditorSampling(void *nativeCommandContext, TextureHandle texture)
+    {
+        auto *resource = m_impl->textures.Get(texture);
+        const auto commandBuffer = static_cast<VkCommandBuffer>(nativeCommandContext);
+        if (!resource || !commandBuffer || resource->descriptor.format == Format::D32Float)
+            return;
+        m_impl->Transition(commandBuffer, *resource, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
     }
 
     std::vector<std::byte> VulkanDevice::ReadTextureRgba8(TextureHandle handle)

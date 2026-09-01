@@ -20,7 +20,10 @@ namespace PlutoGE::render
     class Texture;
     struct RenderCommand;
     class IPostProcessEffect;
-    namespace rhi { class IRenderDevice; }
+    namespace rhi
+    {
+        class IRenderDevice;
+    }
 }
 
 namespace PlutoGE::scene

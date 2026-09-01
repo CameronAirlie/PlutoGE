@@ -2271,7 +2271,8 @@ namespace PlutoGE::ui
 
     void EditorShell::OpenInputMappingAsset(std::string reference)
     {
-        if (reference.empty()) return;
+        if (reference.empty())
+            return;
         m_activeInputMappingAssetReference = std::move(reference);
         m_openInputMappingEditorRequested = true;
         Log(ConsoleSeverity::Info, "Opened input mapping: " + m_activeInputMappingAssetReference);
@@ -3712,8 +3713,8 @@ namespace PlutoGE::ui
                         ImGui::TextDisabled("The project backend is authoritative; editor presentation is handled by the active compositor backend.");
                     }
                     const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
-                                                          ? "Spatial"
-                                                          : "None";
+                                                           ? "Spatial"
+                                                           : "None";
                     if (ImGui::BeginCombo("Runtime Upscaler", runtimeUpscalerLabel))
                     {
                         constexpr std::array<const char *, 2> upscalerLabels = {"None", "Spatial"};

@@ -90,6 +90,7 @@ namespace PlutoGE::render::rhi
         [[nodiscard]] virtual std::uint32_t GetWidth() const noexcept = 0;
         [[nodiscard]] virtual std::uint32_t GetHeight() const noexcept = 0;
         virtual bool Resize(std::uint32_t width, std::uint32_t height) = 0;
+        virtual void SetOverlayPreparation(OverlayRecorder recorder) { (void)recorder; }
         virtual void SetOverlayRecorder(OverlayRecorder recorder) { (void)recorder; }
         virtual bool Present(TextureHandle source) = 0;
     };

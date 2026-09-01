@@ -215,6 +215,12 @@ namespace PlutoGE::render
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
+        // Directional environment used by the RHI PBR path. Physical sky
+        // parameters share the layout used by the sky post-process pass so
+        // the background and surface lighting cannot drift apart.
+        bool physicalSkyEnabled = false;
+        float physicalSkyExposure = 1.0f;
+        std::array<glm::vec4, 6> physicalSkyParameters{};
         glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};

@@ -253,6 +253,17 @@ namespace PlutoGE::render
         depthRangeConversion[3][2] = 0.5f;
         projection = depthRangeConversion * projection;
         BasicLighting effectiveLighting = lighting;
+        // The physical-sky pass is also the source of the directional
+        // environment seen by opaque materials. Keeping this transfer here
+        // makes every RHI caller (editor, runtime, and tests) use one contract.
+        if (const auto sky = std::ranges::find_if(atmosphereEffects, [](const BasicPostProcessEffect &effect)
+                                                  { return effect.type == BasicPostProcessEffectType::PhysicalSky; });
+            sky != atmosphereEffects.end())
+        {
+            effectiveLighting.physicalSkyEnabled = true;
+            effectiveLighting.physicalSkyExposure = sky->exposure;
+            effectiveLighting.physicalSkyParameters = sky->parameters;
+        }
         if (effectiveLighting.shadowsEnabled)
         {
             const float shadowDistance = effectiveLighting.shadowDistance > 0.0f

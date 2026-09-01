@@ -64,8 +64,10 @@ namespace PlutoGE::ui
 {
     bool EditorShell::EditorViewportCamera::SetPostProcessPresetAssetReference(std::string assetReference)
     {
+        auto &engine = core::Engine::GetInstance();
         auto &window = core::Engine::GetInstance().GetWindow();
-        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
+            window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
         {
             return false;
         }
@@ -3782,7 +3784,7 @@ namespace PlutoGE::ui
 
                     if (ImGui::Button("Save"))
                     {
-                        const bool restartForGraphicsApi = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
+                        const bool graphicsApiChanged = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
                         manifest.name = projectNameBuffer.data();
                         manifest.windowTitle = projectWindowTitleBuffer.data();
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
@@ -3814,8 +3816,10 @@ namespace PlutoGE::ui
                             renderer.SetVSyncEnabled(editorVSyncEnabled);
                             m_panelManager.SetEditorFontSize(manifest.editorFontSize);
                             m_panelManager.SetEditorFont(manifest.editorFont);
-                            if (restartForGraphicsApi)
-                                LoadProjectFromPath(m_project->GetManifestPath());
+                            if (graphicsApiChanged)
+                            {
+                                m_statusMessage = "Graphics API saved. It will be used the next time the editor is launched.";
+                            }
                             ImGui::CloseCurrentPopup();
                         }
                     }

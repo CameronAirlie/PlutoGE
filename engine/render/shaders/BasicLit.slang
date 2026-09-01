@@ -44,6 +44,8 @@ cbuffer CameraParameters : register(b0, space0)
     float4 shadowFilterEdgeParameters;
     column_major float4x4 view;
     column_major float4x4 previousViewProjection;
+    float4 physicalSkyParameters[6];
+    float4 physicalSkySettings;
 };
 
 [[vk::binding(0, 2)]]
@@ -90,6 +92,76 @@ Sampler2D directionalShadowTexture1 : register(t6, space1);
 Sampler2D directionalShadowTexture2 : register(t7, space1);
 [[vk::binding(8, 1)]]
 Sampler2D directionalShadowTexture3 : register(t8, space1);
+
+static const float PI = 3.14159265359;
+
+// Evaluate the physical sky as a direction-addressed environment. This is the
+// shader-side equivalent of sampling a generated sky cubemap and avoids a
+// frame of latency when atmospheric settings or the sun direction change.
+float3 samplePhysicalSkyEnvironment(float3 direction)
+{
+    direction = normalize(direction);
+    const float3 sunDirection = normalize(physicalSkyParameters[0].xyz);
+    const float rayleighStrength = max(physicalSkyParameters[0].w, 0.0);
+    const float3 sunColor = max(physicalSkyParameters[1].rgb, 0.0);
+    const float mieStrength = max(physicalSkyParameters[1].w, 0.0);
+    const float3 moonColor = max(physicalSkyParameters[2].rgb, 0.0);
+    const float mieAnisotropy = clamp(physicalSkyParameters[2].w, -0.95, 0.95);
+    const float3 groundColor = max(physicalSkyParameters[3].rgb, 0.0);
+    const float ozoneStrength = max(physicalSkyParameters[3].w, 0.0);
+    const float sunIntensity = max(physicalSkyParameters[4].x, 0.0);
+    const float sunRadius = radians(max(physicalSkyParameters[4].y, 0.01));
+    const float nightIntensity = max(physicalSkyParameters[4].z, 0.0);
+    const float sunHeight = sunDirection.y;
+    const float day = smoothstep(-0.09, 0.035, sunHeight);
+    const float night = 1.0 - smoothstep(-0.12, 0.035, sunHeight);
+    const float viewAirMass = 1.0 / max(max(direction.y, 0.001) + 0.075, 0.075);
+    const float sunAirMass = 1.0 / max(sunHeight + 0.075, 0.04);
+    const float3 betaRayleigh = float3(0.028, 0.067, 0.155) * rayleighStrength;
+    const float3 betaMie = float3(0.035) * mieStrength;
+    const float3 betaExtinction = betaRayleigh + betaMie +
+                                  float3(0.004, 0.012, 0.002) * ozoneStrength;
+    const float3 viewTransmittance = exp(-betaExtinction * viewAirMass);
+    const float3 sunTransmittance = exp(-betaExtinction * sunAirMass);
+    const float cosine = dot(direction, sunDirection);
+    const float rayleighPhase = 3.0 * (1.0 + cosine * cosine) / (16.0 * PI);
+    const float mieDenominator = max(1.0 + mieAnisotropy * mieAnisotropy -
+                                     2.0 * mieAnisotropy * cosine, 0.0001);
+    const float miePhase = (1.0 - mieAnisotropy * mieAnisotropy) /
+                           (4.0 * PI * pow(mieDenominator, 1.5));
+    float3 sky = (betaRayleigh * rayleighPhase + betaMie * miePhase) *
+                 (1.0 - viewTransmittance) / max(betaExtinction, 0.0001) *
+                 sunTransmittance * sunColor * sunIntensity * day;
+    sky += lerp(float3(0.002, 0.003, 0.009), float3(0.012, 0.022, 0.06),
+                pow(saturate(direction.y), 0.35)) * nightIntensity * 24.0 * night;
+    sky += sunColor * sunIntensity *
+           (smoothstep(cos(sunRadius * 1.35), cos(sunRadius), cosine) +
+            pow(max(cosine, 0.0), 512.0) * day * 0.08) * sunTransmittance;
+    const float3 moonDirection = -sunDirection;
+    const float moonCosine = dot(direction, moonDirection);
+    const float moonRadius = radians(max(physicalSkyParameters[5].y, 0.01));
+    const float moonVisibility = night * smoothstep(-0.04, 0.04, moonDirection.y);
+    sky += moonColor * max(physicalSkyParameters[5].x, 0.0) * moonVisibility *
+           (smoothstep(cos(moonRadius * 1.25), cos(moonRadius), moonCosine) +
+            pow(max(moonCosine, 0.0), 256.0) * 0.08);
+    sky = lerp(groundColor * lerp(0.35, 1.0, day), sky,
+               smoothstep(-0.08, 0.015, direction.y));
+    return max(sky * physicalSkySettings.y, 0.0);
+}
+
+float3 samplePhysicalSkyIrradiance(float3 normal)
+{
+    const float3 up = abs(normal.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    const float3 tangent = normalize(cross(up, normal));
+    const float3 bitangent = cross(normal, tangent);
+    // Compact cosine-weighted convolution of the procedural cubemap.
+    float3 irradiance = samplePhysicalSkyEnvironment(normal) * 0.4;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent + bitangent)) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent + bitangent)) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent - bitangent)) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent - bitangent)) * 0.15;
+    return irradiance;
+}
 
 float sampleShadowCascade(int cascade, float2 uv)
 {
@@ -242,7 +314,23 @@ FragmentOutput fragmentMain(VertexOutput input)
                                         evaluateShadowCascade(cascade + 1, input.worldPosition), blend);
         }
     }
-    const float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
+    float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
+    if (physicalSkySettings.x > 0.5)
+    {
+        const float3 environmentIrradiance = samplePhysicalSkyIrradiance(normal);
+        const float3 ambientFresnel = f0 + (1.0 - f0) * pow(1.0 - ndotv, 5.0);
+        const float3 environmentDiffuse = environmentIrradiance * sampledColor.rgb *
+                                          (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
+        const float3 reflectionDirection = reflect(-viewDirection, normal);
+        // Roughness selects progressively broader directions, matching the
+        // perceptual result of sampling lower prefiltered cubemap mip levels.
+        const float3 broadReflection = normalize(lerp(reflectionDirection, normal,
+                                                       materialRoughness * materialRoughness));
+        const float3 environmentSpecular = samplePhysicalSkyEnvironment(broadReflection) *
+                                           ambientFresnel * materialMetallic *
+                                           (1.0 - materialRoughness * 0.45);
+        ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
+    }
     FragmentOutput output;
     output.color = float4(ambient + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
                           sampledColor.a);

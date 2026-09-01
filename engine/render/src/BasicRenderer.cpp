@@ -53,8 +53,10 @@ namespace PlutoGE::render
             glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
             glm::mat4 view{1.0f};
             glm::mat4 previousViewProjection{1.0f};
+            std::array<glm::vec4, 6> physicalSkyParameters{};
+            glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
         };
-        static_assert(sizeof(BasicFrameParameters) == 640);
+        static_assert(sizeof(BasicFrameParameters) == 752);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -627,6 +629,10 @@ namespace PlutoGE::render
                       std::max(lighting.shadowFilterNormalSoftness, 0.001f), 0.0f),
             lighting.view,
             m_hasPreviousFrame ? m_previousViewProjection : viewProjection,
+            lighting.physicalSkyParameters,
+            glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
+                      std::max(lighting.physicalSkyExposure, 0.0f),
+                      1.0f, 0.0f),
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         if (shadowDraws.empty())

@@ -100,8 +100,10 @@ namespace PlutoGE::ui
                     return false;
                 }
 
+                auto &engine = core::Engine::GetInstance();
                 auto &window = core::Engine::GetInstance().GetWindow();
-                if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+                if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
+                    window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
                 {
                     return false;
                 }

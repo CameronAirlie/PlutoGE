@@ -48,5 +48,7 @@ namespace PlutoGE::render
         std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
         std::size_t m_sceneCommandCount = 0;
         std::size_t m_drawCount = 0;
+        std::uint64_t m_temporalFrameIndex = 0;
+        glm::vec2 m_previousTemporalJitterNdc{0.0f};
     };
 }

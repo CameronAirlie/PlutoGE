@@ -68,8 +68,10 @@ namespace PlutoGE::render
             float time = 0.0f;
             float padding = 0.0f;
             std::array<glm::vec4, 6> parameters{};
+            glm::mat4 inverseViewProjection{1.0f};
+            glm::vec4 cameraPosition{0.0f};
         };
-        static_assert(sizeof(BasicPostProcessParameters) == 128);
+        static_assert(sizeof(BasicPostProcessParameters) == 208);
 
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
@@ -450,6 +452,9 @@ namespace PlutoGE::render
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
+        m_inverseViewProjection = glm::inverse(viewProjection);
+        m_postProcessCameraPosition = glm::vec4(lighting.cameraPosition, 1.0f);
+
         EnsureShadowTargets(lighting);
         auto &commands = m_device->GetImmediateContext();
         commands.BeginFrame();
@@ -644,6 +649,8 @@ namespace PlutoGE::render
                 static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
                 0.0f,
                 effectParameters,
+                m_inverseViewProjection,
+                m_postProcessCameraPosition,
             };
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
@@ -730,7 +737,8 @@ namespace PlutoGE::render
             effect.exposure, std::max(effect.gamma, 0.001f),
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
-            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters};
+            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
+            m_inverseViewProjection, m_postProcessCameraPosition};
         auto &meterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(meterBuffer.Get(), 0, Bytes(block));
 
@@ -830,7 +838,8 @@ namespace PlutoGE::render
                     effect.exposure, (std::max)(effect.gamma, 0.001f),
                     m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
                     glm::vec2(1.0f / static_cast<float>(context.width), 1.0f / static_cast<float>(context.height)),
-                    static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, effect.parameters};
+                    static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, effect.parameters,
+                    m_inverseViewProjection, m_postProcessCameraPosition};
                 auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
                 rhi::RenderingInfo info;

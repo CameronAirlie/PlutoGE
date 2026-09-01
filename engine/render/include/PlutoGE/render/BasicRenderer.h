@@ -304,6 +304,8 @@ namespace PlutoGE::render
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
         std::uint64_t m_frameIndex = 0;
+        glm::mat4 m_inverseViewProjection{1.0f};
+        glm::vec4 m_postProcessCameraPosition{0.0f};
         glm::mat4 m_previousViewProjection{1.0f};
         std::vector<glm::mat4> m_previousModels;
         bool m_hasPreviousFrame = false;

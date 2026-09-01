@@ -16,6 +16,19 @@ namespace PlutoGE::render
 {
     namespace
     {
+        float Halton(std::uint64_t index, std::uint32_t base)
+        {
+            float result = 0.0f;
+            float fraction = 1.0f;
+            while (index != 0)
+            {
+                fraction /= static_cast<float>(base);
+                result += fraction * static_cast<float>(index % base);
+                index /= base;
+            }
+            return result;
+        }
+
         glm::mat4 BuildDirectionalShadowMatrix(const CameraData &camera,
                                                const BasicLighting &lighting,
                                                float cascadeNear,
@@ -110,6 +123,8 @@ namespace PlutoGE::render
         m_device = nullptr;
         m_sceneCommandCount = 0;
         m_drawCount = 0;
+        m_temporalFrameIndex = 0;
+        m_previousTemporalJitterNdc = glm::vec2(0.0f);
     }
 
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height,
@@ -302,6 +317,28 @@ namespace PlutoGE::render
         {
             return StageFor(lhs.type) < StageFor(rhs.type);
         });
+        const auto taa = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
+        {
+            return effect.type == BasicPostProcessEffectType::TAA;
+        });
+        if (taa != basicEffects.end())
+        {
+            const std::uint64_t sample = m_temporalFrameIndex++ % 16u + 1u;
+            const float strength = std::clamp(taa->parameters[1].w, 0.0f, 2.0f);
+            const glm::vec2 jitterPixels{Halton(sample, 2u) - 0.5f, Halton(sample, 3u) - 0.5f};
+            const glm::vec2 jitterNdc = jitterPixels * strength *
+                                        glm::vec2(2.0f / static_cast<float>(width),
+                                                  2.0f / static_cast<float>(height));
+            taa->parameters[2] = {jitterNdc * 0.5f, m_previousTemporalJitterNdc * 0.5f};
+            projection[2][0] += jitterNdc.x;
+            projection[2][1] += jitterNdc.y;
+            m_previousTemporalJitterNdc = jitterNdc;
+        }
+        else
+        {
+            m_temporalFrameIndex = 0;
+            m_previousTemporalJitterNdc = glm::vec2(0.0f);
+        }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws);
         return true;
     }

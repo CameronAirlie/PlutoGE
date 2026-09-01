@@ -17,11 +17,17 @@ float luma(float3 color) { return dot(color, float3(0.2126, 0.7152, 0.0722)); }
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
-    const float4 current = sceneTexture.Sample(uv);
+    const float2 textureOrientation = float2(1.0, pass.flipY != 0 ? -1.0 : 1.0);
+    const float2 currentJitterUv = pass.parameters[2].xy * textureOrientation;
+    const float2 previousJitterUv = pass.parameters[2].zw * textureOrientation;
+    const float2 currentUv = saturate(uv - currentJitterUv);
+    const float4 current = sceneTexture.Sample(currentUv);
     if (pass.parameters[5].w < 0.5)
         return current;
 
-    const float2 motion = motionTexture.Sample(uv).xy * 2.0 - 1.0;
+    const float2 encodedMotion = (motionTexture.Sample(currentUv).xy * 2.0 - 1.0) *
+                                 textureOrientation;
+    const float2 motion = encodedMotion + currentJitterUv - previousJitterUv;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0))
         return current;
@@ -34,7 +40,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     {
         for (int x = -1; x <= 1; ++x)
         {
-            const float2 sampleUv = saturate(uv + float2(x, y) * pass.inverseResolution);
+            const float2 sampleUv = saturate(currentUv + float2(x, y) * pass.inverseResolution);
             const float3 sampleColor = sceneTexture.Sample(sampleUv).rgb;
             neighborhoodMin = min(neighborhoodMin, sampleColor);
             neighborhoodMax = max(neighborhoodMax, sampleColor);
@@ -46,9 +52,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 
     float3 history = historyTexture.Sample(historyUv).rgb;
     history = clamp(history, neighborhoodMin, neighborhoodMax);
-    const float currentDepth = depthTexture.Sample(uv).r;
+    const float currentDepth = depthTexture.Sample(currentUv).r;
     const float historyDepth = depthTexture.Sample(historyUv).r;
-    const float3 currentNormal = normalize(normalTexture.Sample(uv).xyz * 2.0 - 1.0);
+    const float3 currentNormal = normalize(normalTexture.Sample(currentUv).xyz * 2.0 - 1.0);
     const float3 historyNormal = normalize(normalTexture.Sample(historyUv).xyz * 2.0 - 1.0);
     const float depthValidity = 1.0 - smoothstep(pass.parameters[1].x,
                                                  pass.parameters[1].x * 2.0,

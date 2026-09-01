@@ -157,7 +157,7 @@ namespace PlutoGE::render
                 result.parameters[1] = {config.depthRejectionThreshold,
                                         config.normalRejectionThreshold,
                                         config.velocityRejectionScale,
-                                        config.jitterStrength};
+                                        config.jitterEnabled ? config.jitterStrength : 0.0f};
                 return result;
             });
         }

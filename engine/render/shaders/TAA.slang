@@ -1,17 +1,32 @@
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 
-[[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
-[[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
-[[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
-[[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
-[[vk::binding(5, 0)]] Sampler2D motionTexture : register(t5, space0);
-[[vk::binding(6, 0)]] Sampler2D historyTexture : register(t6, space0);
+[[vk::binding(0, 0)]]
+cbuffer Parameters : register(b0, space0)
+{
+    PostProcessParameterBlock pass;
+};
+[[vk::binding(1, 0)]]
+Sampler2D sceneTexture : register(t1, space0);
+[[vk::binding(2, 0)]]
+Sampler2D depthTexture : register(t2, space0);
+[[vk::binding(3, 0)]]
+Sampler2D normalTexture : register(t3, space0);
+[[vk::binding(5, 0)]]
+Sampler2D motionTexture : register(t5, space0);
+[[vk::binding(6, 0)]]
+Sampler2D historyTexture : register(t6, space0);
 
 [shader("vertex")]
-FullscreenVertexOutput vertexMain(uint vertexId : SV_VertexID) { return fullscreenVertex(vertexId); }
+FullscreenVertexOutput vertexMain(uint vertexId: SV_VertexID)
+{
+    return fullscreenVertex(vertexId);
+}
 
-float luma(float3 color) { return dot(color, float3(0.2126, 0.7152, 0.0722)); }
+float luma(float3 color)
+{
+    return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
 
 float2 responsiveEncodedMotion(float2 uv)
 {
@@ -52,6 +67,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 
     const float2 encodedMotion = (responsiveEncodedMotion(currentUv) * 2.0 - 1.0) *
                                  textureOrientation;
+    // Projection jitter contributes the negative current-to-previous jitter
+    // delta in raster space. Remove it so stationary geometry has zero motion.
     const float2 motion = encodedMotion + currentJitterUv - previousJitterUv;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0))
@@ -89,7 +106,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float disocclusionWeight = smoothstep(0.35, 2.0, motionPixels);
     const float baseHistoryWeight = lerp(pass.parameters[0].y, pass.parameters[0].z,
                                          saturate(motionPixels * 0.35));
-    const float velocityValidity = saturate(1.0 - length(motion) * pass.parameters[1].z);
+    const float velocityRejectionPixels = max(pass.parameters[1].z, 1.0);
+    const float velocityValidity = saturate(1.0 - motionPixels / velocityRejectionPixels);
     const float lightingDelta = abs(luma(history) - luma(current.rgb)) / max(luma(current.rgb), 0.05);
     const float lightingValidity = 1.0 - smoothstep(0.08, 0.30, lightingDelta);
     // Alternating jitter samples intentionally disagree at stationary sub-pixel

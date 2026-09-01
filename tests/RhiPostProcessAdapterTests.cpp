@@ -133,14 +133,23 @@ int main()
     const auto compositePacket = AdaptPostProcessEffect(composite);
     if (!ssaoPacket || !ssgiPacket || !ssrPacket || !fogPacket || !compositePacket ||
         ssaoPacket->type != BasicPostProcessEffectType::SSAO ||
+        !Near(ssaoPacket->parameters[1].z, 0.9f) ||
+        !Near(ssaoPacket->parameters[1].w, 1.0f) ||
+        !Near(ssaoPacket->parameters[2].x, 0.02f) ||
+        !Near(ssaoPacket->parameters[2].y, 0.85f) ||
         ssgiPacket->type != BasicPostProcessEffectType::SSGI ||
         ssrPacket->type != BasicPostProcessEffectType::SSR ||
         fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
         compositePacket->type != BasicPostProcessEffectType::SceneComposite)
         return 12;
 
-    if (StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::ScreenSpaceDeferred ||
-        StageFor(BasicPostProcessEffectType::TAA) != BasicPostProcessStage::Camera ||
+    if (StageFor(BasicPostProcessEffectType::SceneComposite) != BasicPostProcessStage::LightingComposite ||
+        StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::AmbientOcclusion ||
+        StageFor(BasicPostProcessEffectType::TAA) != BasicPostProcessStage::TemporalResolve ||
+        StageFor(BasicPostProcessEffectType::ToneMapping) != BasicPostProcessStage::ToneAndColor ||
+        !(StageFor(BasicPostProcessEffectType::SceneComposite) < StageFor(BasicPostProcessEffectType::SSAO) &&
+          StageFor(BasicPostProcessEffectType::SSAO) < StageFor(BasicPostProcessEffectType::TAA) &&
+          StageFor(BasicPostProcessEffectType::TAA) < StageFor(BasicPostProcessEffectType::ToneMapping)) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::Material) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::TAA), BasicPostProcessInput::History))
         return 13;

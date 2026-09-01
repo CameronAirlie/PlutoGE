@@ -503,6 +503,8 @@ namespace PlutoGE::render::rhi::vulkan
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
             if (!m_pipeline || slot >= MaxResourceSlots || !texture || !sampler)
                 throw std::invalid_argument("Invalid Vulkan texture binding");
+            if (texture->descriptor.usage != TextureUsage::Sampled && !texture->descriptor.sampled)
+                throw std::invalid_argument("Vulkan texture was not created with sampled usage");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);

@@ -9,5 +9,7 @@ struct PostProcessParameterBlock
     float padding;
     float4 parameters[6];
     column_major float4x4 inverseViewProjection;
+    column_major float4x4 view;
+    column_major float4x4 projection;
     float4 cameraPosition;
 };

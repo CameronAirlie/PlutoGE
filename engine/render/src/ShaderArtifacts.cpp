@@ -69,6 +69,11 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < bloomModules.size(); ++index)
             result.bloom[index] = {.vertex = Load(bloomModules[index], "vertex"),
                                    .fragment = Load(bloomModules[index], "fragment")};
+        constexpr std::array<std::string_view, 3> ssaoModules{
+            "SSAO", "SSAOResolve", "SSAOComposite"};
+        for (std::size_t index = 0; index < ssaoModules.size(); ++index)
+            result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
+                                  .fragment = Load(ssaoModules[index], "fragment")};
         return result;
     }
 

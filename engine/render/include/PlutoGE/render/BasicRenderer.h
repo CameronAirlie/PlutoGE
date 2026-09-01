@@ -47,22 +47,38 @@ namespace PlutoGE::render
 
     enum class BasicPostProcessStage : std::uint8_t
     {
-        ScreenSpaceDeferred,
-        Camera,
+        LightingComposite,
+        AmbientOcclusion,
+        ScreenSpaceAtmosphere,
+        TemporalResolve,
+        CameraOptics,
+        Exposure,
+        ToneAndColor,
     };
 
     [[nodiscard]] constexpr BasicPostProcessStage StageFor(BasicPostProcessEffectType type) noexcept
     {
         switch (type)
         {
-        case BasicPostProcessEffectType::SSAO:
         case BasicPostProcessEffectType::SSGI:
+        case BasicPostProcessEffectType::SceneComposite:
+            return BasicPostProcessStage::LightingComposite;
+        case BasicPostProcessEffectType::SSAO:
+            return BasicPostProcessStage::AmbientOcclusion;
         case BasicPostProcessEffectType::SSR:
         case BasicPostProcessEffectType::VolumetricFog:
-        case BasicPostProcessEffectType::SceneComposite:
-            return BasicPostProcessStage::ScreenSpaceDeferred;
+            return BasicPostProcessStage::ScreenSpaceAtmosphere;
+        case BasicPostProcessEffectType::TAA:
+            return BasicPostProcessStage::TemporalResolve;
+        case BasicPostProcessEffectType::MotionBlur:
+        case BasicPostProcessEffectType::DepthOfField:
+        case BasicPostProcessEffectType::Bloom:
+        case BasicPostProcessEffectType::LensFlare:
+            return BasicPostProcessStage::CameraOptics;
+        case BasicPostProcessEffectType::AutoExposure:
+            return BasicPostProcessStage::Exposure;
         default:
-            return BasicPostProcessStage::Camera;
+            return BasicPostProcessStage::ToneAndColor;
         }
     }
 
@@ -135,6 +151,7 @@ namespace PlutoGE::render
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)> postProcess;
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
+        std::array<BasicPostProcessShaderPackage, 3> ssao;
     };
 
     class BasicMesh
@@ -259,6 +276,9 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,
                                                             const BasicPostProcessEffect &effect,
                                                             rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::TextureHandle RenderSsao(rhi::TextureHandle source,
+                                                    const BasicPostProcessEffect &effect,
+                                                    rhi::ICommandContext &commands);
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
         void EnsureShadowTargets(const BasicLighting &lighting);
 
@@ -291,12 +311,17 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
         std::array<rhi::Texture, 2> m_exposureHistoryTargets;
+        std::array<rhi::GraphicsPipeline, 3> m_ssaoPipelines;
+        rhi::Texture m_ssaoRawTarget;
+        std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
         std::size_t m_postProcessBufferCursor = 0;
         std::uint8_t m_taaHistoryIndex = 0;
         bool m_taaHistoryValid = false;
         std::uint8_t m_exposureHistoryIndex = 0;
         bool m_exposureHistoryValid = false;
+        std::uint8_t m_ssaoHistoryIndex = 0;
+        bool m_ssaoHistoryValid = false;
         rhi::Texture m_depthTarget;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
@@ -305,6 +330,8 @@ namespace PlutoGE::render
         std::uint32_t m_height = 0;
         std::uint64_t m_frameIndex = 0;
         glm::mat4 m_inverseViewProjection{1.0f};
+        glm::mat4 m_postProcessView{1.0f};
+        glm::mat4 m_postProcessProjection{1.0f};
         glm::vec4 m_postProcessCameraPosition{0.0f};
         glm::mat4 m_previousViewProjection{1.0f};
         std::vector<glm::mat4> m_previousModels;

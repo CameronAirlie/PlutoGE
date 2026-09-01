@@ -184,7 +184,11 @@ namespace PlutoGE::render
                 result.quality = static_cast<std::uint32_t>(config.sampleCount);
                 result.parameters[0] = {config.radius, config.bias, config.intensity, config.power};
                 result.parameters[1] = {static_cast<float>(config.blurRadius),
-                                        typed.IsAoOnly() ? 1.0f : 0.0f, 0.0f, 0.0f};
+                                        typed.IsAoOnly() ? 1.0f : 0.0f,
+                                        config.temporalBlend,
+                                        config.halfResolution ? 1.0f : 0.0f};
+                result.parameters[2] = {config.historyDepthThreshold,
+                                        config.historyNormalThreshold, 0.0f, 0.0f};
                 return result;
             });
         }

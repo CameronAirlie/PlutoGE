@@ -63,12 +63,18 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                                              pass.parameters[1].y,
                                              dot(currentNormal, historyNormal));
     const float motionPixels = length(motion / max(pass.inverseResolution, float2(0.000001)));
+    const float disocclusionWeight = smoothstep(0.35, 2.0, motionPixels);
     const float baseHistoryWeight = lerp(pass.parameters[0].y, pass.parameters[0].z,
                                          saturate(motionPixels * 0.35));
     const float velocityValidity = saturate(1.0 - length(motion) * pass.parameters[1].z);
     const float lightingDelta = abs(luma(history) - luma(current.rgb)) / max(luma(current.rgb), 0.05);
-    const float lightingValidity = 1.0 - smoothstep(0.12, 0.4, lightingDelta);
-    const float validity = depthValidity * normalValidity * velocityValidity * lightingValidity;
+    const float lightingValidity = 1.0 - smoothstep(0.08, 0.30, lightingDelta);
+    // Alternating jitter samples intentionally disagree at stationary sub-pixel
+    // edges. Only use geometric and lighting rejection once real unjittered
+    // motion indicates a possible disocclusion.
+    float validity = lerp(1.0, depthValidity * normalValidity, disocclusionWeight);
+    validity *= velocityValidity;
+    validity *= lerp(1.0, lightingValidity, disocclusionWeight);
     const float historyWeight = saturate(min(pass.parameters[0].x, baseHistoryWeight) * validity);
     float3 resolved = lerp(current.rgb, history, historyWeight);
     if (pass.parameters[0].w > 0.0)

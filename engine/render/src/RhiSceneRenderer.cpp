@@ -317,6 +317,16 @@ namespace PlutoGE::render
         {
             return StageFor(lhs.type) < StageFor(rhs.type);
         });
+        // Raw diagnostic views must not be adapted or tone-mapped as scene color.
+        // Doing so allows auto exposure to flatten AO/indirect buffers to grey.
+        const auto terminalDiagnostic = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
+        {
+            return (effect.type == BasicPostProcessEffectType::SSAO && effect.parameters[1].y > 0.5f) ||
+                   (effect.type == BasicPostProcessEffectType::SSGI && effect.parameters[1].z > 0.5f) ||
+                   (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u);
+        });
+        if (terminalDiagnostic != basicEffects.end())
+            basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());
         const auto taa = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
         {
             return effect.type == BasicPostProcessEffectType::TAA;

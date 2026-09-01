@@ -14,10 +14,12 @@ float edgeFade(float2 uv, float width)
     return saturate(min(edge.x, edge.y) / max(width, 0.0001));
 }
 
-float3 reconstructWorldPosition(float2 uv, float depth, float4x4 inverseViewProjection)
+float3 reconstructWorldPosition(float2 uv, float depth, float4x4 inverseViewProjection,
+                                uint flipY)
 {
-    const float4 world = mul(inverseViewProjection,
-                             float4(uv * 2.0 - 1.0, depth, 1.0));
+    float2 ndc = uv * 2.0 - 1.0;
+    if (flipY != 0) ndc.y = -ndc.y;
+    const float4 world = mul(inverseViewProjection, float4(ndc, depth, 1.0));
     const float safeW = abs(world.w) > 0.000001 ? world.w
                                                 : (world.w < 0.0 ? -0.000001 : 0.000001);
     return world.xyz / safeW;

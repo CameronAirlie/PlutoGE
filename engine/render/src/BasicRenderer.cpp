@@ -69,9 +69,11 @@ namespace PlutoGE::render
             float padding = 0.0f;
             std::array<glm::vec4, 6> parameters{};
             glm::mat4 inverseViewProjection{1.0f};
+            glm::mat4 view{1.0f};
+            glm::mat4 projection{1.0f};
             glm::vec4 cameraPosition{0.0f};
         };
-        static_assert(sizeof(BasicPostProcessParameters) == 208);
+        static_assert(sizeof(BasicPostProcessParameters) == 336);
 
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
@@ -147,7 +149,7 @@ namespace PlutoGE::render
             descriptor.vertexShader = shaders.vertex;
             descriptor.fragmentShader = shaders.fragment;
             descriptor.colorFormats = {rhi::Format::R8G8B8A8Srgb, rhi::Format::R8G8B8A8Unorm,
-                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R8G8B8A8Unorm};
+                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float};
             descriptor.resourceBindings = {
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                 {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
@@ -293,6 +295,49 @@ namespace PlutoGE::render
                 bloomDescriptor.debugName = bloomNames[index];
                 m_bloomPipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(bloomDescriptor));
             }
+            constexpr std::array<const char *, 3> ssaoNames{
+                "SSAO raw", "SSAO bilateral temporal resolve", "SSAO composite"};
+            for (std::size_t index = 0; index < m_ssaoPipelines.size(); ++index)
+            {
+                const auto &stage = shaders.ssao[index];
+                if ((stage.vertex.glsl.empty() && stage.vertex.spirv.empty()) ||
+                    (stage.fragment.glsl.empty() && stage.fragment.spirv.empty()))
+                    continue;
+                rhi::GraphicsPipelineDescriptor ssaoDescriptor;
+                ssaoDescriptor.vertexShader = stage.vertex;
+                ssaoDescriptor.fragmentShader = stage.fragment;
+                ssaoDescriptor.depthFormat = rhi::Format::Undefined;
+                ssaoDescriptor.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                };
+                if (index < 2)
+                {
+                    ssaoDescriptor.resourceBindings.push_back(
+                        {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    ssaoDescriptor.resourceBindings.push_back(
+                        {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                }
+                if (index == 1)
+                {
+                    ssaoDescriptor.resourceBindings.push_back(
+                        {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    ssaoDescriptor.resourceBindings.push_back(
+                        {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                }
+                else if (index == 2)
+                    ssaoDescriptor.resourceBindings.push_back(
+                        {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                ssaoDescriptor.colorFormat = index == 0 ? rhi::Format::R32Float :
+                                             index == 1 ? rhi::Format::R32G32B32A32Float :
+                                                          rhi::Format::R8G8B8A8Srgb;
+                ssaoDescriptor.cullMode = rhi::CullMode::None;
+                ssaoDescriptor.depthTest = false;
+                ssaoDescriptor.depthWrite = false;
+                ssaoDescriptor.debugName = ssaoNames[index];
+                m_ssaoPipelines[index] = rhi::GraphicsPipeline(
+                    device, device.CreateGraphicsPipeline(ssaoDescriptor));
+            }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             for (auto &buffer : m_shadowCameraBuffers)
                 buffer = rhi::Buffer(device, device.CreateBuffer(
@@ -321,6 +366,8 @@ namespace PlutoGE::render
         for (auto &target : m_postProcessTargets) target.Reset();
         for (auto &target : m_taaHistoryTargets) target.Reset();
         for (auto &target : m_exposureHistoryTargets) target.Reset();
+        m_ssaoRawTarget.Reset();
+        for (auto &target : m_ssaoHistoryTargets) target.Reset();
         m_colorTarget.Reset();
         m_normalTarget.Reset(); m_materialTarget.Reset(); m_motionTarget.Reset();
         for (auto &target : m_shadowDepthTargets) target.Reset();
@@ -339,6 +386,7 @@ namespace PlutoGE::render
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines) pipeline.Reset();
         for (auto &pipeline : m_autoExposurePipelines) pipeline.Reset();
+        for (auto &pipeline : m_ssaoPipelines) pipeline.Reset();
         for (auto &pipeline : m_postProcessPipelines) pipeline.Reset();
         m_shadowPipeline.Reset();
         m_pipeline.Reset();
@@ -353,6 +401,8 @@ namespace PlutoGE::render
         m_taaHistoryValid = false;
         m_exposureHistoryIndex = 0;
         m_exposureHistoryValid = false;
+        m_ssaoHistoryIndex = 0;
+        m_ssaoHistoryValid = false;
     }
 
     BasicMesh BasicRenderer::CreateMesh(const BasicMeshData &data)
@@ -385,14 +435,15 @@ namespace PlutoGE::render
                 {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "Post process pong", true})),
         };
         rhi::Texture newDepth(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "BasicRenderer depth"}));
+            {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
+             "BasicRenderer depth", true}));
         m_colorTarget = std::move(newColor);
         m_normalTarget = rhi::Texture(*m_device, m_device->CreateTexture(
             {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer normals", true}));
         m_materialTarget = rhi::Texture(*m_device, m_device->CreateTexture(
             {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer material", true}));
         m_motionTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
+            {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_postProcessTargets = std::move(newPostTargets);
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -406,6 +457,15 @@ namespace PlutoGE::render
                  index == 0 ? "Exposure history A" : "Exposure history B", true}));
         m_exposureHistoryIndex = 0;
         m_exposureHistoryValid = false;
+        m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+            {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+             "SSAO raw", true}));
+        for (std::size_t index = 0; index < m_ssaoHistoryTargets.size(); ++index)
+            m_ssaoHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
+                 index == 0 ? "SSAO history A" : "SSAO history B", true}));
+        m_ssaoHistoryIndex = 0;
+        m_ssaoHistoryValid = false;
         m_depthTarget = std::move(newDepth);
         m_width = width;
         m_height = height;
@@ -453,6 +513,8 @@ namespace PlutoGE::render
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
         m_inverseViewProjection = glm::inverse(viewProjection);
+        m_postProcessView = lighting.view;
+        m_postProcessProjection = viewProjection * glm::inverse(lighting.view);
         m_postProcessCameraPosition = glm::vec4(lighting.cameraPosition, 1.0f);
 
         EnsureShadowTargets(lighting);
@@ -617,8 +679,13 @@ namespace PlutoGE::render
         {
             return effect.type == BasicPostProcessEffectType::AutoExposure;
         });
+        const bool hasSsao = std::ranges::any_of(postProcessEffects, [](const auto &effect)
+        {
+            return effect.type == BasicPostProcessEffectType::SSAO;
+        });
         if (!hasTaa) m_taaHistoryValid = false;
         if (!hasAutoExposure) m_exposureHistoryValid = false;
+        if (!hasSsao) m_ssaoHistoryValid = false;
         for (const auto &effect : postProcessEffects)
         {
             if (effect.type == BasicPostProcessEffectType::Bloom)
@@ -629,6 +696,11 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::AutoExposure)
             {
                 m_outputColor = RenderAutoExposure(m_outputColor, effect, commands);
+                continue;
+            }
+            if (effect.type == BasicPostProcessEffectType::SSAO)
+            {
+                m_outputColor = RenderSsao(m_outputColor, effect, commands);
                 continue;
             }
             const auto effectIndex = static_cast<std::size_t>(effect.type);
@@ -650,6 +722,8 @@ namespace PlutoGE::render
                 0.0f,
                 effectParameters,
                 m_inverseViewProjection,
+                m_postProcessView,
+                m_postProcessProjection,
                 m_postProcessCameraPosition,
             };
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
@@ -738,7 +812,8 @@ namespace PlutoGE::render
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
             static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
-            m_inverseViewProjection, m_postProcessCameraPosition};
+            m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
+            m_postProcessCameraPosition};
         auto &meterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(meterBuffer.Get(), 0, Bytes(block));
 
@@ -779,6 +854,83 @@ namespace PlutoGE::render
 
         m_exposureHistoryIndex = 1u - m_exposureHistoryIndex;
         m_exposureHistoryValid = true;
+        return destination->Get();
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderSsao(rhi::TextureHandle source,
+                                                  const BasicPostProcessEffect &effect,
+                                                  rhi::ICommandContext &commands)
+    {
+        if (!source || !m_ssaoRawTarget || !m_ssaoHistoryTargets[0] ||
+            !m_ssaoHistoryTargets[1] ||
+            std::ranges::any_of(m_ssaoPipelines, [](const auto &pipeline) { return !pipeline; }))
+            return source;
+
+        auto parameters = effect.parameters;
+        parameters[5].w = m_ssaoHistoryValid ? 1.0f : 0.0f;
+        const BasicPostProcessParameters block{
+            effect.exposure, std::max(effect.gamma, 0.001f),
+            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
+            glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
+            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
+            m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
+            m_postProcessCameraPosition};
+
+        auto &rawBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(rawBuffer.Get(), 0, Bytes(block));
+        rhi::RenderingInfo rawInfo;
+        rawInfo.colorAttachments = {m_ssaoRawTarget.Get()};
+        rawInfo.width = m_width;
+        rawInfo.height = m_height;
+        rawInfo.clearDepth = false;
+        commands.BeginRendering(rawInfo);
+        commands.BindPipeline(m_ssaoPipelines[0].Get());
+        commands.BindUniformBuffer(0, rawBuffer.Get());
+        commands.BindTexture(1, source, m_fallbackSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        auto &resolvedHistory = m_ssaoHistoryTargets[1u - m_ssaoHistoryIndex];
+        auto &resolveBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(block));
+        rhi::RenderingInfo resolveInfo;
+        resolveInfo.colorAttachments = {resolvedHistory.Get()};
+        resolveInfo.width = m_width;
+        resolveInfo.height = m_height;
+        resolveInfo.clearDepth = false;
+        commands.BeginRendering(resolveInfo);
+        commands.BindPipeline(m_ssaoPipelines[1].Get());
+        commands.BindUniformBuffer(0, resolveBuffer.Get());
+        commands.BindTexture(1, m_ssaoRawTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(6, m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(), m_fallbackSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        rhi::Texture *destination = &m_postProcessTargets[0];
+        if (destination->Get() == source)
+            destination = &m_postProcessTargets[1];
+        auto &compositeBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(compositeBuffer.Get(), 0, Bytes(block));
+        rhi::RenderingInfo compositeInfo;
+        compositeInfo.colorAttachments = {destination->Get()};
+        compositeInfo.width = m_width;
+        compositeInfo.height = m_height;
+        compositeInfo.clearDepth = false;
+        commands.BeginRendering(compositeInfo);
+        commands.BindPipeline(m_ssaoPipelines[2].Get());
+        commands.BindUniformBuffer(0, compositeBuffer.Get());
+        commands.BindTexture(1, source, m_fallbackSampler.Get());
+        commands.BindTexture(6, resolvedHistory.Get(), m_fallbackSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        m_ssaoHistoryIndex = 1u - m_ssaoHistoryIndex;
+        m_ssaoHistoryValid = true;
         return destination->Get();
     }
 
@@ -839,7 +991,8 @@ namespace PlutoGE::render
                     m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
                     glm::vec2(1.0f / static_cast<float>(context.width), 1.0f / static_cast<float>(context.height)),
                     static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, effect.parameters,
-                    m_inverseViewProjection, m_postProcessCameraPosition};
+                    m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
+                    m_postProcessCameraPosition};
                 auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
                 rhi::RenderingInfo info;

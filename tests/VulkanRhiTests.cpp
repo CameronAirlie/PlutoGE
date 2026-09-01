@@ -52,6 +52,13 @@ int main()
             shaders.bloom[index].vertex.spirv = ReadSpirv((std::string(bloomModules[index]) + ".vertex.spv").c_str());
             shaders.bloom[index].fragment.spirv = ReadSpirv((std::string(bloomModules[index]) + ".fragment.spv").c_str());
         }
+        constexpr std::array<const char *, 3> ssaoModules{
+            "SSAO", "SSAOResolve", "SSAOComposite"};
+        for (std::size_t index = 0; index < ssaoModules.size(); ++index)
+        {
+            shaders.ssao[index].vertex.spirv = ReadSpirv((std::string(ssaoModules[index]) + ".vertex.spv").c_str());
+            shaders.ssao[index].fragment.spirv = ReadSpirv((std::string(ssaoModules[index]) + ".fragment.spv").c_str());
+        }
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64)) return 1;
 
@@ -69,6 +76,19 @@ int main()
             0,2,1,0,3,2, 4,5,6,4,6,7, 0,4,7,0,7,3,
             1,2,6,1,6,5, 3,7,6,3,6,2, 0,1,5,0,5,4};
         auto cube = renderer.CreateMesh({vertices, indices});
+        constexpr std::array<BasicVertex, 8> cornerVertices = {{
+            {{{-2.0f, 0.0f, 0.0f}},{{0,1,0}},{{0,0}}},
+            {{{ 2.0f, 0.0f, 0.0f}},{{0,1,0}},{{1,0}}},
+            {{{ 2.0f, 0.0f, 2.0f}},{{0,1,0}},{{1,1}}},
+            {{{-2.0f, 0.0f, 2.0f}},{{0,1,0}},{{0,1}}},
+            {{{-2.0f, 0.0f, 0.0f}},{{0,0,1}},{{0,0}}},
+            {{{ 2.0f, 0.0f, 0.0f}},{{0,0,1}},{{1,0}}},
+            {{{ 2.0f, 3.0f, 0.0f}},{{0,0,1}},{{1,1}}},
+            {{{-2.0f, 3.0f, 0.0f}},{{0,0,1}},{{0,1}}},
+        }};
+        constexpr std::array<std::uint32_t, 12> cornerIndices = {
+            0,2,1,0,3,2, 4,5,6,4,6,7};
+        auto corner = renderer.CreateMesh({cornerVertices, cornerIndices});
 
         glm::mat4 projection(0.0f);
         constexpr float nearPlane = 0.1f, farPlane = 100.0f;
@@ -80,8 +100,11 @@ int main()
         const std::array draws{
             BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(-0.65f, 0, 0))},
             BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(0.65f, 0, 0))},
+            BasicDraw{&corner, glm::mat4(1)},
         };
         BasicLighting neutralLighting;
+        neutralLighting.view = view;
+        neutralLighting.cameraPosition = glm::vec3(glm::inverse(view)[3]);
         neutralLighting.ambientIntensity = 1.0f;
         neutralLighting.directionalIntensity = 0.0f;
         neutralLighting.shadowsEnabled = true;
@@ -124,6 +147,25 @@ int main()
             std::cerr << "Vulkan BasicRenderer introduced a red channel bias ("
                       << red << ", " << green << ", " << blue << ")\n";
             return 4;
+        }
+        auto ssao = BasicPostProcessEffect{BasicPostProcessEffectType::SSAO};
+        ssao.quality = 32;
+        ssao.parameters[0] = {1.5f, 0.02f, 3.0f, 1.0f};
+        ssao.parameters[1] = {1.0f, 1.0f, 0.0f, 0.0f};
+        ssao.parameters[2] = {0.02f, 0.85f, 0.0f, 0.0f};
+        renderer.Render(projection * view, neutralLighting, draws, std::span(&ssao, 1));
+        const auto aoPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        std::size_t occludedPixels = 0;
+        for (std::size_t i = 0; i + 3 < aoPixels.size(); i += 4)
+        {
+            const auto value = std::to_integer<unsigned char>(aoPixels[i]);
+            if (value < 254) ++occludedPixels;
+        }
+        if (occludedPixels < 10)
+        {
+            std::cerr << "Vulkan SSAO produced an all-white AO diagnostic ("
+                      << occludedPixels << " occluded pixels)\n";
+            return 8;
         }
         auto colorGrading = BasicPostProcessEffect{BasicPostProcessEffectType::ColorGrading};
         colorGrading.parameters[0] = {0.0f, 1.05f, 1.05f, 0.04f};

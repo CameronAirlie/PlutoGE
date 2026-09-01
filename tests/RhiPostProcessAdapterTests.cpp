@@ -2,6 +2,7 @@
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
+#include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -78,6 +79,21 @@ int main()
         !IsRhiPostProcessEffectSupported("ChromaticAberration") ||
         !IsRhiPostProcessEffectSupported("Bloom"))
         return 8;
+
+    DepthOfFieldEffect depthOfField;
+    depthOfField.ApplyParameters({
+        {.name = "Auto Focus", .type = PostProcessParameterType::Bool, .value = "false"},
+        {.name = "Focus Distance", .type = PostProcessParameterType::Float, .value = "12.5"},
+        {.name = "F-Stop", .type = PostProcessParameterType::Float, .value = "1.8"},
+        {.name = "Max Blur Radius", .type = PostProcessParameterType::Float, .value = "7.0"}});
+    const auto depthOfFieldPacket = AdaptPostProcessEffect(depthOfField);
+    if (!depthOfFieldPacket || depthOfFieldPacket->type != BasicPostProcessEffectType::DepthOfField ||
+        !Near(depthOfFieldPacket->parameters[0].x, 12.5f) ||
+        !Near(depthOfFieldPacket->parameters[0].z, 1.8f) ||
+        !Near(depthOfFieldPacket->parameters[1].x, 7.0f) ||
+        depthOfFieldPacket->parameters[1].w != 0.0f ||
+        !IsRhiPostProcessEffectSupported("DepthOfField"))
+        return 9;
 
     std::cout << "RHI post-process adapters preserve typed effect parameters\n";
     return 0;

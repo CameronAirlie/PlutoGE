@@ -53,6 +53,7 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
         addPostProcess(BasicPostProcessEffectType::LensFlare, "LensFlare");
         addPostProcess(BasicPostProcessEffectType::MotionBlur, "MotionBlur");
+        addPostProcess(BasicPostProcessEffectType::DepthOfField, "DepthOfField");
         constexpr std::array<std::string_view, 4> bloomModules{
             "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
         for (std::size_t index = 0; index < bloomModules.size(); ++index)

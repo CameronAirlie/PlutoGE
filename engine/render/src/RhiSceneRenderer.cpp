@@ -285,7 +285,11 @@ namespace PlutoGE::render
             if (!effect || !effect->IsEnabled())
                 continue;
             if (auto adapted = AdaptPostProcessEffect(*effect))
+            {
+                if (adapted->type == BasicPostProcessEffectType::DepthOfField)
+                    adapted->parameters[2] = {cameraData.nearPlane, cameraData.farPlane, 0.0f, 0.0f};
                 basicEffects.push_back(std::move(*adapted));
+            }
         }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws);
         return true;

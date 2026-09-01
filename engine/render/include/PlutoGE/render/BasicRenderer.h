@@ -24,6 +24,7 @@ namespace PlutoGE::render
         Bloom,
         LensFlare,
         MotionBlur,
+        DepthOfField,
         Count,
     };
 

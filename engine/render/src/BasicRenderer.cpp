@@ -191,7 +191,7 @@ namespace PlutoGE::render
             shadowDescriptor.debugName = "Directional shadow pipeline";
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
-                                                       const char *debugName, bool usesMotion)
+                                                       const char *debugName, BasicPostProcessEffectType type)
             {
                 rhi::GraphicsPipelineDescriptor postDescriptor;
                 postDescriptor.vertexShader = vertex;
@@ -201,9 +201,12 @@ namespace PlutoGE::render
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 };
-                if (usesMotion)
+                if (type == BasicPostProcessEffectType::MotionBlur)
                     postDescriptor.resourceBindings.push_back(
                         {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                if (type == BasicPostProcessEffectType::DepthOfField)
+                    postDescriptor.resourceBindings.push_back(
+                        {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
@@ -213,7 +216,7 @@ namespace PlutoGE::render
             constexpr std::array<const char *, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> debugNames{
                 "Tone mapping post process", "Gamma correction post process", "FXAA post process",
                 "Color grading post process", "Chromatic aberration post process", "Bloom graph",
-                "Lens flare post process", "Motion blur post process"};
+                "Lens flare post process", "Motion blur post process", "Depth of field post process"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
@@ -221,7 +224,7 @@ namespace PlutoGE::render
                     continue;
                 m_postProcessPipelines[index] = createPostProcessPipeline(
                     shaders.postProcess[index].vertex, shaders.postProcess[index].fragment, debugNames[index],
-                    index == static_cast<std::size_t>(BasicPostProcessEffectType::MotionBlur));
+                    static_cast<BasicPostProcessEffectType>(index));
             }
             constexpr std::array<const char *, 4> bloomNames{
                 "Bloom prefilter", "Bloom downsample", "Bloom upsample", "Bloom composite"};
@@ -583,6 +586,8 @@ namespace PlutoGE::render
             commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
             if (effect.type == BasicPostProcessEffectType::MotionBlur)
                 commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
+            if (effect.type == BasicPostProcessEffectType::DepthOfField)
+                commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = destination.Get();

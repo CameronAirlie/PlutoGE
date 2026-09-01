@@ -392,4 +392,11 @@ namespace PlutoGE::render
         m_hasFocusDistance = false;
         m_lastFocusUpdate = {};
     }
+
+    DepthOfFieldEffect::Settings DepthOfFieldEffect::GetSettings() const noexcept
+    {
+        return {m_quality, m_focusDistance, m_focalLength, m_fStop, m_sensorWidth,
+                m_maxBlurRadius, m_nearBlurScale, m_farBlurScale,
+                m_focusX, m_focusY, m_focusWindow, m_autoFocus};
+    }
 }

@@ -18,6 +18,22 @@ namespace PlutoGE::render
     class DepthOfFieldEffect : public ShaderPostProcessEffect
     {
     public:
+        struct Settings
+        {
+            DepthOfFieldQuality quality = DepthOfFieldQuality::High;
+            float focusDistance = 8.0f;
+            float focalLength = 50.0f;
+            float fStop = 2.8f;
+            float sensorWidth = 36.0f;
+            float maxBlurRadius = 5.0f;
+            float nearBlurScale = 1.25f;
+            float farBlurScale = 1.0f;
+            float focusX = 0.5f;
+            float focusY = 0.5f;
+            float focusWindow = 0.08f;
+            bool autoFocus = true;
+        };
+
         DepthOfFieldEffect() = default;
         ~DepthOfFieldEffect() override = default;
 
@@ -27,6 +43,7 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Depth of Field"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        [[nodiscard]] Settings GetSettings() const noexcept;
 
     private:
         float ReadAutoFocusDistance(const PostProcessContext &context);

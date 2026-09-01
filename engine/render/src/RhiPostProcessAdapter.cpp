@@ -3,6 +3,7 @@
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
+#include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/LensFlareEffect.h"
@@ -120,6 +121,22 @@ namespace PlutoGE::render
             });
         }
 
+        std::optional<BasicPostProcessEffect> AdaptDepthOfField(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<DepthOfFieldEffect>(effect, [](const DepthOfFieldEffect &typed)
+            {
+                const auto settings = typed.GetSettings();
+                BasicPostProcessEffect result{BasicPostProcessEffectType::DepthOfField};
+                result.quality = static_cast<std::uint32_t>(settings.quality);
+                result.parameters[0] = {settings.focusDistance, settings.focalLength,
+                                        settings.fStop, settings.sensorWidth};
+                result.parameters[1] = {settings.maxBlurRadius, settings.nearBlurScale,
+                                        settings.farBlurScale, settings.autoFocus ? 1.0f : 0.0f};
+                result.parameters[3] = {settings.focusX, settings.focusY, settings.focusWindow, 0.0f};
+                return result;
+            });
+        }
+
         constexpr std::array kAdapters{
             AdapterRegistration{"ToneMapping", AdaptToneMapping},
             AdapterRegistration{"GammaCorrection", AdaptGammaCorrection},
@@ -129,6 +146,7 @@ namespace PlutoGE::render
             AdapterRegistration{"Bloom", AdaptBloom},
             AdapterRegistration{"LensFlare", AdaptLensFlare},
             AdapterRegistration{"MotionBlur", AdaptMotionBlur},
+            AdapterRegistration{"DepthOfField", AdaptDepthOfField},
         };
     }
 

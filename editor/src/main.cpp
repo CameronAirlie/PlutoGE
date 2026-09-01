@@ -1,6 +1,8 @@
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -13,9 +15,16 @@
 
 int RunEditor(int argc, char **argv)
 {
+#ifdef _WIN32
+    std::ofstream startupLog(std::filesystem::path(argv[0]).parent_path() / "PlutoGEEditor.log",
+                             std::ios::out | std::ios::trunc);
+    auto *previousErrorBuffer = std::cerr.rdbuf(startupLog.rdbuf());
+    auto *previousLogBuffer = std::clog.rdbuf(startupLog.rdbuf());
+#endif
     auto &editor = PlutoGE::ui::EditorShell::GetInstance();
 
-    if (!editor.Initialize())
+    const std::filesystem::path startupProject = argc > 1 ? argv[1] : std::filesystem::path{};
+    if (!editor.Initialize(startupProject))
     {
         return 1;
     }
@@ -31,6 +40,10 @@ int RunEditor(int argc, char **argv)
 
     editor.Shutdown();
 
+#ifdef _WIN32
+    std::cerr.rdbuf(previousErrorBuffer);
+    std::clog.rdbuf(previousLogBuffer);
+#endif
     return 0;
 }
 

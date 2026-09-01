@@ -30,6 +30,7 @@ namespace PlutoGE::render
                     std::span<const RenderCommand> commands,
                     std::span<const RenderCommand> shadowCommands,
                     std::span<IPostProcessEffect *const> postProcessEffects = {},
+                    std::span<const BasicPostProcessEffect> atmosphereEffects = {},
                     const TexturePixelReader &texturePixelReader = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;

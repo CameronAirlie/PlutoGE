@@ -14,18 +14,38 @@ namespace PlutoGE::render::rhi::opengl
 {
     namespace
     {
-        struct BufferResource { GLuint name = 0; std::size_t size = 0; BufferUsage usage{}; };
-        struct TextureResource { GLuint name = 0; TextureDescriptor descriptor; };
-        struct SamplerResource { GLuint name = 0; };
-        struct PipelineResource { GLuint program = 0; GLuint vertexArray = 0; GraphicsPipelineDescriptor descriptor; };
+        struct BufferResource
+        {
+            GLuint name = 0;
+            std::size_t size = 0;
+            BufferUsage usage{};
+        };
+        struct TextureResource
+        {
+            GLuint name = 0;
+            TextureDescriptor descriptor;
+        };
+        struct SamplerResource
+        {
+            GLuint name = 0;
+        };
+        struct PipelineResource
+        {
+            GLuint program = 0;
+            GLuint vertexArray = 0;
+            GraphicsPipelineDescriptor descriptor;
+        };
 
         GLenum BufferTarget(BufferUsage usage)
         {
             switch (usage)
             {
-            case BufferUsage::Vertex: return GL_ARRAY_BUFFER;
-            case BufferUsage::Index: return GL_ELEMENT_ARRAY_BUFFER;
-            case BufferUsage::Uniform: return GL_UNIFORM_BUFFER;
+            case BufferUsage::Vertex:
+                return GL_ARRAY_BUFFER;
+            case BufferUsage::Index:
+                return GL_ELEMENT_ARRAY_BUFFER;
+            case BufferUsage::Uniform:
+                return GL_UNIFORM_BUFFER;
             }
             throw std::invalid_argument("Unsupported RHI buffer usage");
         }
@@ -41,13 +61,22 @@ namespace PlutoGE::render::rhi::opengl
         {
             switch (format)
             {
-            case Format::R8G8B8A8Unorm: return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
-            case Format::R8G8B8A8Srgb: return {GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE};
-            case Format::R32Float: return {GL_R32F, GL_RED, GL_FLOAT};
-            case Format::R32G32Float: return {GL_RG32F, GL_RG, GL_FLOAT};
-            case Format::R32G32B32A32Float: return {GL_RGBA32F, GL_RGBA, GL_FLOAT};
-            case Format::D32Float: return {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT};
-            default: throw std::invalid_argument("Unsupported RHI texture format");
+            case Format::R8G8B8A8Unorm:
+                return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
+            case Format::R8G8B8A8Srgb:
+                return {GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE};
+            case Format::R16G16B16A16Float:
+                return {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT};
+            case Format::R32Float:
+                return {GL_R32F, GL_RED, GL_FLOAT};
+            case Format::R32G32Float:
+                return {GL_RG32F, GL_RG, GL_FLOAT};
+            case Format::R32G32B32A32Float:
+                return {GL_RGBA32F, GL_RGBA, GL_FLOAT};
+            case Format::D32Float:
+                return {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT};
+            default:
+                throw std::invalid_argument("Unsupported RHI texture format");
             }
         }
 
@@ -55,10 +84,14 @@ namespace PlutoGE::render::rhi::opengl
         {
             switch (format)
             {
-            case Format::R32G32Float: return 2;
-            case Format::R32G32B32Float: return 3;
-            case Format::R32G32B32A32Float: return 4;
-            default: throw std::invalid_argument("Unsupported RHI vertex attribute format");
+            case Format::R32G32Float:
+                return 2;
+            case Format::R32G32B32Float:
+                return 3;
+            case Format::R32G32B32A32Float:
+                return 4;
+            default:
+                throw std::invalid_argument("Unsupported RHI vertex attribute format");
             }
         }
 
@@ -128,15 +161,18 @@ namespace PlutoGE::render::rhi::opengl
                 for (std::size_t index = 0; index < info.colorAttachments.size(); ++index)
                 {
                     const auto *color = m_impl.textures.Get(info.colorAttachments[index]);
-                    if (!color) throw std::invalid_argument("Invalid or stale RHI color attachment");
+                    if (!color)
+                        throw std::invalid_argument("Invalid or stale RHI color attachment");
                     const auto attachment = static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + index);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, color->name, 0);
                     drawBuffers.push_back(attachment);
                 }
                 m_activeColorAttachmentCount = info.colorAttachments.size();
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth ? depth->name : 0, 0);
-                if (drawBuffers.empty()) glDrawBuffer(GL_NONE);
-                else glDrawBuffers(static_cast<GLsizei>(drawBuffers.size()), drawBuffers.data());
+                if (drawBuffers.empty())
+                    glDrawBuffer(GL_NONE);
+                else
+                    glDrawBuffers(static_cast<GLsizei>(drawBuffers.size()), drawBuffers.data());
                 glReadBuffer(drawBuffers.empty() ? GL_NONE : drawBuffers.front());
                 if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     throw std::runtime_error("RHI render target framebuffer is incomplete");
@@ -182,8 +218,16 @@ namespace PlutoGE::render::rhi::opengl
             m_rendering = false;
         }
 
-        void SetViewport(const Viewport &v) override { glViewport(static_cast<GLint>(v.x), static_cast<GLint>(v.y), static_cast<GLsizei>(v.width), static_cast<GLsizei>(v.height)); glDepthRange(v.minDepth, v.maxDepth); }
-        void SetScissor(const Scissor &s) override { glEnable(GL_SCISSOR_TEST); glScissor(s.x, s.y, static_cast<GLsizei>(s.width), static_cast<GLsizei>(s.height)); }
+        void SetViewport(const Viewport &v) override
+        {
+            glViewport(static_cast<GLint>(v.x), static_cast<GLint>(v.y), static_cast<GLsizei>(v.width), static_cast<GLsizei>(v.height));
+            glDepthRange(v.minDepth, v.maxDepth);
+        }
+        void SetScissor(const Scissor &s) override
+        {
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(s.x, s.y, static_cast<GLsizei>(s.width), static_cast<GLsizei>(s.height));
+        }
 
         void BindPipeline(PipelineHandle handle) override
         {
@@ -344,10 +388,14 @@ namespace PlutoGE::render::rhi::opengl
 
     OpenGLDevice::~OpenGLDevice()
     {
-        m_impl->pipelines.ForEach([](auto &r) { glDeleteVertexArrays(1, &r.vertexArray); glDeleteProgram(r.program); });
-        m_impl->samplers.ForEach([](auto &r) { glDeleteSamplers(1, &r.name); });
-        m_impl->textures.ForEach([](auto &r) { glDeleteTextures(1, &r.name); });
-        m_impl->buffers.ForEach([](auto &r) { glDeleteBuffers(1, &r.name); });
+        m_impl->pipelines.ForEach([](auto &r)
+                                  { glDeleteVertexArrays(1, &r.vertexArray); glDeleteProgram(r.program); });
+        m_impl->samplers.ForEach([](auto &r)
+                                 { glDeleteSamplers(1, &r.name); });
+        m_impl->textures.ForEach([](auto &r)
+                                 { glDeleteTextures(1, &r.name); });
+        m_impl->buffers.ForEach([](auto &r)
+                                { glDeleteBuffers(1, &r.name); });
         if (m_impl->framebuffer)
             glDeleteFramebuffers(1, &m_impl->framebuffer);
     }
@@ -421,8 +469,10 @@ namespace PlutoGE::render::rhi::opengl
         }
         catch (...)
         {
-            if (program) glDeleteProgram(program);
-            if (fragment) glDeleteShader(fragment);
+            if (program)
+                glDeleteProgram(program);
+            if (fragment)
+                glDeleteShader(fragment);
             glDeleteShader(vertex);
             throw;
         }
@@ -446,10 +496,29 @@ namespace PlutoGE::render::rhi::opengl
         glBufferSubData(BufferTarget(buffer->usage), static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(data.size()), data.data());
     }
 
-    void OpenGLDevice::DestroyBuffer(BufferHandle h) { if (auto r = m_impl->buffers.Remove(h)) glDeleteBuffers(1, &r->name); }
-    void OpenGLDevice::DestroyTexture(TextureHandle h) { if (auto r = m_impl->textures.Remove(h)) glDeleteTextures(1, &r->name); }
-    void OpenGLDevice::DestroySampler(SamplerHandle h) { if (auto r = m_impl->samplers.Remove(h)) glDeleteSamplers(1, &r->name); }
-    void OpenGLDevice::DestroyPipeline(PipelineHandle h) { if (auto r = m_impl->pipelines.Remove(h)) { glDeleteVertexArrays(1, &r->vertexArray); glDeleteProgram(r->program); } }
+    void OpenGLDevice::DestroyBuffer(BufferHandle h)
+    {
+        if (auto r = m_impl->buffers.Remove(h))
+            glDeleteBuffers(1, &r->name);
+    }
+    void OpenGLDevice::DestroyTexture(TextureHandle h)
+    {
+        if (auto r = m_impl->textures.Remove(h))
+            glDeleteTextures(1, &r->name);
+    }
+    void OpenGLDevice::DestroySampler(SamplerHandle h)
+    {
+        if (auto r = m_impl->samplers.Remove(h))
+            glDeleteSamplers(1, &r->name);
+    }
+    void OpenGLDevice::DestroyPipeline(PipelineHandle h)
+    {
+        if (auto r = m_impl->pipelines.Remove(h))
+        {
+            glDeleteVertexArrays(1, &r->vertexArray);
+            glDeleteProgram(r->program);
+        }
+    }
     ICommandContext &OpenGLDevice::GetImmediateContext() { return *m_impl->context; }
     std::uint64_t OpenGLDevice::GetTextureNativeHandle(TextureHandle handle) const noexcept
     {

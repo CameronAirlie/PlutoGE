@@ -40,7 +40,9 @@ namespace PlutoGE::render
             .vertex = Load("BasicLit", "vertex"),
             .fragment = Load("BasicLit", "fragment"),
             .shadowVertex = Load("DirectionalShadow", "vertex"),
-            .shadowFragment = Load("DirectionalShadow", "fragment")};
+            .shadowFragment = Load("DirectionalShadow", "fragment"),
+            .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
+                              .fragment = Load("DisplayOutput", "fragment")}};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {
@@ -59,6 +61,8 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
         addPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         addPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
+        addPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
+        addPostProcess(BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
         addPostProcess(BasicPostProcessEffectType::SceneComposite, "SceneComposite");
         result.autoExposure[0] = {.vertex = Load("AutoExposureMeter", "vertex"),
                                   .fragment = Load("AutoExposureMeter", "fragment")};

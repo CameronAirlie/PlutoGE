@@ -32,14 +32,16 @@ namespace PlutoGE::assets
         std::string line;
         while (std::getline(input, line))
         {
-            if (line.rfind("ID\t", 0) == 0) return line.substr(3);
+            if (line.rfind("ID\t", 0) == 0)
+                return line.substr(3);
         }
         return {};
     }
 
     std::string AssetManager::ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference) const
     {
-        if (assetId.empty() || m_projectRootDirectory.empty()) return fallbackReference;
+        if (assetId.empty() || m_projectRootDirectory.empty())
+            return fallbackReference;
         const auto assetRoot = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory;
         std::error_code error;
         for (std::filesystem::recursive_directory_iterator iterator(assetRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
@@ -59,7 +61,8 @@ namespace PlutoGE::assets
                     auto assetPath = iterator->path();
                     assetPath.replace_extension();
                     const auto relative = std::filesystem::relative(assetPath, assetRoot, error);
-                    if (!error) return std::string(Project::kProjectAssetScheme) + relative.generic_string();
+                    if (!error)
+                        return std::string(Project::kProjectAssetScheme) + relative.generic_string();
                     break;
                 }
             }
@@ -70,7 +73,8 @@ namespace PlutoGE::assets
     std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
     {
         const auto sourceReference = ResolveStableAssetId(modelAssetId);
-        if (sourceReference.empty() || localId == 0) return {};
+        if (sourceReference.empty() || localId == 0)
+            return {};
         const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
         auto manifestPath = sourcePath.parent_path() / (sourcePath.stem().string() + ".plutomodel");
@@ -83,10 +87,12 @@ namespace PlutoGE::assets
                            sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
         }
         ModelAsset model;
-        if (!LoadModelAsset(manifestPath.string(), model)) return {};
+        if (!LoadModelAsset(manifestPath.string(), model))
+            return {};
         for (const auto &object : model.objects)
         {
-            if (object.localId == localId) return object.reference;
+            if (object.localId == localId)
+                return object.reference;
         }
         return {};
     }
@@ -392,14 +398,16 @@ namespace PlutoGE::assets
         std::ofstream output(overridePath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
-            if (errorMessage) *errorMessage = "Failed to write extracted material bindings: " + overridePath.string();
+            if (errorMessage)
+                *errorMessage = "Failed to write extracted material bindings: " + overridePath.string();
             return false;
         }
         for (const auto &reference : materialReferences)
             output << reference << '\n';
         if (!output.good())
         {
-            if (errorMessage) *errorMessage = "Failed to save extracted material bindings.";
+            if (errorMessage)
+                *errorMessage = "Failed to save extracted material bindings.";
             return false;
         }
         m_meshMaterialReferenceCache[meshAssetReference] = std::move(materialReferences);
@@ -589,7 +597,8 @@ namespace PlutoGE::assets
             return false;
         }
 
-        clip = ReadAnimationClip(input, version >= 5 ? 6 : version >= 4 ? 5 : version >= 3 ? 4
+        clip = ReadAnimationClip(input, version >= 5 ? 6 : version >= 4 ? 5
+                                                       : version >= 3   ? 4
                                                        : version >= 2   ? 3
                                                                         : 2);
         return input.good();
@@ -3003,7 +3012,8 @@ namespace PlutoGE::assets
         if (m_projectRootDirectory.empty())
             return NormalizePath(texturePath);
         return NormalizePath(((std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory) /
-                              std::filesystem::path(texturePath)).string());
+                              std::filesystem::path(texturePath))
+                                 .string());
     }
 
     std::string AssetManager::PersistMaterialTexturePath(const std::string &texturePath) const

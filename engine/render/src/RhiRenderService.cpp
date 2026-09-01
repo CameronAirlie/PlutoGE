@@ -37,14 +37,14 @@ namespace PlutoGE::render
     }
 
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
-                                                  const BasicLighting &lighting,
-                                                  std::span<const RenderCommand> commands,
-                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader)
+                                                 const BasicLighting &lighting,
+                                                 std::span<const RenderCommand> commands,
+                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader)
     {
         if (!m_sceneRenderer || !m_swapchain)
             return false;
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
-                                     cameraData, lighting, commands, commands, {}, texturePixelReader))
+                                     cameraData, lighting, commands, commands, {}, {}, texturePixelReader))
             return false;
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -15,7 +16,12 @@ namespace PlutoGE::render::rhi
 {
     struct RenderDeviceTimingStats
     {
-        struct GpuScope { std::string name; float milliseconds = 0.0f; float cpuMilliseconds = 0.0f; };
+        struct GpuScope
+        {
+            std::string name;
+            float milliseconds = 0.0f;
+            float cpuMilliseconds = 0.0f;
+        };
         float frameGpuMs = 0.0f;
         float frameFenceWaitMs = 0.0f;
         std::uint64_t descriptorAllocationCalls = 0;
@@ -77,11 +83,14 @@ namespace PlutoGE::render::rhi
     class ISwapchain
     {
     public:
+        using OverlayRecorder = std::function<void(void *nativeCommandContext)>;
+
         virtual ~ISwapchain() = default;
         [[nodiscard]] virtual Format GetFormat() const noexcept = 0;
         [[nodiscard]] virtual std::uint32_t GetWidth() const noexcept = 0;
         [[nodiscard]] virtual std::uint32_t GetHeight() const noexcept = 0;
         virtual bool Resize(std::uint32_t width, std::uint32_t height) = 0;
+        virtual void SetOverlayRecorder(OverlayRecorder recorder) { (void)recorder; }
         virtual bool Present(TextureHandle source) = 0;
     };
 

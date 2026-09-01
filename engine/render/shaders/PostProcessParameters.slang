@@ -12,4 +12,5 @@ struct PostProcessParameterBlock
     column_major float4x4 view;
     column_major float4x4 projection;
     float4 cameraPosition;
+    column_major float4x4 worldToLocal;
 };

@@ -228,13 +228,14 @@ namespace PlutoGE::ui
         }
 
         bool LaunchExecutable(const std::filesystem::path &executablePath,
-                              std::string *errorMessage)
+                              std::string *errorMessage,
+                              const std::string &arguments = {})
         {
 #ifdef _WIN32
             const auto operationResult = reinterpret_cast<std::intptr_t>(ShellExecuteA(nullptr,
                                                                                        "open",
                                                                                        executablePath.string().c_str(),
-                                                                                       nullptr,
+                                                                                       arguments.empty() ? nullptr : arguments.c_str(),
                                                                                        executablePath.parent_path().string().c_str(),
                                                                                        SW_SHOWNORMAL));
             if (operationResult <= 32)
@@ -2288,6 +2289,29 @@ namespace PlutoGE::ui
             return false;
         }
 
+        if (loadedProject->GetManifest().graphicsApi != m_engine.GetConfig().graphicsApi)
+        {
+#ifdef _WIN32
+            std::array<char, MAX_PATH> executablePath{};
+            const DWORD pathLength = GetModuleFileNameA(nullptr, executablePath.data(),
+                                                        static_cast<DWORD>(executablePath.size()));
+            std::string launchError;
+            const std::string arguments = "\"" + std::filesystem::absolute(manifestPath).string() + "\"";
+            if (pathLength == 0 || pathLength == executablePath.size() ||
+                !LaunchExecutable(std::filesystem::path(executablePath.data()), &launchError, arguments))
+            {
+                m_statusMessage = launchError.empty() ? "Failed to restart editor with the project graphics API."
+                                                      : launchError;
+                return false;
+            }
+            m_engine.GetWindow().RequestClose();
+            return true;
+#else
+            m_statusMessage = "Restart the editor to apply the project's graphics API.";
+            return false;
+#endif
+        }
+
         m_project = std::move(loadedProject);
         ApplyProjectContext();
         m_project->RefreshAssetRegistry();
@@ -2664,7 +2688,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::Initialize()
+    bool EditorShell::Initialize(const std::filesystem::path &startupProject)
     {
         auto config = core::EngineConfig{
             platform::WindowConfig{
@@ -2677,6 +2701,12 @@ namespace PlutoGE::ui
             }};
         config.vSync = false;
         config.isEditorHost = true;
+        if (!startupProject.empty())
+        {
+            std::string projectError;
+            if (const auto project = assets::Project::Load(startupProject, &projectError))
+                config.graphicsApi = project->GetManifest().graphicsApi;
+        }
         if (!m_engine.Initialize(config))
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
@@ -2749,6 +2779,7 @@ namespace PlutoGE::ui
         viewportConfig.editorViewport = true;
         viewportConfig.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
                                                : render::rhi::GraphicsApi::OpenGL;
+        viewportConfig.sharedRenderDevice = m_engine.GetRenderDevice();
         auto *viewportPanel = new ViewportPanel(viewportConfig, m_editorSceneRenderService.get());
         viewportPanel->Initialize();
 
@@ -2766,6 +2797,7 @@ namespace PlutoGE::ui
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
         viewportConfig2.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
                                                 : render::rhi::GraphicsApi::OpenGL;
+        viewportConfig2.sharedRenderDevice = m_engine.GetRenderDevice();
         if (m_project && m_project->GetManifest().runtimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
         {
             viewportConfig2.initialRenderScale = m_project->GetManifest().runtimeRenderScale;
@@ -2881,6 +2913,7 @@ namespace PlutoGE::ui
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
         renderer.SetVSyncEnabled(editorVSyncEnabled);
+        const bool vulkanEditorHost = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
 
         while (!window.ShouldClose())
         {
@@ -2893,7 +2926,8 @@ namespace PlutoGE::ui
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
-            renderer.BeginProfilingFrame();
+            if (!vulkanEditorHost)
+                renderer.BeginProfilingFrame();
             const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
 
@@ -3747,6 +3781,7 @@ namespace PlutoGE::ui
 
                     if (ImGui::Button("Save"))
                     {
+                        const bool restartForGraphicsApi = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
                         manifest.name = projectNameBuffer.data();
                         manifest.windowTitle = projectWindowTitleBuffer.data();
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
@@ -3778,6 +3813,8 @@ namespace PlutoGE::ui
                             renderer.SetVSyncEnabled(editorVSyncEnabled);
                             m_panelManager.SetEditorFontSize(manifest.editorFontSize);
                             m_panelManager.SetEditorFont(manifest.editorFont);
+                            if (restartForGraphicsApi)
+                                LoadProjectFromPath(m_project->GetManifestPath());
                             ImGui::CloseCurrentPopup();
                         }
                     }
@@ -3895,7 +3932,16 @@ namespace PlutoGE::ui
 
             const auto presentStart = std::chrono::high_resolution_clock::now();
             frameTimingStats.vSyncEnabled = renderer.IsVSyncEnabled();
-            renderer.EndFrame();
+            if (vulkanEditorHost)
+            {
+                const render::BasicLighting hostLighting{};
+                static_cast<void>(m_engine.GetRhiRenderService().RenderAndPresent(
+                    glm::mat4(1.0f), hostLighting, std::span<const render::BasicDraw>{}));
+            }
+            else
+            {
+                renderer.EndFrame();
+            }
             const auto presentEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
 

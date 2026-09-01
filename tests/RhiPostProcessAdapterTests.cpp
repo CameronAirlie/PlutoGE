@@ -73,9 +73,8 @@ int main()
         return 6;
 
     BloomEffect bloom;
-    bloom.ApplyParameters({
-        {.name = "Intensity", .type = PostProcessParameterType::Float, .value = "1.25"},
-        {.name = "Iterations", .type = PostProcessParameterType::Int, .value = "4"}});
+    bloom.ApplyParameters({{.name = "Intensity", .type = PostProcessParameterType::Float, .value = "1.25"},
+                           {.name = "Iterations", .type = PostProcessParameterType::Int, .value = "4"}});
     const auto bloomPacket = AdaptPostProcessEffect(bloom);
     if (!bloomPacket || bloomPacket->type != BasicPostProcessEffectType::Bloom ||
         !Near(bloomPacket->parameters[0].x, 1.25f) || bloomPacket->quality != 4)
@@ -88,11 +87,10 @@ int main()
         return 8;
 
     DepthOfFieldEffect depthOfField;
-    depthOfField.ApplyParameters({
-        {.name = "Auto Focus", .type = PostProcessParameterType::Bool, .value = "false"},
-        {.name = "Focus Distance", .type = PostProcessParameterType::Float, .value = "12.5"},
-        {.name = "F-Stop", .type = PostProcessParameterType::Float, .value = "1.8"},
-        {.name = "Max Blur Radius", .type = PostProcessParameterType::Float, .value = "7.0"}});
+    depthOfField.ApplyParameters({{.name = "Auto Focus", .type = PostProcessParameterType::Bool, .value = "false"},
+                                  {.name = "Focus Distance", .type = PostProcessParameterType::Float, .value = "12.5"},
+                                  {.name = "F-Stop", .type = PostProcessParameterType::Float, .value = "1.8"},
+                                  {.name = "Max Blur Radius", .type = PostProcessParameterType::Float, .value = "7.0"}});
     const auto depthOfFieldPacket = AdaptPostProcessEffect(depthOfField);
     if (!depthOfFieldPacket || depthOfFieldPacket->type != BasicPostProcessEffectType::DepthOfField ||
         !Near(depthOfFieldPacket->parameters[0].x, 12.5f) ||
@@ -103,9 +101,8 @@ int main()
         return 9;
 
     AutoExposureEffect autoExposure;
-    autoExposure.ApplyParameters({
-        {.name = "Key Value", .type = PostProcessParameterType::Float, .value = "0.22"},
-        {.name = "Max Exposure", .type = PostProcessParameterType::Float, .value = "3.5"}});
+    autoExposure.ApplyParameters({{.name = "Key Value", .type = PostProcessParameterType::Float, .value = "0.22"},
+                                  {.name = "Max Exposure", .type = PostProcessParameterType::Float, .value = "3.5"}});
     const auto exposurePacket = AdaptPostProcessEffect(autoExposure);
     if (!exposurePacket || exposurePacket->type != BasicPostProcessEffectType::AutoExposure ||
         !Near(exposurePacket->parameters[0].x, 0.22f) ||
@@ -145,12 +142,16 @@ int main()
 
     if (StageFor(BasicPostProcessEffectType::SceneComposite) != BasicPostProcessStage::LightingComposite ||
         StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::AmbientOcclusion ||
+        StageFor(BasicPostProcessEffectType::PhysicalSky) != BasicPostProcessStage::ScreenSpaceAtmosphere ||
+        StageFor(BasicPostProcessEffectType::VolumetricCloud) != BasicPostProcessStage::ScreenSpaceAtmosphere ||
         StageFor(BasicPostProcessEffectType::TAA) != BasicPostProcessStage::TemporalResolve ||
         StageFor(BasicPostProcessEffectType::ToneMapping) != BasicPostProcessStage::ToneAndColor ||
         !(StageFor(BasicPostProcessEffectType::SceneComposite) < StageFor(BasicPostProcessEffectType::SSAO) &&
           StageFor(BasicPostProcessEffectType::SSAO) < StageFor(BasicPostProcessEffectType::TAA) &&
           StageFor(BasicPostProcessEffectType::TAA) < StageFor(BasicPostProcessEffectType::ToneMapping)) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::Material) ||
+        !HasInput(InputsFor(BasicPostProcessEffectType::PhysicalSky), BasicPostProcessInput::Depth) ||
+        !HasInput(InputsFor(BasicPostProcessEffectType::VolumetricCloud), BasicPostProcessInput::Depth) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::TAA), BasicPostProcessInput::History))
         return 13;
 

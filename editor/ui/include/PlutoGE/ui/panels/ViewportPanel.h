@@ -41,6 +41,7 @@ namespace PlutoGE::ui
         float initialUpscaleSharpness = 0.25f;
         bool editorViewport = false;
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
+        render::rhi::IRenderDevice *sharedRenderDevice = nullptr;
     };
 
     class ViewportPanel : public Panel

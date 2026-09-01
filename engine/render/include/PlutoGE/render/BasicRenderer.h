@@ -31,6 +31,8 @@ namespace PlutoGE::render
         SSGI,
         SSR,
         VolumetricFog,
+        PhysicalSky,
+        VolumetricCloud,
         SceneComposite,
         Count,
     };
@@ -67,6 +69,8 @@ namespace PlutoGE::render
             return BasicPostProcessStage::AmbientOcclusion;
         case BasicPostProcessEffectType::SSR:
         case BasicPostProcessEffectType::VolumetricFog:
+        case BasicPostProcessEffectType::PhysicalSky:
+        case BasicPostProcessEffectType::VolumetricCloud:
             return BasicPostProcessStage::ScreenSpaceAtmosphere;
         case BasicPostProcessEffectType::TAA:
             return BasicPostProcessStage::TemporalResolve;
@@ -83,14 +87,14 @@ namespace PlutoGE::render
     }
 
     [[nodiscard]] constexpr BasicPostProcessInput operator|(BasicPostProcessInput lhs,
-                                                             BasicPostProcessInput rhs) noexcept
+                                                            BasicPostProcessInput rhs) noexcept
     {
         return static_cast<BasicPostProcessInput>(static_cast<std::uint8_t>(lhs) |
                                                   static_cast<std::uint8_t>(rhs));
     }
 
     [[nodiscard]] constexpr bool HasInput(BasicPostProcessInput inputs,
-                                           BasicPostProcessInput input) noexcept
+                                          BasicPostProcessInput input) noexcept
     {
         return (static_cast<std::uint8_t>(inputs) & static_cast<std::uint8_t>(input)) != 0;
     }
@@ -99,8 +103,10 @@ namespace PlutoGE::render
     {
         switch (type)
         {
-        case BasicPostProcessEffectType::MotionBlur: return BasicPostProcessInput::Motion;
-        case BasicPostProcessEffectType::DepthOfField: return BasicPostProcessInput::Depth;
+        case BasicPostProcessEffectType::MotionBlur:
+            return BasicPostProcessInput::Motion;
+        case BasicPostProcessEffectType::DepthOfField:
+            return BasicPostProcessInput::Depth;
         case BasicPostProcessEffectType::TAA:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Motion | BasicPostProcessInput::History;
@@ -111,11 +117,14 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Material;
         case BasicPostProcessEffectType::VolumetricFog:
+        case BasicPostProcessEffectType::PhysicalSky:
+        case BasicPostProcessEffectType::VolumetricCloud:
             return BasicPostProcessInput::Depth;
         case BasicPostProcessEffectType::SceneComposite:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Material | BasicPostProcessInput::Motion;
-        default: return BasicPostProcessInput::None;
+        default:
+            return BasicPostProcessInput::None;
         }
     }
 
@@ -147,8 +156,10 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
+        BasicPostProcessShaderPackage displayOutput;
         std::array<BasicPostProcessShaderPackage,
-                   static_cast<std::size_t>(BasicPostProcessEffectType::Count)> postProcess;
+                   static_cast<std::size_t>(BasicPostProcessEffectType::Count)>
+            postProcess;
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
@@ -241,6 +252,7 @@ namespace PlutoGE::render
         // Effect-specific values are deliberately grouped into aligned lanes.
         // This keeps the GPU ABI stable while new single-input passes are added.
         std::array<glm::vec4, 6> parameters{};
+        glm::mat4 worldToLocal{1.0f};
     };
 
     class BasicRenderer
@@ -285,6 +297,7 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
+        rhi::GraphicsPipeline m_displayPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
         std::array<rhi::Buffer, 4> m_shadowCameraBuffers;
@@ -303,6 +316,7 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;
+        rhi::Texture m_displayTarget;
         rhi::Texture m_normalTarget;
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;

@@ -14,10 +14,16 @@ namespace PlutoGE::render
     class Texture;
     struct RenderCommand;
     class IPostProcessEffect;
-    namespace rhi { class IRenderDevice; }
+    namespace rhi
+    {
+        class IRenderDevice;
+    }
 }
 
-namespace PlutoGE::scene { class Scene; }
+namespace PlutoGE::scene
+{
+    class Scene;
+}
 
 namespace PlutoGE::ui
 {
@@ -31,7 +37,7 @@ namespace PlutoGE::ui
         EditorSceneRenderService(const EditorSceneRenderService &) = delete;
         EditorSceneRenderService &operator=(const EditorSceneRenderService &) = delete;
 
-        bool Initialize(render::rhi::GraphicsApi graphicsApi);
+        bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
@@ -42,7 +48,7 @@ namespace PlutoGE::ui
 
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
         [[nodiscard]] bool IsVulkan() const noexcept { return m_isVulkan; }
-        [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() const noexcept { return m_device.get(); }
+        [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() const noexcept { return m_device; }
         [[nodiscard]] render::rhi::TextureHandle GetViewportTexture() const noexcept { return m_viewportTexture; }
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetSceneCommandCount() : 0; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetDrawCount() : 0; }
@@ -50,7 +56,8 @@ namespace PlutoGE::ui
         [[nodiscard]] const std::string &GetVulkanStatus() const noexcept { return m_vulkanStatus; }
 
     private:
-        std::unique_ptr<render::rhi::IRenderDevice> m_device;
+        std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
+        render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;

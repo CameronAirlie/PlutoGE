@@ -2,12 +2,25 @@
 
 #include "PlutoGE/render/rhi/RenderDevice.h"
 
+#include <volk.h>
+
 #include <memory>
 #include <optional>
 #include <vector>
 
 namespace PlutoGE::render::rhi::vulkan
 {
+    struct VulkanEditorContext
+    {
+        VkInstance instance = VK_NULL_HANDLE;
+        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint32_t queueFamily = 0;
+        VkQueue queue = VK_NULL_HANDLE;
+        VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
+        std::uint32_t imageCount = 0;
+    };
+
     class VulkanCommandContext;
     class VulkanSwapchain;
 
@@ -43,6 +56,8 @@ namespace PlutoGE::render::rhi::vulkan
         // presentation where retaining the previous frame is acceptable.
         [[nodiscard]] std::optional<std::vector<std::byte>> ReadTextureRgba8Buffered(TextureHandle texture);
         [[nodiscard]] const std::string &GetDeviceName() const noexcept;
+        [[nodiscard]] std::optional<VulkanEditorContext> GetEditorContext(const ISwapchain &swapchain) const noexcept;
+        [[nodiscard]] VkImageView GetTextureImageView(TextureHandle texture) const noexcept;
 
     private:
         friend class VulkanCommandContext;

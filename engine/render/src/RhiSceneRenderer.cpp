@@ -65,7 +65,8 @@ namespace PlutoGE::render
             }
 
             glm::vec3 center(0.0f);
-            for (const auto &corner : corners) center += corner;
+            for (const auto &corner : corners)
+                center += corner;
             center /= static_cast<float>(corners.size());
             float radius = 0.0f;
             for (const auto &corner : corners)
@@ -82,7 +83,8 @@ namespace PlutoGE::render
             const glm::mat4 lightView = glm::lookAtRH(center - lightDirection * lightOffset, center, lightUp);
             const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(center, 1.0f));
             const float guard = (std::max(lighting.shadowSoftness, 1.0f) + 1.0f) *
-                                (radius * 2.0f / std::max(shadowResolution, 1u)) + 0.01f;
+                                    (radius * 2.0f / std::max(shadowResolution, 1u)) +
+                                0.01f;
             glm::vec3 minimum = lightSpaceCenter - glm::vec3(radius + guard, radius + guard, radius);
             glm::vec3 maximum = lightSpaceCenter + glm::vec3(radius + guard, radius + guard, radius);
             minimum.z -= std::max(casterDistance, farDistance);
@@ -92,12 +94,15 @@ namespace PlutoGE::render
             // centre. This is the key phase-stability rule used by GLSL CSM.
             const glm::vec2 worldAnchor = glm::vec2(lightView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
             const glm::vec2 snappedMinimum = worldAnchor -
-                glm::round((worldAnchor - glm::vec2(minimum)) / texelSize) * texelSize;
+                                             glm::round((worldAnchor - glm::vec2(minimum)) / texelSize) * texelSize;
             const glm::vec2 snapOffset = snappedMinimum - glm::vec2(minimum);
-            minimum.x += snapOffset.x; maximum.x += snapOffset.x;
-            minimum.y += snapOffset.y; maximum.y += snapOffset.y;
+            minimum.x += snapOffset.x;
+            maximum.x += snapOffset.x;
+            minimum.y += snapOffset.y;
+            maximum.y += snapOffset.y;
             return glm::orthoRH_ZO(minimum.x, maximum.x, minimum.y, maximum.y,
-                                   std::max(-maximum.z, 0.01f), std::max(-minimum.z, 0.02f)) * lightView;
+                                   std::max(-maximum.z, 0.01f), std::max(-minimum.z, 0.02f)) *
+                   lightView;
         }
     }
 
@@ -132,6 +137,7 @@ namespace PlutoGE::render
                                   std::span<const RenderCommand> commands,
                                   std::span<const RenderCommand> shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
+                                  std::span<const BasicPostProcessEffect> atmosphereEffects,
                                   const TexturePixelReader &texturePixelReader)
     {
         if (!m_renderer || !m_device || width == 0 || height == 0 || !m_renderer->Resize(width, height))
@@ -153,8 +159,9 @@ namespace PlutoGE::render
             if (pixels.size() != expectedSize)
                 return {};
             rhi::Texture uploaded(*m_device, m_device->CreateTexture(
-                {static_cast<std::uint32_t>(source->GetWidth()), static_cast<std::uint32_t>(source->GetHeight()),
-                 format, rhi::TextureUsage::Sampled, debugName}, pixels));
+                                                 {static_cast<std::uint32_t>(source->GetWidth()), static_cast<std::uint32_t>(source->GetHeight()),
+                                                  format, rhi::TextureUsage::Sampled, debugName},
+                                                 pixels));
             return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get()
                             : rhi::TextureHandle{};
         };
@@ -162,67 +169,67 @@ namespace PlutoGE::render
         const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
                                      std::vector<BasicDraw> &destination)
         {
-          for (const auto &command : sourceCommands)
-          {
-            if (!command.mesh)
-                continue;
-            auto mesh = m_meshes.find(command.mesh);
-            if (mesh == m_meshes.end())
+            for (const auto &command : sourceCommands)
             {
-                const auto &source = command.mesh->GetMeshData();
-                if (source.vertices.empty() || source.indices.empty())
+                if (!command.mesh)
                     continue;
-                std::vector<BasicVertex> vertices;
-                vertices.reserve(source.vertices.size());
-                for (const auto &vertex : source.vertices)
-                    vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
-                mesh = m_meshes.emplace(command.mesh, m_renderer->CreateMesh({vertices, source.indices})).first;
-            }
+                auto mesh = m_meshes.find(command.mesh);
+                if (mesh == m_meshes.end())
+                {
+                    const auto &source = command.mesh->GetMeshData();
+                    if (source.vertices.empty() || source.indices.empty())
+                        continue;
+                    std::vector<BasicVertex> vertices;
+                    vertices.reserve(source.vertices.size());
+                    for (const auto &vertex : source.vertices)
+                        vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
+                    mesh = m_meshes.emplace(command.mesh, m_renderer->CreateMesh({vertices, source.indices})).first;
+                }
 
-            std::uint32_t firstIndex = 0;
-            std::uint32_t indexCount = 0;
-            if (command.submeshIndex < command.mesh->GetSubmeshCount())
-            {
-                const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
-                firstIndex = range.indexOffset;
-                indexCount = range.indexCount;
+                std::uint32_t firstIndex = 0;
+                std::uint32_t indexCount = 0;
+                if (command.submeshIndex < command.mesh->GetSubmeshCount())
+                {
+                    const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
+                    firstIndex = range.indexOffset;
+                    indexCount = range.indexCount;
+                }
+                BasicDraw draw{.mesh = &mesh->second, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                if (command.material)
+                {
+                    const auto &material = command.material->GetConfig();
+                    draw.baseColor = material.color;
+                    draw.uvScale = material.uvScale;
+                    draw.metallic = material.metallic;
+                    draw.roughness = material.roughness;
+                    draw.emission = material.emission;
+                    draw.subsurface = material.subsurface;
+                    draw.subsurfaceColor = material.subsurfaceColor;
+                    draw.subsurfaceRadius = material.subsurfaceRadius;
+                    draw.alphaCutoff = material.alphaCutoff;
+                    draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
+                    draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
+                    draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
+                    draw.flipNormalY = material.flipNormalY;
+                    draw.castsShadow = draw.castsShadow && material.castsShadow;
+                    draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
+                                                          m_srgbTextures, "Scene albedo");
+                    draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
+                                                       m_linearTextures, "Scene normal");
+                    draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
+                                                         m_linearTextures, "Scene metallic");
+                    draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
+                                                          m_linearTextures, "Scene roughness");
+                }
+                if (command.instanceModels && !command.instanceModels->empty())
+                    for (const auto &model : *command.instanceModels)
+                    {
+                        draw.model = model;
+                        destination.push_back(draw);
+                    }
+                else
+                    destination.push_back(draw);
             }
-            BasicDraw draw{.mesh = &mesh->second, .model = command.model,
-                           .castsShadow = command.castsShadow,
-                           .shadowBoundsCenter = command.worldBounds.center,
-                           .shadowBoundsRadius = command.worldBounds.radius,
-                           .firstIndex = firstIndex, .indexCount = indexCount};
-            if (command.material)
-            {
-                const auto &material = command.material->GetConfig();
-                draw.baseColor = material.color;
-                draw.uvScale = material.uvScale;
-                draw.metallic = material.metallic;
-                draw.roughness = material.roughness;
-                draw.emission = material.emission;
-                draw.subsurface = material.subsurface;
-                draw.subsurfaceColor = material.subsurfaceColor;
-                draw.subsurfaceRadius = material.subsurfaceRadius;
-                draw.alphaCutoff = material.alphaCutoff;
-                draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
-                draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
-                draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
-                draw.flipNormalY = material.flipNormalY;
-                draw.castsShadow = draw.castsShadow && material.castsShadow;
-                draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
-                                                      m_srgbTextures, "Scene albedo");
-                draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
-                                                   m_linearTextures, "Scene normal");
-                draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
-                                                     m_linearTextures, "Scene metallic");
-                draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                      m_linearTextures, "Scene roughness");
-            }
-            if (command.instanceModels && !command.instanceModels->empty())
-                for (const auto &model : *command.instanceModels) { draw.model = model; destination.push_back(draw); }
-            else
-                destination.push_back(draw);
-          }
         };
         appendDraws(commands, draws);
         std::vector<BasicDraw> shadowDraws;
@@ -284,9 +291,10 @@ namespace PlutoGE::render
                     cameraData, effectiveLighting, cascadeNear,
                     effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
                     std::clamp(static_cast<std::uint32_t>(std::lround(
-                        effectiveLighting.shadowResolution * std::pow(
-                            std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
-                            static_cast<float>(cascade)))), 256u, 8192u));
+                                   effectiveLighting.shadowResolution * std::pow(
+                                                                            std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
+                                                                            static_cast<float>(cascade)))),
+                               256u, 8192u));
             }
             if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
                 effectiveLighting.shadowFlipY = true;
@@ -296,7 +304,7 @@ namespace PlutoGE::render
                 effectiveLighting.shadowDepthBias = 0.5f;
             }
         }
-        std::vector<BasicPostProcessEffect> basicEffects;
+        std::vector<BasicPostProcessEffect> basicEffects(atmosphereEffects.begin(), atmosphereEffects.end());
         for (const auto *effect : postProcessEffects)
         {
             if (!effect || !effect->IsEnabled())
@@ -313,24 +321,24 @@ namespace PlutoGE::render
                 basicEffects.push_back(std::move(*adapted));
             }
         }
+        for (auto &effect : basicEffects)
+            if (HasInput(InputsFor(effect.type), BasicPostProcessInput::Depth))
+            {
+                effect.parameters[5].z = cameraData.nearPlane;
+                effect.parameters[5].w = cameraData.farPlane;
+            }
         std::stable_sort(basicEffects.begin(), basicEffects.end(), [](const auto &lhs, const auto &rhs)
-        {
-            return StageFor(lhs.type) < StageFor(rhs.type);
-        });
+                         { return StageFor(lhs.type) < StageFor(rhs.type); });
         // Raw diagnostic views must not be adapted or tone-mapped as scene color.
         // Doing so allows auto exposure to flatten AO/indirect buffers to grey.
         const auto terminalDiagnostic = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
-        {
-            return (effect.type == BasicPostProcessEffectType::SSAO && effect.parameters[1].y > 0.5f) ||
-                   (effect.type == BasicPostProcessEffectType::SSGI && effect.parameters[1].z > 0.5f) ||
-                   (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u);
-        });
+                                                     { return (effect.type == BasicPostProcessEffectType::SSAO && effect.parameters[1].y > 0.5f) ||
+                                                              (effect.type == BasicPostProcessEffectType::SSGI && effect.parameters[1].z > 0.5f) ||
+                                                              (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u); });
         if (terminalDiagnostic != basicEffects.end())
             basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());
         const auto taa = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
-        {
-            return effect.type == BasicPostProcessEffectType::TAA;
-        });
+                                      { return effect.type == BasicPostProcessEffectType::TAA; });
         if (taa != basicEffects.end())
         {
             const std::uint64_t sample = m_temporalFrameIndex++ % 16u + 1u;

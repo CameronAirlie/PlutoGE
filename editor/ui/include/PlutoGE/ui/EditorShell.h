@@ -137,7 +137,7 @@ namespace PlutoGE::ui
             const std::string &GetPostProcessPresetAssetReference() const { return postProcessPresetAssetReference; }
         };
 
-        bool Initialize();
+        bool Initialize(const std::filesystem::path &startupProject = {});
         void Render();
         void Shutdown();
 

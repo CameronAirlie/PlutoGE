@@ -48,15 +48,19 @@ namespace PlutoGE::render
             float shadowDepthBias = 0.0f;
             std::array<glm::vec4, 4> shadowInverseResolutions{};
             glm::vec4 shadowCascadeSplits{0.0f};
-            glm::vec4 shadowCascadeParameters{0.0f}; // count, blend distance, softness, padding
-            glm::vec4 shadowFilterParameters{0.0f}; // enabled, radius, render scale, depth scale
+            glm::vec4 shadowCascadeParameters{0.0f};    // count, blend distance, softness, padding
+            glm::vec4 shadowFilterParameters{0.0f};     // enabled, radius, render scale, depth scale
             glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
             glm::mat4 view{1.0f};
             glm::mat4 previousViewProjection{1.0f};
         };
         static_assert(sizeof(BasicFrameParameters) == 640);
 
-        struct alignas(16) BasicObjectParameters { glm::mat4 model{1.0f}; glm::mat4 previousModel{1.0f}; };
+        struct alignas(16) BasicObjectParameters
+        {
+            glm::mat4 model{1.0f};
+            glm::mat4 previousModel{1.0f};
+        };
 
         struct alignas(16) BasicPostProcessParameters
         {
@@ -72,8 +76,9 @@ namespace PlutoGE::render
             glm::mat4 view{1.0f};
             glm::mat4 projection{1.0f};
             glm::vec4 cameraPosition{0.0f};
+            glm::mat4 worldToLocal{1.0f};
         };
-        static_assert(sizeof(BasicPostProcessParameters) == 336);
+        static_assert(sizeof(BasicPostProcessParameters) == 400);
 
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
@@ -148,7 +153,7 @@ namespace PlutoGE::render
             rhi::GraphicsPipelineDescriptor descriptor;
             descriptor.vertexShader = shaders.vertex;
             descriptor.fragmentShader = shaders.fragment;
-            descriptor.colorFormats = {rhi::Format::R8G8B8A8Srgb, rhi::Format::R8G8B8A8Unorm,
+            descriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float};
             descriptor.resourceBindings = {
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
@@ -194,6 +199,22 @@ namespace PlutoGE::render
             shadowDescriptor.depthCompare = rhi::CompareOperation::Less;
             shadowDescriptor.debugName = "Directional shadow pipeline";
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
+            if ((!shaders.displayOutput.vertex.glsl.empty() || !shaders.displayOutput.vertex.spirv.empty()) &&
+                (!shaders.displayOutput.fragment.glsl.empty() || !shaders.displayOutput.fragment.spirv.empty()))
+            {
+                rhi::GraphicsPipelineDescriptor displayDescriptor;
+                displayDescriptor.vertexShader = shaders.displayOutput.vertex;
+                displayDescriptor.fragmentShader = shaders.displayOutput.fragment;
+                displayDescriptor.depthFormat = rhi::Format::Undefined;
+                displayDescriptor.colorFormat = rhi::Format::R8G8B8A8Unorm;
+                displayDescriptor.resourceBindings = {
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                displayDescriptor.cullMode = rhi::CullMode::None;
+                displayDescriptor.depthTest = false;
+                displayDescriptor.depthWrite = false;
+                displayDescriptor.debugName = "Display output";
+                m_displayPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(displayDescriptor));
+            }
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
                                                        const char *debugName, BasicPostProcessEffectType type)
             {
@@ -206,7 +227,7 @@ namespace PlutoGE::render
                 // precision during camera motion.
                 postDescriptor.colorFormat = type == BasicPostProcessEffectType::TAA
                                                  ? rhi::Format::R32G32B32A32Float
-                                                 : rhi::Format::R8G8B8A8Srgb;
+                                                 : rhi::Format::R16G16B16A16Float;
                 postDescriptor.resourceBindings = {
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
@@ -227,7 +248,7 @@ namespace PlutoGE::render
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
-                postDescriptor.debugName = debugName;
+                postDescriptor.debugName = debugName ? debugName : "Unnamed post process";
                 return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(postDescriptor));
             };
             constexpr std::array<const char *, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> debugNames{
@@ -236,7 +257,8 @@ namespace PlutoGE::render
                 "Lens flare post process", "Motion blur post process", "Depth of field post process",
                 "Auto exposure post process", "Temporal anti-aliasing post process",
                 "Screen-space ambient occlusion", "Screen-space global illumination",
-                "Screen-space reflections", "Volumetric fog", "Scene composite"};
+                "Screen-space reflections", "Volumetric fog", "Physical sky",
+                "Volumetric clouds", "Scene composite"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
@@ -267,7 +289,7 @@ namespace PlutoGE::render
                 exposureDescriptor.depthTest = false;
                 exposureDescriptor.depthWrite = false;
                 exposureDescriptor.colorFormat = index == 0 ? rhi::Format::R32Float
-                                                             : rhi::Format::R8G8B8A8Srgb;
+                                                            : rhi::Format::R16G16B16A16Float;
                 exposureDescriptor.debugName = exposureNames[index];
                 m_autoExposurePipelines[index] = rhi::GraphicsPipeline(
                     device, device.CreateGraphicsPipeline(exposureDescriptor));
@@ -298,6 +320,7 @@ namespace PlutoGE::render
                 bloomDescriptor.cullMode = rhi::CullMode::None;
                 bloomDescriptor.depthTest = false;
                 bloomDescriptor.depthWrite = false;
+                bloomDescriptor.colorFormat = rhi::Format::R16G16B16A16Float;
                 bloomDescriptor.debugName = bloomNames[index];
                 m_bloomPipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(bloomDescriptor));
             }
@@ -334,9 +357,8 @@ namespace PlutoGE::render
                 else if (index == 2)
                     ssaoDescriptor.resourceBindings.push_back(
                         {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                ssaoDescriptor.colorFormat = index == 0 ? rhi::Format::R32Float :
-                                             index == 1 ? rhi::Format::R32G32B32A32Float :
-                                                          rhi::Format::R8G8B8A8Srgb;
+                ssaoDescriptor.colorFormat = index == 0 ? rhi::Format::R32Float : index == 1 ? rhi::Format::R32G32B32A32Float
+                                                                                             : rhi::Format::R16G16B16A16Float;
                 ssaoDescriptor.cullMode = rhi::CullMode::None;
                 ssaoDescriptor.depthTest = false;
                 ssaoDescriptor.depthWrite = false;
@@ -347,7 +369,7 @@ namespace PlutoGE::render
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             for (auto &buffer : m_shadowCameraBuffers)
                 buffer = rhi::Buffer(device, device.CreateBuffer(
-                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
+                                                 {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
             m_postProcessResourcePool = std::make_unique<PostProcessResourcePool>(device);
 
             constexpr std::array<std::uint8_t, 4> neutralBaseColor = {255, 255, 255, 255};
@@ -369,15 +391,24 @@ namespace PlutoGE::render
     void BasicRenderer::Shutdown()
     {
         m_depthTarget.Reset();
-        for (auto &target : m_postProcessTargets) target.Reset();
-        for (auto &target : m_taaHistoryTargets) target.Reset();
-        for (auto &target : m_exposureHistoryTargets) target.Reset();
+        m_displayTarget.Reset();
+        for (auto &target : m_postProcessTargets)
+            target.Reset();
+        for (auto &target : m_taaHistoryTargets)
+            target.Reset();
+        for (auto &target : m_exposureHistoryTargets)
+            target.Reset();
         m_ssaoRawTarget.Reset();
-        for (auto &target : m_ssaoHistoryTargets) target.Reset();
+        for (auto &target : m_ssaoHistoryTargets)
+            target.Reset();
         m_colorTarget.Reset();
-        m_normalTarget.Reset(); m_materialTarget.Reset(); m_motionTarget.Reset();
-        for (auto &target : m_shadowDepthTargets) target.Reset();
-        for (auto &target : m_shadowColorTargets) target.Reset();
+        m_normalTarget.Reset();
+        m_materialTarget.Reset();
+        m_motionTarget.Reset();
+        for (auto &target : m_shadowDepthTargets)
+            target.Reset();
+        for (auto &target : m_shadowColorTargets)
+            target.Reset();
         m_shadowResolutions.fill(0);
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
@@ -386,21 +417,29 @@ namespace PlutoGE::render
         m_objectBuffers.clear();
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
-        for (auto &buffer : m_shadowCameraBuffers) buffer.Reset();
+        for (auto &buffer : m_shadowCameraBuffers)
+            buffer.Reset();
         m_shadowObjectBuffers.clear();
         m_postProcessBuffers.clear();
         m_postProcessResourcePool.reset();
-        for (auto &pipeline : m_bloomPipelines) pipeline.Reset();
-        for (auto &pipeline : m_autoExposurePipelines) pipeline.Reset();
-        for (auto &pipeline : m_ssaoPipelines) pipeline.Reset();
-        for (auto &pipeline : m_postProcessPipelines) pipeline.Reset();
+        for (auto &pipeline : m_bloomPipelines)
+            pipeline.Reset();
+        for (auto &pipeline : m_autoExposurePipelines)
+            pipeline.Reset();
+        for (auto &pipeline : m_ssaoPipelines)
+            pipeline.Reset();
+        for (auto &pipeline : m_postProcessPipelines)
+            pipeline.Reset();
         m_shadowPipeline.Reset();
+        m_displayPipeline.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
         m_width = 0;
         m_height = 0;
         m_frameIndex = 0;
-        m_previousModels.clear(); m_hasPreviousFrame = false; m_previousViewProjection = glm::mat4(1.0f);
+        m_previousModels.clear();
+        m_hasPreviousFrame = false;
+        m_previousViewProjection = glm::mat4(1.0f);
         m_outputColor = {};
         m_postProcessBufferCursor = 0;
         m_taaHistoryIndex = 0;
@@ -418,9 +457,9 @@ namespace PlutoGE::render
 
         BasicMesh mesh;
         mesh.m_vertexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
-            {data.vertices.size_bytes(), rhi::BufferUsage::Vertex, "BasicRenderer mesh vertices"}, Bytes(data.vertices)));
+                                                         {data.vertices.size_bytes(), rhi::BufferUsage::Vertex, "BasicRenderer mesh vertices"}, Bytes(data.vertices)));
         mesh.m_indexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
-            {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
+                                                        {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
         mesh.m_indexCount = static_cast<std::uint32_t>(data.indices.size());
         return mesh;
     }
@@ -433,43 +472,46 @@ namespace PlutoGE::render
             return true;
 
         rhi::Texture newColor(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "BasicRenderer color", true}));
+                                             {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "BasicRenderer HDR color", true}));
+        rhi::Texture newDisplay(*m_device, m_device->CreateTexture(
+                                               {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "BasicRenderer display output", true}));
         std::array<rhi::Texture, 2> newPostTargets{
             rhi::Texture(*m_device, m_device->CreateTexture(
-                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "Post process ping", true})),
+                                        {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "HDR post process ping", true})),
             rhi::Texture(*m_device, m_device->CreateTexture(
-                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment, "Post process pong", true})),
+                                        {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "HDR post process pong", true})),
         };
         rhi::Texture newDepth(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
-             "BasicRenderer depth", true}));
+                                             {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
+                                              "BasicRenderer depth", true}));
         m_colorTarget = std::move(newColor);
+        m_displayTarget = std::move(newDisplay);
         m_normalTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer normals", true}));
+                                                     {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer normals", true}));
         m_materialTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer material", true}));
+                                                       {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer material", true}));
         m_motionTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
+                                                     {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_postProcessTargets = std::move(newPostTargets);
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
-                 index == 0 ? "TAA history A" : "TAA history B", true}));
+                                                                     {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
+                                                                      index == 0 ? "TAA history A" : "TAA history B", true}));
         m_taaHistoryIndex = 0;
         m_taaHistoryValid = false;
         for (std::size_t index = 0; index < m_exposureHistoryTargets.size(); ++index)
             m_exposureHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {1, 1, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
-                 index == 0 ? "Exposure history A" : "Exposure history B", true}));
+                                                                          {1, 1, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                                                                           index == 0 ? "Exposure history A" : "Exposure history B", true}));
         m_exposureHistoryIndex = 0;
         m_exposureHistoryValid = false;
         m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
-             "SSAO raw", true}));
+                                                      {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                                                       "SSAO raw", true}));
         for (std::size_t index = 0; index < m_ssaoHistoryTargets.size(); ++index)
             m_ssaoHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
-                 index == 0 ? "SSAO history A" : "SSAO history B", true}));
+                                                                      {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
+                                                                       index == 0 ? "SSAO history A" : "SSAO history B", true}));
         m_ssaoHistoryIndex = 0;
         m_ssaoHistoryValid = false;
         m_depthTarget = std::move(newDepth);
@@ -496,11 +538,11 @@ namespace PlutoGE::render
                 m_shadowResolutions[cascade] == resolution)
                 continue;
             m_shadowColorTargets[cascade] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {resolution, resolution, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
-                 "Directional shadow cascade", true}));
+                                                                        {resolution, resolution, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                                                                         "Directional shadow cascade", true}));
             m_shadowDepthTargets[cascade] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
-                 "Directional shadow cascade depth"}));
+                                                                        {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
+                                                                         "Directional shadow cascade depth"}));
             m_shadowResolutions[cascade] = resolution;
         }
     }
@@ -560,12 +602,13 @@ namespace PlutoGE::render
             m_hasPreviousFrame ? m_previousViewProjection : viewProjection,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
-        if (shadowDraws.empty()) shadowDraws = draws;
+        if (shadowDraws.empty())
+            shadowDraws = draws;
         if (lighting.shadowsEnabled)
         {
             while (m_shadowObjectBuffers.size() < shadowDraws.size())
                 m_shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                    {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
+                                                                  {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
             for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
             {
                 const auto &draw = shadowDraws[drawIndex];
@@ -594,13 +637,15 @@ namespace PlutoGE::render
                 {
                     const auto &draw = shadowDraws[drawIndex];
                     if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
-                        !shadowFrustum.Intersects(draw)) continue;
+                        !shadowFrustum.Intersects(draw))
+                        continue;
                     commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
                     commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                     commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                     const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
-                    if (count) commands.DrawIndexed(count, draw.firstIndex);
+                    if (count)
+                        commands.DrawIndexed(count, draw.firstIndex);
                 }
                 commands.EndRendering();
                 commands.EndGpuScope();
@@ -616,9 +661,9 @@ namespace PlutoGE::render
         renderingInfo.clearColorValue[2] = 0.09f;
         renderingInfo.clearColorValues = {
             {0.04f, 0.06f, 0.09f, 1.0f}, // Scene color.
-            {0.5f, 0.5f, 1.0f, 1.0f},   // Neutral encoded normal.
-            {0.0f, 1.0f, 0.0f, 1.0f},   // Non-metallic, fully rough material.
-            {0.5f, 0.5f, 0.0f, 1.0f},   // Encoded zero motion.
+            {0.5f, 0.5f, 1.0f, 1.0f},    // Neutral encoded normal.
+            {0.0f, 1.0f, 0.0f, 1.0f},    // Non-metallic, fully rough material.
+            {0.5f, 0.5f, 0.0f, 1.0f},    // Encoded zero motion.
         };
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
@@ -632,17 +677,17 @@ namespace PlutoGE::render
             if (drawIndex == m_objectBuffers.size())
             {
                 m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                        {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
+                                                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
             }
             auto &objectBuffer = m_objectBuffers[drawIndex++];
             const BasicObjectParameters objectParameters{draw.model,
-                m_hasPreviousFrame && drawIndex - 1 < m_previousModels.size() ? m_previousModels[drawIndex - 1] : draw.model};
+                                                         m_hasPreviousFrame && drawIndex - 1 < m_previousModels.size() ? m_previousModels[drawIndex - 1] : draw.model};
             m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
             commands.BindUniformBuffer(16, objectBuffer.Get());
             if (m_materialBuffers.size() < drawIndex)
             {
                 m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                    {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
+                                                              {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
             }
             const BasicMaterialParameters materialParameters{
                 draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
@@ -684,20 +729,17 @@ namespace PlutoGE::render
         m_postProcessBufferCursor = 0;
         std::size_t targetIndex = 0;
         const bool hasTaa = std::ranges::any_of(postProcessEffects, [](const auto &effect)
-        {
-            return effect.type == BasicPostProcessEffectType::TAA;
-        });
+                                                { return effect.type == BasicPostProcessEffectType::TAA; });
         const bool hasAutoExposure = std::ranges::any_of(postProcessEffects, [](const auto &effect)
-        {
-            return effect.type == BasicPostProcessEffectType::AutoExposure;
-        });
+                                                         { return effect.type == BasicPostProcessEffectType::AutoExposure; });
         const bool hasSsao = std::ranges::any_of(postProcessEffects, [](const auto &effect)
-        {
-            return effect.type == BasicPostProcessEffectType::SSAO;
-        });
-        if (!hasTaa) m_taaHistoryValid = false;
-        if (!hasAutoExposure) m_exposureHistoryValid = false;
-        if (!hasSsao) m_ssaoHistoryValid = false;
+                                                 { return effect.type == BasicPostProcessEffectType::SSAO; });
+        if (!hasTaa)
+            m_taaHistoryValid = false;
+        if (!hasAutoExposure)
+            m_exposureHistoryValid = false;
+        if (!hasSsao)
+            m_ssaoHistoryValid = false;
         for (const auto &effect : postProcessEffects)
         {
             if (effect.type == BasicPostProcessEffectType::Bloom)
@@ -737,6 +779,7 @@ namespace PlutoGE::render
                 m_postProcessView,
                 m_postProcessProjection,
                 m_postProcessCameraPosition,
+                effect.worldToLocal,
             };
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
@@ -779,8 +822,7 @@ namespace PlutoGE::render
             if (HasInput(inputs, BasicPostProcessInput::Motion))
                 commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::History))
-                commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get()
-                                                          : m_outputColor,
+                commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
                                      m_fallbackSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
@@ -791,11 +833,27 @@ namespace PlutoGE::render
                 m_taaHistoryValid = true;
             }
         }
+        if (m_displayPipeline && m_displayTarget)
+        {
+            rhi::RenderingInfo displayInfo;
+            displayInfo.colorAttachments = {m_displayTarget.Get()};
+            displayInfo.width = m_width;
+            displayInfo.height = m_height;
+            displayInfo.clearDepth = false;
+            commands.BeginRendering(displayInfo);
+            commands.BindPipeline(m_displayPipeline.Get());
+            commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+            m_outputColor = m_displayTarget.Get();
+        }
         commands.EndGpuScope();
         ++m_frameIndex;
         m_previousViewProjection = viewProjection;
         m_previousModels.clear();
-        for (const auto &draw : draws) if (draw.mesh && draw.mesh->IsValid()) m_previousModels.push_back(draw.model);
+        for (const auto &draw : draws)
+            if (draw.mesh && draw.mesh->IsValid())
+                m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
         commands.Submit();
     }
@@ -804,14 +862,14 @@ namespace PlutoGE::render
     {
         while (m_postProcessBuffers.size() <= index)
             m_postProcessBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform,
-                 "BasicRenderer post-process pass parameters"}));
+                                                             {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform,
+                                                              "BasicRenderer post-process pass parameters"}));
         return m_postProcessBuffers[index];
     }
 
     rhi::TextureHandle BasicRenderer::RenderAutoExposure(rhi::TextureHandle source,
-                                                          const BasicPostProcessEffect &effect,
-                                                          rhi::ICommandContext &commands)
+                                                         const BasicPostProcessEffect &effect,
+                                                         rhi::ICommandContext &commands)
     {
         if (!source || !m_autoExposurePipelines[0] || !m_autoExposurePipelines[1] ||
             !m_exposureHistoryTargets[0] || !m_exposureHistoryTargets[1])
@@ -825,7 +883,7 @@ namespace PlutoGE::render
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
             static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
             m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
-            m_postProcessCameraPosition};
+            m_postProcessCameraPosition, effect.worldToLocal};
         auto &meterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(meterBuffer.Get(), 0, Bytes(block));
 
@@ -839,9 +897,7 @@ namespace PlutoGE::render
         commands.BindPipeline(m_autoExposurePipelines[0].Get());
         commands.BindUniformBuffer(0, meterBuffer.Get());
         commands.BindTexture(1, source, m_fallbackSampler.Get());
-        commands.BindTexture(6, m_exposureHistoryValid
-                                    ? m_exposureHistoryTargets[m_exposureHistoryIndex].Get()
-                                    : source,
+        commands.BindTexture(6, m_exposureHistoryValid ? m_exposureHistoryTargets[m_exposureHistoryIndex].Get() : source,
                              m_fallbackSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
@@ -870,12 +926,13 @@ namespace PlutoGE::render
     }
 
     rhi::TextureHandle BasicRenderer::RenderSsao(rhi::TextureHandle source,
-                                                  const BasicPostProcessEffect &effect,
-                                                  rhi::ICommandContext &commands)
+                                                 const BasicPostProcessEffect &effect,
+                                                 rhi::ICommandContext &commands)
     {
         if (!source || !m_ssaoRawTarget || !m_ssaoHistoryTargets[0] ||
             !m_ssaoHistoryTargets[1] ||
-            std::ranges::any_of(m_ssaoPipelines, [](const auto &pipeline) { return !pipeline; }))
+            std::ranges::any_of(m_ssaoPipelines, [](const auto &pipeline)
+                                { return !pipeline; }))
             return source;
 
         auto parameters = effect.parameters;
@@ -886,7 +943,7 @@ namespace PlutoGE::render
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
             static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
             m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
-            m_postProcessCameraPosition};
+            m_postProcessCameraPosition, effect.worldToLocal};
 
         auto &rawBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(rawBuffer.Get(), 0, Bytes(block));
@@ -947,10 +1004,11 @@ namespace PlutoGE::render
     }
 
     rhi::TextureHandle BasicRenderer::RenderBloom(rhi::TextureHandle source,
-                                                   const BasicPostProcessEffect &effect)
+                                                  const BasicPostProcessEffect &effect)
     {
         if (!source || !m_postProcessResourcePool ||
-            std::ranges::any_of(m_bloomPipelines, [](const auto &pipeline) { return !pipeline; }))
+            std::ranges::any_of(m_bloomPipelines, [](const auto &pipeline)
+                                { return !pipeline; }))
             return source;
 
         const auto levelCount = std::clamp(effect.quality, 1u, 8u);
@@ -962,33 +1020,28 @@ namespace PlutoGE::render
         {
             const float scale = 1.0f / static_cast<float>(1u << (std::min)(level + 1u, 12u));
             levels.push_back(graph.AddResource({.name = "Bloom level " + std::to_string(level),
-                                                .widthScale = scale, .heightScale = scale}));
+                                                .format = rhi::Format::R16G16B16A16Float,
+                                                .widthScale = scale,
+                                                .heightScale = scale}));
         }
-        graph.AddPass({.name = "Bloom prefilter", .implementation = "prefilter",
-                       .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, scene}},
-                       .writes = {levels.front()}});
+        graph.AddPass({.name = "Bloom prefilter", .implementation = "prefilter", .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, scene}}, .writes = {levels.front()}});
         for (std::uint32_t level = 1; level < levelCount; ++level)
-            graph.AddPass({.name = "Bloom downsample " + std::to_string(level), .implementation = "downsample",
-                           .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, levels[level - 1]}},
-                           .writes = {levels[level]}});
+            graph.AddPass({.name = "Bloom downsample " + std::to_string(level), .implementation = "downsample", .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, levels[level - 1]}}, .writes = {levels[level]}});
 
         auto reconstructed = levels.back();
         for (std::uint32_t level = levelCount - 1; level > 0; --level)
         {
             const float scale = 1.0f / static_cast<float>(1u << level);
             const auto output = graph.AddResource({.name = "Bloom upsample " + std::to_string(level - 1),
-                                                   .widthScale = scale, .heightScale = scale});
-            graph.AddPass({.name = "Bloom upsample " + std::to_string(level - 1), .implementation = "upsample",
-                           .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, levels[level - 1]},
-                                      {PostProcessPassDescriptor::InputSemantic::Auxiliary0, reconstructed}},
-                           .writes = {output}});
+                                                   .format = rhi::Format::R16G16B16A16Float,
+                                                   .widthScale = scale,
+                                                   .heightScale = scale});
+            graph.AddPass({.name = "Bloom upsample " + std::to_string(level - 1), .implementation = "upsample", .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, levels[level - 1]}, {PostProcessPassDescriptor::InputSemantic::Auxiliary0, reconstructed}}, .writes = {output}});
             reconstructed = output;
         }
-        const auto result = graph.AddResource({.name = "Bloom result"});
-        graph.AddPass({.name = "Bloom composite", .implementation = "composite",
-                       .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, scene},
-                                  {PostProcessPassDescriptor::InputSemantic::Auxiliary0, reconstructed}},
-                       .writes = {result}});
+        const auto result = graph.AddResource({.name = "Bloom result",
+                                               .format = rhi::Format::R16G16B16A16Float});
+        graph.AddPass({.name = "Bloom composite", .implementation = "composite", .inputs = {{PostProcessPassDescriptor::InputSemantic::SceneColor, scene}, {PostProcessPassDescriptor::InputSemantic::Auxiliary0, reconstructed}}, .writes = {result}});
 
         const auto compiled = graph.Compile();
         m_postProcessResourcePool->Prepare(graph, compiled, m_width, m_height);
@@ -997,14 +1050,14 @@ namespace PlutoGE::render
         const auto registerStage = [&](const char *name, std::size_t pipelineIndex)
         {
             executor.Register(name, [&, pipelineIndex](const PostProcessPassContext &context)
-            {
+                              {
                 const BasicPostProcessParameters parameters{
                     effect.exposure, (std::max)(effect.gamma, 0.001f),
                     m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
                     glm::vec2(1.0f / static_cast<float>(context.width), 1.0f / static_cast<float>(context.height)),
                     static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, effect.parameters,
                     m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
-                    m_postProcessCameraPosition};
+                    m_postProcessCameraPosition, effect.worldToLocal};
                 auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
                 rhi::RenderingInfo info;
@@ -1029,8 +1082,7 @@ namespace PlutoGE::render
                     // original recording failure to the scene renderer.
                     commands.EndRendering();
                     throw;
-                }
-            });
+                } });
         };
         registerStage("prefilter", 0);
         registerStage("downsample", 1);

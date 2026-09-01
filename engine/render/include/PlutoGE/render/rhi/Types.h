@@ -7,16 +7,73 @@
 
 namespace PlutoGE::render::rhi
 {
-    enum class GraphicsApi : std::uint8_t { OpenGL, Vulkan };
-    enum class Format : std::uint8_t { Undefined, R8G8B8A8Unorm, R8G8B8A8Srgb, R32Float, D32Float, R32Uint, R32G32Float, R32G32B32Float, R32G32B32A32Float };
-    enum class BufferUsage : std::uint8_t { Vertex, Index, Uniform };
-    enum class TextureUsage : std::uint8_t { Sampled, ColorAttachment, DepthStencilAttachment };
-    enum class ShaderStage : std::uint8_t { Vertex, Fragment };
-    enum class ShaderStageMask : std::uint8_t { Vertex = 1, Fragment = 2, AllGraphics = 3 };
-    enum class ResourceBindingType : std::uint8_t { UniformBuffer, SampledTexture };
-    enum class PrimitiveTopology : std::uint8_t { TriangleList };
-    enum class CullMode : std::uint8_t { None, Front, Back };
-    enum class CompareOperation : std::uint8_t { Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always };
+    enum class GraphicsApi : std::uint8_t
+    {
+        OpenGL,
+        Vulkan
+    };
+    enum class Format : std::uint8_t
+    {
+        Undefined,
+        R8G8B8A8Unorm,
+        R8G8B8A8Srgb,
+        R16G16B16A16Float,
+        R32Float,
+        D32Float,
+        R32Uint,
+        R32G32Float,
+        R32G32B32Float,
+        R32G32B32A32Float
+    };
+    enum class BufferUsage : std::uint8_t
+    {
+        Vertex,
+        Index,
+        Uniform
+    };
+    enum class TextureUsage : std::uint8_t
+    {
+        Sampled,
+        ColorAttachment,
+        DepthStencilAttachment
+    };
+    enum class ShaderStage : std::uint8_t
+    {
+        Vertex,
+        Fragment
+    };
+    enum class ShaderStageMask : std::uint8_t
+    {
+        Vertex = 1,
+        Fragment = 2,
+        AllGraphics = 3
+    };
+    enum class ResourceBindingType : std::uint8_t
+    {
+        UniformBuffer,
+        SampledTexture
+    };
+    enum class PrimitiveTopology : std::uint8_t
+    {
+        TriangleList
+    };
+    enum class CullMode : std::uint8_t
+    {
+        None,
+        Front,
+        Back
+    };
+    enum class CompareOperation : std::uint8_t
+    {
+        Never,
+        Less,
+        Equal,
+        LessOrEqual,
+        Greater,
+        NotEqual,
+        GreaterOrEqual,
+        Always
+    };
 
     template <typename Tag>
     struct Handle
@@ -35,9 +92,26 @@ namespace PlutoGE::render::rhi
     using PipelineHandle = Handle<struct PipelineTag>;
     using RenderPassHandle = Handle<struct RenderPassTag>;
 
-    struct Viewport { float x = 0; float y = 0; float width = 0; float height = 0; float minDepth = 0; float maxDepth = 1; };
-    struct Scissor { std::int32_t x = 0; std::int32_t y = 0; std::uint32_t width = 0; std::uint32_t height = 0; };
-    struct BlendState { bool enabled = false; };
+    struct Viewport
+    {
+        float x = 0;
+        float y = 0;
+        float width = 0;
+        float height = 0;
+        float minDepth = 0;
+        float maxDepth = 1;
+    };
+    struct Scissor
+    {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+    };
+    struct BlendState
+    {
+        bool enabled = false;
+    };
 
     struct VertexAttribute
     {

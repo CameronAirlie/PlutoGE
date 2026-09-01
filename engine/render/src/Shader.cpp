@@ -8,6 +8,8 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/core/Engine.h"
 
+#include <GLFW/glfw3.h>
+
 namespace PlutoGE::render
 {
     namespace
@@ -148,6 +150,9 @@ namespace PlutoGE::render
     // Helper function to create shader from source
     Shader *Shader::CreateShaderFromSource(const ShaderSource &source)
     {
+        if (!glfwGetCurrentContext() || !glad_glCreateShader)
+            return nullptr;
+
         const bool isCompute = !source.computeSource.empty();
         GLuint vertexShader = isCompute ? 0 : CompileShader(GL_VERTEX_SHADER, source.vertexSource.c_str());
         GLuint geometryShader = source.geometrySource.empty() ? 0 : CompileShader(GL_GEOMETRY_SHADER, source.geometrySource.c_str());

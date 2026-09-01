@@ -1,6 +1,8 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Graphics.h"
 
+#include <GLFW/glfw3.h>
+
 namespace PlutoGE::render
 {
     bool RenderTarget::Resize(int width, int height)
@@ -24,6 +26,8 @@ namespace PlutoGE::render
     {
         m_width = width;
         m_height = height;
+        if (!glfwGetCurrentContext() || !glad_glGenFramebuffers)
+            return false;
 
         // Generate framebuffer
         glGenFramebuffers(1, &m_framebufferID);

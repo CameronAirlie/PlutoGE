@@ -7,6 +7,7 @@
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
+#include <glm/gtc/packing.hpp>
 
 #include <array>
 #include <algorithm>
@@ -32,30 +33,112 @@ namespace PlutoGE::render::rhi::vulkan
         {
             switch (format)
             {
-            case Format::R8G8B8A8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
-            case Format::R8G8B8A8Srgb: return VK_FORMAT_R8G8B8A8_SRGB;
-            case Format::R32Float: return VK_FORMAT_R32_SFLOAT;
-            case Format::D32Float: return VK_FORMAT_D32_SFLOAT;
-            case Format::R32Uint: return VK_FORMAT_R32_UINT;
-            case Format::R32G32Float: return VK_FORMAT_R32G32_SFLOAT;
-            case Format::R32G32B32Float: return VK_FORMAT_R32G32B32_SFLOAT;
-            case Format::R32G32B32A32Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
-            default: throw std::invalid_argument("Unsupported Vulkan RHI format");
+            case Format::R8G8B8A8Unorm:
+                return VK_FORMAT_R8G8B8A8_UNORM;
+            case Format::R8G8B8A8Srgb:
+                return VK_FORMAT_R8G8B8A8_SRGB;
+            case Format::R16G16B16A16Float:
+                return VK_FORMAT_R16G16B16A16_SFLOAT;
+            case Format::R32Float:
+                return VK_FORMAT_R32_SFLOAT;
+            case Format::D32Float:
+                return VK_FORMAT_D32_SFLOAT;
+            case Format::R32Uint:
+                return VK_FORMAT_R32_UINT;
+            case Format::R32G32Float:
+                return VK_FORMAT_R32G32_SFLOAT;
+            case Format::R32G32B32Float:
+                return VK_FORMAT_R32G32B32_SFLOAT;
+            case Format::R32G32B32A32Float:
+                return VK_FORMAT_R32G32B32A32_SFLOAT;
+            default:
+                throw std::invalid_argument("Unsupported Vulkan RHI format");
             }
+        }
+
+        std::size_t BytesPerPixel(Format format)
+        {
+            switch (format)
+            {
+            case Format::R8G8B8A8Unorm:
+            case Format::R8G8B8A8Srgb:
+            case Format::R32Float:
+            case Format::R32Uint:
+                return 4;
+            case Format::R32G32Float:
+                return 8;
+            case Format::R16G16B16A16Float:
+                return 8;
+            case Format::R32G32B32Float:
+                return 12;
+            case Format::R32G32B32A32Float:
+                return 16;
+            default:
+                throw std::invalid_argument("Unsupported Vulkan readback format");
+            }
+        }
+
+        std::vector<std::byte> ConvertToRgba8(const void *source, std::size_t pixelCount, Format format)
+        {
+            const auto *bytes = static_cast<const std::byte *>(source);
+            if (format == Format::R8G8B8A8Unorm || format == Format::R8G8B8A8Srgb)
+                return {bytes, bytes + pixelCount * 4};
+
+            std::vector<std::byte> result(pixelCount * 4);
+            const auto encode = [](float value)
+            {
+                return static_cast<std::byte>(static_cast<std::uint8_t>(
+                    std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f)));
+            };
+            const std::size_t channelCount = format == Format::R32Float || format == Format::R32Uint ? 1 : format == Format::R32G32Float  ? 2
+                                                                                                       : format == Format::R32G32B32Float ? 3
+                                                                                                                                          : 4;
+            for (std::size_t pixel = 0; pixel < pixelCount; ++pixel)
+            {
+                if (format == Format::R32Uint)
+                {
+                    const auto value = reinterpret_cast<const std::uint32_t *>(source)[pixel];
+                    result[pixel * 4] = static_cast<std::byte>(static_cast<std::uint8_t>(std::min(value, 255u)));
+                }
+                else if (format == Format::R16G16B16A16Float)
+                {
+                    const auto *values = reinterpret_cast<const std::uint16_t *>(source) + pixel * 4;
+                    for (std::size_t channel = 0; channel < 4; ++channel)
+                        result[pixel * 4 + channel] = encode(glm::unpackHalf1x16(values[channel]));
+                }
+                else
+                {
+                    const auto *values = static_cast<const float *>(source) + pixel * channelCount;
+                    for (std::size_t channel = 0; channel < channelCount; ++channel)
+                        result[pixel * 4 + channel] = encode(values[channel]);
+                }
+                if (channelCount == 1)
+                    result[pixel * 4 + 1] = result[pixel * 4 + 2] = result[pixel * 4];
+                result[pixel * 4 + 3] = static_cast<std::byte>(255);
+            }
+            return result;
         }
 
         VkCompareOp ToVkCompare(CompareOperation operation)
         {
             switch (operation)
             {
-            case CompareOperation::Never: return VK_COMPARE_OP_NEVER;
-            case CompareOperation::Less: return VK_COMPARE_OP_LESS;
-            case CompareOperation::Equal: return VK_COMPARE_OP_EQUAL;
-            case CompareOperation::LessOrEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
-            case CompareOperation::Greater: return VK_COMPARE_OP_GREATER;
-            case CompareOperation::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
-            case CompareOperation::GreaterOrEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-            case CompareOperation::Always: return VK_COMPARE_OP_ALWAYS;
+            case CompareOperation::Never:
+                return VK_COMPARE_OP_NEVER;
+            case CompareOperation::Less:
+                return VK_COMPARE_OP_LESS;
+            case CompareOperation::Equal:
+                return VK_COMPARE_OP_EQUAL;
+            case CompareOperation::LessOrEqual:
+                return VK_COMPARE_OP_LESS_OR_EQUAL;
+            case CompareOperation::Greater:
+                return VK_COMPARE_OP_GREATER;
+            case CompareOperation::NotEqual:
+                return VK_COMPARE_OP_NOT_EQUAL;
+            case CompareOperation::GreaterOrEqual:
+                return VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case CompareOperation::Always:
+                return VK_COMPARE_OP_ALWAYS;
             }
             return VK_COMPARE_OP_ALWAYS;
         }
@@ -64,9 +147,12 @@ namespace PlutoGE::render::rhi::vulkan
         {
             switch (usage)
             {
-            case BufferUsage::Vertex: return VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-            case BufferUsage::Index: return VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-            case BufferUsage::Uniform: return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            case BufferUsage::Vertex:
+                return VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            case BufferUsage::Index:
+                return VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            case BufferUsage::Uniform:
+                return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             }
             return 0;
         }
@@ -75,7 +161,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             const float encoded = static_cast<float>(value) / 255.0f;
             return encoded <= 0.04045f ? encoded / 12.92f
-                                      : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
+                                       : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
         }
 
         std::byte LinearToSrgb(float value)
@@ -107,7 +193,10 @@ namespace PlutoGE::render::rhi::vulkan
             std::uint32_t mipLevels = 1;
         };
 
-        struct SamplerResource { VkSampler sampler = VK_NULL_HANDLE; };
+        struct SamplerResource
+        {
+            VkSampler sampler = VK_NULL_HANDLE;
+        };
 
         struct PipelineResource
         {
@@ -148,6 +237,8 @@ namespace PlutoGE::render::rhi::vulkan
             VmaAllocation allocation = VK_NULL_HANDLE;
             void *mapped = nullptr;
             std::size_t byteCount = 0;
+            Format format = Format::Undefined;
+            std::size_t pixelCount = 0;
             bool pending = false;
             std::uint64_t sequence = 0;
             TextureHandle source;
@@ -185,7 +276,8 @@ namespace PlutoGE::render::rhi::vulkan
             arena.dirtyStart = VK_WHOLE_SIZE;
             arena.dirtyEnd = 0;
             ++arena.epoch;
-            if (arena.epoch == 0) arena.epoch = 1;
+            if (arena.epoch == 0)
+                arena.epoch = 1;
         }
 
         VkDeviceSize EnsureUniformResident(BufferResource &resource)
@@ -210,7 +302,8 @@ namespace PlutoGE::render::rhi::vulkan
         void FlushUniformArena()
         {
             auto &arena = uniformArenas[activeFrameIndex];
-            if (arena.dirtyStart == VK_WHOLE_SIZE || arena.dirtyEnd <= arena.dirtyStart) return;
+            if (arena.dirtyStart == VK_WHOLE_SIZE || arena.dirtyEnd <= arena.dirtyStart)
+                return;
             vmaFlushAllocation(allocator, arena.allocation, arena.dirtyStart, arena.dirtyEnd - arena.dirtyStart);
         }
 
@@ -239,11 +332,11 @@ namespace PlutoGE::render::rhi::vulkan
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = texture.image;
             barrier.subresourceRange = {Aspect(texture), 0, texture.mipLevels, 0, 1};
-            barrier.srcAccessMask = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
-                                    texture.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? VK_ACCESS_TRANSFER_WRITE_BIT :
-                                    texture.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_ACCESS_TRANSFER_READ_BIT :
-                                    texture.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT :
-                                    texture.descriptor.format == Format::D32Float ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier.srcAccessMask = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL   ? VK_ACCESS_TRANSFER_WRITE_BIT
+                                                                                  : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL     ? VK_ACCESS_TRANSFER_READ_BIT
+                                                                                  : texture.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT
+                                                                                  : texture.descriptor.format == Format::D32Float              ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                                                                                                                               : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             const VkPipelineStageFlags sourceStage = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
             vkCmdPipelineBarrier(command, sourceStage, destinationStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
             texture.layout = next;
@@ -266,9 +359,8 @@ namespace PlutoGE::render::rhi::vulkan
                 command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 command.commandBufferCount = 1;
                 Check(vkAllocateCommandBuffers(m_impl.device, &command, &frame.commandBuffer), "vkAllocateCommandBuffers(frame)");
-                std::array<VkDescriptorPoolSize, 2> sizes{{
-                    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
-                    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
+                std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
+                                                           {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
                 VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 descriptors.maxSets = 32768;
                 descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
@@ -289,21 +381,27 @@ namespace PlutoGE::render::rhi::vulkan
         {
             for (auto &frame : m_frames)
             {
-                if (frame.fence) vkDestroyFence(m_impl.device, frame.fence, nullptr);
-                if (frame.queryPool) vkDestroyQueryPool(m_impl.device, frame.queryPool, nullptr);
-                if (frame.descriptorPool) vkDestroyDescriptorPool(m_impl.device, frame.descriptorPool, nullptr);
-                if (frame.commandPool) vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
+                if (frame.fence)
+                    vkDestroyFence(m_impl.device, frame.fence, nullptr);
+                if (frame.queryPool)
+                    vkDestroyQueryPool(m_impl.device, frame.queryPool, nullptr);
+                if (frame.descriptorPool)
+                    vkDestroyDescriptorPool(m_impl.device, frame.descriptorPool, nullptr);
+                if (frame.commandPool)
+                    vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
             }
         }
 
         void BeginFrame() override
         {
-            if (m_recording) throw std::logic_error("Vulkan frame is already recording");
+            if (m_recording)
+                throw std::logic_error("Vulkan frame is already recording");
             auto &frame = m_frames[m_frameIndex];
             const auto waitStart = std::chrono::steady_clock::now();
             Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(frame)");
             m_impl.timingStats.frameFenceWaitMs = std::chrono::duration<float, std::milli>(
-                std::chrono::steady_clock::now() - waitStart).count();
+                                                      std::chrono::steady_clock::now() - waitStart)
+                                                      .count();
             ResolveTimestamps(frame);
             m_impl.timingStats.descriptorAllocationCalls = 0;
             m_impl.timingStats.descriptorSetsAllocated = 0;
@@ -341,18 +439,21 @@ namespace PlutoGE::render::rhi::vulkan
 
         void BeginRendering(const RenderingInfo &info) override
         {
-            if (m_rendering) throw std::logic_error("Vulkan rendering is already active");
+            if (m_rendering)
+                throw std::logic_error("Vulkan rendering is already active");
             m_colors.clear();
             for (const auto handle : info.colorAttachments)
             {
                 auto *color = m_impl.textures.Get(handle);
-                if (!color) throw std::invalid_argument("Invalid Vulkan color attachment");
+                if (!color)
+                    throw std::invalid_argument("Invalid Vulkan color attachment");
                 m_colors.push_back(color);
             }
             m_depth = m_impl.textures.Get(info.depthAttachment);
             if ((m_colors.empty() && !m_depth) || (info.depthAttachment && !m_depth))
                 throw std::invalid_argument("Invalid Vulkan render attachments");
-            if (!m_recording) throw std::logic_error("Vulkan rendering requires BeginFrame");
+            if (!m_recording)
+                throw std::logic_error("Vulkan rendering requires BeginFrame");
             for (auto *color : m_colors)
                 m_impl.Transition(CommandBuffer(), *color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
@@ -394,7 +495,8 @@ namespace PlutoGE::render::rhi::vulkan
 
         void EndRendering() override
         {
-            if (!m_rendering) throw std::logic_error("Vulkan rendering is not active");
+            if (!m_rendering)
+                throw std::logic_error("Vulkan rendering is not active");
             vkCmdEndRendering(CommandBuffer());
             m_rendering = false;
         }
@@ -402,7 +504,8 @@ namespace PlutoGE::render::rhi::vulkan
         void BeginGpuScope(std::string_view name) override
         {
             auto &frame = m_frames[m_frameIndex];
-            if (!m_recording || m_activeScope || frame.nextQuery + 1 >= MaxTimestampQueries) return;
+            if (!m_recording || m_activeScope || frame.nextQuery + 1 >= MaxTimestampQueries)
+                return;
             m_activeScope = true;
             m_activeScopeName.assign(name);
             m_activeScopeStart = frame.nextQuery++;
@@ -412,22 +515,27 @@ namespace PlutoGE::render::rhi::vulkan
 
         void EndGpuScope() override
         {
-            if (!m_activeScope) return;
+            if (!m_activeScope)
+                return;
             auto &frame = m_frames[m_frameIndex];
             const auto end = frame.nextQuery++;
             vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, end);
             const float cpuMs = std::chrono::duration<float, std::milli>(
-                std::chrono::steady_clock::now() - m_activeScopeCpuStart).count();
+                                    std::chrono::steady_clock::now() - m_activeScopeCpuStart)
+                                    .count();
             frame.scopes.push_back({m_activeScopeName, m_activeScopeStart, end, cpuMs});
             m_activeScope = false;
         }
 
         void Submit() override
         {
-            if (m_rendering) throw std::logic_error("Cannot submit while Vulkan rendering is active");
-            if (!m_recording) return;
+            if (m_rendering)
+                throw std::logic_error("Cannot submit while Vulkan rendering is active");
+            if (!m_recording)
+                return;
             auto &frame = m_frames[m_frameIndex];
-            if (m_activeScope) EndGpuScope();
+            if (m_activeScope)
+                EndGpuScope();
             m_impl.FlushUniformArena();
             vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
             frame.hasTimestamps = true;
@@ -453,7 +561,8 @@ namespace PlutoGE::render::rhi::vulkan
         void BindPipeline(PipelineHandle handle) override
         {
             auto *pipeline = m_impl.pipelines.Get(handle);
-            if (!pipeline) throw std::invalid_argument("Invalid or stale Vulkan pipeline");
+            if (!pipeline)
+                throw std::invalid_argument("Invalid or stale Vulkan pipeline");
             if (m_pipeline != pipeline)
             {
                 if (!m_pipeline || m_pipeline->layout != pipeline->layout)
@@ -470,8 +579,10 @@ namespace PlutoGE::render::rhi::vulkan
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
-            if (!resource || resource->usage != BufferUsage::Vertex) throw std::invalid_argument("Invalid Vulkan vertex buffer");
-            if (m_boundVertexBuffer == handle && m_boundVertexOffset == offset) return;
+            if (!resource || resource->usage != BufferUsage::Vertex)
+                throw std::invalid_argument("Invalid Vulkan vertex buffer");
+            if (m_boundVertexBuffer == handle && m_boundVertexOffset == offset)
+                return;
             const VkDeviceSize vkOffset = offset;
             vkCmdBindVertexBuffers(CommandBuffer(), 0, 1, &resource->buffer, &vkOffset);
             m_boundVertexBuffer = handle;
@@ -480,8 +591,10 @@ namespace PlutoGE::render::rhi::vulkan
         void BindIndexBuffer(BufferHandle handle, Format format, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
-            if (!resource || resource->usage != BufferUsage::Index || format != Format::R32Uint) throw std::invalid_argument("Invalid Vulkan index buffer");
-            if (m_boundIndexBuffer == handle && m_boundIndexOffset == offset) return;
+            if (!resource || resource->usage != BufferUsage::Index || format != Format::R32Uint)
+                throw std::invalid_argument("Invalid Vulkan index buffer");
+            if (m_boundIndexBuffer == handle && m_boundIndexOffset == offset)
+                return;
             vkCmdBindIndexBuffer(CommandBuffer(), resource->buffer, offset, VK_INDEX_TYPE_UINT32);
             m_boundIndexBuffer = handle;
             m_boundIndexOffset = offset;
@@ -504,7 +617,8 @@ namespace PlutoGE::render::rhi::vulkan
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
-            auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
+            auto *texture = m_impl.textures.Get(textureHandle);
+            auto *sampler = m_impl.samplers.Get(samplerHandle);
             if (!m_pipeline || slot >= MaxResourceSlots || !texture || !sampler)
                 throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->descriptor.usage != TextureUsage::Sampled && !texture->descriptor.sampled)
@@ -556,7 +670,8 @@ namespace PlutoGE::render::rhi::vulkan
         void PrepareDraw()
         {
             const auto descriptorStart = std::chrono::steady_clock::now();
-            if (!m_rendering || !m_pipeline) throw std::logic_error("Vulkan draw requires active rendering and pipeline");
+            if (!m_rendering || !m_pipeline)
+                throw std::logic_error("Vulkan draw requires active rendering and pipeline");
             const auto setCount = m_pipeline->setLayouts.size();
             if (setCount > MaxDescriptorSets || m_pipeline->descriptor.resourceBindings.size() > MaxDescriptorBindings)
                 throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
@@ -564,7 +679,8 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 BindPreparedDescriptorSets();
                 m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
-                    std::chrono::steady_clock::now() - descriptorStart).count();
+                                                          std::chrono::steady_clock::now() - descriptorStart)
+                                                          .count();
                 return;
             }
             std::array<VkDescriptorSet, MaxDescriptorSets> sets{};
@@ -588,8 +704,10 @@ namespace PlutoGE::render::rhi::vulkan
                     if (binding.type == ResourceBindingType::UniformBuffer)
                     {
                         auto *buffer = binding.slot < MaxResourceSlots
-                            ? m_impl.buffers.Get(m_uniformBuffers[binding.slot]) : nullptr;
-                        if (!buffer) throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                                           ? m_impl.buffers.Get(m_uniformBuffers[binding.slot])
+                                           : nullptr;
+                        if (!buffer)
+                            throw std::logic_error("Vulkan draw has an incomplete uniform binding");
                         dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                         key.resources[key.resourceCount++] = buffer->size;
                     }
@@ -648,7 +766,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::size_t bufferCount = 0, imageCount = 0, writeCount = 0;
             for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
             {
-                if (!newlyAllocated[setIndex]) continue;
+                if (!newlyAllocated[setIndex])
+                    continue;
                 for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
                 {
                     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -680,9 +799,9 @@ namespace PlutoGE::render::rhi::vulkan
                 const auto offsetStart = dynamicOffsetStarts[setIndex];
                 const auto offsetCount = dynamicOffsetCounts[setIndex];
                 const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
-                    std::equal(dynamicOffsets.begin() + offsetStart,
-                               dynamicOffsets.begin() + offsetStart + offsetCount,
-                               m_boundDynamicOffsets[setIndex].begin());
+                                          std::equal(dynamicOffsets.begin() + offsetStart,
+                                                     dynamicOffsets.begin() + offsetStart + offsetCount,
+                                                     m_boundDynamicOffsets[setIndex].begin());
                 if (m_boundPipelineLayout == m_pipeline->layout &&
                     m_boundDescriptorSets[setIndex] == sets[setIndex] && offsetsMatch)
                     continue;
@@ -698,7 +817,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::copy_n(sets.begin(), setCount, m_preparedDescriptorSets.begin());
             m_descriptorBindingsDirty = false;
             m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
-                std::chrono::steady_clock::now() - descriptorStart).count();
+                                                      std::chrono::steady_clock::now() - descriptorStart)
+                                                      .count();
         }
 
         void BindPreparedDescriptorSets()
@@ -710,16 +830,17 @@ namespace PlutoGE::render::rhi::vulkan
                 const auto offsetStart = dynamicOffsetCount;
                 for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
                 {
-                    if (binding.type != ResourceBindingType::UniformBuffer) continue;
+                    if (binding.type != ResourceBindingType::UniformBuffer)
+                        continue;
                     if (binding.slot >= MaxResourceSlots || !m_uniformBuffers[binding.slot])
                         throw std::logic_error("Vulkan draw has an incomplete uniform binding");
                     dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                 }
                 const auto offsetCount = dynamicOffsetCount - offsetStart;
                 const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
-                    std::equal(dynamicOffsets.begin() + offsetStart,
-                               dynamicOffsets.begin() + dynamicOffsetCount,
-                               m_boundDynamicOffsets[setIndex].begin());
+                                          std::equal(dynamicOffsets.begin() + offsetStart,
+                                                     dynamicOffsets.begin() + dynamicOffsetCount,
+                                                     m_boundDynamicOffsets[setIndex].begin());
                 if (m_boundPipelineLayout == m_pipeline->layout &&
                     m_boundDescriptorSets[setIndex] == m_preparedDescriptorSets[setIndex] && offsetsMatch)
                     continue;
@@ -742,7 +863,13 @@ namespace PlutoGE::render::rhi::vulkan
             VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
             VkQueryPool queryPool = VK_NULL_HANDLE;
-            struct Scope { std::string name; std::uint32_t start = 0; std::uint32_t end = 0; float cpuMs = 0.0f; };
+            struct Scope
+            {
+                std::string name;
+                std::uint32_t start = 0;
+                std::uint32_t end = 0;
+                float cpuMs = 0.0f;
+            };
             std::vector<Scope> scopes;
             std::uint32_t nextQuery = 2;
             bool hasTimestamps = false;
@@ -754,7 +881,8 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr std::uint32_t MaxTimestampQueries = 32;
         void ResolveTimestamps(FrameResources &frame)
         {
-            if (!frame.hasTimestamps) return;
+            if (!frame.hasTimestamps)
+                return;
             std::array<std::uint64_t, MaxTimestampQueries> values{};
             Check(vkGetQueryPoolResults(m_impl.device, frame.queryPool, 0, frame.nextQuery,
                                         sizeof(values), values.data(), sizeof(std::uint64_t),
@@ -819,12 +947,15 @@ namespace PlutoGE::render::rhi::vulkan
                 pool.queueFamilyIndex = m_impl.queueFamily;
                 Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &frame.commandPool), "vkCreateCommandPool(presentation)");
                 VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-                allocation.commandPool = frame.commandPool; allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocation.commandBufferCount = 1;
+                allocation.commandPool = frame.commandPool;
+                allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocation.commandBufferCount = 1;
                 Check(vkAllocateCommandBuffers(m_impl.device, &allocation, &frame.commandBuffer), "vkAllocateCommandBuffers(presentation)");
                 VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
                 Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.imageAvailable), "vkCreateSemaphore(image available)");
                 Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.renderFinished), "vkCreateSemaphore(render finished)");
-                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(presentation)");
             }
             Recreate();
@@ -836,16 +967,28 @@ namespace PlutoGE::render::rhi::vulkan
             DestroySwapchain();
             for (auto &frame : m_frames)
             {
-                if (frame.fence) vkDestroyFence(m_impl.device, frame.fence, nullptr);
-                if (frame.renderFinished) vkDestroySemaphore(m_impl.device, frame.renderFinished, nullptr);
-                if (frame.imageAvailable) vkDestroySemaphore(m_impl.device, frame.imageAvailable, nullptr);
-                if (frame.commandPool) vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
+                if (frame.fence)
+                    vkDestroyFence(m_impl.device, frame.fence, nullptr);
+                if (frame.renderFinished)
+                    vkDestroySemaphore(m_impl.device, frame.renderFinished, nullptr);
+                if (frame.imageAvailable)
+                    vkDestroySemaphore(m_impl.device, frame.imageAvailable, nullptr);
+                if (frame.commandPool)
+                    vkDestroyCommandPool(m_impl.device, frame.commandPool, nullptr);
             }
         }
 
         [[nodiscard]] Format GetFormat() const noexcept override { return m_format; }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept override { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept override { return m_height; }
+
+        void SetOverlayRecorder(OverlayRecorder recorder) override
+        {
+            m_overlayRecorder = std::move(recorder);
+        }
+
+        [[nodiscard]] VkFormat GetNativeFormat() const noexcept { return m_nativeFormat; }
+        [[nodiscard]] std::uint32_t GetImageCount() const noexcept { return static_cast<std::uint32_t>(m_images.size()); }
 
         bool Resize(std::uint32_t width, std::uint32_t height) override
         {
@@ -877,7 +1020,8 @@ namespace PlutoGE::render::rhi::vulkan
 
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(presentation)");
-            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             Check(vkBeginCommandBuffer(frame.commandBuffer, &begin), "vkBeginCommandBuffer(presentation)");
             m_impl.Transition(frame.commandBuffer, *source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                               VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -903,23 +1047,54 @@ namespace PlutoGE::render::rhi::vulkan
                            m_images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
 
             destination.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            destination.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            destination.newLayout = m_overlayRecorder ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
             destination.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            destination.dstAccessMask = 0;
-            vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            destination.dstAccessMask = m_overlayRecorder ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0;
+            vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 m_overlayRecorder ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &destination);
+            if (m_overlayRecorder)
+            {
+                VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                color.imageView = m_imageViews[imageIndex];
+                color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+                rendering.renderArea.extent = {m_width, m_height};
+                rendering.layerCount = 1;
+                rendering.colorAttachmentCount = 1;
+                rendering.pColorAttachments = &color;
+                vkCmdBeginRendering(frame.commandBuffer, &rendering);
+                m_overlayRecorder(frame.commandBuffer);
+                vkCmdEndRendering(frame.commandBuffer);
+
+                destination.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                destination.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                destination.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                destination.dstAccessMask = 0;
+                vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                     VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &destination);
+            }
             Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer(presentation)");
 
             const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-            submit.waitSemaphoreCount = 1; submit.pWaitSemaphores = &frame.imageAvailable; submit.pWaitDstStageMask = &waitStage;
-            submit.commandBufferCount = 1; submit.pCommandBuffers = &frame.commandBuffer;
-            submit.signalSemaphoreCount = 1; submit.pSignalSemaphores = &frame.renderFinished;
+            submit.waitSemaphoreCount = 1;
+            submit.pWaitSemaphores = &frame.imageAvailable;
+            submit.pWaitDstStageMask = &waitStage;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &frame.commandBuffer;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &frame.renderFinished;
             Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
 
             VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-            present.waitSemaphoreCount = 1; present.pWaitSemaphores = &frame.renderFinished;
-            present.swapchainCount = 1; present.pSwapchains = &m_swapchain; present.pImageIndices = &imageIndex;
+            present.waitSemaphoreCount = 1;
+            present.pWaitSemaphores = &frame.renderFinished;
+            present.swapchainCount = 1;
+            present.pSwapchains = &m_swapchain;
+            present.pImageIndices = &imageIndex;
             const VkResult result = vkQueuePresentKHR(m_impl.presentQueue, &present);
             m_presented[imageIndex] = true;
             if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
@@ -935,7 +1110,11 @@ namespace PlutoGE::render::rhi::vulkan
     private:
         void DestroySwapchain()
         {
-            if (m_swapchain) vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
+            for (const VkImageView imageView : m_imageViews)
+                vkDestroyImageView(m_impl.device, imageView, nullptr);
+            m_imageViews.clear();
+            if (m_swapchain)
+                vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
             m_swapchain = VK_NULL_HANDLE;
             m_images.clear();
             m_presented.clear();
@@ -948,16 +1127,24 @@ namespace PlutoGE::render::rhi::vulkan
             Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_impl.physicalDevice, m_impl.surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
             std::uint32_t formatCount = 0;
             Check(vkGetPhysicalDeviceSurfaceFormatsKHR(m_impl.physicalDevice, m_impl.surface, &formatCount, nullptr), "vkGetPhysicalDeviceSurfaceFormatsKHR");
-            if (!formatCount) throw std::runtime_error("Vulkan surface has no supported formats");
+            if (!formatCount)
+                throw std::runtime_error("Vulkan surface has no supported formats");
             std::vector<VkSurfaceFormatKHR> formats(formatCount);
             Check(vkGetPhysicalDeviceSurfaceFormatsKHR(m_impl.physicalDevice, m_impl.surface, &formatCount, formats.data()), "vkGetPhysicalDeviceSurfaceFormatsKHR");
             if (!(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
                 throw std::runtime_error("Vulkan surface images do not support transfer destinations");
+            if (!(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
+                throw std::runtime_error("Vulkan surface images do not support color attachments");
             auto selected = formats.front();
             for (const auto &candidate : formats)
-                if (candidate.format == VK_FORMAT_R8G8B8A8_SRGB || candidate.format == VK_FORMAT_B8G8R8A8_SRGB) { selected = candidate; break; }
+                if (candidate.format == VK_FORMAT_R8G8B8A8_SRGB || candidate.format == VK_FORMAT_B8G8R8A8_SRGB)
+                {
+                    selected = candidate;
+                    break;
+                }
             m_format = selected.format == VK_FORMAT_R8G8B8A8_SRGB || selected.format == VK_FORMAT_B8G8R8A8_SRGB
-                           ? Format::R8G8B8A8Srgb : Format::R8G8B8A8Unorm;
+                           ? Format::R8G8B8A8Srgb
+                           : Format::R8G8B8A8Unorm;
 
             VkExtent2D extent = capabilities.currentExtent;
             if (extent.width == UINT32_MAX)
@@ -965,7 +1152,8 @@ namespace PlutoGE::render::rhi::vulkan
                 extent.width = std::clamp(m_width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
                 extent.height = std::clamp(m_height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
             }
-            m_width = extent.width; m_height = extent.height;
+            m_width = extent.width;
+            m_height = extent.height;
             std::uint32_t presentModeCount = 0;
             Check(vkGetPhysicalDeviceSurfacePresentModesKHR(m_impl.physicalDevice, m_impl.surface, &presentModeCount, nullptr), "vkGetPhysicalDeviceSurfacePresentModesKHR");
             std::vector<VkPresentModeKHR> presentModes(presentModeCount);
@@ -983,26 +1171,55 @@ namespace PlutoGE::render::rhi::vulkan
                 VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
                 VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR};
             for (const auto candidate : compositeCandidates)
-                if (capabilities.supportedCompositeAlpha & candidate) { compositeAlpha = candidate; break; }
+                if (capabilities.supportedCompositeAlpha & candidate)
+                {
+                    compositeAlpha = candidate;
+                    break;
+                }
             const std::uint32_t imageCount = std::min(capabilities.minImageCount + 1,
-                                                       capabilities.maxImageCount ? capabilities.maxImageCount : UINT32_MAX);
+                                                      capabilities.maxImageCount ? capabilities.maxImageCount : UINT32_MAX);
             VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
-            info.surface = m_impl.surface; info.minImageCount = imageCount; info.imageFormat = selected.format; info.imageColorSpace = selected.colorSpace;
-            info.imageExtent = extent; info.imageArrayLayers = 1; info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.surface = m_impl.surface;
+            info.minImageCount = imageCount;
+            info.imageFormat = selected.format;
+            info.imageColorSpace = selected.colorSpace;
+            info.imageExtent = extent;
+            info.imageArrayLayers = 1;
+            info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
             const std::array queueFamilies{m_impl.queueFamily, m_impl.presentQueueFamily};
-            if (queueFamilies[0] != queueFamilies[1]) { info.imageSharingMode = VK_SHARING_MODE_CONCURRENT; info.queueFamilyIndexCount = 2; info.pQueueFamilyIndices = queueFamilies.data(); }
-            else info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            info.preTransform = capabilities.currentTransform; info.compositeAlpha = compositeAlpha;
+            if (queueFamilies[0] != queueFamilies[1])
+            {
+                info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+                info.queueFamilyIndexCount = 2;
+                info.pQueueFamilyIndices = queueFamilies.data();
+            }
+            else
+                info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.preTransform = capabilities.currentTransform;
+            info.compositeAlpha = compositeAlpha;
             info.presentMode = presentMode;
-            info.clipped = VK_TRUE; info.oldSwapchain = m_swapchain;
+            info.clipped = VK_TRUE;
+            info.oldSwapchain = m_swapchain;
             VkSwapchainKHR replacement = VK_NULL_HANDLE;
             Check(vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement), "vkCreateSwapchainKHR");
-            if (m_swapchain) vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
+            if (m_swapchain)
+                vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
             m_swapchain = replacement;
             std::uint32_t actualImageCount = 0;
             Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, nullptr), "vkGetSwapchainImagesKHR");
             m_images.resize(actualImageCount);
             Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, m_images.data()), "vkGetSwapchainImagesKHR");
+            m_nativeFormat = selected.format;
+            m_imageViews.resize(actualImageCount);
+            for (std::uint32_t index = 0; index < actualImageCount; ++index)
+            {
+                VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                view.image = m_images[index];
+                view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                view.format = selected.format;
+                view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                Check(vkCreateImageView(m_impl.device, &view, nullptr, &m_imageViews[index]), "vkCreateImageView(swapchain)");
+            }
             m_presented.assign(actualImageCount, false);
         }
 
@@ -1019,6 +1236,9 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<FrameResources, 2> m_frames;
         std::size_t m_frameIndex = 0;
         std::vector<VkImage> m_images;
+        std::vector<VkImageView> m_imageViews;
+        VkFormat m_nativeFormat = VK_FORMAT_UNDEFINED;
+        OverlayRecorder m_overlayRecorder;
         std::vector<bool> m_presented;
         Format m_format = Format::R8G8B8A8Srgb;
         std::uint32_t m_width = 0;
@@ -1031,8 +1251,12 @@ namespace PlutoGE::render::rhi::vulkan
     VulkanDevice::VulkanDevice(const SwapchainDescriptor &presentation) : m_impl(std::make_unique<Impl>())
     {
         Check(volkInitialize(), "volkInitialize");
-        VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.pApplicationName = "PlutoGE"; app.pEngineName = "PlutoGE"; app.apiVersion = VK_API_VERSION_1_3;
-        VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; instanceInfo.pApplicationInfo = &app;
+        VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        app.pApplicationName = "PlutoGE";
+        app.pEngineName = "PlutoGE";
+        app.apiVersion = VK_API_VERSION_1_3;
+        VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        instanceInfo.pApplicationInfo = &app;
         std::uint32_t instanceExtensionCount = 0;
         const char **instanceExtensions = nullptr;
         if (presentation.nativeWindow)
@@ -1047,13 +1271,18 @@ namespace PlutoGE::render::rhi::vulkan
         volkLoadInstance(m_impl->instance);
         if (presentation.nativeWindow)
             Check(glfwCreateWindowSurface(m_impl->instance, static_cast<GLFWwindow *>(presentation.nativeWindow), nullptr, &m_impl->surface), "glfwCreateWindowSurface");
-        std::uint32_t count = 0; Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-        if (!count) throw std::runtime_error("No Vulkan physical device is available");
-        std::vector<VkPhysicalDevice> devices(count); Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
+        std::uint32_t count = 0;
+        Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
+        if (!count)
+            throw std::runtime_error("No Vulkan physical device is available");
+        std::vector<VkPhysicalDevice> devices(count);
+        Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
         for (auto device : devices)
         {
-            std::uint32_t familyCount = 0; vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, nullptr);
-            std::vector<VkQueueFamilyProperties> families(familyCount); vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, families.data());
+            std::uint32_t familyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, nullptr);
+            std::vector<VkQueueFamilyProperties> families(familyCount);
+            vkGetPhysicalDeviceQueueFamilyProperties(device, &familyCount, families.data());
             for (std::uint32_t graphicsFamily = 0; graphicsFamily < familyCount; ++graphicsFamily)
             {
                 if (!(families[graphicsFamily].queueFlags & VK_QUEUE_GRAPHICS_BIT))
@@ -1077,28 +1306,59 @@ namespace PlutoGE::render::rhi::vulkan
                     m_impl->presentQueueFamily = presentFamily;
                     break;
                 }
-                if (m_impl->physicalDevice) break;
+                if (m_impl->physicalDevice)
+                    break;
             }
-            if (m_impl->physicalDevice) break;
+            if (m_impl->physicalDevice)
+                break;
         }
-        if (!m_impl->physicalDevice) throw std::runtime_error("No Vulkan graphics queue is available");
-        VkPhysicalDeviceProperties properties{}; vkGetPhysicalDeviceProperties(m_impl->physicalDevice, &properties); m_impl->deviceName = properties.deviceName; m_impl->timestampPeriodNs = properties.limits.timestampPeriod;
+        if (!m_impl->physicalDevice)
+            throw std::runtime_error("No Vulkan graphics queue is available");
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(m_impl->physicalDevice, &properties);
+        m_impl->deviceName = properties.deviceName;
+        m_impl->timestampPeriodNs = properties.limits.timestampPeriod;
         const float priority = 1.0f;
         std::array<VkDeviceQueueCreateInfo, 2> queues{};
-        queues[0] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queues[0].queueFamilyIndex = m_impl->queueFamily; queues[0].queueCount = 1; queues[0].pQueuePriorities = &priority;
+        queues[0] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        queues[0].queueFamilyIndex = m_impl->queueFamily;
+        queues[0].queueCount = 1;
+        queues[0].pQueuePriorities = &priority;
         std::uint32_t queueCount = 1;
         if (m_impl->surface && m_impl->presentQueueFamily != m_impl->queueFamily)
         {
-            queues[1] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}; queues[1].queueFamilyIndex = m_impl->presentQueueFamily; queues[1].queueCount = 1; queues[1].pQueuePriorities = &priority;
+            queues[1] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+            queues[1].queueFamilyIndex = m_impl->presentQueueFamily;
+            queues[1].queueCount = 1;
+            queues[1].pQueuePriorities = &priority;
             queueCount = 2;
         }
-        VkPhysicalDeviceDynamicRenderingFeatures dynamic{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES}; dynamic.dynamicRendering = VK_TRUE;
+        VkPhysicalDeviceDynamicRenderingFeatures dynamic{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
+        dynamic.dynamicRendering = VK_TRUE;
         const char *swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; deviceInfo.pNext = &dynamic; deviceInfo.queueCreateInfoCount = queueCount; deviceInfo.pQueueCreateInfos = queues.data();
-        if (m_impl->surface) { deviceInfo.enabledExtensionCount = 1; deviceInfo.ppEnabledExtensionNames = &swapchainExtension; }
-        Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice"); volkLoadDevice(m_impl->device); vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue); vkGetDeviceQueue(m_impl->device, m_impl->presentQueueFamily, 0, &m_impl->presentQueue);
-        VmaVulkanFunctions functions{}; functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr; functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
-        VmaAllocatorCreateInfo allocator{}; allocator.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT; allocator.vulkanApiVersion = VK_API_VERSION_1_3; allocator.instance = m_impl->instance; allocator.physicalDevice = m_impl->physicalDevice; allocator.device = m_impl->device; allocator.pVulkanFunctions = &functions;
+        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        deviceInfo.pNext = &dynamic;
+        deviceInfo.queueCreateInfoCount = queueCount;
+        deviceInfo.pQueueCreateInfos = queues.data();
+        if (m_impl->surface)
+        {
+            deviceInfo.enabledExtensionCount = 1;
+            deviceInfo.ppEnabledExtensionNames = &swapchainExtension;
+        }
+        Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice");
+        volkLoadDevice(m_impl->device);
+        vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue);
+        vkGetDeviceQueue(m_impl->device, m_impl->presentQueueFamily, 0, &m_impl->presentQueue);
+        VmaVulkanFunctions functions{};
+        functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+        functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+        VmaAllocatorCreateInfo allocator{};
+        allocator.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+        allocator.vulkanApiVersion = VK_API_VERSION_1_3;
+        allocator.instance = m_impl->instance;
+        allocator.physicalDevice = m_impl->physicalDevice;
+        allocator.device = m_impl->device;
+        allocator.pVulkanFunctions = &functions;
         Check(vmaCreateAllocator(&allocator, &m_impl->allocator), "vmaCreateAllocator");
         m_impl->uniformAlignment = std::max<VkDeviceSize>(properties.limits.minUniformBufferOffsetAlignment, 1);
         for (auto &arena : m_impl->uniformArenas)
@@ -1116,42 +1376,68 @@ namespace PlutoGE::render::rhi::vulkan
                   "vmaCreateBuffer(uniform arena)");
             arena.mapped = allocationInfo.pMappedData;
         }
-        VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; pool.queueFamilyIndex = m_impl->queueFamily; Check(vkCreateCommandPool(m_impl->device, &pool, nullptr, &m_impl->commandPool), "vkCreateCommandPool");
-        VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO}; command.commandPool = m_impl->commandPool; command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; command.commandBufferCount = 1; Check(vkAllocateCommandBuffers(m_impl->device, &command, &m_impl->commandBuffer), "vkAllocateCommandBuffers");
+        VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool.queueFamilyIndex = m_impl->queueFamily;
+        Check(vkCreateCommandPool(m_impl->device, &pool, nullptr, &m_impl->commandPool), "vkCreateCommandPool");
+        VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        command.commandPool = m_impl->commandPool;
+        command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        command.commandBufferCount = 1;
+        Check(vkAllocateCommandBuffers(m_impl->device, &command, &m_impl->commandBuffer), "vkAllocateCommandBuffers");
         std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
-        VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; descriptors.maxSets = 32768; descriptors.poolSizeCount = sizes.size(); descriptors.pPoolSizes = sizes.data(); Check(vkCreateDescriptorPool(m_impl->device, &descriptors, nullptr, &m_impl->descriptorPool), "vkCreateDescriptorPool");
+        VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        descriptors.maxSets = 32768;
+        descriptors.poolSizeCount = sizes.size();
+        descriptors.pPoolSizes = sizes.data();
+        Check(vkCreateDescriptorPool(m_impl->device, &descriptors, nullptr, &m_impl->descriptorPool), "vkCreateDescriptorPool");
         m_impl->context = std::make_unique<VulkanCommandContext>(*m_impl);
     }
 
     VulkanDevice::~VulkanDevice()
     {
-        if (!m_impl) return;
-        if (m_impl->device) vkDeviceWaitIdle(m_impl->device);
+        if (!m_impl)
+            return;
+        if (m_impl->device)
+            vkDeviceWaitIdle(m_impl->device);
         m_impl->context.reset();
         for (auto &slot : m_impl->readbacks)
         {
             // VMA_ALLOCATION_CREATE_MAPPED_BIT owns the persistent mapping.
             // No matching vmaMapMemory call was made, so destroying the
             // allocation is also responsible for releasing that mapping.
-            if (slot.buffer) vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
-            if (slot.fence) vkDestroyFence(m_impl->device, slot.fence, nullptr);
-            if (slot.commandPool) vkDestroyCommandPool(m_impl->device, slot.commandPool, nullptr);
+            if (slot.buffer)
+                vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
+            if (slot.fence)
+                vkDestroyFence(m_impl->device, slot.fence, nullptr);
+            if (slot.commandPool)
+                vkDestroyCommandPool(m_impl->device, slot.commandPool, nullptr);
         }
-        m_impl->pipelines.ForEach([&](auto &r) { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r.layout, nullptr); for (auto l : r.setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); });
-        m_impl->samplers.ForEach([&](auto &r) { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
-        m_impl->textures.ForEach([&](auto &r) { vkDestroyImageView(m_impl->device, r.view, nullptr); vmaDestroyImage(m_impl->allocator, r.image, r.allocation); });
-        m_impl->buffers.ForEach([&](auto &r) {
+        m_impl->pipelines.ForEach([&](auto &r)
+                                  { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r.layout, nullptr); for (auto l : r.setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); });
+        m_impl->samplers.ForEach([&](auto &r)
+                                 { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
+        m_impl->textures.ForEach([&](auto &r)
+                                 { vkDestroyImageView(m_impl->device, r.view, nullptr); vmaDestroyImage(m_impl->allocator, r.image, r.allocation); });
+        m_impl->buffers.ForEach([&](auto &r)
+                                {
             if (r.buffer)
-                vmaDestroyBuffer(m_impl->allocator, r.buffer, r.allocation);
-        });
+                vmaDestroyBuffer(m_impl->allocator, r.buffer, r.allocation); });
         for (auto &arena : m_impl->uniformArenas)
-            if (arena.buffer) vmaDestroyBuffer(m_impl->allocator, arena.buffer, arena.allocation);
-        if (m_impl->descriptorPool) vkDestroyDescriptorPool(m_impl->device, m_impl->descriptorPool, nullptr);
-        if (m_impl->commandPool) vkDestroyCommandPool(m_impl->device, m_impl->commandPool, nullptr);
-        if (m_impl->allocator) vmaDestroyAllocator(m_impl->allocator);
-        if (m_impl->device) vkDestroyDevice(m_impl->device, nullptr);
-        if (m_impl->surface) vkDestroySurfaceKHR(m_impl->instance, m_impl->surface, nullptr);
-        if (m_impl->instance) vkDestroyInstance(m_impl->instance, nullptr);
+            if (arena.buffer)
+                vmaDestroyBuffer(m_impl->allocator, arena.buffer, arena.allocation);
+        if (m_impl->descriptorPool)
+            vkDestroyDescriptorPool(m_impl->device, m_impl->descriptorPool, nullptr);
+        if (m_impl->commandPool)
+            vkDestroyCommandPool(m_impl->device, m_impl->commandPool, nullptr);
+        if (m_impl->allocator)
+            vmaDestroyAllocator(m_impl->allocator);
+        if (m_impl->device)
+            vkDestroyDevice(m_impl->device, nullptr);
+        if (m_impl->surface)
+            vkDestroySurfaceKHR(m_impl->instance, m_impl->surface, nullptr);
+        if (m_impl->instance)
+            vkDestroyInstance(m_impl->instance, nullptr);
     }
 
     std::unique_ptr<ISwapchain> VulkanDevice::CreateSwapchain(const SwapchainDescriptor &descriptor)
@@ -1161,14 +1447,22 @@ namespace PlutoGE::render::rhi::vulkan
 
     BufferHandle VulkanDevice::CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> data)
     {
-        if (!descriptor.size || data.size() > descriptor.size) throw std::invalid_argument("Invalid Vulkan buffer size/data");
-        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; info.size = descriptor.size; info.usage = BufferUsageFlags(descriptor.usage) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO; allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        BufferResource resource; resource.size = descriptor.size; resource.usage = descriptor.usage;
+        if (!descriptor.size || data.size() > descriptor.size)
+            throw std::invalid_argument("Invalid Vulkan buffer size/data");
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = descriptor.size;
+        info.usage = BufferUsageFlags(descriptor.usage) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO;
+        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        BufferResource resource;
+        resource.size = descriptor.size;
+        resource.usage = descriptor.usage;
         if (descriptor.usage == BufferUsage::Uniform)
         {
             resource.uniformData.resize(descriptor.size);
-            if (!data.empty()) std::memcpy(resource.uniformData.data(), data.data(), data.size());
+            if (!data.empty())
+                std::memcpy(resource.uniformData.data(), data.data(), data.size());
             return m_impl->buffers.Insert(std::move(resource));
         }
         for (std::size_t frame = 0; frame < 1; ++frame)
@@ -1188,21 +1482,35 @@ namespace PlutoGE::render::rhi::vulkan
 
     TextureHandle VulkanDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
-        if (!descriptor.width || !descriptor.height) throw std::invalid_argument("Invalid Vulkan texture dimensions");
-        TextureResource resource; resource.descriptor = descriptor;
+        if (!descriptor.width || !descriptor.height)
+            throw std::invalid_argument("Invalid Vulkan texture dimensions");
+        TextureResource resource;
+        resource.descriptor = descriptor;
         resource.mipLevels = descriptor.usage == TextureUsage::Sampled
                                  ? 1u + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>((std::max)(descriptor.width, descriptor.height)))))
                                  : 1u;
-        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; image.imageType = VK_IMAGE_TYPE_2D; image.extent = {descriptor.width, descriptor.height, 1}; image.mipLevels = resource.mipLevels; image.arrayLayers = 1; image.format = ToVkFormat(descriptor.format); image.tiling = VK_IMAGE_TILING_OPTIMAL; image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; image.samples = VK_SAMPLE_COUNT_1_BIT;
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {descriptor.width, descriptor.height, 1};
+        image.mipLevels = resource.mipLevels;
+        image.arrayLayers = 1;
+        image.format = ToVkFormat(descriptor.format);
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                      (descriptor.usage == TextureUsage::Sampled ? VK_IMAGE_USAGE_SAMPLED_BIT :
-                       descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT :
-                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+                      (descriptor.usage == TextureUsage::Sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                                                                                                                                                  : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
         if (descriptor.sampled)
             image.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-        VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         Check(vmaCreateImage(m_impl->allocator, &image, &allocation, &resource.image, &resource.allocation, nullptr), "vmaCreateImage");
-        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; view.image = resource.image; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = image.format; view.subresourceRange = {Aspect(resource), 0, resource.mipLevels, 0, 1};
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = resource.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = image.format;
+        view.subresourceRange = {Aspect(resource), 0, resource.mipLevels, 0, 1};
         Check(vkCreateImageView(m_impl->device, &view, nullptr, &resource.view), "vkCreateImageView");
         const auto handle = m_impl->textures.Insert(std::move(resource));
         auto *stored = m_impl->textures.Get(handle);
@@ -1254,7 +1562,8 @@ namespace PlutoGE::render::rhi::vulkan
             }
             const BufferHandle stagingHandle = CreateBuffer({mipData.size(), BufferUsage::Vertex, "Texture staging"}, mipData);
             auto *staging = m_impl->buffers.Get(stagingHandle);
-            m_impl->Immediate([&](VkCommandBuffer command) { m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT); vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(copies.size()), copies.data()); m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT); });
+            m_impl->Immediate([&](VkCommandBuffer command)
+                              { m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT); vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(copies.size()), copies.data()); m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT); });
             DestroyBuffer(stagingHandle);
         }
         return handle;
@@ -1262,16 +1571,25 @@ namespace PlutoGE::render::rhi::vulkan
 
     SamplerHandle VulkanDevice::CreateSampler(const SamplerDescriptor &descriptor)
     {
-        VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO}; info.magFilter = info.minFilter = descriptor.linearFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST; info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; info.maxLod = VK_LOD_CLAMP_NONE;
-        SamplerResource resource; Check(vkCreateSampler(m_impl->device, &info, nullptr, &resource.sampler), "vkCreateSampler"); return m_impl->samplers.Insert(resource);
+        VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        info.magFilter = info.minFilter = descriptor.linearFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+        info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        info.maxLod = VK_LOD_CLAMP_NONE;
+        SamplerResource resource;
+        Check(vkCreateSampler(m_impl->device, &info, nullptr, &resource.sampler), "vkCreateSampler");
+        return m_impl->samplers.Insert(resource);
     }
 
     PipelineHandle VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDescriptor &descriptor)
     {
-        if (descriptor.vertexShader.spirv.empty() || descriptor.fragmentShader.spirv.empty()) throw std::invalid_argument("Vulkan pipeline requires SPIR-V shaders");
-        auto module = [&](const auto &code) { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
+        if (descriptor.vertexShader.spirv.empty() || descriptor.fragmentShader.spirv.empty())
+            throw std::invalid_argument("Vulkan pipeline requires SPIR-V shaders");
+        auto module = [&](const auto &code)
+        { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
-        PipelineResource resource; resource.descriptor = descriptor;
+        PipelineResource resource;
+        resource.descriptor = descriptor;
         if (descriptor.resourceBindings.empty())
             throw std::invalid_argument("Vulkan pipeline requires declared shader resource bindings");
         std::uint32_t maximumSet = 0;
@@ -1281,15 +1599,13 @@ namespace PlutoGE::render::rhi::vulkan
         for (const auto &binding : descriptor.resourceBindings)
         {
             const VkShaderStageFlags stages =
-                binding.stages == ShaderStageMask::Vertex ? VK_SHADER_STAGE_VERTEX_BIT :
-                binding.stages == ShaderStageMask::Fragment ? VK_SHADER_STAGE_FRAGMENT_BIT :
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            bindingsBySet[binding.set].push_back({
-                binding.binding,
-                binding.type == ResourceBindingType::UniformBuffer
-                    ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
-                    : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                1, stages, nullptr});
+                binding.stages == ShaderStageMask::Vertex ? VK_SHADER_STAGE_VERTEX_BIT : binding.stages == ShaderStageMask::Fragment ? VK_SHADER_STAGE_FRAGMENT_BIT
+                                                                                                                                     : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            bindingsBySet[binding.set].push_back({binding.binding,
+                                                  binding.type == ResourceBindingType::UniformBuffer
+                                                      ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
+                                                      : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                  1, stages, nullptr});
         }
         resource.setLayouts.resize(bindingsBySet.size());
         resource.populatedSets.resize(bindingsBySet.size());
@@ -1312,19 +1628,70 @@ namespace PlutoGE::render::rhi::vulkan
         Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"}}};
-        std::vector<VkVertexInputAttributeDescription> attributes; for (const auto &a : descriptor.vertexLayout.attributes) attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
-        VkVertexInputBindingDescription binding{0, descriptor.vertexLayout.stride, VK_VERTEX_INPUT_RATE_VERTEX}; VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}; vertexInput.vertexBindingDescriptionCount = attributes.empty() ? 0u : 1u; vertexInput.pVertexBindingDescriptions = attributes.empty() ? nullptr : &binding; vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size()); vertexInput.pVertexAttributeDescriptions = attributes.data();
-        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO}; assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; viewport.viewportCount = 1; viewport.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = descriptor.cullMode == CullMode::None ? VK_CULL_MODE_NONE : descriptor.cullMode == CullMode::Front ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT; raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth = 1;
-        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = descriptor.depthTest; depth.depthWriteEnable = descriptor.depthWrite; depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
+        std::vector<VkVertexInputAttributeDescription> attributes;
+        for (const auto &a : descriptor.vertexLayout.attributes)
+            attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
+        VkVertexInputBindingDescription binding{0, descriptor.vertexLayout.stride, VK_VERTEX_INPUT_RATE_VERTEX};
+        VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        vertexInput.vertexBindingDescriptionCount = attributes.empty() ? 0u : 1u;
+        vertexInput.pVertexBindingDescriptions = attributes.empty() ? nullptr : &binding;
+        vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
+        vertexInput.pVertexAttributeDescriptions = attributes.data();
+        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        viewport.viewportCount = 1;
+        viewport.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.cullMode = descriptor.cullMode == CullMode::None ? VK_CULL_MODE_NONE : descriptor.cullMode == CullMode::Front ? VK_CULL_MODE_FRONT_BIT
+                                                                                                                             : VK_CULL_MODE_BACK_BIT;
+        raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        raster.lineWidth = 1;
+        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        depth.depthTestEnable = descriptor.depthTest;
+        depth.depthWriteEnable = descriptor.depthWrite;
+        depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
         const std::size_t colorAttachmentCount = descriptor.colorFormats.empty() ? 1 : descriptor.colorFormats.size();
-        std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount); for (auto &blend : blendAttachments) blend.colorWriteMask = 0xf; VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blending.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size()); blending.pAttachments = blendAttachments.data();
-        std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}; VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dynamicState.dynamicStateCount = dynamicStates.size(); dynamicState.pDynamicStates = dynamicStates.data();
-        std::vector<VkFormat> colorFormats; if (descriptor.colorFormats.empty()) colorFormats.push_back(ToVkFormat(descriptor.colorFormat)); else for (const auto format : descriptor.colorFormats) colorFormats.push_back(ToVkFormat(format)); VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; rendering.colorAttachmentCount = static_cast<std::uint32_t>(colorFormats.size()); rendering.pColorAttachmentFormats = colorFormats.data(); rendering.depthAttachmentFormat = descriptor.depthFormat == Format::Undefined ? VK_FORMAT_UNDEFINED : ToVkFormat(descriptor.depthFormat);
-        VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; info.pNext = &rendering; info.stageCount = stages.size(); info.pStages = stages.data(); info.pVertexInputState = &vertexInput; info.pInputAssemblyState = &assembly; info.pViewportState = &viewport; info.pRasterizationState = &raster; info.pMultisampleState = &multisample; info.pDepthStencilState = &depth; info.pColorBlendState = &blending; info.pDynamicState = &dynamicState; info.layout = resource.layout;
-        const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline); vkDestroyShaderModule(m_impl->device, vertex, nullptr); vkDestroyShaderModule(m_impl->device, fragment, nullptr); Check(result, "vkCreateGraphicsPipelines");
+        std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount);
+        for (auto &blend : blendAttachments)
+            blend.colorWriteMask = 0xf;
+        VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        blending.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
+        blending.pAttachments = blendAttachments.data();
+        std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynamicState.dynamicStateCount = dynamicStates.size();
+        dynamicState.pDynamicStates = dynamicStates.data();
+        std::vector<VkFormat> colorFormats;
+        if (descriptor.colorFormats.empty())
+            colorFormats.push_back(ToVkFormat(descriptor.colorFormat));
+        else
+            for (const auto format : descriptor.colorFormats)
+                colorFormats.push_back(ToVkFormat(format));
+        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        rendering.colorAttachmentCount = static_cast<std::uint32_t>(colorFormats.size());
+        rendering.pColorAttachmentFormats = colorFormats.data();
+        rendering.depthAttachmentFormat = descriptor.depthFormat == Format::Undefined ? VK_FORMAT_UNDEFINED : ToVkFormat(descriptor.depthFormat);
+        VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        info.pNext = &rendering;
+        info.stageCount = stages.size();
+        info.pStages = stages.data();
+        info.pVertexInputState = &vertexInput;
+        info.pInputAssemblyState = &assembly;
+        info.pViewportState = &viewport;
+        info.pRasterizationState = &raster;
+        info.pMultisampleState = &multisample;
+        info.pDepthStencilState = &depth;
+        info.pColorBlendState = &blending;
+        info.pDynamicState = &dynamicState;
+        info.layout = resource.layout;
+        const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline);
+        vkDestroyShaderModule(m_impl->device, vertex, nullptr);
+        vkDestroyShaderModule(m_impl->device, fragment, nullptr);
+        Check(result, "vkCreateGraphicsPipelines");
         return m_impl->pipelines.Insert(std::move(resource));
     }
 
@@ -1349,7 +1716,8 @@ namespace PlutoGE::render::rhi::vulkan
                 m_impl->timingStats.uniformBytesUploaded += data.size();
             }
             m_impl->timingStats.uniformUploadCpuMs += std::chrono::duration<float, std::milli>(
-                std::chrono::steady_clock::now() - uploadStart).count();
+                                                          std::chrono::steady_clock::now() - uploadStart)
+                                                          .count();
             return;
         }
         const auto allocation = resource->allocation;
@@ -1376,32 +1744,80 @@ namespace PlutoGE::render::rhi::vulkan
         for (auto &slot : m_impl->readbacks)
             if (slot.pending && slot.source == h)
             {
-                Check(vkWaitForFences(m_impl->device, 1, &slot.fence, VK_TRUE, UINT64_MAX),
-                      "vkWaitForFences(readback destruction)");
+                vkWaitForFences(m_impl->device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
                 slot.pending = false;
             }
         if (auto r = m_impl->textures.Remove(h))
         {
-            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(texture destruction)");
+            vkDeviceWaitIdle(m_impl->device);
             vkDestroyImageView(m_impl->device, r->view, nullptr);
             vmaDestroyImage(m_impl->allocator, r->image, r->allocation);
         }
     }
-    void VulkanDevice::DestroySampler(SamplerHandle h) { if (auto r = m_impl->samplers.Remove(h)) { Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(sampler destruction)"); vkDestroySampler(m_impl->device, r->sampler, nullptr); } }
-    void VulkanDevice::DestroyPipeline(PipelineHandle h) { if (auto r = m_impl->pipelines.Remove(h)) { Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(pipeline destruction)"); vkDestroyPipeline(m_impl->device, r->pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr); for (auto l : r->setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); } }
+    void VulkanDevice::DestroySampler(SamplerHandle h)
+    {
+        if (auto r = m_impl->samplers.Remove(h))
+        {
+            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(sampler destruction)");
+            vkDestroySampler(m_impl->device, r->sampler, nullptr);
+        }
+    }
+    void VulkanDevice::DestroyPipeline(PipelineHandle h)
+    {
+        if (auto r = m_impl->pipelines.Remove(h))
+        {
+            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(pipeline destruction)");
+            vkDestroyPipeline(m_impl->device, r->pipeline, nullptr);
+            vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr);
+            for (auto l : r->setLayouts)
+                vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr);
+        }
+    }
     ICommandContext &VulkanDevice::GetImmediateContext() { return *m_impl->context; }
     RenderDeviceTimingStats VulkanDevice::GetTimingStats() const { return m_impl->timingStats; }
     const std::string &VulkanDevice::GetDeviceName() const noexcept { return m_impl->deviceName; }
 
+    std::optional<VulkanEditorContext> VulkanDevice::GetEditorContext(const ISwapchain &swapchain) const noexcept
+    {
+        const auto *vulkanSwapchain = dynamic_cast<const VulkanSwapchain *>(&swapchain);
+        if (!vulkanSwapchain)
+            return std::nullopt;
+        return VulkanEditorContext{
+            m_impl->instance, m_impl->physicalDevice, m_impl->device, m_impl->queueFamily, m_impl->queue,
+            vulkanSwapchain->GetNativeFormat(), vulkanSwapchain->GetImageCount()};
+    }
+
+    VkImageView VulkanDevice::GetTextureImageView(TextureHandle texture) const noexcept
+    {
+        const auto *resource = m_impl->textures.Get(texture);
+        return resource ? resource->view : VK_NULL_HANDLE;
+    }
+
     std::vector<std::byte> VulkanDevice::ReadTextureRgba8(TextureHandle handle)
     {
-        auto *texture = m_impl->textures.Get(handle); if (!texture || texture->descriptor.format == Format::D32Float) throw std::invalid_argument("Invalid Vulkan color texture readback");
-        const std::size_t byteCount = static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height * 4;
-        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; info.size = byteCount; info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO; allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
-        VkBuffer buffer{}; VmaAllocation memory{}; Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
-        m_impl->Immediate([&](VkCommandBuffer command) { m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1}; vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy); });
-        std::vector<std::byte> pixels(byteCount); void *mapped = nullptr; Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)"); vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount); std::memcpy(pixels.data(), mapped, byteCount); vmaUnmapMemory(m_impl->allocator, memory); vmaDestroyBuffer(m_impl->allocator, buffer, memory); return pixels;
+        auto *texture = m_impl->textures.Get(handle);
+        if (!texture || texture->descriptor.format == Format::D32Float)
+            throw std::invalid_argument("Invalid Vulkan color texture readback");
+        const std::size_t pixelCount = static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height;
+        const std::size_t byteCount = pixelCount * BytesPerPixel(texture->descriptor.format);
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = byteCount;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO;
+        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+        VkBuffer buffer{};
+        VmaAllocation memory{};
+        Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
+        m_impl->Immediate([&](VkCommandBuffer command)
+                          { m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1}; vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy); });
+        void *mapped = nullptr;
+        Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)");
+        vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount);
+        auto pixels = ConvertToRgba8(mapped, pixelCount, texture->descriptor.format);
+        vmaUnmapMemory(m_impl->allocator, memory);
+        vmaDestroyBuffer(m_impl->allocator, buffer, memory);
+        return pixels;
     }
 
     std::optional<std::vector<std::byte>> VulkanDevice::ReadTextureRgba8Buffered(TextureHandle handle)
@@ -1410,8 +1826,8 @@ namespace PlutoGE::render::rhi::vulkan
         if (!texture || texture->descriptor.format == Format::D32Float)
             throw std::invalid_argument("Invalid Vulkan color texture readback");
 
-        const std::size_t byteCount = static_cast<std::size_t>(texture->descriptor.width) *
-                                      texture->descriptor.height * 4;
+        const std::size_t pixelCount = static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height;
+        const std::size_t byteCount = pixelCount * BytesPerPixel(texture->descriptor.format);
         std::optional<std::vector<std::byte>> completed;
         std::uint64_t completedSequence = 0;
         for (auto &slot : m_impl->readbacks)
@@ -1419,17 +1835,17 @@ namespace PlutoGE::render::rhi::vulkan
             if (!slot.pending || vkGetFenceStatus(m_impl->device, slot.fence) != VK_SUCCESS)
                 continue;
             vmaInvalidateAllocation(m_impl->allocator, slot.allocation, 0, slot.byteCount);
-            if (slot.byteCount == byteCount && slot.sequence >= completedSequence)
+            if (slot.pixelCount == pixelCount && slot.sequence >= completedSequence)
             {
-                completed.emplace(slot.byteCount);
-                std::memcpy(completed->data(), slot.mapped, slot.byteCount);
+                completed = ConvertToRgba8(slot.mapped, slot.pixelCount, slot.format);
                 completedSequence = slot.sequence;
             }
             slot.pending = false;
         }
 
         auto available = std::find_if(m_impl->readbacks.begin(), m_impl->readbacks.end(),
-                                      [](const auto &slot) { return !slot.pending; });
+                                      [](const auto &slot)
+                                      { return !slot.pending; });
         if (available == m_impl->readbacks.end())
             return completed;
 
@@ -1452,7 +1868,8 @@ namespace PlutoGE::render::rhi::vulkan
         }
         if (slot.byteCount != byteCount)
         {
-            if (slot.buffer) vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
+            if (slot.buffer)
+                vmaDestroyBuffer(m_impl->allocator, slot.buffer, slot.allocation);
             slot.buffer = VK_NULL_HANDLE;
             slot.allocation = VK_NULL_HANDLE;
             slot.mapped = nullptr;
@@ -1465,10 +1882,13 @@ namespace PlutoGE::render::rhi::vulkan
                                VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo allocationInfo{};
             Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &slot.buffer,
-                                  &slot.allocation, &allocationInfo), "vmaCreateBuffer(buffered readback)");
+                                  &slot.allocation, &allocationInfo),
+                  "vmaCreateBuffer(buffered readback)");
             slot.mapped = allocationInfo.pMappedData;
             slot.byteCount = byteCount;
         }
+        slot.format = texture->descriptor.format;
+        slot.pixelCount = pixelCount;
 
         Check(vkResetFences(m_impl->device, 1, &slot.fence), "vkResetFences(readback)");
         Check(vkResetCommandPool(m_impl->device, slot.commandPool, 0), "vkResetCommandPool(readback)");

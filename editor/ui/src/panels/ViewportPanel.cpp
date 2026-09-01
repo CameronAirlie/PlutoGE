@@ -1835,7 +1835,7 @@ namespace PlutoGE::ui
             m_useRhiPreview = false;
             return;
         }
-        m_useRhiPreview = m_rhiRenderService->Initialize(m_config.graphicsApi);
+        m_useRhiPreview = m_rhiRenderService->Initialize(m_config.graphicsApi, m_config.sharedRenderDevice);
         m_vulkanAvailable = m_rhiRenderService->IsVulkanAvailable();
         m_vulkanStatus = m_rhiRenderService->GetVulkanStatus();
         m_activeRhiVulkan = m_rhiRenderService->IsVulkan();

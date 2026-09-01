@@ -5,42 +5,166 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/rhi/RenderDeviceFactory.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanBootstrap.h"
+#include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
+#include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
 #include <glad/glad.h>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <iostream>
+#include <vector>
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        struct CloudPacket
+        {
+            render::BasicPostProcessEffect effect;
+            float distanceSquared = 0.0f;
+        };
+
+        const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Entity *entity)
+        {
+            if (!entity || !entity->IsActive())
+                return nullptr;
+            for (const auto *sky : entity->GetComponents<scene::PhysicalSkyComponent>())
+                if (sky && sky->IsEnabled())
+                    return sky;
+            for (const auto *child : entity->GetChildren())
+                if (const auto *sky = FindPhysicalSky(child))
+                    return sky;
+            return nullptr;
+        }
+
+        const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Scene *scene)
+        {
+            if (!scene)
+                return nullptr;
+            for (const auto *root : scene->GetRootEntities())
+                if (const auto *sky = FindPhysicalSky(root))
+                    return sky;
+            return nullptr;
+        }
+
+        glm::vec3 AtmosphericSunTransmittance(const scene::PhysicalSkyComponent &sky,
+                                              const glm::vec3 &sunDirection)
+        {
+            const float airMass = 1.0f / std::max(sunDirection.y + 0.075f, 0.04f);
+            const glm::vec3 extinction =
+                glm::vec3(0.028f, 0.067f, 0.155f) * std::max(sky.GetRayleighStrength(), 0.0f) +
+                glm::vec3(0.035f) * std::max(sky.GetMieStrength(), 0.0f) +
+                glm::vec3(0.004f, 0.012f, 0.002f) * std::max(sky.GetOzoneStrength(), 0.0f);
+            return glm::exp(-extinction * airMass) * glm::max(sky.GetSunColor(), glm::vec3(0.0f));
+        }
+
+        void CollectAtmosphere(const scene::Entity *entity, const glm::vec3 &cameraPosition,
+                               const render::BasicLighting &lighting,
+                               std::vector<render::BasicPostProcessEffect> &effects,
+                               std::vector<CloudPacket> &clouds, bool &hasSky)
+        {
+            if (!entity || !entity->IsActive())
+                return;
+            if (!hasSky)
+                for (const auto *sky : entity->GetComponents<scene::PhysicalSkyComponent>())
+                    if (sky && sky->IsEnabled())
+                    {
+                        render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
+                        glm::vec3 sunDirection = lighting.directionalIntensity > 0.0f
+                                                     ? -lighting.directionalDirection
+                                                     : glm::vec3(0.25f, 0.8f, 0.4f);
+                        if (glm::dot(sunDirection, sunDirection) < 0.000001f)
+                            sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
+                        effect.exposure = sky->GetExposure();
+                        effect.parameters[0] = {glm::normalize(sunDirection), sky->GetRayleighStrength()};
+                        effect.parameters[1] = {sky->GetSunColor(), sky->GetMieStrength()};
+                        effect.parameters[2] = {sky->GetMoonColor(), sky->GetMieAnisotropy()};
+                        effect.parameters[3] = {sky->GetGroundColor(), sky->GetOzoneStrength()};
+                        effect.parameters[4] = {sky->GetSunIntensity(), sky->GetSunAngularRadius(),
+                                                sky->GetNightIntensity(), sky->GetStarIntensity()};
+                        effect.parameters[5] = {sky->GetMoonIntensity(), sky->GetMoonAngularRadius(), 0.0f, 0.0f};
+                        effects.push_back(effect);
+                        hasSky = true;
+                        break;
+                    }
+
+            for (const auto *cloud : entity->GetComponents<scene::VolumetricCloudComponent>())
+                if (cloud && cloud->IsEnabled() && cloud->GetDensity() > 0.0f && cloud->GetCoverage() > 0.0f)
+                {
+                    render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::VolumetricCloud};
+                    glm::vec3 lightDirection = -lighting.directionalDirection;
+                    if (glm::dot(lightDirection, lightDirection) < 0.000001f)
+                        lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
+                    lightDirection = glm::normalize(lightDirection);
+                    const float horizonVisibility = glm::smoothstep(-0.02f, 0.03f, lightDirection.y);
+                    const glm::vec3 windDirection = glm::dot(cloud->GetWindDirection(), cloud->GetWindDirection()) > 0.000001f
+                                                        ? glm::normalize(cloud->GetWindDirection())
+                                                        : glm::vec3(0.0f);
+                    effect.quality = static_cast<std::uint32_t>(std::clamp(cloud->GetPrimaryStepCount(), 1, 128)) |
+                                     (static_cast<std::uint32_t>(std::clamp(cloud->GetLightStepCount(), 1, 16)) << 8u);
+                    effect.parameters[0] = {cloud->GetCloudColor(), cloud->GetCoverage()};
+                    effect.parameters[1] = {windDirection * cloud->GetWindSpeed() * cloud->GetSimulationTime(),
+                                            cloud->GetDensity()};
+                    effect.parameters[2] = {lightDirection, cloud->GetExtinction()};
+                    effect.parameters[3] = {glm::max(lighting.directionalColor, glm::vec3(0.0f)),
+                                            std::max(lighting.directionalIntensity, 0.0f) * horizonVisibility};
+                    effect.parameters[4] = {cloud->GetScatteringAlbedo(), cloud->GetAnisotropy(),
+                                            cloud->GetAmbientLight(), cloud->GetBaseNoiseScale()};
+                    effect.parameters[5] = {cloud->GetDetailNoiseScale(), cloud->GetDetailErosion(), 0.0f, 0.0f};
+                    const glm::mat4 volumeTransform = entity->GetWorldTransform() *
+                                                      glm::scale(glm::mat4(1.0f), cloud->GetSize());
+                    effect.worldToLocal = glm::inverse(volumeTransform);
+                    const glm::vec3 offset = entity->GetWorldPosition() - cameraPosition;
+                    clouds.push_back({effect, glm::dot(offset, offset)});
+                }
+            for (const auto *child : entity->GetChildren())
+                CollectAtmosphere(child, cameraPosition, lighting, effects, clouds, hasSky);
+        }
+    }
+
     EditorSceneRenderService::~EditorSceneRenderService()
     {
         Shutdown();
     }
 
-    bool EditorSceneRenderService::Initialize(render::rhi::GraphicsApi graphicsApi)
+    bool EditorSceneRenderService::Initialize(render::rhi::GraphicsApi graphicsApi,
+                                              render::rhi::IRenderDevice *sharedDevice)
     {
         Shutdown();
         try
         {
-            auto creation = render::rhi::CreateRenderDevice(graphicsApi);
+            auto creation = sharedDevice && sharedDevice->GetApi() == graphicsApi
+                                ? render::rhi::RenderDeviceCreationResult{}
+                                : render::rhi::CreateRenderDevice(graphicsApi);
+            if (sharedDevice && sharedDevice->GetApi() == graphicsApi)
+            {
+                creation.activeApi = graphicsApi;
+                creation.deviceName = graphicsApi == render::rhi::GraphicsApi::Vulkan
+                                          ? static_cast<render::rhi::vulkan::VulkanDevice &>(*sharedDevice).GetDeviceName()
+                                          : "Shared OpenGL device";
+            }
             const auto vulkanInfo = graphicsApi == render::rhi::GraphicsApi::Vulkan
                                         ? render::rhi::vulkan::VulkanDeviceInfo{
-                                              .available = static_cast<bool>(creation),
+                                              .available = sharedDevice != nullptr || static_cast<bool>(creation),
                                               .deviceName = creation.deviceName,
                                               .error = creation.error}
                                         : render::rhi::vulkan::ProbeVulkanDevice();
             m_vulkanAvailable = vulkanInfo.available;
             m_vulkanStatus = vulkanInfo.available ? "Vulkan available: " + vulkanInfo.deviceName
                                                   : "Vulkan unavailable: " + vulkanInfo.error;
-            if (!creation)
+            if (!sharedDevice && !creation)
                 throw std::runtime_error(creation.error.empty() ? "Failed to create the requested render device"
                                                                 : creation.error);
 
             m_isVulkan = creation.activeApi == render::rhi::GraphicsApi::Vulkan;
-            m_device = std::move(creation.device);
+            m_ownedDevice = std::move(creation.device);
+            m_device = sharedDevice && sharedDevice->GetApi() == graphicsApi ? sharedDevice : m_ownedDevice.get();
             auto renderer = std::make_unique<render::RhiSceneRenderer>();
             const render::ShaderArtifactLibrary shaderArtifacts;
             render::BasicRendererShaderPackage shaders = shaderArtifacts.LoadBasicRendererPackage();
@@ -64,7 +188,8 @@ namespace PlutoGE::ui
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
-        m_device.reset();
+        m_device = nullptr;
+        m_ownedDevice.reset();
         m_viewportTexture = {};
         m_isVulkan = false;
     }
@@ -123,6 +248,17 @@ namespace PlutoGE::ui
                     break;
                 }
 
+        if (const auto *sky = FindPhysicalSky(scene); sky && lighting.directionalIntensity > 0.0f)
+        {
+            glm::vec3 sunDirection = -lighting.directionalDirection;
+            if (glm::dot(sunDirection, sunDirection) > 0.000001f)
+            {
+                sunDirection = glm::normalize(sunDirection);
+                lighting.directionalColor *= AtmosphericSunTransmittance(*sky, sunDirection);
+                lighting.directionalIntensity *= glm::smoothstep(-0.02f, 0.03f, sunDirection.y);
+            }
+        }
+
         const auto readOpenGlTexture = [](const render::Texture &source)
         {
             if (!source.GetRgba8Pixels().empty())
@@ -140,10 +276,21 @@ namespace PlutoGE::ui
             return pixels;
         };
 
+        std::vector<render::BasicPostProcessEffect> atmosphereEffects;
+        std::vector<CloudPacket> clouds;
+        bool hasSky = false;
+        if (scene)
+            for (const auto *root : scene->GetRootEntities())
+                CollectAtmosphere(root, lighting.cameraPosition, lighting, atmosphereEffects, clouds, hasSky);
+        std::sort(clouds.begin(), clouds.end(), [](const CloudPacket &lhs, const CloudPacket &rhs)
+                  { return lhs.distanceSquared > rhs.distanceSquared; });
+        for (auto &cloud : clouds)
+            atmosphereEffects.push_back(std::move(cloud.effect));
+
         try
         {
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
-                                         postProcessEffects, readOpenGlTexture))
+                                         postProcessEffects, atmosphereEffects, readOpenGlTexture))
                 return false;
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
         }

@@ -22,15 +22,16 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 previousJitterUv = pass.parameters[2].zw * textureOrientation;
     const float2 currentUv = saturate(uv - currentJitterUv);
     const float4 current = sceneTexture.Sample(currentUv);
+    const float currentDepth = depthTexture.Sample(currentUv).r;
     if (pass.parameters[5].w < 0.5)
-        return current;
+        return float4(current.rgb, currentDepth);
 
     const float2 encodedMotion = (motionTexture.Sample(currentUv).xy * 2.0 - 1.0) *
                                  textureOrientation;
     const float2 motion = encodedMotion + currentJitterUv - previousJitterUv;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0))
-        return current;
+        return float4(current.rgb, currentDepth);
 
     float3 neighborhoodMin = current.rgb;
     float3 neighborhoodMax = current.rgb;
@@ -50,18 +51,16 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         }
     }
 
-    float3 history = historyTexture.Sample(historyUv).rgb;
-    history = clamp(history, neighborhoodMin, neighborhoodMax);
-    const float currentDepth = depthTexture.Sample(currentUv).r;
-    const float historyDepth = depthTexture.Sample(historyUv).r;
-    const float3 currentNormal = normalize(normalTexture.Sample(currentUv).xyz * 2.0 - 1.0);
-    const float3 historyNormal = normalize(normalTexture.Sample(historyUv).xyz * 2.0 - 1.0);
+    const float4 historySample = historyTexture.Sample(historyUv);
+    float3 history = clamp(historySample.rgb, neighborhoodMin, neighborhoodMax);
+    // The history alpha channel carries the depth written with the resolved
+    // color. Sampling the current depth/normal buffers at historyUv compares
+    // two locations from this frame, which falsely rejects valid history at
+    // every moving silhouette.
+    const float historyDepth = historySample.a;
     const float depthValidity = 1.0 - smoothstep(pass.parameters[1].x,
                                                  pass.parameters[1].x * 2.0,
                                                  abs(currentDepth - historyDepth));
-    const float normalValidity = smoothstep(pass.parameters[1].y - 0.12,
-                                             pass.parameters[1].y,
-                                             dot(currentNormal, historyNormal));
     const float motionPixels = length(motion / max(pass.inverseResolution, float2(0.000001)));
     const float disocclusionWeight = smoothstep(0.35, 2.0, motionPixels);
     const float baseHistoryWeight = lerp(pass.parameters[0].y, pass.parameters[0].z,
@@ -72,7 +71,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // Alternating jitter samples intentionally disagree at stationary sub-pixel
     // edges. Only use geometric and lighting rejection once real unjittered
     // motion indicates a possible disocclusion.
-    float validity = lerp(1.0, depthValidity * normalValidity, disocclusionWeight);
+    float validity = lerp(1.0, depthValidity, disocclusionWeight);
     validity *= velocityValidity;
     validity *= lerp(1.0, lightingValidity, disocclusionWeight);
     const float historyWeight = saturate(min(pass.parameters[0].x, baseHistoryWeight) * validity);
@@ -82,5 +81,5 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         const float3 detail = current.rgb - lowpass / max(lowpassWeight, 0.0001);
         resolved += detail * pass.parameters[0].w * (1.0 - historyWeight);
     }
-    return float4(max(resolved, 0.0), current.a);
+    return float4(max(resolved, 0.0), currentDepth);
 }

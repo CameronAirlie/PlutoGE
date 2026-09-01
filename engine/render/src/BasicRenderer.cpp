@@ -201,6 +201,12 @@ namespace PlutoGE::render
                 postDescriptor.vertexShader = vertex;
                 postDescriptor.fragmentShader = fragment;
                 postDescriptor.depthFormat = rhi::Format::Undefined;
+                // TAA stores reprojectable depth in alpha alongside HDR history.
+                // An 8-bit sRGB target cannot represent either with sufficient
+                // precision during camera motion.
+                postDescriptor.colorFormat = type == BasicPostProcessEffectType::TAA
+                                                 ? rhi::Format::R32G32B32A32Float
+                                                 : rhi::Format::R8G8B8A8Srgb;
                 postDescriptor.resourceBindings = {
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
@@ -447,7 +453,7 @@ namespace PlutoGE::render
         m_postProcessTargets = std::move(newPostTargets);
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                {width, height, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::ColorAttachment,
+                {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
                  index == 0 ? "TAA history A" : "TAA history B", true}));
         m_taaHistoryIndex = 0;
         m_taaHistoryValid = false;

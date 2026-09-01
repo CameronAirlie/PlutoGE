@@ -2,14 +2,27 @@
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
 
-[[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
-[[vk::binding(1, 0)]] Sampler2D rawAoTexture : register(t1, space0);
-[[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
-[[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
-[[vk::binding(5, 0)]] Sampler2D motionTexture : register(t5, space0);
-[[vk::binding(6, 0)]] Sampler2D historyTexture : register(t6, space0);
+[[vk::binding(0, 0)]]
+cbuffer Parameters : register(b0, space0)
+{
+    PostProcessParameterBlock pass;
+};
+[[vk::binding(1, 0)]]
+Sampler2D rawAoTexture : register(t1, space0);
+[[vk::binding(2, 0)]]
+Sampler2D depthTexture : register(t2, space0);
+[[vk::binding(3, 0)]]
+Sampler2D normalTexture : register(t3, space0);
+[[vk::binding(5, 0)]]
+Sampler2D motionTexture : register(t5, space0);
+[[vk::binding(6, 0)]]
+Sampler2D historyTexture : register(t6, space0);
 
-[shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
+[shader("vertex")]
+FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
+{
+    return fullscreenVertex(id);
+}
 
 float2 encodeOctahedral(float3 normal)
 {
@@ -37,7 +50,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // raw AO and history just as they are for the geometry buffers.
     const float2 textureUv = orientFullscreenUv(input.uv, pass.flipY);
     const float centerDepth = depthTexture.Sample(textureUv).r;
-    if (centerDepth <= 0.000001) return float4(1.0, 0.0, 0.5, 0.5);
+    if (centerDepth <= 0.000001)
+        return float4(1.0, 0.0, 0.5, 0.5);
     const float3 centerWorld = reconstructWorldPosition(textureUv, centerDepth,
                                                         pass.inverseViewProjection, pass.flipY);
     const float3 centerView = mul(pass.view, float4(centerWorld, 1.0)).xyz;
@@ -49,19 +63,23 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float maxAo = 0.0;
     for (int y = -4; y <= 4; ++y)
     {
-        if (abs(y) > blurRadius) continue;
+        if (abs(y) > blurRadius)
+            continue;
         for (int x = -4; x <= 4; ++x)
         {
-            if (abs(x) > blurRadius || abs(x) + abs(y) > blurRadius) continue;
+            if (abs(x) > blurRadius || abs(x) + abs(y) > blurRadius)
+                continue;
             const float2 offset = float2(x, y);
             const float2 sampleUv = saturate(textureUv + offset * pass.inverseResolution);
             const float sampleDepth = depthTexture.Sample(sampleUv).r;
-            if (sampleDepth <= 0.000001) continue;
+            if (sampleDepth <= 0.000001)
+                continue;
             const float3 sampleWorld = reconstructWorldPosition(sampleUv, sampleDepth,
                                                                 pass.inverseViewProjection, pass.flipY);
             const float sampleViewDepth = -mul(pass.view, float4(sampleWorld, 1.0)).z;
             const float depthDelta = abs(sampleViewDepth + centerView.z);
-            if (depthDelta > 0.35) continue;
+            if (depthDelta > 0.35)
+                continue;
             const float3 sampleNormal = decodeNormal(normalTexture.Sample(sampleUv).xyz);
             float normalWeight = max(dot(centerNormal, sampleNormal), 0.0);
             normalWeight *= normalWeight;
@@ -78,7 +96,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         }
     }
     const float currentAo = weightSum > 0.0001 ? aoSum / weightSum
-                                              : rawAoTexture.Sample(textureUv).r;
+                                               : rawAoTexture.Sample(textureUv).r;
     float resolvedAo = currentAo;
     if (pass.parameters[5].w > 0.5)
     {

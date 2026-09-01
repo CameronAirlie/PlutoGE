@@ -315,6 +315,7 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackNormalTexture;
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
+        rhi::Sampler m_screenSampler;
         rhi::Texture m_colorTarget;
         rhi::Texture m_displayTarget;
         rhi::Texture m_normalTarget;

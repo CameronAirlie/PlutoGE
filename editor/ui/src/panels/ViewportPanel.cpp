@@ -1965,10 +1965,7 @@ namespace PlutoGE::ui
         const auto imguiTexture = EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_registeredTexture);
         ImTextureID texId = static_cast<ImTextureID>(imguiTexture);
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
-        const bool displayingVulkan = m_useRhiPreview && m_activeRhiVulkan && m_rhiViewportTexture.IsValid();
-        ImGui::Image(texId, imageSize,
-                     displayingVulkan ? ImVec2(0, 0) : ImVec2(0, 1),
-                     displayingVulkan ? ImVec2(1, 1) : ImVec2(1, 0));
+        ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
         if (m_useRhiPreview)

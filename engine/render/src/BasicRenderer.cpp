@@ -378,7 +378,8 @@ namespace PlutoGE::render
             constexpr std::array<std::uint8_t, 4> neutralData = {255, 255, 255, 255};
             m_fallbackNormalTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral normal"}, Bytes(std::span(neutralNormal))));
             m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
-            m_fallbackSampler = rhi::Sampler(device, device.CreateSampler({true, true, "BasicRenderer sampler"}));
+            m_fallbackSampler = rhi::Sampler(device, device.CreateSampler({true, true, "BasicRenderer material sampler"}));
+            m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             return true;
         }
         catch (...)
@@ -410,6 +411,7 @@ namespace PlutoGE::render
         for (auto &target : m_shadowColorTargets)
             target.Reset();
         m_shadowResolutions.fill(0);
+        m_screenSampler.Reset();
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
         m_fallbackNormalTexture.Reset();
@@ -707,10 +709,10 @@ namespace PlutoGE::render
             commands.BindTexture(10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
             commands.BindTexture(11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
             commands.BindTexture(12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(13, m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
-            commands.BindTexture(14, m_shadowColorTargets[1] ? m_shadowColorTargets[1].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
-            commands.BindTexture(15, m_shadowColorTargets[2] ? m_shadowColorTargets[2].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
-            commands.BindTexture(16, m_shadowColorTargets[3] ? m_shadowColorTargets[3].Get() : m_shadowColorTargets[0].Get(), m_fallbackSampler.Get());
+            commands.BindTexture(13, m_shadowColorTargets[0].Get(), m_screenSampler.Get());
+            commands.BindTexture(14, m_shadowColorTargets[1] ? m_shadowColorTargets[1].Get() : m_shadowColorTargets[0].Get(), m_screenSampler.Get());
+            commands.BindTexture(15, m_shadowColorTargets[2] ? m_shadowColorTargets[2].Get() : m_shadowColorTargets[0].Get(), m_screenSampler.Get());
+            commands.BindTexture(16, m_shadowColorTargets[3] ? m_shadowColorTargets[3].Get() : m_shadowColorTargets[0].Get(), m_screenSampler.Get());
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount
@@ -811,19 +813,19 @@ namespace PlutoGE::render
             commands.BeginRendering(postInfo);
             commands.BindPipeline(pipeline);
             commands.BindUniformBuffer(0, parameterBuffer.Get());
-            commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
+            commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
             const auto inputs = InputsFor(effect.type);
             if (HasInput(inputs, BasicPostProcessInput::Depth))
-                commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Normal))
-                commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Material))
-                commands.BindTexture(4, m_materialTarget.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Motion))
-                commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::History))
                 commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
-                                     m_fallbackSampler.Get());
+                                     m_screenSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = destination->Get();
@@ -842,7 +844,7 @@ namespace PlutoGE::render
             displayInfo.clearDepth = false;
             commands.BeginRendering(displayInfo);
             commands.BindPipeline(m_displayPipeline.Get());
-            commands.BindTexture(1, m_outputColor, m_fallbackSampler.Get());
+            commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = m_displayTarget.Get();
@@ -896,9 +898,9 @@ namespace PlutoGE::render
         commands.BeginRendering(meterInfo);
         commands.BindPipeline(m_autoExposurePipelines[0].Get());
         commands.BindUniformBuffer(0, meterBuffer.Get());
-        commands.BindTexture(1, source, m_fallbackSampler.Get());
+        commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(6, m_exposureHistoryValid ? m_exposureHistoryTargets[m_exposureHistoryIndex].Get() : source,
-                             m_fallbackSampler.Get());
+                             m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -915,8 +917,8 @@ namespace PlutoGE::render
         commands.BeginRendering(applyInfo);
         commands.BindPipeline(m_autoExposurePipelines[1].Get());
         commands.BindUniformBuffer(0, applyBuffer.Get());
-        commands.BindTexture(1, source, m_fallbackSampler.Get());
-        commands.BindTexture(6, writeExposure.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.BindTexture(6, writeExposure.Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -955,9 +957,9 @@ namespace PlutoGE::render
         commands.BeginRendering(rawInfo);
         commands.BindPipeline(m_ssaoPipelines[0].Get());
         commands.BindUniformBuffer(0, rawBuffer.Get());
-        commands.BindTexture(1, source, m_fallbackSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -972,11 +974,11 @@ namespace PlutoGE::render
         commands.BeginRendering(resolveInfo);
         commands.BindPipeline(m_ssaoPipelines[1].Get());
         commands.BindUniformBuffer(0, resolveBuffer.Get());
-        commands.BindTexture(1, m_ssaoRawTarget.Get(), m_fallbackSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_fallbackSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_fallbackSampler.Get());
-        commands.BindTexture(5, m_motionTarget.Get(), m_fallbackSampler.Get());
-        commands.BindTexture(6, m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(), m_fallbackSampler.Get());
+        commands.BindTexture(1, m_ssaoRawTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(6, m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -993,8 +995,8 @@ namespace PlutoGE::render
         commands.BeginRendering(compositeInfo);
         commands.BindPipeline(m_ssaoPipelines[2].Get());
         commands.BindUniformBuffer(0, compositeBuffer.Get());
-        commands.BindTexture(1, source, m_fallbackSampler.Get());
-        commands.BindTexture(6, resolvedHistory.Get(), m_fallbackSampler.Get());
+        commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.BindTexture(6, resolvedHistory.Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -1072,7 +1074,7 @@ namespace PlutoGE::render
                     commands.BindPipeline(m_bloomPipelines[pipelineIndex].Get());
                     commands.BindUniformBuffer(0, buffer.Get());
                     for (const auto &input : context.inputs)
-                        commands.BindTexture(input.slot, input.texture, m_fallbackSampler.Get());
+                        commands.BindTexture(input.slot, input.texture, m_screenSampler.Get());
                     commands.Draw(3);
                     commands.EndRendering();
                 }

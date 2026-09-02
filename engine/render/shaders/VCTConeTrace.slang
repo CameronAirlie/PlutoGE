@@ -135,7 +135,12 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             (tangent * cos(angle) + bitangent * sin(angle)) * 0.835);
         indirect += traceCone(position, normal, direction);
     }
-    indirect *= pass.traceSettings.x / (float(coneCount) * 3.14159265);
+    // The cone set samples the cosine-weighted hemisphere. Its arithmetic mean
+    // therefore estimates (1 / PI) * integral(Li * cos(theta) dOmega), which is
+    // already the irradiance term required by a Lambertian receiver. Voxel
+    // radiance also contains the source surface's 1 / PI BRDF. Dividing here by
+    // PI again would remove roughly two thirds of the energy from every bounce.
+    indirect *= pass.traceSettings.x / float(coneCount);
     const float3 receiverAlbedo = albedoTexture.Sample(uv).rgb;
     const float receiverMetallic = saturate(materialTexture.Sample(uv).r);
     indirect *= receiverAlbedo * (1.0 - receiverMetallic);

@@ -495,7 +495,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
  if(uDebugView==4){vec3 cascadeColor=surfaceCascade==0?vec3(0,.8,0):surfaceCascade==1?vec3(0,.35,1):vec3(1,.55,0);FragColor=vec4(cascadeColor,viewDepth);return;}
  vec3 up=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),t=normalize(cross(up,n)),b=cross(n,t);vec3 total=cone(p,n,n);
  for(int i=1;i<6;i++){if(i>=uConeCount)break;float a=6.2831853*float(i-1)/max(float(uConeCount-1),1);vec3 d=normalize(n*.55+(t*cos(a)+b*sin(a))*.835);total+=cone(p,n,d);}
- FragColor=vec4(total*(uIntensity/max(float(uConeCount),1.0))/PI,viewDepth);})";
+ // Cone directions approximate cosine-weighted hemisphere sampling, so their
+ // mean already contains the receiver's 1/PI Lambertian normalization.
+ FragColor=vec4(total*(uIntensity/max(float(uConeCount),1.0)),viewDepth);})";
         m_coneTraceShader = Shader::Create(trace);
 
         ShaderSource temporal;

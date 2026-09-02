@@ -107,6 +107,9 @@ namespace PlutoGE::render::rhi
     public:
         virtual ~IRenderDevice() = default;
         [[nodiscard]] virtual GraphicsApi GetApi() const noexcept = 0;
+        // True when clip-space Z is interpreted as [0, 1]. Vulkan always uses
+        // this convention; OpenGL only does so when clip control is available.
+        [[nodiscard]] virtual bool UsesZeroToOneClipDepth() const noexcept { return false; }
         [[nodiscard]] virtual std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) = 0;
         [[nodiscard]] virtual BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
         [[nodiscard]] virtual TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;

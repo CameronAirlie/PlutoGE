@@ -446,9 +446,16 @@ namespace PlutoGE::render::rhi::opengl
         glBindFramebuffer(GL_FRAMEBUFFER, m_impl->framebuffer);
         LabelObject(GL_FRAMEBUFFER, m_impl->framebuffer, "RHI attachment framebuffer");
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        if (GLAD_GL_VERSION_4_5 && glad_glClipControl)
+        // The function can be exposed by ARB_clip_control on a 4.3 context, so
+        // capability-test the entry point instead of requiring core 4.5.
+        if (glad_glClipControl)
             glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
         m_impl->context = std::make_unique<OpenGLCommandContext>(*m_impl);
+    }
+
+    bool OpenGLDevice::UsesZeroToOneClipDepth() const noexcept
+    {
+        return glad_glClipControl != nullptr;
     }
 
     OpenGLDevice::~OpenGLDevice()

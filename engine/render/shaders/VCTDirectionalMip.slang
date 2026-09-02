@@ -10,7 +10,7 @@ struct MipParameters
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { MipParameters pass; };
 [[vk::binding(1, 0)]] Sampler3D sourceVolume : register(t1, space0);
-[[vk::binding(2, 0)]] RWTexture3D<half4> destinationVolume : register(u2, space0);
+[[vk::binding(2, 0)]] RWTexture3D<float4> destinationVolume : register(u2, space0);
 
 float4 over(float4 front, float4 back)
 {
@@ -49,5 +49,5 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         total += over(front, back);
     }
     destinationVolume[destination + int3(0, 0, int(pass.cascadeIndex * pass.cascadeMipSize))] =
-        half4(total * 0.25);
+        float4(total * 0.25);
 }

@@ -18,6 +18,7 @@ namespace PlutoGE::render::rhi::opengl
         OpenGLDevice &operator=(const OpenGLDevice &) = delete;
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::OpenGL; }
+        [[nodiscard]] bool UsesZeroToOneClipDepth() const noexcept override;
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;

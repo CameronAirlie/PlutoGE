@@ -20,4 +20,10 @@ string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_sourc
 # Slang uses the SPIR-V/Vulkan builtin spelling for SV_VertexID when emitting
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.
 string(REPLACE "gl_VertexIndex" "gl_VertexID" shader_source "${shader_source}")
+# Slang derives the GLSL image qualifier from the source value type. Some
+# resources intentionally store 32-bit shader values into 16-bit float images;
+# OpenGL requires the declaration to match the bound image's internal format.
+if (DEFINED IMAGE_FORMAT AND NOT IMAGE_FORMAT STREQUAL "")
+    string(REPLACE "layout(rgba32f)" "layout(${IMAGE_FORMAT})" shader_source "${shader_source}")
+endif()
 file(WRITE "${OUTPUT}" "${shader_source}")

@@ -78,6 +78,7 @@ namespace PlutoGE::ui
         void SetEditorCameraData(const render::CameraData &cameraData);
         void ClearEditorCameraData();
         void SetGraphicsApi(render::rhi::GraphicsApi graphicsApi);
+        void SetSharedRenderDevice(render::rhi::IRenderDevice *device) { m_config.sharedRenderDevice = device; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:

@@ -36,6 +36,7 @@ namespace PlutoGE::render::rhi::vulkan
         VulkanDevice &operator=(const VulkanDevice &) = delete;
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::Vulkan; }
+        [[nodiscard]] bool UsesZeroToOneClipDepth() const noexcept override { return true; }
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &, std::span<const std::byte> = {}) override;

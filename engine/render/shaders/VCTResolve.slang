@@ -10,7 +10,10 @@ struct ResolveParameters
 [[vk::binding(2, 0)]] RWTexture3D<uint> accumulationG : register(u2, space0);
 [[vk::binding(3, 0)]] RWTexture3D<uint> accumulationB : register(u3, space0);
 [[vk::binding(4, 0)]] RWTexture3D<uint> accumulationWeight : register(u4, space0);
-[[vk::binding(5, 0)]] RWTexture3D<half4> resolvedVolume : register(u5, space0);
+// Keep the shader value type at 32-bit. The backing image may still be RGBA16F;
+// the API performs the store conversion without requiring optional GLSL
+// explicit-arithmetic-types extensions on OpenGL drivers.
+[[vk::binding(5, 0)]] RWTexture3D<float4> resolvedVolume : register(u5, space0);
 
 float opacityAt(int3 coordinate, int3 size)
 {
@@ -35,5 +38,5 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
                              int3(0,-1,0), int3(0,0,1), int3(0,0,-1)};
     for (uint index = 0; index < 6; ++index)
         opacity = max(opacity, opacityAt(coordinate + offsets[index], size) * 0.35);
-    resolvedVolume[coordinate + int3(0, 0, pass.destinationZOffset)] = half4(radiance, opacity);
+    resolvedVolume[coordinate + int3(0, 0, pass.destinationZOffset)] = float4(radiance, opacity);
 }

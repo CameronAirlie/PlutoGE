@@ -292,14 +292,16 @@ namespace PlutoGE::render
 
         m_drawCount = draws.size();
         glm::mat4 projection = cameraData.projection;
-        // CameraData uses GLM's negative-one-to-one clip depth. Both RHI
-        // backends use zero-to-one: Vulkan natively and OpenGL through
-        // glClipControl. Applying this only to Vulkan clipped the reverse-Z
-        // OpenGL scene before rasterization and produced a black viewport.
-        glm::mat4 depthRangeConversion(1.0f);
-        depthRangeConversion[2][2] = 0.5f;
-        depthRangeConversion[3][2] = 0.5f;
-        projection = depthRangeConversion * projection;
+        // CameraData uses GLM's negative-one-to-one clip depth. Vulkan and
+        // OpenGL contexts with clip control use zero-to-one; older OpenGL
+        // contexts must retain the original projection convention.
+        if (m_device->UsesZeroToOneClipDepth())
+        {
+            glm::mat4 depthRangeConversion(1.0f);
+            depthRangeConversion[2][2] = 0.5f;
+            depthRangeConversion[3][2] = 0.5f;
+            projection = depthRangeConversion * projection;
+        }
         BasicLighting effectiveLighting = lighting;
         // The physical-sky pass is also the source of the directional
         // environment seen by opaque materials. Keeping this transfer here

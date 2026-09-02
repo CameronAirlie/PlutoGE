@@ -2294,25 +2294,14 @@ namespace PlutoGE::ui
 
         if (loadedProject->GetManifest().graphicsApi != m_engine.GetConfig().graphicsApi)
         {
-#ifdef _WIN32
-            std::array<char, MAX_PATH> executablePath{};
-            const DWORD pathLength = GetModuleFileNameA(nullptr, executablePath.data(),
-                                                        static_cast<DWORD>(executablePath.size()));
-            std::string launchError;
-            const std::string arguments = "\"" + std::filesystem::absolute(manifestPath).string() + "\"";
-            if (pathLength == 0 || pathLength == executablePath.size() ||
-                !LaunchExecutable(std::filesystem::path(executablePath.data()), &launchError, arguments))
-            {
-                m_statusMessage = launchError.empty() ? "Failed to restart editor with the project graphics API."
-                                                      : launchError;
-                return false;
-            }
-            m_engine.GetWindow().RequestClose();
+            // Switching a GLFW window between OpenGL and no-client-API requires
+            // recreating its native handle. Defer that work until the current
+            // ImGui frame has completed; tearing down a compositor from inside
+            // a menu/file-dialog callback invalidates the active UI stack.
+            m_pendingProjectLoad = std::filesystem::absolute(manifestPath);
+            m_pendingGraphicsApi = loadedProject->GetManifest().graphicsApi;
+            m_statusMessage = "Switching graphics API...";
             return true;
-#else
-            m_statusMessage = "Restart the editor to apply the project's graphics API.";
-            return false;
-#endif
         }
 
         m_project = std::move(loadedProject);
@@ -2916,7 +2905,7 @@ namespace PlutoGE::ui
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
         renderer.SetVSyncEnabled(editorVSyncEnabled);
-        const bool vulkanEditorHost = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        bool vulkanEditorHost = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
 
         while (!window.ShouldClose())
         {
@@ -2960,10 +2949,10 @@ namespace PlutoGE::ui
             viewportPanel->SetPanelControlsEnabled(true);
             viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
 
-            const auto renderTargetWidth = renderTarget->GetWidth();
-            const auto renderTargetHeight = renderTarget->GetHeight();
-            const auto renderTarget2Width = renderTarget2->GetWidth();
-            const auto renderTarget2Height = renderTarget2->GetHeight();
+            const auto renderTargetWidth = (std::max)(renderTarget->GetWidth(), 1);
+            const auto renderTargetHeight = (std::max)(renderTarget->GetHeight(), 1);
+            const auto renderTarget2Width = (std::max)(renderTarget2->GetWidth(), 1);
+            const auto renderTarget2Height = (std::max)(renderTarget2->GetHeight(), 1);
             UpdateEditorCamera(m_editorCamera,
                                window,
                                windowHandle,
@@ -3827,7 +3816,8 @@ namespace PlutoGE::ui
                             m_panelManager.SetEditorFont(manifest.editorFont);
                             if (graphicsApiChanged)
                             {
-                                m_statusMessage = "Graphics API saved. It will be used the next time the editor is launched.";
+                                m_pendingGraphicsApi = manifest.graphicsApi;
+                                m_statusMessage = "Switching graphics API...";
                             }
                             ImGui::CloseCurrentPopup();
                         }
@@ -3967,6 +3957,113 @@ namespace PlutoGE::ui
             const auto frameEndTime = std::chrono::high_resolution_clock::now();
             m_profiler.SetLatestFrameTimingStats(frameTimingStats);
             m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
+
+            if (m_pendingGraphicsApi)
+            {
+                const auto requestedApi = *m_pendingGraphicsApi;
+                m_pendingGraphicsApi.reset();
+                const auto savedEditorEffects = BuildProjectEditorPostProcessEffects(m_editorCamera);
+                const std::string savedEditorPreset = m_editorCamera.postProcessPresetAssetReference;
+
+                // Release every resource tied to the old device/context before
+                // Engine::Shutdown destroys the native window.
+                viewportPanel->Shutdown();
+                viewportPanel2->Shutdown();
+                m_editorSceneRenderService->Shutdown();
+                m_gameSceneRenderService->Shutdown();
+                m_panelManager.ShutdownImGui();
+                // Editor post-process effects can own legacy OpenGL objects.
+                // Destroy them while the old context is still current and
+                // recreate their backend resources after the switch.
+                m_editorCamera.postProcessEffects.clear();
+                m_editorCamera.postProcessPresetAssetReference.clear();
+
+                const auto previousConfig = m_engine.GetConfig();
+                auto config = previousConfig;
+                const auto extents = window.GetExtents();
+                config.graphicsApi = requestedApi;
+                config.windowConfig.width = (std::max)(extents.width, 1);
+                config.windowConfig.height = (std::max)(extents.height, 1);
+                config.vSync = editorVSyncEnabled;
+                m_engine.Shutdown();
+
+                const auto initializeGraphicsHost = [&](const core::EngineConfig &hostConfig)
+                {
+                    if (!m_engine.Initialize(hostConfig))
+                        return false;
+                    if (m_panelManager.InitializeImGui(&window, m_engine.GetRenderDevice(), m_engine.GetSwapchain()))
+                        return true;
+                    m_engine.Shutdown();
+                    return false;
+                };
+
+                if (!initializeGraphicsHost(config))
+                {
+                    // A failed backend should not take the editor/debug session
+                    // down. Restore the previous graphics host and leave the
+                    // requested project unopened so the user can inspect the
+                    // error in the editor and log.
+                    if (!initializeGraphicsHost(previousConfig))
+                    {
+                        std::cerr << "Failed to initialize both the requested and previous editor graphics backends.\n";
+                        window.RequestClose();
+                        break;
+                    }
+                    m_pendingProjectLoad.reset();
+                    windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
+                    vulkanEditorHost = previousConfig.graphicsApi == render::rhi::GraphicsApi::Vulkan;
+                    viewportPanel->SetSharedRenderDevice(m_engine.GetRenderDevice());
+                    viewportPanel2->SetSharedRenderDevice(m_engine.GetRenderDevice());
+                    viewportPanel->SetGraphicsApi(previousConfig.graphicsApi);
+                    viewportPanel2->SetGraphicsApi(previousConfig.graphicsApi);
+                    viewportPanel->Initialize();
+                    viewportPanel2->Initialize();
+                    renderTarget = viewportPanel->GetRenderTarget();
+                    renderTarget2 = viewportPanel2->GetRenderTarget();
+                    ApplyProjectEditorPostProcessEffects(savedEditorEffects, m_editorCamera);
+                    m_statusMessage = "Graphics API switch failed; restored the previous renderer. See PlutoGEEditor.log.";
+                    continue;
+                }
+
+                windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
+                vulkanEditorHost = requestedApi == render::rhi::GraphicsApi::Vulkan;
+                viewportPanel->SetSharedRenderDevice(m_engine.GetRenderDevice());
+                viewportPanel2->SetSharedRenderDevice(m_engine.GetRenderDevice());
+                viewportPanel->SetGraphicsApi(requestedApi);
+                viewportPanel2->SetGraphicsApi(requestedApi);
+                viewportPanel->Initialize();
+                viewportPanel2->Initialize();
+                // Shutdown/Initialize replaces the legacy targets. Refresh the
+                // frame-loop aliases used for camera aspect and presentation;
+                // retaining the deleted targets yielded arbitrary dimensions
+                // and a severely flattened perspective projection.
+                renderTarget = viewportPanel->GetRenderTarget();
+                renderTarget2 = viewportPanel2->GetRenderTarget();
+                renderer.SetVSyncEnabled(editorVSyncEnabled);
+                UpdateWindowTitle();
+                m_statusMessage = requestedApi == render::rhi::GraphicsApi::Vulkan
+                                      ? "Renderer switched to Vulkan."
+                                      : "Renderer switched to OpenGL.";
+
+                if (m_pendingProjectLoad)
+                {
+                    const auto pendingPath = std::move(*m_pendingProjectLoad);
+                    m_pendingProjectLoad.reset();
+                    static_cast<void>(LoadProjectFromPath(pendingPath));
+                    editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
+                }
+                else
+                {
+                    if (savedEditorPreset.empty() ||
+                        !m_editorCamera.SetPostProcessPresetAssetReference(savedEditorPreset))
+                        ApplyProjectEditorPostProcessEffects(savedEditorEffects, m_editorCamera);
+
+                    std::string scriptError;
+                    ReloadProjectScriptAssembly(&scriptError);
+                    if (!scriptError.empty())
+                        m_statusMessage += " " + scriptError;
+                }
+            }
 
             lastTime = currentTime;
         }

@@ -14,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -353,5 +354,7 @@ namespace PlutoGE::ui
         bool m_openAnimationClipEditorRequested = false;
         bool m_openParticleSystemEditorRequested = false;
         bool m_openInputMappingEditorRequested = false;
+        std::optional<std::filesystem::path> m_pendingProjectLoad;
+        std::optional<render::rhi::GraphicsApi> m_pendingGraphicsApi;
     };
 }

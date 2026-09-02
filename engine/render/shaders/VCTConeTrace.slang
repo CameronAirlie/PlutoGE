@@ -17,6 +17,8 @@ struct TraceParameters
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 [[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
+[[vk::binding(4, 0)]] Sampler2D materialTexture : register(t4, space0);
+[[vk::binding(5, 0)]] Sampler2D albedoTexture : register(t5, space0);
 [[vk::binding(7, 0)]] Sampler3D voxelPositiveX : register(t7, space0);
 [[vk::binding(8, 0)]] Sampler3D voxelNegativeX : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler3D voxelPositiveY : register(t9, space0);
@@ -134,5 +136,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         indirect += traceCone(position, normal, direction);
     }
     indirect *= pass.traceSettings.x / (float(coneCount) * 3.14159265);
+    const float3 receiverAlbedo = albedoTexture.Sample(uv).rgb;
+    const float receiverMetallic = saturate(materialTexture.Sample(uv).r);
+    indirect *= receiverAlbedo * (1.0 - receiverMetallic);
     return pass.indirectOnly != 0 ? float4(indirect, 1.0) : float4(scene.rgb + indirect, scene.a);
 }

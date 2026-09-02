@@ -23,6 +23,7 @@ struct FragmentOutput
     float4 normal : SV_Target1;
     float4 material : SV_Target2;
     float4 motion : SV_Target3;
+    float4 albedo : SV_Target4;
 };
 
 [[vk::binding(0, 0)]]
@@ -339,5 +340,6 @@ FragmentOutput fragmentMain(VertexOutput input)
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
     output.motion = float4((currentNdc - previousNdc) * 0.25 + 0.5, 0.0, 1.0);
+    output.albedo = sampledColor;
     return output;
 }

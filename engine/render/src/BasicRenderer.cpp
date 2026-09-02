@@ -256,7 +256,8 @@ namespace PlutoGE::render
             descriptor.vertexShader = shaders.vertex;
             descriptor.fragmentShader = shaders.fragment;
             descriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm,
-                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float};
+                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
+                                       rhi::Format::R8G8B8A8Unorm};
             descriptor.resourceBindings = {
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                 {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
@@ -554,7 +555,7 @@ namespace PlutoGE::render
                 };
                 if (index == 0)
                 {
-                    addTexture(1); addTexture(2); addTexture(3);
+                    addTexture(1); addTexture(2); addTexture(3); addTexture(4); addTexture(5);
                     for (std::uint32_t slot = 7; slot <= 12; ++slot) addTexture(slot);
                 }
                 else if (index == 1)
@@ -618,6 +619,7 @@ namespace PlutoGE::render
         m_normalTarget.Reset();
         m_materialTarget.Reset();
         m_motionTarget.Reset();
+        m_albedoTarget.Reset();
         for (auto &target : m_shadowDepthTargets)
             target.Reset();
         for (auto &target : m_shadowColorTargets)
@@ -714,6 +716,8 @@ namespace PlutoGE::render
                                                        {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer material", true}));
         m_motionTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                                                      {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
+        m_albedoTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                                                     {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer albedo", true}));
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
@@ -901,7 +905,8 @@ namespace PlutoGE::render
             }
         }
         rhi::RenderingInfo renderingInfo;
-        renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(), m_motionTarget.Get()};
+        renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
+                                          m_motionTarget.Get(), m_albedoTarget.Get()};
         renderingInfo.depthAttachment = m_depthTarget.Get();
         renderingInfo.width = m_width;
         renderingInfo.height = m_height;
@@ -913,6 +918,7 @@ namespace PlutoGE::render
             {0.5f, 0.5f, 1.0f, 1.0f},    // Neutral encoded normal.
             {0.0f, 1.0f, 0.0f, 1.0f},    // Non-metallic, fully rough material.
             {0.5f, 0.5f, 0.0f, 1.0f},    // Encoded zero motion.
+            {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
         };
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
@@ -1421,6 +1427,8 @@ namespace PlutoGE::render
         commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
         commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_albedoTarget.Get(), m_screenSampler.Get());
         for (std::size_t direction = 0; direction < 6; ++direction)
             commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
         commands.Draw(3); commands.EndRendering();

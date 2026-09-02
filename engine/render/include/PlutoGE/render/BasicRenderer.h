@@ -343,6 +343,7 @@ namespace PlutoGE::render
         rhi::Texture m_normalTarget;
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
+        rhi::Texture m_albedoTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
         // screen-tile corruption. Keep one stable output per ordinary pass.

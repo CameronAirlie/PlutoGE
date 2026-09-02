@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -34,6 +35,7 @@ namespace PlutoGE::render::rhi::opengl
             GLuint program = 0;
             GLuint vertexArray = 0;
             GraphicsPipelineDescriptor descriptor;
+            bool compute = false;
         };
 
         GLenum BufferTarget(BufferUsage usage)
@@ -237,6 +239,8 @@ namespace PlutoGE::render::rhi::opengl
             m_pipeline = pipeline;
             glUseProgram(pipeline->program);
             glBindVertexArray(pipeline->vertexArray);
+            if (pipeline->compute)
+                return;
             pipeline->descriptor.depthTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
             glDepthMask(pipeline->descriptor.depthWrite ? GL_TRUE : GL_FALSE);
             pipeline->descriptor.blend.enabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
@@ -290,8 +294,19 @@ namespace PlutoGE::render::rhi::opengl
             if (!texture || !sampler)
                 throw std::invalid_argument("Invalid RHI texture or sampler");
             glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(GL_TEXTURE_2D, texture->name);
+            glBindTexture(texture->descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D, texture->name);
             glBindSampler(slot, sampler->name);
+        }
+
+        void BindStorageImage(std::uint32_t slot, TextureHandle textureHandle, std::uint32_t mipLevel) override
+        {
+            auto *texture = m_impl.textures.Get(textureHandle);
+            if (!texture)
+                throw std::invalid_argument("Invalid OpenGL storage image");
+            const auto format = ToTextureFormat(texture->descriptor.format);
+            glBindImageTexture(slot, texture->name, static_cast<GLint>(mipLevel),
+                               texture->descriptor.depth > 1 ? GL_TRUE : GL_FALSE,
+                               0, GL_READ_WRITE, format.internalFormat);
         }
 
         void Draw(std::uint32_t count, std::uint32_t firstVertex) override
@@ -311,6 +326,18 @@ namespace PlutoGE::render::rhi::opengl
             else
                 glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,
                                reinterpret_cast<const void *>(m_indexOffset + firstIndex * sizeof(std::uint32_t)));
+        }
+
+        void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
+        {
+            if (m_rendering || !m_pipeline || !m_pipeline->compute)
+                throw std::logic_error("OpenGL compute dispatch requires a compute pipeline outside rendering");
+            glDispatchCompute(x, y, z);
+        }
+
+        void ShaderMemoryBarrier() override
+        {
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         }
 
         void Submit() override {}
@@ -419,15 +446,39 @@ namespace PlutoGE::render::rhi::opengl
 
     TextureHandle OpenGLDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
-        if (descriptor.width == 0 || descriptor.height == 0)
+        if (descriptor.width == 0 || descriptor.height == 0 || descriptor.depth == 0)
             throw std::invalid_argument("RHI texture dimensions must be non-zero");
         const auto format = ToTextureFormat(descriptor.format);
         GLuint name = 0;
         glGenTextures(1, &name);
-        glBindTexture(GL_TEXTURE_2D, name);
-        glTexImage2D(GL_TEXTURE_2D, 0, format.internalFormat, static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height), 0, format.format, format.type, data.empty() ? nullptr : data.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        const GLenum target = descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
+        glBindTexture(target, name);
+        const auto maximumDimension = std::max({descriptor.width, descriptor.height, descriptor.depth});
+        const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(std::floor(std::log2(maximumDimension)));
+        const std::uint32_t mipCount = descriptor.mipLevels != 0 ? descriptor.mipLevels
+                                      : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
+        if (descriptor.depth > 1)
+            glTexStorage3D(target, static_cast<GLsizei>(mipCount), format.internalFormat,
+                           static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height),
+                           static_cast<GLsizei>(descriptor.depth));
+        else
+            glTexStorage2D(target, static_cast<GLsizei>(mipCount), format.internalFormat,
+                           static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height));
+        if (!data.empty())
+        {
+            if (descriptor.depth > 1)
+                glTexSubImage3D(target, 0, 0, 0, 0, static_cast<GLsizei>(descriptor.width),
+                                static_cast<GLsizei>(descriptor.height), static_cast<GLsizei>(descriptor.depth),
+                                format.format, format.type, data.data());
+            else
+                glTexSubImage2D(target, 0, 0, 0, static_cast<GLsizei>(descriptor.width),
+                                static_cast<GLsizei>(descriptor.height), format.format, format.type, data.data());
+            if (mipCount > 1)
+                glGenerateMipmap(target);
+        }
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         LabelObject(GL_TEXTURE, name, descriptor.debugName);
         return m_impl->textures.Insert(TextureResource{name, descriptor});
     }
@@ -436,7 +487,10 @@ namespace PlutoGE::render::rhi::opengl
     {
         GLuint name = 0;
         glGenSamplers(1, &name);
-        glSamplerParameteri(name, GL_TEXTURE_MIN_FILTER, descriptor.linearFiltering ? GL_LINEAR : GL_NEAREST);
+        glSamplerParameteri(name, GL_TEXTURE_MIN_FILTER,
+                            descriptor.mipFiltering
+                                ? (descriptor.linearFiltering ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
+                                : (descriptor.linearFiltering ? GL_LINEAR : GL_NEAREST));
         glSamplerParameteri(name, GL_TEXTURE_MAG_FILTER, descriptor.linearFiltering ? GL_LINEAR : GL_NEAREST);
         glSamplerParameteri(name, GL_TEXTURE_WRAP_S, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glSamplerParameteri(name, GL_TEXTURE_WRAP_T, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
@@ -448,12 +502,17 @@ namespace PlutoGE::render::rhi::opengl
     {
         const GLuint vertex = CompileShader(GL_VERTEX_SHADER, descriptor.vertexShader.glsl, descriptor.debugName);
         GLuint fragment = 0;
+        GLuint geometry = 0;
         GLuint program = 0;
         try
         {
             fragment = CompileShader(GL_FRAGMENT_SHADER, descriptor.fragmentShader.glsl, descriptor.debugName);
+            if (!descriptor.geometryShader.glsl.empty())
+                geometry = CompileShader(GL_GEOMETRY_SHADER, descriptor.geometryShader.glsl, descriptor.debugName);
             program = glCreateProgram();
             glAttachShader(program, vertex);
+            if (geometry)
+                glAttachShader(program, geometry);
             glAttachShader(program, fragment);
             glLinkProgram(program);
             GLint linked = GL_FALSE;
@@ -473,10 +532,14 @@ namespace PlutoGE::render::rhi::opengl
                 glDeleteProgram(program);
             if (fragment)
                 glDeleteShader(fragment);
+            if (geometry)
+                glDeleteShader(geometry);
             glDeleteShader(vertex);
             throw;
         }
         glDeleteShader(fragment);
+        if (geometry)
+            glDeleteShader(geometry);
         glDeleteShader(vertex);
         GLuint vertexArray = 0;
         glGenVertexArrays(1, &vertexArray);
@@ -484,7 +547,32 @@ namespace PlutoGE::render::rhi::opengl
         LabelObject(GL_PROGRAM, program, descriptor.debugName);
         LabelObject(GL_VERTEX_ARRAY, vertexArray, descriptor.debugName + " VAO");
         glBindVertexArray(0);
-        return m_impl->pipelines.Insert(PipelineResource{program, vertexArray, descriptor});
+        return m_impl->pipelines.Insert(PipelineResource{program, vertexArray, descriptor, false});
+    }
+
+    PipelineHandle OpenGLDevice::CreateComputePipeline(const ComputePipelineDescriptor &descriptor)
+    {
+        const GLuint shader = CompileShader(GL_COMPUTE_SHADER, descriptor.computeShader.glsl, descriptor.debugName);
+        GLuint program = glCreateProgram();
+        glAttachShader(program, shader);
+        glLinkProgram(program);
+        glDeleteShader(shader);
+        GLint linked = GL_FALSE;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        if (linked != GL_TRUE)
+        {
+            GLint length = 0;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
+            std::string log(static_cast<std::size_t>(std::max(length, 1)), '\0');
+            glGetProgramInfoLog(program, length, nullptr, log.data());
+            glDeleteProgram(program);
+            throw std::runtime_error(descriptor.debugName + " pipeline link failed: " + log);
+        }
+        GLuint vertexArray = 0;
+        glGenVertexArrays(1, &vertexArray);
+        GraphicsPipelineDescriptor compatibility;
+        compatibility.debugName = descriptor.debugName;
+        return m_impl->pipelines.Insert(PipelineResource{program, vertexArray, std::move(compatibility), true});
     }
 
     void OpenGLDevice::UpdateBuffer(BufferHandle handle, std::size_t offset, std::span<const std::byte> data)

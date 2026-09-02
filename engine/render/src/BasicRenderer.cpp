@@ -368,6 +368,32 @@ namespace PlutoGE::render
                 m_ssaoPipelines[index] = rhi::GraphicsPipeline(
                     device, device.CreateGraphicsPipeline(ssaoDescriptor));
             }
+            if (!shaders.vctCompute[0].glsl.empty() || !shaders.vctCompute[0].spirv.empty())
+            {
+                rhi::ComputePipelineDescriptor compute;
+                compute.computeShader = shaders.vctCompute[0];
+                compute.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Compute},
+                    {1, 0, 1, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {3, 0, 3, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                compute.debugName = "VCT accumulation resolve";
+                m_vctResolvePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
+            }
+            if (!shaders.vctCompute[1].glsl.empty() || !shaders.vctCompute[1].spirv.empty())
+            {
+                rhi::ComputePipelineDescriptor compute;
+                compute.computeShader = shaders.vctCompute[1];
+                compute.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Compute},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Compute},
+                    {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                compute.debugName = "VCT directional mip generation";
+                m_vctDirectionalMipPipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
+            }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             for (auto &buffer : m_shadowCameraBuffers)
                 buffer = rhi::Buffer(device, device.CreateBuffer(
@@ -383,6 +409,8 @@ namespace PlutoGE::render
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler({true, true, "BasicRenderer material sampler"}));
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
+            m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
+                                                          {true, false, "VCT volume sampler", true}));
             return true;
         }
         catch (...)
@@ -416,6 +444,7 @@ namespace PlutoGE::render
             target.Reset();
         m_shadowResolutions.fill(0);
         m_shadowSampler.Reset();
+        m_vctVolumeSampler.Reset();
         m_screenSampler.Reset();
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
@@ -435,6 +464,8 @@ namespace PlutoGE::render
             pipeline.Reset();
         for (auto &pipeline : m_ssaoPipelines)
             pipeline.Reset();
+        m_vctResolvePipeline.Reset();
+        m_vctDirectionalMipPipeline.Reset();
         for (auto &pipeline : m_postProcessPipelines)
             pipeline.Reset();
         m_shadowPipeline.Reset();

@@ -77,7 +77,9 @@ namespace PlutoGE::render
             "SSAO", "SSAOResolve", "SSAOComposite"};
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
             result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
-                                  .fragment = Load(ssaoModules[index], "fragment")};
+                                   .fragment = Load(ssaoModules[index], "fragment")};
+        result.vctCompute[0] = Load("VCTResolve", "compute");
+        result.vctCompute[1] = Load("VCTDirectionalMip", "compute");
         return result;
     }
 

@@ -238,6 +238,26 @@ namespace PlutoGE::render
         };
     }
 
+    VoxelConeTracingEffect::Settings VoxelConeTracingEffect::GetSettings() const noexcept
+    {
+        return {.resolution = m_resolution,
+                .cascadeCount = m_requestedCascadeCount,
+                .coneCount = m_coneCount,
+                .traceResolutionDivisor = m_traceResolutionDivisor,
+                .updateInterval = m_updateInterval,
+                .debugView = m_debugView,
+                .volumeSize = m_volumeSize,
+                .intensity = m_intensity,
+                .aperture = m_aperture,
+                .maxDistance = m_maxDistance,
+                .normalBias = m_normalBias,
+                .temporalBlend = m_temporalBlend,
+                .historyDepthThreshold = m_historyDepthThreshold,
+                .historyNormalThreshold = m_historyNormalThreshold,
+                .injectLocalLights = m_injectLocalLights,
+                .indirectOnly = m_indirectOnly};
+    }
+
     void VoxelConeTracingEffect::SetParameters(const std::vector<PostProcessParameter> &parameters)
     {
         for (const auto &p : parameters)

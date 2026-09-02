@@ -163,6 +163,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
+        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 2> vctCompute;
     };
 
     class BasicMesh
@@ -323,6 +324,7 @@ namespace PlutoGE::render
         rhi::Sampler m_fallbackSampler;
         rhi::Sampler m_screenSampler;
         rhi::Sampler m_shadowSampler;
+        rhi::Sampler m_vctVolumeSampler;
         rhi::Texture m_colorTarget;
         rhi::Texture m_displayTarget;
         rhi::Texture m_normalTarget;
@@ -337,6 +339,8 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
         std::array<rhi::Texture, 2> m_exposureHistoryTargets;
         std::array<rhi::GraphicsPipeline, 3> m_ssaoPipelines;
+        rhi::GraphicsPipeline m_vctResolvePipeline;
+        rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
         rhi::Texture m_ssaoRawTarget;
         std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;

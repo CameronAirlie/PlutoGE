@@ -19,6 +19,26 @@ namespace PlutoGE::render
     class VoxelConeTracingEffect : public ShaderPostProcessEffect
     {
     public:
+        struct Settings
+        {
+            int resolution = 64;
+            int cascadeCount = 2;
+            int coneCount = 5;
+            int traceResolutionDivisor = 4;
+            int updateInterval = 1;
+            int debugView = 0;
+            float volumeSize = 48.0f;
+            float intensity = 1.0f;
+            float aperture = 0.55f;
+            float maxDistance = 24.0f;
+            float normalBias = 0.35f;
+            float temporalBlend = 0.92f;
+            float historyDepthThreshold = 0.25f;
+            float historyNormalThreshold = 0.9f;
+            bool injectLocalLights = false;
+            bool indirectOnly = false;
+        };
+
         ~VoxelConeTracingEffect() override;
 
         void Initialize() override;
@@ -31,6 +51,7 @@ namespace PlutoGE::render
         bool OutputsIndirectOnly() const { return m_indirectOnly; }
         int GetDebugView() const { return m_debugView; }
         int GetTraceResolutionDivisor() const { return m_traceResolutionDivisor; }
+        [[nodiscard]] Settings GetSettings() const noexcept;
 
     private:
         // Cascades share six directional 3D atlases. This keeps the trace shader

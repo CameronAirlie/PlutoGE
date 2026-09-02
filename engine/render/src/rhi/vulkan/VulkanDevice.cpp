@@ -187,6 +187,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkImage image = VK_NULL_HANDLE;
             VkImageView view = VK_NULL_HANDLE;
+            std::vector<VkImageView> storageViews;
             VmaAllocation allocation = VK_NULL_HANDLE;
             TextureDescriptor descriptor;
             VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -206,6 +207,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::vector<bool> populatedSets;
             std::vector<std::vector<GraphicsPipelineDescriptor::ResourceBinding>> bindingsBySet;
             GraphicsPipelineDescriptor descriptor;
+            std::vector<GraphicsPipelineDescriptor::ResourceBinding> resourceBindings;
+            bool compute = false;
         };
 
         VkImageAspectFlags Aspect(const TextureResource &texture)
@@ -335,6 +338,7 @@ namespace PlutoGE::render::rhi::vulkan
             barrier.srcAccessMask = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL   ? VK_ACCESS_TRANSFER_WRITE_BIT
                                                                                   : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL     ? VK_ACCESS_TRANSFER_READ_BIT
                                                                                   : texture.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT
+                                                                                  : texture.layout == VK_IMAGE_LAYOUT_GENERAL                  ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
                                                                                   : texture.descriptor.format == Format::D32Float              ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                                                                                                                                                : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             const VkPipelineStageFlags sourceStage = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -359,8 +363,9 @@ namespace PlutoGE::render::rhi::vulkan
                 command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 command.commandBufferCount = 1;
                 Check(vkAllocateCommandBuffers(m_impl.device, &command, &frame.commandBuffer), "vkAllocateCommandBuffers(frame)");
-                std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
-                                                           {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384}}};
+                std::array<VkDescriptorPoolSize, 3> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
+                                                           {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384},
+                                                           {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}}};
                 VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 descriptors.maxSets = 32768;
                 descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
@@ -573,7 +578,9 @@ namespace PlutoGE::render::rhi::vulkan
                 }
                 m_pipeline = pipeline;
                 m_descriptorBindingsDirty = true;
-                vkCmdBindPipeline(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->pipeline);
+                vkCmdBindPipeline(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE
+                                                                       : VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  m_pipeline->pipeline);
             }
         }
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
@@ -631,6 +638,21 @@ namespace PlutoGE::render::rhi::vulkan
             m_sampledTextures[slot] = textureHandle;
             m_samplers[slot] = samplerHandle;
         }
+        void BindStorageImage(std::uint32_t slot, TextureHandle textureHandle, std::uint32_t mipLevel) override
+        {
+            auto *texture = m_impl.textures.Get(textureHandle);
+            if (!m_pipeline || slot >= MaxResourceSlots || !texture || !texture->descriptor.storage ||
+                mipLevel >= texture->mipLevels)
+                throw std::invalid_argument("Invalid Vulkan storage image binding");
+            if (texture->layout != VK_IMAGE_LAYOUT_GENERAL)
+                m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_GENERAL,
+                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            if (m_storageImages[slot] != textureHandle || m_storageMipLevels[slot] != mipLevel)
+                m_descriptorBindingsDirty = true;
+            m_storageImages[slot] = textureHandle;
+            m_storageMipLevels[slot] = mipLevel;
+        }
         void Draw(std::uint32_t count, std::uint32_t firstVertex) override
         {
             PrepareDraw();
@@ -641,6 +663,21 @@ namespace PlutoGE::render::rhi::vulkan
         {
             PrepareDraw();
             vkCmdDrawIndexed(CommandBuffer(), count, 1, firstIndex, vertexOffset, 0);
+        }
+        void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
+        {
+            if (m_rendering || !m_pipeline || !m_pipeline->compute)
+                throw std::logic_error("Vulkan compute dispatch requires a compute pipeline outside rendering");
+            PrepareDraw();
+            vkCmdDispatch(CommandBuffer(), x, y, z);
+        }
+        void ShaderMemoryBarrier() override
+        {
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
 
     private:
@@ -670,10 +707,10 @@ namespace PlutoGE::render::rhi::vulkan
         void PrepareDraw()
         {
             const auto descriptorStart = std::chrono::steady_clock::now();
-            if (!m_rendering || !m_pipeline)
+            if (!m_pipeline || (!m_pipeline->compute && !m_rendering))
                 throw std::logic_error("Vulkan draw requires active rendering and pipeline");
             const auto setCount = m_pipeline->setLayouts.size();
-            if (setCount > MaxDescriptorSets || m_pipeline->descriptor.resourceBindings.size() > MaxDescriptorBindings)
+            if (setCount > MaxDescriptorSets || m_pipeline->resourceBindings.size() > MaxDescriptorBindings)
                 throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
             if (!m_descriptorBindingsDirty)
             {
@@ -711,7 +748,7 @@ namespace PlutoGE::render::rhi::vulkan
                         dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                         key.resources[key.resourceCount++] = buffer->size;
                     }
-                    else
+                    else if (binding.type == ResourceBindingType::SampledTexture)
                     {
                         if (binding.slot >= MaxResourceSlots || !m_sampledTextures[binding.slot] || !m_samplers[binding.slot])
                             throw std::logic_error("Vulkan draw has an incomplete texture binding");
@@ -719,6 +756,13 @@ namespace PlutoGE::render::rhi::vulkan
                             throw std::logic_error("Vulkan descriptor set exceeds fixed cache key capacity");
                         key.resources[key.resourceCount++] = EncodeHandle(m_sampledTextures[binding.slot]);
                         key.resources[key.resourceCount++] = EncodeHandle(m_samplers[binding.slot]);
+                    }
+                    else
+                    {
+                        if (binding.slot >= MaxResourceSlots || !m_storageImages[binding.slot])
+                            throw std::logic_error("Vulkan command has an incomplete storage image binding");
+                        key.resources[key.resourceCount++] = EncodeHandle(m_storageImages[binding.slot]);
+                        key.resources[key.resourceCount++] = m_storageMipLevels[binding.slot];
                     }
                 }
                 dynamicOffsetCounts[setIndex] = dynamicOffsetCount - dynamicOffsetStarts[setIndex];
@@ -781,12 +825,21 @@ namespace PlutoGE::render::rhi::vulkan
                         write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
                         write.pBufferInfo = &buffers[bufferCount++];
                     }
-                    else
+                    else if (binding.type == ResourceBindingType::SampledTexture)
                     {
                         auto *texture = m_impl.textures.Get(m_sampledTextures[binding.slot]);
                         auto *sampler = m_impl.samplers.Get(m_samplers[binding.slot]);
                         images[imageCount] = {sampler->sampler, texture->view, texture->layout};
                         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                        write.pImageInfo = &images[imageCount++];
+                    }
+                    else
+                    {
+                        auto *texture = m_impl.textures.Get(m_storageImages[binding.slot]);
+                        images[imageCount] = {VK_NULL_HANDLE,
+                                             texture->storageViews[m_storageMipLevels[binding.slot]],
+                                             VK_IMAGE_LAYOUT_GENERAL};
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
                         write.pImageInfo = &images[imageCount++];
                     }
                     writes[writeCount++] = write;
@@ -805,7 +858,7 @@ namespace PlutoGE::render::rhi::vulkan
                 if (m_boundPipelineLayout == m_pipeline->layout &&
                     m_boundDescriptorSets[setIndex] == sets[setIndex] && offsetsMatch)
                     continue;
-                vkCmdBindDescriptorSets(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                vkCmdBindDescriptorSets(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
                                         static_cast<std::uint32_t>(setIndex), 1, &sets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
                 m_boundDescriptorSets[setIndex] = sets[setIndex];
@@ -844,7 +897,7 @@ namespace PlutoGE::render::rhi::vulkan
                 if (m_boundPipelineLayout == m_pipeline->layout &&
                     m_boundDescriptorSets[setIndex] == m_preparedDescriptorSets[setIndex] && offsetsMatch)
                     continue;
-                vkCmdBindDescriptorSets(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                vkCmdBindDescriptorSets(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
                                         static_cast<std::uint32_t>(setIndex), 1, &m_preparedDescriptorSets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
                 m_boundDescriptorSets[setIndex] = m_preparedDescriptorSets[setIndex];
@@ -908,6 +961,8 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<BufferHandle, MaxResourceSlots> m_uniformBuffers{};
         std::array<std::uint32_t, MaxResourceSlots> m_uniformDynamicOffsets{};
         std::array<TextureHandle, MaxResourceSlots> m_sampledTextures{};
+        std::array<TextureHandle, MaxResourceSlots> m_storageImages{};
+        std::array<std::uint32_t, MaxResourceSlots> m_storageMipLevels{};
         std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
         std::unordered_map<VkDescriptorSetLayout, VkDescriptorSet> m_emptyDescriptorSets;
         std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash> m_descriptorSetCache;
@@ -1497,16 +1552,18 @@ namespace PlutoGE::render::rhi::vulkan
 
     TextureHandle VulkanDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
-        if (!descriptor.width || !descriptor.height)
+        if (!descriptor.width || !descriptor.height || !descriptor.depth)
             throw std::invalid_argument("Invalid Vulkan texture dimensions");
         TextureResource resource;
         resource.descriptor = descriptor;
-        resource.mipLevels = descriptor.usage == TextureUsage::Sampled
-                                 ? 1u + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>((std::max)(descriptor.width, descriptor.height)))))
-                                 : 1u;
+        const auto maximumDimension = (std::max)({descriptor.width, descriptor.height, descriptor.depth});
+        const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(
+                                                      std::floor(std::log2(static_cast<double>(maximumDimension))));
+        resource.mipLevels = descriptor.mipLevels != 0 ? descriptor.mipLevels
+                              : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        image.imageType = VK_IMAGE_TYPE_2D;
-        image.extent = {descriptor.width, descriptor.height, 1};
+        image.imageType = descriptor.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+        image.extent = {descriptor.width, descriptor.height, descriptor.depth};
         image.mipLevels = resource.mipLevels;
         image.arrayLayers = 1;
         image.format = ToVkFormat(descriptor.format);
@@ -1518,15 +1575,28 @@ namespace PlutoGE::render::rhi::vulkan
                                                                                                                                                   : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
         if (descriptor.sampled)
             image.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (descriptor.storage)
+            image.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         Check(vmaCreateImage(m_impl->allocator, &image, &allocation, &resource.image, &resource.allocation, nullptr), "vmaCreateImage");
         VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view.image = resource.image;
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.viewType = descriptor.depth > 1 ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
         view.format = image.format;
         view.subresourceRange = {Aspect(resource), 0, resource.mipLevels, 0, 1};
         Check(vkCreateImageView(m_impl->device, &view, nullptr, &resource.view), "vkCreateImageView");
+        if (descriptor.storage)
+        {
+            resource.storageViews.resize(resource.mipLevels);
+            for (std::uint32_t level = 0; level < resource.mipLevels; ++level)
+            {
+                view.subresourceRange.baseMipLevel = level;
+                view.subresourceRange.levelCount = 1;
+                Check(vkCreateImageView(m_impl->device, &view, nullptr, &resource.storageViews[level]),
+                      "vkCreateImageView(storage mip)");
+            }
+        }
         const auto handle = m_impl->textures.Insert(std::move(resource));
         auto *stored = m_impl->textures.Get(handle);
         if (!data.empty())
@@ -1537,8 +1607,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::uint32_t mipWidth = descriptor.width;
             std::uint32_t mipHeight = descriptor.height;
             std::size_t levelOffset = 0;
-            copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {mipWidth, mipHeight, 1}});
-            for (std::uint32_t level = 1; level < stored->mipLevels; ++level)
+            copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {mipWidth, mipHeight, descriptor.depth}});
+            for (std::uint32_t level = 1; descriptor.depth == 1 && level < stored->mipLevels; ++level)
             {
                 const std::uint32_t nextWidth = (std::max)(1u, mipWidth / 2u);
                 const std::uint32_t nextHeight = (std::max)(1u, mipHeight / 2u);
@@ -1603,8 +1673,11 @@ namespace PlutoGE::render::rhi::vulkan
         auto module = [&](const auto &code)
         { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
+        VkShaderModule geometry = descriptor.geometryShader.spirv.empty() ? VK_NULL_HANDLE
+                                                                          : module(descriptor.geometryShader.spirv);
         PipelineResource resource;
         resource.descriptor = descriptor;
+        resource.resourceBindings = descriptor.resourceBindings;
         if (descriptor.resourceBindings.empty())
             throw std::invalid_argument("Vulkan pipeline requires declared shader resource bindings");
         std::uint32_t maximumSet = 0;
@@ -1613,13 +1686,17 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<std::vector<VkDescriptorSetLayoutBinding>> bindingsBySet(maximumSet + 1);
         for (const auto &binding : descriptor.resourceBindings)
         {
-            const VkShaderStageFlags stages =
-                binding.stages == ShaderStageMask::Vertex ? VK_SHADER_STAGE_VERTEX_BIT : binding.stages == ShaderStageMask::Fragment ? VK_SHADER_STAGE_FRAGMENT_BIT
-                                                                                                                                     : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            const VkShaderStageFlags stages = binding.stages == ShaderStageMask::Vertex ? VK_SHADER_STAGE_VERTEX_BIT
+                                               : binding.stages == ShaderStageMask::Fragment ? VK_SHADER_STAGE_FRAGMENT_BIT
+                                               : binding.stages == ShaderStageMask::Compute ? VK_SHADER_STAGE_COMPUTE_BIT
+                                               : binding.stages == ShaderStageMask::Geometry ? VK_SHADER_STAGE_GEOMETRY_BIT
+                                                                                           : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             bindingsBySet[binding.set].push_back({binding.binding,
                                                   binding.type == ResourceBindingType::UniformBuffer
                                                       ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
-                                                      : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                      : binding.type == ResourceBindingType::SampledTexture
+                                                            ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                   1, stages, nullptr});
         }
         resource.setLayouts.resize(bindingsBySet.size());
@@ -1642,7 +1719,13 @@ namespace PlutoGE::render::rhi::vulkan
         layout.pSetLayouts = resource.setLayouts.data();
         Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
-        std::array<VkPipelineShaderStageCreateInfo, 2> stages{{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"}}};
+        std::vector<VkPipelineShaderStageCreateInfo> stages{
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}};
+        if (geometry)
+            stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                              VK_SHADER_STAGE_GEOMETRY_BIT, geometry, "main"});
+        stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                          VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"});
         std::vector<VkVertexInputAttributeDescription> attributes;
         for (const auto &a : descriptor.vertexLayout.attributes)
             attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
@@ -1706,7 +1789,68 @@ namespace PlutoGE::render::rhi::vulkan
         const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline);
         vkDestroyShaderModule(m_impl->device, vertex, nullptr);
         vkDestroyShaderModule(m_impl->device, fragment, nullptr);
+        if (geometry)
+            vkDestroyShaderModule(m_impl->device, geometry, nullptr);
         Check(result, "vkCreateGraphicsPipelines");
+        return m_impl->pipelines.Insert(std::move(resource));
+    }
+
+    PipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineDescriptor &descriptor)
+    {
+        if (descriptor.computeShader.spirv.empty() || descriptor.resourceBindings.empty())
+            throw std::invalid_argument("Vulkan compute pipeline requires SPIR-V and declared resources");
+
+        PipelineResource resource;
+        resource.resourceBindings.assign(descriptor.resourceBindings.begin(), descriptor.resourceBindings.end());
+        resource.compute = true;
+        std::uint32_t maximumSet = 0;
+        for (const auto &binding : descriptor.resourceBindings)
+            maximumSet = (std::max)(maximumSet, binding.set);
+        std::vector<std::vector<VkDescriptorSetLayoutBinding>> nativeBindings(maximumSet + 1);
+        resource.setLayouts.resize(maximumSet + 1);
+        resource.populatedSets.resize(maximumSet + 1);
+        resource.bindingsBySet.resize(maximumSet + 1);
+        for (const auto &binding : descriptor.resourceBindings)
+        {
+            const auto descriptorType = binding.type == ResourceBindingType::UniformBuffer
+                                            ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
+                                        : binding.type == ResourceBindingType::SampledTexture
+                                            ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            nativeBindings[binding.set].push_back(
+                {binding.binding, descriptorType, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
+            resource.bindingsBySet[binding.set].push_back(binding);
+        }
+        for (std::size_t set = 0; set < nativeBindings.size(); ++set)
+        {
+            std::ranges::sort(resource.bindingsBySet[set], {},
+                              &GraphicsPipelineDescriptor::ResourceBinding::binding);
+            resource.populatedSets[set] = !nativeBindings[set].empty();
+            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            info.bindingCount = static_cast<std::uint32_t>(nativeBindings[set].size());
+            info.pBindings = nativeBindings[set].data();
+            Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[set]),
+                  "vkCreateDescriptorSetLayout(compute)");
+        }
+        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layout.setLayoutCount = static_cast<std::uint32_t>(resource.setLayouts.size());
+        layout.pSetLayouts = resource.setLayouts.data();
+        Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout),
+              "vkCreatePipelineLayout(compute)");
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = descriptor.computeShader.spirv.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = descriptor.computeShader.spirv.data();
+        VkShaderModule module = VK_NULL_HANDLE;
+        Check(vkCreateShaderModule(m_impl->device, &moduleInfo, nullptr, &module),
+              "vkCreateShaderModule(compute)");
+        VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                      VK_SHADER_STAGE_COMPUTE_BIT, module, "main"};
+        info.layout = resource.layout;
+        const VkResult result = vkCreateComputePipelines(m_impl->device, VK_NULL_HANDLE, 1,
+                                                         &info, nullptr, &resource.pipeline);
+        vkDestroyShaderModule(m_impl->device, module, nullptr);
+        Check(result, "vkCreateComputePipelines");
         return m_impl->pipelines.Insert(std::move(resource));
     }
 
@@ -1765,6 +1909,8 @@ namespace PlutoGE::render::rhi::vulkan
         if (auto r = m_impl->textures.Remove(h))
         {
             vkDeviceWaitIdle(m_impl->device);
+            for (const auto view : r->storageViews)
+                vkDestroyImageView(m_impl->device, view, nullptr);
             vkDestroyImageView(m_impl->device, r->view, nullptr);
             vmaDestroyImage(m_impl->allocator, r->image, r->allocation);
         }

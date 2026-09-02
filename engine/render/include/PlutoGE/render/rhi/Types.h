@@ -40,18 +40,23 @@ namespace PlutoGE::render::rhi
     enum class ShaderStage : std::uint8_t
     {
         Vertex,
-        Fragment
+        Fragment,
+        Geometry,
+        Compute
     };
     enum class ShaderStageMask : std::uint8_t
     {
         Vertex = 1,
         Fragment = 2,
-        AllGraphics = 3
+        Compute = 4,
+        Geometry = 8,
+        AllGraphics = 11
     };
     enum class ResourceBindingType : std::uint8_t
     {
         UniformBuffer,
-        SampledTexture
+        SampledTexture,
+        StorageImage
     };
     enum class PrimitiveTopology : std::uint8_t
     {
@@ -141,6 +146,12 @@ namespace PlutoGE::render::rhi
         TextureUsage usage = TextureUsage::Sampled;
         std::string debugName;
         bool sampled = false;
+        // A depth greater than one creates a true 3D image. It is deliberately
+        // appended so existing aggregate descriptors retain their ABI/source meaning.
+        std::uint32_t depth = 1;
+        bool storage = false;
+        // Zero requests the full chain for sampled textures; one disables mips.
+        std::uint32_t mipLevels = 0;
     };
 
     struct GraphicsPipelineDescriptor
@@ -151,6 +162,7 @@ namespace PlutoGE::render::rhi
             std::vector<std::uint32_t> spirv;
         };
         ShaderCode vertexShader;
+        ShaderCode geometryShader;
         ShaderCode fragmentShader;
         Format colorFormat = Format::R8G8B8A8Srgb;
         // Empty preserves the single-target colorFormat compatibility path.
@@ -177,10 +189,20 @@ namespace PlutoGE::render::rhi
         std::string debugName;
     };
 
+    struct ComputePipelineDescriptor
+    {
+        using ShaderCode = GraphicsPipelineDescriptor::ShaderCode;
+        using ResourceBinding = GraphicsPipelineDescriptor::ResourceBinding;
+        ShaderCode computeShader;
+        std::vector<ResourceBinding> resourceBindings;
+        std::string debugName;
+    };
+
     struct SamplerDescriptor
     {
         bool linearFiltering = true;
         bool repeat = true;
         std::string debugName;
+        bool mipFiltering = false;
     };
 }

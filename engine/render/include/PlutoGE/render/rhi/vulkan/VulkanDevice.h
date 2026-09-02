@@ -41,6 +41,7 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &) override;
         [[nodiscard]] PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &) override;
+        [[nodiscard]] PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &) override;
         void UpdateBuffer(BufferHandle, std::size_t, std::span<const std::byte>) override;
         void DestroyBuffer(BufferHandle) override;
         void DestroyTexture(TextureHandle) override;

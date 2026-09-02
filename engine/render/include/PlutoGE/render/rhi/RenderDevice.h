@@ -65,8 +65,12 @@ namespace PlutoGE::render::rhi
         virtual void BindIndexBuffer(BufferHandle buffer, Format indexFormat = Format::R32Uint, std::size_t offset = 0) = 0;
         virtual void BindUniformBuffer(std::uint32_t slot, BufferHandle buffer) = 0;
         virtual void BindTexture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) = 0;
+        virtual void BindStorageImage(std::uint32_t, TextureHandle, std::uint32_t mipLevel = 0) {}
         virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
+        virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
+        // Makes prior shader writes visible to subsequent shader reads/writes.
+        virtual void ShaderMemoryBarrier() {}
         // Submit all rendering recorded since the previous call. Explicit APIs
         // use this as the frame boundary; immediate APIs may make it a no-op.
         virtual void Submit() {}
@@ -105,6 +109,7 @@ namespace PlutoGE::render::rhi
         [[nodiscard]] virtual TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
         [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDescriptor &descriptor) = 0;
         [[nodiscard]] virtual PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &descriptor) = 0;
+        [[nodiscard]] virtual PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &) { return {}; }
         virtual void UpdateBuffer(BufferHandle buffer, std::size_t offset, std::span<const std::byte> data) = 0;
         virtual void DestroyBuffer(BufferHandle buffer) = 0;
         virtual void DestroyTexture(TextureHandle texture) = 0;

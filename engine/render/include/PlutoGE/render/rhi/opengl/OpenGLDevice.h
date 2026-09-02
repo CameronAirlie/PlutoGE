@@ -23,6 +23,7 @@ namespace PlutoGE::render::rhi::opengl
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &descriptor) override;
         [[nodiscard]] PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &descriptor) override;
+        [[nodiscard]] PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &descriptor) override;
         void UpdateBuffer(BufferHandle buffer, std::size_t offset, std::span<const std::byte> data) override;
         void DestroyBuffer(BufferHandle buffer) override;
         void DestroyTexture(TextureHandle texture) override;

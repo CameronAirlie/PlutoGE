@@ -53,7 +53,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (depthTexture.Sample(uv).r > 0.000001)
         return scene;
 
-    const float3 worldPosition = reconstructWorldPosition(uv, 1.0, pass.inverseViewProjection,
+    const float3 worldPosition = reconstructWorldPosition(uv, 0.0, pass.inverseViewProjection,
                                                            pass.flipY, pass.zeroToOneDepth);
     const float3 direction = normalize(worldPosition - pass.cameraPosition.xyz);
     const float3 sunDirection = normalize(pass.parameters[0].xyz);

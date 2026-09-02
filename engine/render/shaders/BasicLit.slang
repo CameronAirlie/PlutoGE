@@ -317,7 +317,12 @@ FragmentOutput fragmentMain(VertexOutput input)
         const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
         const float slope = 1.0 - ndotl;
         const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
-        const float depthBias = cascadeWorldTexel * lerp(0.05, 0.30, slope) / cascadeDepthRange;
+        // A large caster range can make the world-space-derived bias approach
+        // zero in the near cascade. Retain a texel-scaled floor to prevent
+        // every receiver from self-shadowing while preserving cascade scale.
+        const float depthBias = max(
+            cascadeWorldTexel * lerp(0.05, 0.30, slope) / cascadeDepthRange,
+            shadowInverseResolutions[cascade].x * lerp(0.5, 2.0, slope));
         const float3 receiverPosition = input.worldPosition + normal * normalBias;
         shadowVisibility = evaluateShadowCascade(cascade, receiverPosition, depthBias);
         rawShadowVisibility = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
@@ -332,7 +337,9 @@ FragmentOutput fragmentMain(VertexOutput input)
                 const float nextWorldTexel = max(shadowCascadeMetrics[cascade + 1].x, 0.00001);
                 const float nextDepthRange = max(shadowCascadeMetrics[cascade + 1].y, 0.0001);
                 const float nextNormalBias = nextWorldTexel * lerp(0.08, 0.60, slope);
-                const float nextDepthBias = nextWorldTexel * lerp(0.05, 0.30, slope) / nextDepthRange;
+                const float nextDepthBias = max(
+                    nextWorldTexel * lerp(0.05, 0.30, slope) / nextDepthRange,
+                    shadowInverseResolutions[cascade + 1].x * lerp(0.5, 2.0, slope));
                 const float3 nextReceiverPosition = input.worldPosition + normal * nextNormalBias;
                 shadowVisibility = lerp(shadowVisibility,
                                         evaluateShadowCascade(cascade + 1, nextReceiverPosition, nextDepthBias), blend);

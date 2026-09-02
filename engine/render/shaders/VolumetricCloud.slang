@@ -94,7 +94,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float4 scene = sceneTexture.Sample(uv);
     const float4x4 inverseVolume = pass.worldToLocal;
-    const float3 farPosition = reconstructWorldPosition(uv, 1.0, pass.inverseViewProjection,
+    // The renderer uses reverse-Z, so zero is the far plane. Building the ray
+    // from the near plane loses substantial direction precision in large
+    // worlds and can make the volume intersection cover the whole screen.
+    const float3 farPosition = reconstructWorldPosition(uv, 0.0, pass.inverseViewProjection,
                                                          pass.flipY, pass.zeroToOneDepth);
     const float3 rayDirection = normalize(farPosition - pass.cameraPosition.xyz);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);

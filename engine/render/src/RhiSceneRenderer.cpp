@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <numeric>
 
 namespace PlutoGE::render
 {
@@ -274,14 +275,9 @@ namespace PlutoGE::render
                                                               m_linearTextures, "Scene roughness");
                     }
                 }
-                if (command.instanceModels && !command.instanceModels->empty())
-                    for (const auto &model : *command.instanceModels)
-                    {
-                        draw.model = model;
-                        destination.push_back(draw);
-                    }
-                else
-                    destination.push_back(draw);
+                draw.instanceModels = command.instanceModels;
+                draw.previousInstanceModels = command.previousInstanceModels;
+                destination.push_back(std::move(draw));
             }
         };
         appendDraws(commands, draws, false);
@@ -294,6 +290,12 @@ namespace PlutoGE::render
         const auto translationEnd = std::chrono::steady_clock::now();
         m_timingStats.commandTranslationMs = millisecondsBetween(totalStart, translationEnd);
         m_timingStats.visibleDrawCount = draws.size();
+        m_timingStats.visibleInstanceCount = std::accumulate(
+            draws.begin(), draws.end(), std::size_t{0}, [](std::size_t count, const BasicDraw &draw)
+            {
+                return count + (draw.instanceModels && !draw.instanceModels->empty()
+                                    ? draw.instanceModels->size() : 1u);
+            });
         m_timingStats.shadowCandidateCount = shadowDraws.size();
 
         // Visibility is transient. Evicting resources that are merely outside
@@ -460,11 +462,14 @@ namespace PlutoGE::render
                            debugView);
         const auto &frameStats = m_renderer->GetFrameStats();
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
+        m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
         m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();
+        m_timingStats.recordedShadowInstanceCount = frameStats.shadowInstances;
         m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;
         m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
         m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
+        m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();
         m_timingStats.renderRecordingMs = millisecondsBetween(setupEnd, renderEnd);
         m_timingStats.totalMs = millisecondsBetween(totalStart, renderEnd);

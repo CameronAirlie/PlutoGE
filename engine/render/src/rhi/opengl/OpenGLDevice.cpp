@@ -337,6 +337,20 @@ namespace PlutoGE::render::rhi::opengl
                                reinterpret_cast<const void *>(m_indexOffset + firstIndex * sizeof(std::uint32_t)));
         }
 
+        void DrawIndexedInstanced(std::uint32_t count, std::uint32_t instanceCount,
+                                  std::uint32_t firstIndex, std::int32_t vertexOffset) override
+        {
+            if (!m_rendering || !m_pipeline)
+                throw std::logic_error("RHI instanced indexed draw requires active rendering and a pipeline");
+            const auto indices = reinterpret_cast<const void *>(m_indexOffset + firstIndex * sizeof(std::uint32_t));
+            if (vertexOffset != 0)
+                glDrawElementsInstancedBaseVertex(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,
+                                                  indices, static_cast<GLsizei>(instanceCount), vertexOffset);
+            else
+                glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,
+                                        indices, static_cast<GLsizei>(instanceCount));
+        }
+
         void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
         {
             if (m_rendering || !m_pipeline || !m_pipeline->compute)

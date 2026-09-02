@@ -59,6 +59,19 @@ cbuffer ObjectParameters : register(b0, space2)
     float4 objectDebugParameters;
 };
 
+struct InstanceObjectParameters
+{
+    column_major float4x4 model;
+    column_major float4x4 previousModel;
+    float4 debugParameters;
+};
+
+[[vk::binding(0, 3)]]
+cbuffer InstancedObjectParameters : register(b0, space3)
+{
+    InstanceObjectParameters instances[64];
+};
+
 [[vk::binding(0, 1)]]
 cbuffer MaterialParameters : register(b0, space1)
 {
@@ -237,6 +250,28 @@ VertexOutput vertexMain(VertexInput input)
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
+    return output;
+}
+
+[shader("vertex")]
+VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_InstanceID)
+{
+    VertexOutput output;
+    const InstanceObjectParameters instance = instances[instanceId];
+    const float4 worldPosition = mul(instance.model, float4(input.position, 1.0));
+    float3 localTangent = input.tangent.xyz;
+    if (dot(localTangent, localTangent) < 0.000001)
+    {
+        const float3 tangentAxis = abs(input.normal.y) < 0.999 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+        localTangent = normalize(cross(tangentAxis, input.normal));
+    }
+    output.position = mul(viewProjection, worldPosition);
+    output.currentClip = output.position;
+    output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(input.position, 1.0)));
+    output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
+    output.uv = input.uv;
+    output.worldPosition = worldPosition.xyz;
+    output.worldTangent = float4(normalize(mul((float3x3)instance.model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     return output;
 }
 

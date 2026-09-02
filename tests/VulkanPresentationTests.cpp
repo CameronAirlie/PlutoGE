@@ -44,8 +44,10 @@ int main()
 
             render::BasicRendererShaderPackage shaders;
             shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
+            shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
             shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
             shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
+            shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
             shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
             const auto loadPostProcess = [&](render::BasicPostProcessEffectType type, const char *module)
             {

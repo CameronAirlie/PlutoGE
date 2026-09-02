@@ -17,9 +17,12 @@ namespace PlutoGE::render
         float renderRecordingMs = 0.0f;
         float totalMs = 0.0f;
         std::size_t visibleDrawCount = 0;
+        std::size_t visibleInstanceCount = 0;
         std::size_t shadowCandidateCount = 0;
         std::size_t recordedGeometryDrawCount = 0;
+        std::size_t recordedGeometryInstanceCount = 0;
         std::size_t recordedShadowDrawCount = 0;
+        std::size_t recordedShadowInstanceCount = 0;
         std::size_t shadowObjectUploadCount = 0;
         std::size_t shadowCascadeUpdateCount = 0;
         std::size_t shadowCascadeCacheHitCount = 0;

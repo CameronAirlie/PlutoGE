@@ -118,8 +118,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
         shaders.vertex.glsl = ReadText("BasicLit.vertex.glsl");
+        shaders.instancedVertex.glsl = ReadText("BasicLitInstanced.vertex.glsl");
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
+        shaders.shadowInstancedVertex.glsl = ReadText("DirectionalShadowInstanced.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
         const auto loadPostProcess = [&](render::BasicPostProcessEffectType type, const char *module)
         {
@@ -191,13 +193,22 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         projection[2][3] = -1.0f;
         projection[3][2] = farPlane * nearPlane / (farPlane - nearPlane);
         const glm::mat4 view = glm::lookAtRH(glm::vec3(2.5f, 1.8f, 3.0f), glm::vec3(0.0f), glm::vec3(0, 1, 0));
-        const std::array draws = {render::BasicDraw{&cube, glm::mat4(1.0f)}};
+        const auto instances = std::make_shared<const std::vector<glm::mat4>>(
+            std::vector<glm::mat4>{glm::mat4(1.0f),
+                glm::translate(glm::mat4(1.0f), glm::vec3(0.75f, 0.0f, 0.0f))});
+        const std::array draws = {render::BasicDraw{.mesh = &cube, .instanceModels = instances}};
         // Model the shared editor context after a clipped ImGui draw. The RHI
         // render pass must establish its own raster state rather than inherit
         // a zero-area UI scissor.
         glEnable(GL_SCISSOR_TEST);
         glScissor(0, 0, 0, 0);
         basicRenderer.Render(projection * view, draws);
+        if (basicRenderer.GetFrameStats().geometryDraws != 1 ||
+            basicRenderer.GetFrameStats().geometryInstances != 2)
+        {
+            std::cerr << "OpenGL BasicRenderer did not batch geometry instances\n";
+            return 12;
+        }
 
         centerPixel.fill(0);
         glReadPixels(48, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, centerPixel.data());

@@ -183,10 +183,13 @@ namespace PlutoGE::ui
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
         report << "RHI scene total CPU: " << rhiScene.totalMs << " ms\n";
         report << "RHI command translation: " << rhiScene.commandTranslationMs << " ms ("
-               << rhiScene.visibleDrawCount << " translated visible draws, "
+               << rhiScene.visibleDrawCount << " translated groups / "
+               << rhiScene.visibleInstanceCount << " instances, "
                << rhiScene.shadowCandidateCount << " shadow candidates)\n";
-        report << "RHI recorded geometry draws: " << rhiScene.recordedGeometryDrawCount << "\n";
-        report << "RHI recorded shadow draws: " << rhiScene.recordedShadowDrawCount << " ("
+        report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
+               << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "RHI recorded shadows: " << rhiScene.recordedShadowDrawCount << " draws, "
+               << rhiScene.recordedShadowInstanceCount << " instances ("
                << rhiScene.recordedShadowDrawsByCascade[0] << ", "
                << rhiScene.recordedShadowDrawsByCascade[1] << ", "
                << rhiScene.recordedShadowDrawsByCascade[2] << ", "

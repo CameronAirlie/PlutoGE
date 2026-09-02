@@ -66,6 +66,15 @@ namespace PlutoGE::render
             glm::mat4 previousModel{1.0f};
             glm::vec4 debugParameters{0.0f}; // normalized LOD
         };
+        constexpr std::size_t kMaxInstancesPerDraw = 64;
+        struct alignas(16) BasicInstanceObjectParameters
+        {
+            std::array<BasicObjectParameters, kMaxInstancesPerDraw> instances{};
+        };
+        struct alignas(16) BasicShadowInstanceParameters
+        {
+            std::array<glm::mat4, kMaxInstancesPerDraw> models{};
+        };
 
         struct alignas(16) BasicDebugViewParameters
         {
@@ -211,6 +220,12 @@ namespace PlutoGE::render
                 HashVctValue(hash, draw.model);
                 HashVctValue(hash, draw.firstIndex);
                 HashVctValue(hash, draw.indexCount);
+                if (draw.instanceModels && !draw.instanceModels->empty())
+                {
+                    HashVctValue(hash, draw.instanceModels->size());
+                    for (const auto &model : *draw.instanceModels)
+                        HashVctValue(hash, model);
+                }
             }
             return hash;
         }
@@ -281,6 +296,10 @@ namespace PlutoGE::render
             return false;
         if (shaders.fragment.glsl.empty() && shaders.fragment.spirv.empty())
             return false;
+        if (shaders.instancedVertex.glsl.empty() && shaders.instancedVertex.spirv.empty())
+            return false;
+        if (shaders.shadowInstancedVertex.glsl.empty() && shaders.shadowInstancedVertex.spirv.empty())
+            return false;
 
         try
         {
@@ -318,6 +337,13 @@ namespace PlutoGE::render
             descriptor.cullMode = rhi::CullMode::None;
             descriptor.debugName = "BasicRenderer opaque pipeline";
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
+            auto instancedDescriptor = descriptor;
+            instancedDescriptor.vertexShader = shaders.instancedVertex;
+            instancedDescriptor.resourceBindings.back() =
+                {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
+            instancedDescriptor.debugName = "BasicRenderer instanced opaque pipeline";
+            m_instancedPipeline = rhi::GraphicsPipeline(
+                device, device.CreateGraphicsPipeline(instancedDescriptor));
             rhi::GraphicsPipelineDescriptor shadowDescriptor;
             shadowDescriptor.vertexShader = shaders.shadowVertex;
             shadowDescriptor.fragmentShader = shaders.shadowFragment;
@@ -335,6 +361,13 @@ namespace PlutoGE::render
             shadowDescriptor.depthCompare = rhi::CompareOperation::Less;
             shadowDescriptor.debugName = "Directional shadow pipeline";
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
+            auto shadowInstancedDescriptor = shadowDescriptor;
+            shadowInstancedDescriptor.vertexShader = shaders.shadowInstancedVertex;
+            shadowInstancedDescriptor.resourceBindings.back() =
+                {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
+            shadowInstancedDescriptor.debugName = "Directional instanced shadow pipeline";
+            m_shadowInstancedPipeline = rhi::GraphicsPipeline(
+                device, device.CreateGraphicsPipeline(shadowInstancedDescriptor));
             if ((!shaders.displayOutput.vertex.glsl.empty() || !shaders.displayOutput.vertex.spirv.empty()) &&
                 (!shaders.displayOutput.fragment.glsl.empty() || !shaders.displayOutput.fragment.spirv.empty()))
             {
@@ -678,12 +711,14 @@ namespace PlutoGE::render
         m_fallbackNormalTexture.Reset();
         m_fallbackDataTexture.Reset();
         m_objectBuffers.clear();
+        m_instanceBuffers.clear();
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
         m_debugViewBuffer.Reset();
         for (auto &buffer : m_shadowCameraBuffers)
             buffer.Reset();
         m_shadowObjectBuffers.clear();
+        m_shadowInstanceBuffers.clear();
         m_postProcessBuffers.clear();
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines)
@@ -700,8 +735,10 @@ namespace PlutoGE::render
         for (auto &pipeline : m_postProcessPipelines)
             pipeline.Reset();
         m_shadowPipeline.Reset();
+        m_shadowInstancedPipeline.Reset();
         m_displayPipeline.Reset();
         m_pipeline.Reset();
+        m_instancedPipeline.Reset();
         m_device = nullptr;
         m_width = 0;
         m_height = 0;
@@ -950,14 +987,36 @@ namespace PlutoGE::render
             while (m_shadowObjectBuffers.size() < shadowDraws.size())
                 m_shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                                                                   {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
+            std::vector<std::size_t> shadowInstanceBufferStarts(shadowDraws.size());
+            std::size_t shadowInstanceBufferCursor = 0;
             for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
             {
                 const auto &draw = shadowDraws[drawIndex];
                 if (m_shadowVisibleInAnyCascade[drawIndex] != 0u)
                 {
-                    m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
-                                           Bytes(BasicObjectParameters{draw.model, draw.model}));
-                    ++m_frameStats.shadowObjectUploads;
+                    if (draw.instanceModels && draw.instanceModels->size() > 1)
+                    {
+                        shadowInstanceBufferStarts[drawIndex] = shadowInstanceBufferCursor;
+                        for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
+                        {
+                            if (shadowInstanceBufferCursor == m_shadowInstanceBuffers.size())
+                                m_shadowInstanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                                    {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform,
+                                     "BasicRenderer shadow instances"}));
+                            BasicShadowInstanceParameters parameters;
+                            const auto count = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
+                            std::copy_n(draw.instanceModels->begin() + first, count, parameters.models.begin());
+                            m_device->UpdateBuffer(m_shadowInstanceBuffers[shadowInstanceBufferCursor++].Get(), 0,
+                                                   Bytes(parameters));
+                            ++m_frameStats.shadowObjectUploads;
+                        }
+                    }
+                    else
+                    {
+                        m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
+                                               Bytes(BasicObjectParameters{draw.model, draw.model}));
+                        ++m_frameStats.shadowObjectUploads;
+                    }
                 }
             }
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
@@ -975,20 +1034,37 @@ namespace PlutoGE::render
                 shadowInfo.clearColorValue[0] = 1.0f;
                 shadowInfo.clearDepthValue = 1.0f;
                 commands.BeginRendering(shadowInfo);
-                commands.BindPipeline(m_shadowPipeline.Get());
-                commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
                 for (const auto drawIndex : m_shadowCascadeDrawIndices[cascade])
                 {
                     const auto &draw = shadowDraws[drawIndex];
-                    commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
+                    const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
+                    commands.BindPipeline(instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get());
+                    commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
                     commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                     commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                     const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
                     if (count)
                     {
-                        commands.DrawIndexed(count, draw.firstIndex);
-                        ++m_frameStats.shadowDrawsByCascade[cascade];
+                        if (instanced)
+                        {
+                            std::size_t bufferIndex = shadowInstanceBufferStarts[drawIndex];
+                            for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
+                            {
+                                const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
+                                commands.BindUniformBuffer(17, m_shadowInstanceBuffers[bufferIndex++].Get());
+                                commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
+                                ++m_frameStats.shadowDrawsByCascade[cascade];
+                                m_frameStats.shadowInstances += instanceCount;
+                            }
+                        }
+                        else
+                        {
+                            commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
+                            commands.DrawIndexed(count, draw.firstIndex);
+                            ++m_frameStats.shadowDrawsByCascade[cascade];
+                            ++m_frameStats.shadowInstances;
+                        }
                     }
                 }
                 commands.EndRendering();
@@ -1015,27 +1091,30 @@ namespace PlutoGE::render
         };
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
-        commands.BindPipeline(m_pipeline.Get());
-        commands.BindUniformBuffer(0, m_cameraBuffer.Get());
         std::size_t drawIndex = 0;
+        std::size_t instanceBufferCursor = 0;
         for (const auto &draw : draws)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 continue;
-            if (drawIndex == m_objectBuffers.size())
+            const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
+            commands.BindPipeline(instanced ? m_instancedPipeline.Get() : m_pipeline.Get());
+            commands.BindUniformBuffer(0, m_cameraBuffer.Get());
+            while (!instanced && drawIndex >= m_objectBuffers.size())
             {
                 m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                                                             {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
             }
-            auto &objectBuffer = m_objectBuffers[drawIndex++];
-            const BasicObjectParameters objectParameters{
-                draw.model,
-                m_hasPreviousFrame && drawIndex - 1 < m_previousModels.size()
-                    ? m_previousModels[drawIndex - 1]
-                    : draw.model,
-                glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
-            m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
-            commands.BindUniformBuffer(16, objectBuffer.Get());
+            if (!instanced)
+            {
+                auto &objectBuffer = m_objectBuffers[drawIndex];
+                const BasicObjectParameters objectParameters{
+                    draw.model,
+                    m_hasPreviousFrame && drawIndex < m_previousModels.size() ? m_previousModels[drawIndex] : draw.model,
+                    glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
+                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
+            }
+            ++drawIndex;
             if (m_materialBuffers.size() < drawIndex)
             {
                 m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
@@ -1072,8 +1151,40 @@ namespace PlutoGE::render
             const std::uint32_t drawCount = std::min(requestedCount, availableCount);
             if (drawCount != 0)
             {
-                commands.DrawIndexed(drawCount, draw.firstIndex);
-                ++m_frameStats.geometryDraws;
+                if (instanced)
+                {
+                    for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
+                    {
+                        if (instanceBufferCursor == m_instanceBuffers.size())
+                            m_instanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                                {sizeof(BasicInstanceObjectParameters), rhi::BufferUsage::Uniform,
+                                 "BasicRenderer geometry instances"}));
+                        BasicInstanceObjectParameters parameters;
+                        const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
+                        const bool hasPrevious = draw.previousInstanceModels &&
+                                                 draw.previousInstanceModels->size() == draw.instanceModels->size();
+                        for (std::size_t instance = 0; instance < instanceCount; ++instance)
+                        {
+                            const auto &model = (*draw.instanceModels)[first + instance];
+                            const auto &previous = hasPrevious ? (*draw.previousInstanceModels)[first + instance] : model;
+                            parameters.instances[instance] = {model, previous,
+                                glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
+                        }
+                        auto &instanceBuffer = m_instanceBuffers[instanceBufferCursor++];
+                        m_device->UpdateBuffer(instanceBuffer.Get(), 0, Bytes(parameters));
+                        commands.BindUniformBuffer(17, instanceBuffer.Get());
+                        commands.DrawIndexedInstanced(drawCount, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
+                        ++m_frameStats.geometryDraws;
+                        m_frameStats.geometryInstances += instanceCount;
+                    }
+                }
+                else
+                {
+                    commands.BindUniformBuffer(16, m_objectBuffers[drawIndex - 1].Get());
+                    commands.DrawIndexed(drawCount, draw.firstIndex);
+                    ++m_frameStats.geometryDraws;
+                    ++m_frameStats.geometryInstances;
+                }
             }
         }
         commands.EndRendering();

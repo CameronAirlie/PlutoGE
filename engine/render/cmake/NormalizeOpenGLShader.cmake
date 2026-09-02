@@ -7,6 +7,7 @@ file(READ "${INPUT}" shader_source)
 # [[vk::binding]]. OpenGL has one namespace per resource class, so the source
 # uses deliberately flattened register indices and this removes only `set`.
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*2" "binding = 16" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*3" "binding = 17" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*1" "binding = 9" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*2,[ \t]*set[ \t]*=[ \t]*1" "binding = 10" shader_source "${shader_source}")
@@ -20,6 +21,7 @@ string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_sourc
 # Slang uses the SPIR-V/Vulkan builtin spelling for SV_VertexID when emitting
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.
 string(REPLACE "gl_VertexIndex" "gl_VertexID" shader_source "${shader_source}")
+string(REPLACE "gl_InstanceIndex" "gl_InstanceID" shader_source "${shader_source}")
 # Slang derives the GLSL image qualifier from the source value type. Some
 # resources intentionally store 32-bit shader values into 16-bit float images;
 # OpenGL requires the declaration to match the bound image's internal format.

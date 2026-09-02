@@ -715,6 +715,13 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdDrawIndexed(CommandBuffer(), count, 1, firstIndex, vertexOffset, 0);
             ++m_impl.timingStats.indexedDrawCalls;
         }
+        void DrawIndexedInstanced(std::uint32_t count, std::uint32_t instanceCount,
+                                  std::uint32_t firstIndex, std::int32_t vertexOffset) override
+        {
+            PrepareDraw();
+            vkCmdDrawIndexed(CommandBuffer(), count, instanceCount, firstIndex, vertexOffset, 0);
+            ++m_impl.timingStats.indexedDrawCalls;
+        }
         void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
         {
             if (m_rendering || !m_pipeline || !m_pipeline->compute)

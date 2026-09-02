@@ -38,8 +38,10 @@ namespace PlutoGE::render
     {
         BasicRendererShaderPackage result{
             .vertex = Load("BasicLit", "vertex"),
+            .instancedVertex = Load("BasicLitInstanced", "vertex"),
             .fragment = Load("BasicLit", "fragment"),
             .shadowVertex = Load("DirectionalShadow", "vertex"),
+            .shadowInstancedVertex = Load("DirectionalShadowInstanced", "vertex"),
             .shadowFragment = Load("DirectionalShadow", "fragment"),
             .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
                               .fragment = Load("DisplayOutput", "fragment")}};

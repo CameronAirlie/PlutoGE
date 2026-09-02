@@ -158,8 +158,10 @@ namespace PlutoGE::render
     struct BasicRendererShaderPackage
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode instancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
         BasicPostProcessShaderPackage displayOutput;
         std::array<BasicPostProcessShaderPackage,
@@ -218,6 +220,8 @@ namespace PlutoGE::render
         std::uint32_t indexCount = 0;
         bool contributesToGi = true;
         float normalizedLod = 0.0f;
+        std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
+        std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
     };
 
     struct BasicLighting
@@ -275,8 +279,10 @@ namespace PlutoGE::render
     struct BasicRendererFrameStats
     {
         std::size_t geometryDraws = 0;
+        std::size_t geometryInstances = 0;
         std::size_t shadowCandidates = 0;
         std::size_t shadowObjectUploads = 0;
+        std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
         std::array<std::size_t, 4> shadowDrawsByCascade{};
@@ -340,7 +346,9 @@ namespace PlutoGE::render
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
+        rhi::GraphicsPipeline m_instancedPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
+        rhi::GraphicsPipeline m_shadowInstancedPipeline;
         rhi::GraphicsPipeline m_displayPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
@@ -349,6 +357,7 @@ namespace PlutoGE::render
         // Shadow object transforms are cascade-independent and are uploaded
         // once per caster, then referenced by every intersecting cascade.
         std::vector<rhi::Buffer> m_shadowObjectBuffers;
+        std::vector<rhi::Buffer> m_shadowInstanceBuffers;
         // Reused visibility scratch keeps cascade filtering out of the command-recording
         // loop without introducing per-frame allocations.
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
@@ -359,6 +368,7 @@ namespace PlutoGE::render
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;
+        std::vector<rhi::Buffer> m_instanceBuffers;
         std::vector<rhi::Buffer> m_materialBuffers;
         rhi::Texture m_fallbackTexture;
         rhi::Texture m_fallbackNormalTexture;

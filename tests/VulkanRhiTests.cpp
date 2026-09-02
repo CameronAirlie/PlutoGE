@@ -31,8 +31,10 @@ int main()
         rhi::vulkan::VulkanDevice device;
         BasicRendererShaderPackage shaders;
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
+        shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
+        shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
         shaders.displayOutput.vertex.spirv = ReadSpirv("DisplayOutput.vertex.spv");
         shaders.displayOutput.fragment.spirv = ReadSpirv("DisplayOutput.fragment.spv");
@@ -136,10 +138,13 @@ int main()
         projection[2][3] = -1.0f;
         projection[3][2] = farPlane * nearPlane / (farPlane - nearPlane);
         const glm::mat4 view = glm::lookAtRH(glm::vec3(2.5f, 1.8f, 3.0f), glm::vec3(0), glm::vec3(0, 1, 0));
+        const auto cubeInstances = std::make_shared<const std::vector<glm::mat4>>(
+            std::vector<glm::mat4>{
+                glm::translate(glm::mat4(1), glm::vec3(-0.65f, 0, 0)),
+                glm::translate(glm::mat4(1), glm::vec3(0.65f, 0, 0))});
         const std::array draws{
-            BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(-0.65f, 0, 0))},
-            BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(0.65f, 0, 0))},
-            BasicDraw{&corner, glm::mat4(1)},
+            BasicDraw{.mesh = &cube, .instanceModels = cubeInstances},
+            BasicDraw{.mesh = &corner},
         };
         BasicLighting neutralLighting;
         neutralLighting.view = view;
@@ -149,8 +154,8 @@ int main()
         neutralLighting.shadowsEnabled = true;
         renderer.Render(projection * view, neutralLighting, draws);
         const auto &frameStats = renderer.GetFrameStats();
-        if (frameStats.geometryDraws != draws.size() || frameStats.shadowCandidates != draws.size() ||
-            frameStats.shadowObjectUploads > frameStats.shadowCandidates)
+        if (frameStats.geometryDraws != draws.size() || frameStats.geometryInstances != 3 ||
+            frameStats.shadowCandidates != draws.size() || frameStats.shadowObjectUploads > 3)
         {
             std::cerr << "BasicRenderer reported inconsistent recorded-work statistics\n";
             return 12;

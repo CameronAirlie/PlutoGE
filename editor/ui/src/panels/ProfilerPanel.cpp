@@ -209,13 +209,17 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhi.uniformBytesUploaded), rhi.uniformUploadCpuMs);
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
         ImGui::Text("RHI scene CPU: %.2f ms", rhiScene.totalMs);
-        ImGui::Text("  Translation: %.2f ms (%llu visible, %llu shadow candidates)",
+        ImGui::Text("  Translation: %.2f ms (%llu groups / %llu instances, %llu shadow candidates)",
                     rhiScene.commandTranslationMs,
                     static_cast<unsigned long long>(rhiScene.visibleDrawCount),
+                    static_cast<unsigned long long>(rhiScene.visibleInstanceCount),
                     static_cast<unsigned long long>(rhiScene.shadowCandidateCount));
-        ImGui::Text("  Recorded: %llu geometry, %llu shadow draws; %llu shadow uploads",
+        ImGui::Text("  Recorded: %llu geometry draws / %llu instances",
                     static_cast<unsigned long long>(rhiScene.recordedGeometryDrawCount),
+                    static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount));
+        ImGui::Text("  Shadows: %llu draws / %llu instances; %llu uploads",
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawCount),
+                    static_cast<unsigned long long>(rhiScene.recordedShadowInstanceCount),
                     static_cast<unsigned long long>(rhiScene.shadowObjectUploadCount));
         ImGui::Text("  Shadow cascades: %llu / %llu / %llu / %llu draws",
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[0]),

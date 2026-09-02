@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -74,6 +75,13 @@ namespace PlutoGE::render::rhi
         virtual void BindStorageImage(std::uint32_t, TextureHandle, std::uint32_t mipLevel = 0) {}
         virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
+        virtual void DrawIndexedInstanced(std::uint32_t indexCount, std::uint32_t instanceCount,
+                                          std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0)
+        {
+            if (instanceCount != 1)
+                throw std::logic_error("Instanced indexed drawing is unsupported by this command context");
+            DrawIndexed(indexCount, firstIndex, vertexOffset);
+        }
         virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
         // Makes prior shader writes visible to subsequent shader reads/writes.
         virtual void ShaderMemoryBarrier() {}

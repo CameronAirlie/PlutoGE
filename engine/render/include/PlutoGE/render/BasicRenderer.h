@@ -272,6 +272,24 @@ namespace PlutoGE::render
         glm::mat4 worldToLocal{1.0f};
     };
 
+    struct BasicRendererFrameStats
+    {
+        std::size_t geometryDraws = 0;
+        std::size_t shadowCandidates = 0;
+        std::size_t shadowObjectUploads = 0;
+        std::size_t shadowCascadeUpdates = 0;
+        std::size_t shadowCascadeCacheHits = 0;
+        std::array<std::size_t, 4> shadowDrawsByCascade{};
+
+        [[nodiscard]] std::size_t ShadowDraws() const noexcept
+        {
+            std::size_t total = 0;
+            for (const auto count : shadowDrawsByCascade)
+                total += count;
+            return total;
+        }
+    };
+
     class BasicRenderer
     {
     public:
@@ -299,6 +317,7 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept { return m_height; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
+        [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
 
     private:
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
@@ -330,6 +349,10 @@ namespace PlutoGE::render
         // Shadow object transforms are cascade-independent and are uploaded
         // once per caster, then referenced by every intersecting cascade.
         std::vector<rhi::Buffer> m_shadowObjectBuffers;
+        // Reused visibility scratch keeps cascade filtering out of the command-recording
+        // loop without introducing per-frame allocations.
+        std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
+        std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;
@@ -404,6 +427,8 @@ namespace PlutoGE::render
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
         std::array<std::uint32_t, 4> m_shadowResolutions{};
+        std::array<std::uint64_t, 4> m_shadowContentSignatures{};
+        std::array<bool, 4> m_shadowCacheValid{};
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
         std::uint64_t m_frameIndex = 0;
@@ -415,5 +440,6 @@ namespace PlutoGE::render
         std::vector<glm::mat4> m_previousModels;
         bool m_hasPreviousFrame = false;
         rhi::TextureHandle m_outputColor;
+        BasicRendererFrameStats m_frameStats;
     };
 }

@@ -27,6 +27,10 @@ namespace PlutoGE::render::rhi
         std::uint64_t descriptorAllocationCalls = 0;
         std::uint64_t descriptorSetsAllocated = 0;
         std::uint64_t descriptorWrites = 0;
+        std::uint64_t descriptorBindCalls = 0;
+        std::uint64_t drawCalls = 0;
+        std::uint64_t indexedDrawCalls = 0;
+        std::uint64_t dispatchCalls = 0;
         std::uint64_t uniformBytesUploaded = 0;
         float descriptorCpuMs = 0.0f;
         float uniformUploadCpuMs = 0.0f;

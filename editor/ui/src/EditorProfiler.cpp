@@ -174,14 +174,26 @@ namespace PlutoGE::ui
         report << "RHI descriptor allocation calls: " << rhi.descriptorAllocationCalls << "\n";
         report << "RHI descriptor sets allocated: " << rhi.descriptorSetsAllocated << "\n";
         report << "RHI descriptor writes: " << rhi.descriptorWrites << "\n";
+        report << "RHI descriptor bind calls: " << rhi.descriptorBindCalls << "\n";
+        report << "RHI commands recorded: " << rhi.indexedDrawCalls << " indexed draws, "
+               << rhi.drawCalls << " non-indexed draws, " << rhi.dispatchCalls << " dispatches\n";
         report << "RHI descriptor preparation CPU: " << rhi.descriptorCpuMs << " ms\n";
         report << "RHI uniform upload: " << rhi.uniformBytesUploaded << " bytes in "
                << rhi.uniformUploadCpuMs << " ms CPU\n";
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
         report << "RHI scene total CPU: " << rhiScene.totalMs << " ms\n";
         report << "RHI command translation: " << rhiScene.commandTranslationMs << " ms ("
-               << rhiScene.visibleDrawCount << " visible draws, " << rhiScene.shadowDrawCount
-               << " shadow draws)\n";
+               << rhiScene.visibleDrawCount << " translated visible draws, "
+               << rhiScene.shadowCandidateCount << " shadow candidates)\n";
+        report << "RHI recorded geometry draws: " << rhiScene.recordedGeometryDrawCount << "\n";
+        report << "RHI recorded shadow draws: " << rhiScene.recordedShadowDrawCount << " ("
+               << rhiScene.recordedShadowDrawsByCascade[0] << ", "
+               << rhiScene.recordedShadowDrawsByCascade[1] << ", "
+               << rhiScene.recordedShadowDrawsByCascade[2] << ", "
+               << rhiScene.recordedShadowDrawsByCascade[3] << " by cascade; "
+               << rhiScene.shadowObjectUploadCount << " object uploads)\n";
+        report << "RHI shadow cascade cache: " << rhiScene.shadowCascadeCacheHitCount << " hits, "
+               << rhiScene.shadowCascadeUpdateCount << " updates\n";
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
         for (const auto &scope : rhi.gpuScopes)

@@ -294,7 +294,7 @@ namespace PlutoGE::render
         const auto translationEnd = std::chrono::steady_clock::now();
         m_timingStats.commandTranslationMs = millisecondsBetween(totalStart, translationEnd);
         m_timingStats.visibleDrawCount = draws.size();
-        m_timingStats.shadowDrawCount = shadowDraws.size();
+        m_timingStats.shadowCandidateCount = shadowDraws.size();
 
         // Visibility is transient. Evicting resources that are merely outside
         // the current camera frustum makes camera rotation synchronously rebuild
@@ -458,6 +458,13 @@ namespace PlutoGE::render
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
                            debugView);
+        const auto &frameStats = m_renderer->GetFrameStats();
+        m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
+        m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();
+        m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;
+        m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
+        m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
+        m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         const auto renderEnd = std::chrono::steady_clock::now();
         m_timingStats.renderRecordingMs = millisecondsBetween(setupEnd, renderEnd);
         m_timingStats.totalMs = millisecondsBetween(totalStart, renderEnd);

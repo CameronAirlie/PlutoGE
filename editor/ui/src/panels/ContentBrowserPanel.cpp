@@ -56,6 +56,7 @@ namespace PlutoGE::ui
     public:
         ~AssetThumbnailCache()
         {
+            if (!CanDeleteOpenGLResources()) return;
             for (const auto &[reference, entry] : m_entries)
             {
                 (void)reference;
@@ -74,6 +75,12 @@ namespace PlutoGE::ui
 
         GLuint Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
         {
+            // Mesh/material thumbnails are implemented with legacy OpenGL. A Vulkan
+            // editor window has no GL context and its GLAD dispatch table is null.
+            // Texture IDs are not portable to ImGui's Vulkan backend either, so do
+            // not expose any part of this cache when OpenGL is not active.
+            if (!PrepareOpenGL(engine)) return 0;
+
             if (asset.type != assets::ProjectAssetType::Texture &&
                 asset.type != assets::ProjectAssetType::Model &&
                 asset.type != assets::ProjectAssetType::Mesh &&
@@ -171,6 +178,8 @@ namespace PlutoGE::ui
         GLuint GetMaterial(core::Engine &engine, const std::string &key,
                            const render::MaterialConfig &config, std::uint64_t revision)
         {
+            if (!PrepareOpenGL(engine)) return 0;
+
             const auto found = m_entries.find(key);
             if (found != m_entries.end() && found->second.stamp == revision)
                 return found->second.texture;
@@ -187,10 +196,13 @@ namespace PlutoGE::ui
 
         void Clear()
         {
-            for (const auto &[reference, entry] : m_entries)
+            if (CanDeleteOpenGLResources())
             {
-                (void)reference;
-                if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
+                for (const auto &[reference, entry] : m_entries)
+                {
+                    (void)reference;
+                    if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
+                }
             }
             m_entries.clear();
         }
@@ -212,6 +224,21 @@ namespace PlutoGE::ui
         GLuint m_program = 0;
         int m_generationBudget = 0;
         std::uint64_t m_frameSequence = 0;
+
+        static bool PrepareOpenGL(core::Engine &engine)
+        {
+            return engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
+                   engine.GetWindow().EnsureOpenGLContextCurrent();
+        }
+
+        static bool CanDeleteOpenGLResources()
+        {
+            return glfwGetCurrentContext() != nullptr &&
+                   glad_glDeleteTextures != nullptr &&
+                   glad_glDeleteRenderbuffers != nullptr &&
+                   glad_glDeleteFramebuffers != nullptr &&
+                   glad_glDeleteProgram != nullptr;
+        }
 
         static std::uint64_t GetStamp(const assets::Project &project, const std::string &reference)
         {

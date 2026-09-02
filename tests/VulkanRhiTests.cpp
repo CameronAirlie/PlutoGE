@@ -148,6 +148,41 @@ int main()
         neutralLighting.directionalIntensity = 0.0f;
         neutralLighting.shadowsEnabled = true;
         renderer.Render(projection * view, neutralLighting, draws);
+        const auto &frameStats = renderer.GetFrameStats();
+        if (frameStats.geometryDraws != draws.size() || frameStats.shadowCandidates != draws.size() ||
+            frameStats.shadowObjectUploads > frameStats.shadowCandidates)
+        {
+            std::cerr << "BasicRenderer reported inconsistent recorded-work statistics\n";
+            return 12;
+        }
+        const auto deviceStats = device.GetTimingStats();
+        if (deviceStats.indexedDrawCalls < frameStats.geometryDraws ||
+            deviceStats.descriptorBindCalls == 0)
+        {
+            std::cerr << "Vulkan RHI did not report recorded draw and descriptor bind counts\n";
+            return 13;
+        }
+        renderer.Render(projection * view, neutralLighting, draws);
+        const auto &cachedFrameStats = renderer.GetFrameStats();
+        if (cachedFrameStats.shadowCascadeCacheHits != neutralLighting.shadowCascadeCount ||
+            cachedFrameStats.shadowCascadeUpdates != 0 || cachedFrameStats.ShadowDraws() != 0 ||
+            cachedFrameStats.shadowObjectUploads != 0)
+        {
+            std::cerr << "BasicRenderer did not reuse unchanged directional shadow cascades\n";
+            return 14;
+        }
+        auto movedShadowLighting = neutralLighting;
+        movedShadowLighting.shadowMatrices[0][3][0] += 0.25f;
+        renderer.Render(projection * view, movedShadowLighting, draws);
+        const auto &invalidatedFrameStats = renderer.GetFrameStats();
+        if (invalidatedFrameStats.shadowCascadeUpdates != 1 ||
+            invalidatedFrameStats.shadowCascadeCacheHits + invalidatedFrameStats.shadowCascadeUpdates !=
+                neutralLighting.shadowCascadeCount)
+        {
+            std::cerr << "BasicRenderer shadow cache invalidation was not cascade-local\n";
+            return 15;
+        }
+        renderer.Render(projection * view, neutralLighting, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
         const auto normalPixels = device.ReadTextureRgba8(renderer.GetNormalTexture());
         const auto materialPixels = device.ReadTextureRgba8(renderer.GetMaterialTexture());

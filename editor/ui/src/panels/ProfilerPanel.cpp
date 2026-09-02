@@ -200,14 +200,31 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhi.descriptorSetsAllocated),
                     static_cast<unsigned long long>(rhi.descriptorWrites));
         ImGui::Text("RHI descriptor preparation CPU: %.2f ms", rhi.descriptorCpuMs);
+        ImGui::Text("RHI descriptor binds: %llu", static_cast<unsigned long long>(rhi.descriptorBindCalls));
+        ImGui::Text("RHI commands: %llu indexed draws, %llu draws, %llu dispatches",
+                    static_cast<unsigned long long>(rhi.indexedDrawCalls),
+                    static_cast<unsigned long long>(rhi.drawCalls),
+                    static_cast<unsigned long long>(rhi.dispatchCalls));
         ImGui::Text("RHI uniform upload: %llu bytes, %.2f ms CPU",
                     static_cast<unsigned long long>(rhi.uniformBytesUploaded), rhi.uniformUploadCpuMs);
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
         ImGui::Text("RHI scene CPU: %.2f ms", rhiScene.totalMs);
-        ImGui::Text("  Translation: %.2f ms (%llu visible, %llu shadow draws)",
+        ImGui::Text("  Translation: %.2f ms (%llu visible, %llu shadow candidates)",
                     rhiScene.commandTranslationMs,
                     static_cast<unsigned long long>(rhiScene.visibleDrawCount),
-                    static_cast<unsigned long long>(rhiScene.shadowDrawCount));
+                    static_cast<unsigned long long>(rhiScene.shadowCandidateCount));
+        ImGui::Text("  Recorded: %llu geometry, %llu shadow draws; %llu shadow uploads",
+                    static_cast<unsigned long long>(rhiScene.recordedGeometryDrawCount),
+                    static_cast<unsigned long long>(rhiScene.recordedShadowDrawCount),
+                    static_cast<unsigned long long>(rhiScene.shadowObjectUploadCount));
+        ImGui::Text("  Shadow cascades: %llu / %llu / %llu / %llu draws",
+                    static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[0]),
+                    static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[1]),
+                    static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[2]),
+                    static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[3]));
+        ImGui::Text("  Shadow cache: %llu hits, %llu updates",
+                    static_cast<unsigned long long>(rhiScene.shadowCascadeCacheHitCount),
+                    static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount));
         ImGui::Text("  Setup: %.2f ms, recording: %.2f ms",
                     rhiScene.sceneSetupMs, rhiScene.renderRecordingMs);
         for (const auto &scope : rhi.gpuScopes)

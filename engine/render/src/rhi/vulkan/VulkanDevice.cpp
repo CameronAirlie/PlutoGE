@@ -206,6 +206,7 @@ namespace PlutoGE::render::rhi::vulkan
             std::vector<VkDescriptorSetLayout> setLayouts;
             std::vector<bool> populatedSets;
             std::vector<std::vector<GraphicsPipelineDescriptor::ResourceBinding>> bindingsBySet;
+            std::vector<std::vector<std::uint32_t>> dynamicUniformSlotsBySet;
             GraphicsPipelineDescriptor descriptor;
             std::vector<GraphicsPipelineDescriptor::ResourceBinding> resourceBindings;
             bool compute = false;
@@ -411,6 +412,10 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.descriptorAllocationCalls = 0;
             m_impl.timingStats.descriptorSetsAllocated = 0;
             m_impl.timingStats.descriptorWrites = 0;
+            m_impl.timingStats.descriptorBindCalls = 0;
+            m_impl.timingStats.drawCalls = 0;
+            m_impl.timingStats.indexedDrawCalls = 0;
+            m_impl.timingStats.dispatchCalls = 0;
             m_impl.timingStats.uniformBytesUploaded = 0;
             m_impl.timingStats.descriptorCpuMs = 0.0f;
             m_impl.timingStats.uniformUploadCpuMs = 0.0f;
@@ -701,12 +706,14 @@ namespace PlutoGE::render::rhi::vulkan
         {
             PrepareDraw();
             vkCmdDraw(CommandBuffer(), count, 1, firstVertex, 0);
+            ++m_impl.timingStats.drawCalls;
         }
 
         void DrawIndexed(std::uint32_t count, std::uint32_t firstIndex, std::int32_t vertexOffset) override
         {
             PrepareDraw();
             vkCmdDrawIndexed(CommandBuffer(), count, 1, firstIndex, vertexOffset, 0);
+            ++m_impl.timingStats.indexedDrawCalls;
         }
         void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
         {
@@ -714,6 +721,7 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::logic_error("Vulkan compute dispatch requires a compute pipeline outside rendering");
             PrepareDraw();
             vkCmdDispatch(CommandBuffer(), x, y, z);
+            ++m_impl.timingStats.dispatchCalls;
         }
         void ShaderMemoryBarrier() override
         {
@@ -924,6 +932,7 @@ namespace PlutoGE::render::rhi::vulkan
                 vkCmdBindDescriptorSets(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
                                         static_cast<std::uint32_t>(setIndex), 1, &sets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
+                ++m_impl.timingStats.descriptorBindCalls;
                 m_boundDescriptorSets[setIndex] = sets[setIndex];
                 m_boundDynamicOffsetCounts[setIndex] = offsetCount;
                 std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
@@ -944,13 +953,9 @@ namespace PlutoGE::render::rhi::vulkan
             for (std::size_t setIndex = 0; setIndex < m_pipeline->setLayouts.size(); ++setIndex)
             {
                 const auto offsetStart = dynamicOffsetCount;
-                for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
+                for (const auto slot : m_pipeline->dynamicUniformSlotsBySet[setIndex])
                 {
-                    if (binding.type != ResourceBindingType::UniformBuffer)
-                        continue;
-                    if (binding.slot >= MaxResourceSlots || !m_uniformBuffers[binding.slot])
-                        throw std::logic_error("Vulkan draw has an incomplete uniform binding");
-                    dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
+                    dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[slot];
                 }
                 const auto offsetCount = dynamicOffsetCount - offsetStart;
                 const bool offsetsMatch = m_boundDynamicOffsetCounts[setIndex] == offsetCount &&
@@ -963,6 +968,7 @@ namespace PlutoGE::render::rhi::vulkan
                 vkCmdBindDescriptorSets(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
                                         static_cast<std::uint32_t>(setIndex), 1, &m_preparedDescriptorSets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
+                ++m_impl.timingStats.descriptorBindCalls;
                 m_boundDescriptorSets[setIndex] = m_preparedDescriptorSets[setIndex];
                 m_boundDynamicOffsetCounts[setIndex] = offsetCount;
                 std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
@@ -1769,11 +1775,17 @@ namespace PlutoGE::render::rhi::vulkan
         resource.setLayouts.resize(bindingsBySet.size());
         resource.populatedSets.resize(bindingsBySet.size());
         resource.bindingsBySet.resize(bindingsBySet.size());
+        resource.dynamicUniformSlotsBySet.resize(bindingsBySet.size());
         for (const auto &binding : descriptor.resourceBindings)
+        {
             resource.bindingsBySet[binding.set].push_back(binding);
+        }
         for (std::size_t set = 0; set < bindingsBySet.size(); ++set)
         {
             std::ranges::sort(resource.bindingsBySet[set], {}, &GraphicsPipelineDescriptor::ResourceBinding::binding);
+            for (const auto &binding : resource.bindingsBySet[set])
+                if (binding.type == ResourceBindingType::UniformBuffer)
+                    resource.dynamicUniformSlotsBySet[set].push_back(binding.slot);
             resource.populatedSets[set] = !bindingsBySet[set].empty();
             VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             setInfo.bindingCount = static_cast<std::uint32_t>(bindingsBySet[set].size());
@@ -1884,6 +1896,7 @@ namespace PlutoGE::render::rhi::vulkan
         resource.setLayouts.resize(maximumSet + 1);
         resource.populatedSets.resize(maximumSet + 1);
         resource.bindingsBySet.resize(maximumSet + 1);
+        resource.dynamicUniformSlotsBySet.resize(maximumSet + 1);
         for (const auto &binding : descriptor.resourceBindings)
         {
             const auto descriptorType = binding.type == ResourceBindingType::UniformBuffer
@@ -1899,6 +1912,9 @@ namespace PlutoGE::render::rhi::vulkan
         {
             std::ranges::sort(resource.bindingsBySet[set], {},
                               &GraphicsPipelineDescriptor::ResourceBinding::binding);
+            for (const auto &binding : resource.bindingsBySet[set])
+                if (binding.type == ResourceBindingType::UniformBuffer)
+                    resource.dynamicUniformSlotsBySet[set].push_back(binding.slot);
             resource.populatedSets[set] = !nativeBindings[set].empty();
             VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             info.bindingCount = static_cast<std::uint32_t>(nativeBindings[set].size());

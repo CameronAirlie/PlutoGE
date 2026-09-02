@@ -195,6 +195,26 @@ namespace PlutoGE::render
             return hash;
         }
 
+        std::uint64_t ShadowContentSignature(const glm::mat4 &shadowMatrix,
+                                             std::uint32_t resolution,
+                                             std::span<const BasicDraw> draws,
+                                             std::span<const std::size_t> visibleDrawIndices)
+        {
+            std::uint64_t hash = 14695981039346656037ull;
+            HashVctValue(hash, shadowMatrix);
+            HashVctValue(hash, resolution);
+            HashVctValue(hash, visibleDrawIndices.size());
+            for (const auto drawIndex : visibleDrawIndices)
+            {
+                const auto &draw = draws[drawIndex];
+                HashVctValue(hash, draw.mesh);
+                HashVctValue(hash, draw.model);
+                HashVctValue(hash, draw.firstIndex);
+                HashVctValue(hash, draw.indexCount);
+            }
+            return hash;
+        }
+
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
         {
@@ -648,6 +668,8 @@ namespace PlutoGE::render
         for (auto &target : m_shadowColorTargets)
             target.Reset();
         m_shadowResolutions.fill(0);
+        m_shadowContentSignatures.fill(0);
+        m_shadowCacheValid.fill(false);
         m_shadowSampler.Reset();
         m_vctVolumeSampler.Reset();
         m_screenSampler.Reset();
@@ -797,6 +819,7 @@ namespace PlutoGE::render
                                                                         {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                                                          "Directional shadow cascade depth", true}));
             m_shadowResolutions[cascade] = resolution;
+            m_shadowCacheValid[cascade] = false;
         }
     }
 
@@ -811,6 +834,7 @@ namespace PlutoGE::render
                                std::span<const BasicDraw> shadowDraws,
                                PostProcessDebugView debugView)
     {
+        m_frameStats = {};
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
@@ -885,23 +909,62 @@ namespace PlutoGE::render
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         if (shadowDraws.empty())
             shadowDraws = draws;
+        m_frameStats.shadowCandidates = shadowDraws.size();
         if (lighting.shadowsEnabled)
         {
+            const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
+            m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
+            std::array<bool, 4> cascadeNeedsUpdate{};
+            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+            {
+                const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
+                auto &indices = m_shadowCascadeDrawIndices[cascade];
+                indices.clear();
+                indices.reserve(shadowDraws.size());
+                for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
+                {
+                    const auto &draw = shadowDraws[drawIndex];
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
+                        !shadowFrustum.Intersects(draw))
+                        continue;
+                    indices.push_back(drawIndex);
+                }
+                const auto signature = ShadowContentSignature(
+                    lighting.shadowMatrices[cascade], m_shadowResolutions[cascade], shadowDraws, indices);
+                cascadeNeedsUpdate[cascade] = !m_shadowCacheValid[cascade] ||
+                                              m_shadowContentSignatures[cascade] != signature;
+                if (cascadeNeedsUpdate[cascade])
+                {
+                    m_shadowContentSignatures[cascade] = signature;
+                    ++m_frameStats.shadowCascadeUpdates;
+                    for (const auto drawIndex : indices)
+                        m_shadowVisibleInAnyCascade[drawIndex] = 1u;
+                }
+                else
+                {
+                    ++m_frameStats.shadowCascadeCacheHits;
+                }
+            }
+            for (std::uint32_t cascade = cascadeCount; cascade < m_shadowCascadeDrawIndices.size(); ++cascade)
+                m_shadowCascadeDrawIndices[cascade].clear();
             while (m_shadowObjectBuffers.size() < shadowDraws.size())
                 m_shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                                                                   {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
             for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
             {
                 const auto &draw = shadowDraws[drawIndex];
-                if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow)
+                if (m_shadowVisibleInAnyCascade[drawIndex] != 0u)
+                {
                     m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
                                            Bytes(BasicObjectParameters{draw.model, draw.model}));
+                    ++m_frameStats.shadowObjectUploads;
+                }
             }
-            const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
             {
+                if (!cascadeNeedsUpdate[cascade])
+                    continue;
                 const auto scopeName = "RHI Shadow Cascade " + std::to_string(cascade);
-                const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
                 commands.BeginGpuScope(scopeName);
                 m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
                 rhi::RenderingInfo shadowInfo;
@@ -914,22 +977,23 @@ namespace PlutoGE::render
                 commands.BeginRendering(shadowInfo);
                 commands.BindPipeline(m_shadowPipeline.Get());
                 commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
-                for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
+                for (const auto drawIndex : m_shadowCascadeDrawIndices[cascade])
                 {
                     const auto &draw = shadowDraws[drawIndex];
-                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
-                        !shadowFrustum.Intersects(draw))
-                        continue;
                     commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
                     commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                     commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                     const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
                     if (count)
+                    {
                         commands.DrawIndexed(count, draw.firstIndex);
+                        ++m_frameStats.shadowDrawsByCascade[cascade];
+                    }
                 }
                 commands.EndRendering();
                 commands.EndGpuScope();
+                m_shadowCacheValid[cascade] = true;
             }
         }
         rhi::RenderingInfo renderingInfo;
@@ -1007,7 +1071,10 @@ namespace PlutoGE::render
             const std::uint32_t requestedCount = draw.indexCount == 0 ? availableCount : draw.indexCount;
             const std::uint32_t drawCount = std::min(requestedCount, availableCount);
             if (drawCount != 0)
+            {
                 commands.DrawIndexed(drawCount, draw.firstIndex);
+                ++m_frameStats.geometryDraws;
+            }
         }
         commands.EndRendering();
         commands.EndGpuScope();

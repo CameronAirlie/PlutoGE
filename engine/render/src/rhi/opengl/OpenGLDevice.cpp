@@ -215,8 +215,21 @@ namespace PlutoGE::render::rhi::opengl
             }
             if (info.clearDepth)
             {
+                // glClear respects GL_DEPTH_WRITEMASK. Fullscreen/post-process
+                // pipelines deliberately leave depth writes disabled, and the
+                // clear happens before the next pipeline is bound. Without
+                // forcing the mask here, the following frame retains stale
+                // reverse-Z depth, causing sky pixels to be treated as geometry
+                // and clipping atmospheric volumes along old silhouettes.
+                GLboolean previousDepthMask = GL_TRUE;
+                glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+                glDepthMask(GL_TRUE);
                 glClearDepth(info.clearDepthValue);
                 clearMask |= GL_DEPTH_BUFFER_BIT;
+                if (clearMask)
+                    glClear(clearMask);
+                glDepthMask(previousDepthMask);
+                clearMask = 0;
             }
             if (clearMask)
                 glClear(clearMask);

@@ -1,0 +1,10 @@
+Color=0.02,0.3,1,1
+SurfaceType=Standard
+AlphaMode=Opaque
+AlphaCutoff=0.5
+CastsShadow=true
+UvScale=1,1
+Metallic=0.2
+Roughness=0.35
+Emission=0.02,0.25,1
+ShaderGraph=engine://builtin/shadergraph/default-lit

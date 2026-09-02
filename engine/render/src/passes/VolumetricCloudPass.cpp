@@ -81,8 +81,7 @@ namespace PlutoGE::render
                 out vec4 FragColor;
 
                 uniform sampler2D uSceneDepth;
-                uniform mat4 uInverseView;
-                uniform mat4 uInverseProjection;
+                uniform mat4 uInverseViewProjection;
                 uniform mat4 uInverseVolumeTransform;
                 uniform vec3 uCameraPosition;
                 uniform vec3 uWindOffset;
@@ -99,7 +98,6 @@ namespace PlutoGE::render
                 uniform float uBaseNoiseScale;
                 uniform float uDetailNoiseScale;
                 uniform float uDetailErosion;
-                uniform float uFarPlane;
                 uniform int uPrimarySteps;
                 uniform int uLightSteps;
                 uniform float uFrameIndex;
@@ -163,7 +161,9 @@ namespace PlutoGE::render
                     float height = local.y + 0.5;
                     float vertical = smoothstep(0.0, 0.14, height) * (1.0 - smoothstep(0.62, 1.0, height));
                     vec2 edgeDistance = vec2(0.5) - abs(local.xz);
-                    return vertical * smoothstep(0.0, 0.07, min(edgeDistance.x, edgeDistance.y));
+                    // A broad horizontal fade prevents the finite volume wall
+                    // from appearing as a hard line as the camera moves.
+                    return vertical * smoothstep(0.0, 0.18, min(edgeDistance.x, edgeDistance.y));
                 }
 
                 float SampleDensity(vec3 worldPosition)
@@ -242,18 +242,20 @@ namespace PlutoGE::render
 
                 vec3 WorldRay(vec2 uv)
                 {
-                    vec4 view = uInverseProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
-                    return normalize((uInverseView * vec4(normalize(view.xyz / max(view.w, 0.0001)), 0.0)).xyz);
+                    vec4 world = uInverseViewProjection * vec4(uv * 2.0 - 1.0, -1.0, 1.0);
+                    float safeW = abs(world.w) > 0.000001
+                        ? world.w
+                        : (world.w < 0.0 ? -0.000001 : 0.000001);
+                    return normalize(world.xyz / safeW - uCameraPosition);
                 }
 
-                float OpaqueDistance(vec2 uv, vec3 rayDirection)
+                float OpaqueDistance(vec2 uv, float depth, vec3 rayDirection)
                 {
-                    float depth = texture(uSceneDepth, uv).r;
-                    if (depth <= 0.000001) return uFarPlane;
-                    vec4 view = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-                    view /= max(view.w, 0.0001);
-                    vec3 world = (uInverseView * view).xyz;
-                    return max(dot(world - uCameraPosition, rayDirection), 0.0);
+                    vec4 world = uInverseViewProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                    float safeW = abs(world.w) > 0.000001
+                        ? world.w
+                        : (world.w < 0.0 ? -0.000001 : 0.000001);
+                    return max(dot(world.xyz / safeW - uCameraPosition, rayDirection), 0.0);
                 }
 
                 void main()
@@ -261,7 +263,14 @@ namespace PlutoGE::render
                     vec3 rayDirection = WorldRay(vUv);
                     vec2 hit = IntersectVolume(uCameraPosition, rayDirection);
                     float start = max(hit.x, 0.0);
-                    float end = min(hit.y, OpaqueDistance(vUv, rayDirection));
+                    float end = hit.y;
+                    // A cleared reversed-Z depth value represents the sky, not
+                    // geometry at the camera far plane. Clouds are atmospheric
+                    // and must remain visible beyond that plane. Only clamp the
+                    // march when this pixel contains actual scene geometry.
+                    float sceneDepth = texture(uSceneDepth, vUv).r;
+                    if (sceneDepth > 0.000001)
+                        end = min(end, OpaqueDistance(vUv, sceneDepth, rayDirection));
                     if (end <= start) discard;
 
                     float stepLength = (end - start) / float(max(uPrimarySteps, 1));
@@ -322,19 +331,43 @@ namespace PlutoGE::render
                 in vec2 vUv;
                 out vec4 FragColor;
                 uniform sampler2D uCloudTexture;
+                uniform sampler2D uSceneDepth;
                 uniform vec2 uCloudTexelSize;
+
+                float DepthWeight(float centerDepth, float sampleDepth)
+                {
+                    bool centerSky = centerDepth <= 0.000001;
+                    bool sampleSky = sampleDepth <= 0.000001;
+                    if (centerSky != sampleSky) return 0.0;
+                    if (centerSky) return 1.0;
+                    float relativeDifference = abs(centerDepth - sampleDepth) /
+                                               max(max(centerDepth, sampleDepth), 0.0001);
+                    return exp(-relativeDifference * 64.0);
+                }
+
                 void main()
                 {
-                    // Four half-texel bilinear reads reproduce the previous
-                    // 3x3 tent exactly: centre 4/16, axial neighbours 2/16,
-                    // and diagonal neighbours 1/16. This removes five texture
-                    // operations from every native-resolution output pixel.
                     vec2 halfTexel = uCloudTexelSize * 0.5;
-                    vec4 c = texture(uCloudTexture, vUv + vec2(-halfTexel.x, -halfTexel.y));
-                    c += texture(uCloudTexture, vUv + vec2( halfTexel.x, -halfTexel.y));
-                    c += texture(uCloudTexture, vUv + vec2(-halfTexel.x,  halfTexel.y));
-                    c += texture(uCloudTexture, vUv + vec2( halfTexel.x,  halfTexel.y));
-                    FragColor = c * 0.25;
+                    vec2 offsets[4] = vec2[4](
+                        vec2(-halfTexel.x, -halfTexel.y),
+                        vec2( halfTexel.x, -halfTexel.y),
+                        vec2(-halfTexel.x,  halfTexel.y),
+                        vec2( halfTexel.x,  halfTexel.y));
+                    float centerDepth = texture(uSceneDepth, vUv).r;
+                    vec4 resolved = vec4(0.0);
+                    float totalWeight = 0.0;
+                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    {
+                        vec2 sampleUv = clamp(vUv + offsets[sampleIndex], vec2(0.0), vec2(1.0));
+                        float weight = DepthWeight(centerDepth, texture(uSceneDepth, sampleUv).r);
+                        resolved += texture(uCloudTexture, sampleUv) * weight;
+                        totalWeight += weight;
+                    }
+                    // Depth-aware reconstruction prevents low-resolution cloud
+                    // radiance bleeding over silhouettes and the horizon.
+                    FragColor = totalWeight > 0.0001
+                        ? resolved / totalWeight
+                        : texture(uCloudTexture, vUv);
                 }
             )";
             return Shader::Create(source);
@@ -429,13 +462,11 @@ namespace PlutoGE::render
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         m_shader->Bind();
-        m_shader->SetUniform("uInverseView", inverseView);
-        m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
+        m_shader->SetUniform("uInverseViewProjection", glm::inverse(ctx.cameraData.projection * ctx.cameraData.view));
         m_shader->SetUniform("uCameraPosition", cameraPosition);
         m_shader->SetUniform("uLightDirection", lightDirection);
         m_shader->SetUniform("uLightColor", lightColor);
         m_shader->SetUniform("uLightIntensity", lightIntensity);
-        m_shader->SetUniform("uFarPlane", std::max(ctx.cameraData.farPlane, 1.0f));
         m_shader->SetUniform("uFrameIndex", hasTemporalAA ? static_cast<float>(ctx.frameSequence % 4096) : 0.0f);
         m_shader->SetUniform("uTemporalSampling", hasTemporalAA ? 1 : 0);
         Graphics::ActiveTexture(GL_TEXTURE0);
@@ -488,6 +519,9 @@ namespace PlutoGE::render
         Graphics::ActiveTexture(GL_TEXTURE0);
         Graphics::BindTexture(GL_TEXTURE_2D, m_cloudTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uCloudTexture", 0);
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, sceneDepth);
+        m_compositeShader->SetUniform("uSceneDepth", 1);
         m_compositeShader->SetUniform("uCloudTexelSize", glm::vec2(1.0f / static_cast<float>(cloudWidth), 1.0f / static_cast<float>(cloudHeight)));
         Graphics::DrawFullscreenTriangle();
         m_compositeShader->Unbind();

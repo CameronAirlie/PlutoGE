@@ -1356,6 +1356,7 @@ namespace PlutoGE::scene
                 HashCombine(signature, rigidbody->GetLinearDrag());
                 HashCombine(signature, rigidbody->GetAngularDrag());
                 HashCombine(signature, rigidbody->GetFriction());
+                HashCombine(signature, rigidbody->GetRestitution());
                 HashCombine(signature, rigidbody->UsesGravity());
                 HashCombine(signature, rigidbody->IsKinematic());
                 HashCombine(signature, rigidbody->HasFreezeRotation());
@@ -1652,6 +1653,7 @@ namespace PlutoGE::scene
             if (rigidbodyEnabled)
             {
                 body->setFriction(rigidbody->GetFriction());
+                body->setRestitution(rigidbody->GetRestitution());
                 body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
                 body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
                 body->setGravity(rigidbody->UsesGravity() ? runtimeWorld->dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
@@ -1659,6 +1661,13 @@ namespace PlutoGE::scene
                 {
                     body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
                 }
+            }
+            else
+            {
+                // Bullet multiplies the restitution of both contact bodies.
+                // Treat an unconfigured static collider as a neutral surface,
+                // allowing a dynamic body's restitution to define its bounce.
+                body->setRestitution(1.0f);
             }
 
             if (!dynamic && rigidbodyEnabled && rigidbody->IsKinematic())

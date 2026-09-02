@@ -1,0 +1,28 @@
+<rml>
+<head>
+    <title>RocketLeg HUD</title>
+    <link type="text/rcss" href="rocketleg-hud.rcss"/>
+</head>
+<body>
+    <div id="rocketleg-hud">
+        <div id="scoreboard">
+            <span class="blue-team">BLUE</span>
+            <span id="blue-score" class="score">0</span>
+            <span class="separator">-</span>
+            <span id="orange-score" class="score">0</span>
+            <span class="orange-team">ORANGE</span>
+        </div>
+
+        <div id="match-status">KICKOFF!</div>
+
+        <div id="controls">
+            <div><span class="blue-team">P1</span> WASD drive / air control &nbsp; Q/E roll &nbsp; Shift boost &nbsp; Space jump</div>
+            <div><span class="orange-team">P2</span> Arrows drive / air control &nbsp; ,/. roll &nbsp; Right Shift boost &nbsp; Enter jump</div>
+            <div>Pad: LT/RT reverse/drive &nbsp; Left stick steer/pitch &nbsp; LB free roll &nbsp; A jump &nbsp; B boost &nbsp; X roll right</div>
+            <div class="camera-help">C ball cam &nbsp; Tab switch car &nbsp; R restart</div>
+        </div>
+
+        <div id="game-title">ROCKETLEG</div>
+    </div>
+</body>
+</rml>

@@ -1,0 +1,126 @@
+PostProcessPresetVersion 1 12
+Effect "SSR" 1 9
+Parameter 0 "Intensity" "0.800000" 0
+Parameter 0 "Max Ray Distance" "30.000000" 0
+Parameter 0 "Thickness" "0.350000" 0
+Parameter 0 "Start Offset" "0.080000" 0
+Parameter 1 "Steps" "48" 0
+Parameter 1 "Binary Search Steps" "5" 0
+Parameter 0 "Edge Fade" "0.120000" 0
+Parameter 0 "Fresnel Power" "5.000000" 0
+Parameter 0 "Metallic Boost" "0.750000" 0
+Effect "SSAO" 1 11
+Parameter 0 "Radius" "0.850000" 0
+Parameter 0 "Bias" "0.080000" 0
+Parameter 0 "Intensity" "1.250000" 0
+Parameter 0 "Power" "1.500000" 0
+Parameter 0 "Temporal Blend" "0.900000" 0
+Parameter 0 "History Depth Threshold" "0.020000" 0
+Parameter 0 "History Normal Threshold" "0.850000" 0
+Parameter 1 "Samples" "16" 0
+Parameter 1 "Blur Radius" "1" 0
+Parameter 3 "Half Resolution" "true" 0
+Parameter 3 "AO Only" "false" 0
+Effect "VCTGI" 1 18
+Parameter 4 "Resolution" "0" 2 "64" "128"
+Parameter 1 "Cascade Count" "2" 0
+Parameter 0 "Volume Size" "40.000000" 0
+Parameter 0 "Intensity" "8.000000" 0
+Parameter 1 "Cone Count" "2" 0
+Parameter 4 "Trace Quality" "0" 2 "Balanced" "High"
+Parameter 3 "Inject Local Lights" "false" 0
+Parameter 1 "Voxelization LOD Bias" "0" 0
+Parameter 1 "Voxelization Command Budget" "8" 0
+Parameter 0 "Cone Aperture" "1.200000" 0
+Parameter 0 "Max Distance" "105.000000" 0
+Parameter 0 "Normal Bias" "0.350000" 0
+Parameter 1 "Update Interval" "1" 0
+Parameter 0 "Temporal Blend" "0.920000" 0
+Parameter 0 "History Depth Threshold" "0.250000" 0
+Parameter 0 "History Normal Threshold" "0.900000" 0
+Parameter 4 "Debug View" "0" 9 "Final Composite" "Raw Cone Trace" "Temporal Result" "History Validation" "Voxel Radiance" "Voxel Opacity" "Upsample Classification" "Voxel Sample Count" "Cascade Coverage"
+Parameter 3 "Indirect Only" "false" 0
+Effect "VolumetricFog" 1 15
+Parameter 0 "Density" "0.015000" 0
+Parameter 0 "Height Falloff" "0.050000" 0
+Parameter 0 "Height Offset" "-14.000000" 0
+Parameter 0 "Max Distance" "5000.000000" 0
+Parameter 0 "Scattering" "0.650000" 0
+Parameter 0 "Anisotropy" "0.200000" 0
+Parameter 0 "Ambient Contribution" "0.000000" 0
+Parameter 0 "Directional Contribution" "1.000000" 0
+Parameter 0 "Max Opacity" "0.920000" 0
+Parameter 1 "Step Count" "32" 0
+Parameter 1 "Shadow Step Stride" "2" 0
+Parameter 3 "Half Resolution" "true" 0
+Parameter 0 "Color R" "1.000000" 0
+Parameter 0 "Color G" "1.000000" 0
+Parameter 0 "Color B" "1.000000" 0
+Effect "Bloom" 1 5
+Parameter 0 "Intensity" "0.100000" 0
+Parameter 0 "Threshold" "1.000000" 0
+Parameter 0 "Soft Knee" "0.500000" 0
+Parameter 0 "Radius" "0.850000" 0
+Parameter 1 "Iterations" "6" 0
+Effect "DepthOfField" 0 13
+Parameter 4 "Quality" "1" 3 "Balanced" "High" "Cinematic"
+Parameter 3 "Auto Focus" "true" 0
+Parameter 0 "Focus Distance" "8.000000" 0
+Parameter 0 "Focal Length (mm)" "50.000000" 0
+Parameter 0 "F-Stop" "2.800000" 0
+Parameter 0 "Sensor Width (mm)" "36.000000" 0
+Parameter 0 "Max Blur Radius" "5.000000" 0
+Parameter 0 "Near Blur Scale" "1.250000" 0
+Parameter 0 "Far Blur Scale" "1.000000" 0
+Parameter 0 "Focus Speed" "10.000000" 0
+Parameter 0 "Focus X" "0.500000" 0
+Parameter 0 "Focus Y" "0.500000" 0
+Parameter 0 "Focus Window" "0.080000" 0
+Effect "LensFlare" 0 5
+Parameter 2 "Texture Path" "" 0
+Parameter 0 "Intensity" "0.100000" 0
+Parameter 0 "Threshold" "2.000000" 0
+Parameter 0 "Scale" "1.000000" 0
+Parameter 0 "Ghost Dispersal" "0.550000" 0
+Effect "AutoExposure" 1 5
+Parameter 0 "Key Value" "0.200000" 0
+Parameter 0 "Min Exposure" "0.100000" 0
+Parameter 0 "Max Exposure" "1.500000" 0
+Parameter 0 "Adapt Up" "0.180000" 0
+Parameter 0 "Adapt Down" "0.060000" 0
+Effect "ToneMapping" 1 2
+Parameter 0 "Exposure" "1.000000" 0
+Parameter 0 "Gamma" "2.200000" 0
+Effect "TAA" 1 10
+Parameter 4 "Quality" "0" 2 "Balanced" "High"
+Parameter 0 "History Weight" "0.900000" 0
+Parameter 0 "Stationary History Weight" "0.940000" 0
+Parameter 0 "Motion History Weight" "0.550000" 0
+Parameter 0 "Sharpening" "1.000000" 0
+Parameter 0 "Depth Rejection Threshold" "0.003500" 0
+Parameter 0 "Normal Rejection Threshold" "0.820000" 0
+Parameter 0 "Velocity Rejection Scale" "80.000000" 0
+Parameter 0 "Jitter Strength" "0.800000" 0
+Parameter 3 "Jitter Enabled" "true" 0
+Effect "ColorGrading" 0 18
+Parameter 4 "Preset" "1" 9 "Custom" "Neutral" "Filmic" "Cinematic" "Teal & Orange" "Vintage" "Bleach Bypass" "Noir" "Dreamy"
+Parameter 0 "Brightness" "0.000000" 0
+Parameter 0 "Contrast" "1.000000" 0
+Parameter 0 "Saturation" "1.000000" 0
+Parameter 0 "Temperature" "0.000000" 0
+Parameter 0 "Tint" "0.000000" 0
+Parameter 0 "Vibrance" "0.000000" 0
+Parameter 0 "Lift" "0.000000" 0
+Parameter 0 "Gamma" "1.000000" 0
+Parameter 0 "Gain" "1.000000" 0
+Parameter 0 "Fade" "0.000000" 0
+Parameter 0 "Vignette" "0.000000" 0
+Parameter 0 "Film Grain" "0.000000" 0
+Parameter 5 "Shadow Color" "0.000000,0.550000,0.480000,1.0" 0
+Parameter 0 "Shadow Color Strength" "0.000000" 0
+Parameter 5 "Highlight Color" "1.000000,0.360000,0.080000,1.0" 0
+Parameter 0 "Highlight Color Strength" "0.000000" 0
+Parameter 0 "Split Balance" "0.500000" 0
+Effect "SceneComposite" 1 2
+Parameter 3 "Enable SSGI" "false" 0
+Parameter 4 "Indirect Debug View" "0" 5 "None" "LPV Only" "SSGI Only" "Combined Indirect" "RSM Only"

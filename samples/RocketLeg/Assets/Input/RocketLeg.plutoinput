@@ -1,0 +1,140 @@
+{
+  "Actions": [
+    {
+      "Name": "P1Forward",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "RightTrigger", "Gamepad": 0, "Scale": 1, "DeadZone": 0.05 },
+        { "Kind": "Key", "Key": "W", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P1Backward",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftTrigger", "Gamepad": 0, "Scale": 1, "DeadZone": 0.05 },
+        { "Kind": "Key", "Key": "S", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P1Steer",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftX", "Gamepad": 0, "Scale": 1, "DeadZone": 0.16 },
+        { "Kind": "Key", "Key": "A", "Scale": -1 },
+        { "Kind": "Key", "Key": "D", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P1Pitch",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftY", "Gamepad": 0, "Scale": 1, "DeadZone": 0.16 },
+        { "Kind": "Key", "Key": "W", "Scale": -1 },
+        { "Kind": "Key", "Key": "S", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P1AirRoll",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "X", "Gamepad": 0, "Scale": 1 },
+        { "Kind": "Key", "Key": "Q", "Scale": -1 },
+        { "Kind": "Key", "Key": "E", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P1FreeAirRoll",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "LeftBumper", "Gamepad": 0 }
+      ]
+    },
+    {
+      "Name": "P1Boost",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "B", "Gamepad": 0 },
+        { "Kind": "Key", "Key": "LeftShift" }
+      ]
+    },
+    {
+      "Name": "P1Jump",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "A", "Gamepad": 0 },
+        { "Kind": "Key", "Key": "Space" }
+      ]
+    },
+    {
+      "Name": "P2Forward",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "RightTrigger", "Gamepad": 1, "Scale": 1, "DeadZone": 0.05 },
+        { "Kind": "Key", "Key": "Up", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P2Backward",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftTrigger", "Gamepad": 1, "Scale": 1, "DeadZone": 0.05 },
+        { "Kind": "Key", "Key": "Down", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P2Steer",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftX", "Gamepad": 1, "Scale": 1, "DeadZone": 0.16 },
+        { "Kind": "Key", "Key": "Left", "Scale": -1 },
+        { "Kind": "Key", "Key": "Right", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P2Pitch",
+      "Bindings": [
+        { "Kind": "GamepadAxis", "Axis": "LeftY", "Gamepad": 1, "Scale": 1, "DeadZone": 0.16 },
+        { "Kind": "Key", "Key": "Up", "Scale": -1 },
+        { "Kind": "Key", "Key": "Down", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P2AirRoll",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "X", "Gamepad": 1, "Scale": 1 },
+        { "Kind": "Key", "Key": "Comma", "Scale": -1 },
+        { "Kind": "Key", "Key": "Period", "Scale": 1 }
+      ]
+    },
+    {
+      "Name": "P2FreeAirRoll",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "LeftBumper", "Gamepad": 1 }
+      ]
+    },
+    {
+      "Name": "P2Boost",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "B", "Gamepad": 1 },
+        { "Kind": "Key", "Key": "RightShift" }
+      ]
+    },
+    {
+      "Name": "P2Jump",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "A", "Gamepad": 1 },
+        { "Kind": "Key", "Key": "Enter" }
+      ]
+    },
+    {
+      "Name": "CameraBallToggle",
+      "Bindings": [
+        { "Kind": "Key", "Key": "C" },
+        { "Kind": "GamepadButton", "Button": "Y", "Gamepad": 0 },
+        { "Kind": "GamepadButton", "Button": "Y", "Gamepad": 1 }
+      ]
+    },
+    {
+      "Name": "CameraSwitchCar",
+      "Bindings": [
+        { "Kind": "Key", "Key": "Tab" }
+      ]
+    },
+    {
+      "Name": "RestartMatch",
+      "Bindings": [
+        { "Kind": "Key", "Key": "R" }
+      ]
+    }
+  ]
+}

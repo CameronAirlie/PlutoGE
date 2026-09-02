@@ -39,8 +39,10 @@ namespace PlutoGE::scene
         glm::vec3 m_windDirection{1.0f, 0.0f, 0.25f};
         glm::vec3 m_cloudColor{1.0f, 0.98f, 0.95f};
         float m_coverage = 0.55f;
-        float m_density = 1.0f;
-        float m_extinction = 0.035f;
+        // These coefficients are integrated over world-space metres. The old
+        // 1.0 / 0.035 defaults made a 1000 m volume behave like solid fog.
+        float m_density = 0.42f;
+        float m_extinction = 0.012f;
         float m_scatteringAlbedo = 0.9f;
         float m_anisotropy = 0.65f;
         float m_ambientLight = 0.22f;

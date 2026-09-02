@@ -13,6 +13,7 @@ namespace PlutoGE::scene
         float linearDrag = 0.0f;
         float angularDrag = 0.05f;
         float friction = 1.8f;
+        float restitution = 0.0f;
         bool useGravity = true;
         bool isKinematic = false;
         bool freezeRotation = false;
@@ -43,6 +44,9 @@ namespace PlutoGE::scene
 
         float GetFriction() const { return m_config.friction; }
         void SetFriction(float friction);
+
+        float GetRestitution() const { return m_config.restitution; }
+        void SetRestitution(float restitution);
 
         bool UsesGravity() const { return m_config.useGravity; }
         void SetUseGravity(bool useGravity) { m_config.useGravity = useGravity; }

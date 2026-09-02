@@ -60,7 +60,8 @@ namespace PlutoGE::render
     {
         Rml::Matrix4f transform;
         float translation[2]{};
-        float padding[2]{};
+        float clipYSign = 1.0f;
+        float padding = 0.0f;
     };
 
     RmlUiRhiRenderer::RmlUiRhiRenderer(
@@ -180,7 +181,11 @@ namespace PlutoGE::render
         auto *texture = textureHandle ? reinterpret_cast<Texture *>(textureHandle) : m_whiteTexture.get();
         if (!texture || !texture->resource)
             return;
-        Parameters parameters{m_transform, {translation.x, translation.y}, {}};
+        Parameters parameters{
+            m_transform,
+            {translation.x, translation.y},
+            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f,
+            0.0f};
         auto &parameterBuffer = AcquireParameterBuffer();
         m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
         auto &commands = m_device->GetImmediateContext();
@@ -291,12 +296,10 @@ namespace PlutoGE::render
             const int top = std::clamp(m_scissor.Top(), 0, m_height);
             const int right = std::clamp(m_scissor.Right(), left, m_width);
             const int bottom = std::clamp(m_scissor.Bottom(), top, m_height);
-            // The vertex shader stores RmlUi's top edge at the render target's
-            // bottom edge to match the scene texture presentation convention.
-            const int backendY = m_device->GetApi() == rhi::GraphicsApi::OpenGL
-                                     ? top
-                                     : m_height - bottom;
-            scissor = {left, backendY, static_cast<std::uint32_t>(right - left),
+            // The Vulkan clip-space correction above mirrors geometry relative
+            // to its negative-height viewport. Both backends therefore need
+            // RmlUi's top-origin rectangle converted from its bottom edge.
+            scissor = {left, m_height - bottom, static_cast<std::uint32_t>(right - left),
                        static_cast<std::uint32_t>(bottom - top)};
         }
         m_device->GetImmediateContext().SetScissor(scissor);

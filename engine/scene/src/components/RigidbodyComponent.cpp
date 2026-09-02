@@ -33,6 +33,7 @@ namespace PlutoGE::scene
         SetLinearDrag(m_config.linearDrag);
         SetAngularDrag(m_config.angularDrag);
         SetFriction(m_config.friction);
+        SetRestitution(m_config.restitution);
     }
 
     void RigidbodyComponent::Update(float deltaTime)
@@ -60,6 +61,11 @@ namespace PlutoGE::scene
         m_config.friction = std::max(friction, 0.0f);
     }
 
+    void RigidbodyComponent::SetRestitution(float restitution)
+    {
+        m_config.restitution = std::clamp(restitution, 0.0f, 1.0f);
+    }
+
     std::vector<Property> RigidbodyComponent::Serialize() const
     {
         return {
@@ -67,6 +73,7 @@ namespace PlutoGE::scene
             {"Linear Drag", PropertyType::Float, std::to_string(m_config.linearDrag)},
             {"Angular Drag", PropertyType::Float, std::to_string(m_config.angularDrag)},
             {"Friction", PropertyType::Float, std::to_string(m_config.friction)},
+            {"Restitution", PropertyType::Float, std::to_string(m_config.restitution)},
             {"Use Gravity", PropertyType::Bool, m_config.useGravity ? "true" : "false"},
             {"Is Kinematic", PropertyType::Bool, m_config.isKinematic ? "true" : "false"},
             {"Freeze Rotation", PropertyType::Bool, m_config.freezeRotation ? "true" : "false"},
@@ -95,6 +102,10 @@ namespace PlutoGE::scene
             else if (property.name == "Friction")
             {
                 SetFriction(std::stof(property.value));
+            }
+            else if (property.name == "Restitution")
+            {
+                SetRestitution(std::stof(property.value));
             }
             else if (property.name == "Use Gravity")
             {

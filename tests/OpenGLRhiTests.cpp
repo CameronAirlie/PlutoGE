@@ -136,6 +136,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::ChromaticAberration, "ChromaticAberration");
         loadPostProcess(render::BasicPostProcessEffectType::LensFlare, "LensFlare");
         loadPostProcess(render::BasicPostProcessEffectType::MotionBlur, "MotionBlur");
+        loadPostProcess(render::BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
+        loadPostProcess(render::BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
         constexpr std::array<const char *, 4> bloomModules{
             "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
         for (std::size_t index = 0; index < bloomModules.size(); ++index)
@@ -254,6 +256,92 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             std::cerr << "Backend-neutral OpenGL post-process chain produced a blank image\n";
             return 10;
+        }
+
+        render::BasicLighting atmosphereLighting;
+        atmosphereLighting.cameraPosition = {0.0f, 1.0f, 5.0f};
+        atmosphereLighting.view = glm::lookAtRH(atmosphereLighting.cameraPosition,
+                                                glm::vec3(0.0f, 2.0f, 0.0f),
+                                                glm::vec3(0.0f, 1.0f, 0.0f));
+        atmosphereLighting.directionalDirection = glm::normalize(glm::vec3(-0.25f, -0.8f, -0.4f));
+        atmosphereLighting.directionalIntensity = 5.0f;
+
+        render::BasicPostProcessEffect physicalSky{render::BasicPostProcessEffectType::PhysicalSky};
+        physicalSky.parameters[0] = {0.25f, 0.8f, 0.4f, 1.0f};
+        physicalSky.parameters[1] = {1.0f, 0.95f, 0.85f, 1.0f};
+        physicalSky.parameters[2] = {0.6f, 0.7f, 1.0f, 0.76f};
+        physicalSky.parameters[3] = {0.08f, 0.09f, 0.1f, 1.0f};
+        physicalSky.parameters[4] = {5.0f, 0.27f, 0.08f, 0.35f};
+        physicalSky.parameters[5] = {0.15f, 0.26f, 0.0f, 0.0f};
+
+        const glm::mat4 atmosphereProjection = glm::perspectiveRH_ZO(
+            glm::radians(60.0f), aspect, farPlane, nearPlane);
+        basicRenderer.Render(atmosphereProjection * atmosphereLighting.view,
+                             atmosphereLighting, {}, std::span(&physicalSky, 1));
+        std::array<unsigned char, 4> skyTop{}, skyBottom{};
+        glReadPixels(48, 56, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, skyTop.data());
+        glReadPixels(48, 8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, skyBottom.data());
+        const int skyDifference = std::abs(int(skyTop[0]) - int(skyBottom[0])) +
+                                  std::abs(int(skyTop[1]) - int(skyBottom[1])) +
+                                  std::abs(int(skyTop[2]) - int(skyBottom[2]));
+        if (glGetError() != GL_NO_ERROR || skyDifference < 8)
+        {
+            std::cerr << "OpenGL physical sky did not produce a directional gradient: top="
+                      << int(skyTop[0]) << ',' << int(skyTop[1]) << ',' << int(skyTop[2])
+                      << " bottom=" << int(skyBottom[0]) << ',' << int(skyBottom[1]) << ','
+                      << int(skyBottom[2]) << '\n';
+            return 13;
+        }
+        std::array<unsigned char, 96u * 64u * 4u> clearSkyPixels{};
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, clearSkyPixels.data());
+
+        render::BasicPostProcessEffect cloud{render::BasicPostProcessEffectType::VolumetricCloud};
+        cloud.quality = 32u | (4u << 8u);
+        cloud.parameters[0] = {1.0f, 1.0f, 1.0f, 0.65f};
+        cloud.parameters[1] = {0.0f, 0.0f, 0.0f, 0.6f};
+        cloud.parameters[2] = {0.25f, 0.8f, 0.4f, 0.035f};
+        cloud.parameters[3] = {1.0f, 0.95f, 0.85f, 5.0f};
+        cloud.parameters[4] = {0.95f, 0.35f, 0.3f, 0.08f};
+        cloud.parameters[5] = {0.18f, 0.25f, 0.0f, 0.0f};
+        const glm::mat4 cloudTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 4.0f, 0.0f)) *
+                                         glm::scale(glm::mat4(1.0f), glm::vec3(20.0f, 5.0f, 20.0f));
+        cloud.worldToLocal = glm::inverse(cloudTransform);
+        const std::array atmosphereEffects{physicalSky, cloud};
+        basicRenderer.Render(atmosphereProjection * atmosphereLighting.view,
+                             atmosphereLighting, {}, atmosphereEffects);
+        std::array<unsigned char, 96u * 64u * 4u> cloudyPixels{};
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, cloudyPixels.data());
+        std::uint64_t cloudDifference = 0;
+        for (std::size_t pixel = 0; pixel < cloudyPixels.size(); pixel += 4)
+            for (std::size_t channel = 0; channel < 3; ++channel)
+                cloudDifference += static_cast<std::uint64_t>(
+                    std::abs(int(cloudyPixels[pixel + channel]) - int(clearSkyPixels[pixel + channel])));
+        if (glGetError() != GL_NO_ERROR || cloudDifference < 100)
+        {
+            std::cerr << "OpenGL volumetric cloud did not change the sky image; total difference="
+                      << cloudDifference << '\n';
+            return 14;
+        }
+
+        const glm::mat4 displacedCloudTransform =
+            glm::translate(glm::mat4(1.0f), glm::vec3(10000.0f, 4.0f, 0.0f)) *
+            glm::scale(glm::mat4(1.0f), glm::vec3(20.0f, 5.0f, 20.0f));
+        cloud.worldToLocal = glm::inverse(displacedCloudTransform);
+        const std::array displacedAtmosphereEffects{physicalSky, cloud};
+        basicRenderer.Render(atmosphereProjection * atmosphereLighting.view,
+                             atmosphereLighting, {}, displacedAtmosphereEffects);
+        std::array<unsigned char, 96u * 64u * 4u> displacedCloudPixels{};
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, displacedCloudPixels.data());
+        std::uint64_t displacedDifference = 0;
+        for (std::size_t pixel = 0; pixel < displacedCloudPixels.size(); pixel += 4)
+            for (std::size_t channel = 0; channel < 3; ++channel)
+                displacedDifference += static_cast<std::uint64_t>(
+                    std::abs(int(displacedCloudPixels[pixel + channel]) - int(clearSkyPixels[pixel + channel])));
+        if (glGetError() != GL_NO_ERROR || displacedDifference > 24)
+        {
+            std::cerr << "OpenGL volumetric cloud escaped its translated bounds; total difference="
+                      << displacedDifference << '\n';
+            return 15;
         }
         auto vctgi = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::VCTGI};
         vctgi.quality = 3;

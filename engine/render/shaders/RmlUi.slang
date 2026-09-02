@@ -17,7 +17,8 @@ cbuffer RmlUiParameters : register(b0, space0)
 {
     column_major float4x4 transform;
     float2 translation;
-    float2 padding;
+    float clipYSign;
+    float padding;
 };
 
 [[vk::binding(0, 1)]] Sampler2D sourceTexture : register(t0, space1);
@@ -27,10 +28,9 @@ VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     output.position = mul(transform, float4(input.position + translation, 0.0, 1.0));
-    // The legacy GL3 renderer draws into an intermediate layer and flips that
-    // layer during its final composite. RHI draws directly into the scene's
-    // bottom-up presentation target, so perform the equivalent flip here.
-    output.position.y = -output.position.y;
+    // Vulkan's negative-height viewport and RmlUi's top-left orthographic
+    // projection otherwise invert Y twice. OpenGL uses +1; Vulkan uses -1.
+    output.position.y *= clipYSign;
     output.color = input.color;
     output.uv = input.uv;
     return output;

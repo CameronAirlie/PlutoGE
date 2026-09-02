@@ -1,0 +1,844 @@
+SCENE	1
+ENTITY	1	0	1	Arena Floor	0.000000,-0.300000,0.000000	0.000000,0.000000,0.000000	44.000000,0.500000,28.000000
+TAGS	1	1	ground
+COMPONENT	1	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	1	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
+END_COMPONENT
+ENTITY	2	0	1	North Wall	0.000000,1.500000,-14.500000	0.000000,0.000000,0.000000	52.000000,3.000000,1.000000
+TAGS	2	1	wall
+COMPONENT	2	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	2	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	3	0	1	South Wall	0.000000,1.500000,14.500000	0.000000,0.000000,0.000000	52.000000,3.000000,1.000000
+TAGS	3	1	wall
+COMPONENT	3	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	3	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	4	0	1	West North Wall	-22.500000,1.500000,-10.250000	0.000000,0.000000,0.000000	1.000000,3.000000,8.500000
+TAGS	4	1	wall
+COMPONENT	4	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	4	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	5	0	1	West South Wall	-22.500000,1.500000,10.250000	0.000000,0.000000,0.000000	1.000000,3.000000,8.500000
+TAGS	5	1	wall
+COMPONENT	5	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	5	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	6	0	1	East North Wall	22.500000,1.500000,-10.250000	0.000000,0.000000,0.000000	1.000000,3.000000,8.500000
+TAGS	6	1	wall
+COMPONENT	6	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	6	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	7	0	1	East South Wall	22.500000,1.500000,10.250000	0.000000,0.000000,0.000000	1.000000,3.000000,8.500000
+TAGS	7	1	wall
+COMPONENT	7	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	7	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
+END_COMPONENT
+ENTITY	8	0	1	Blue Goal Back	-26.000000,1.500000,0.000000	0.000000,0.000000,0.000000	0.750000,3.000000,13.000000
+TAGS	8	2	wall	goal-blue
+COMPONENT	8	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	8	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	9	0	1	Blue Goal North	-24.250000,1.500000,-6.500000	0.000000,0.000000,0.000000	3.500000,3.000000,1.000000
+TAGS	9	2	wall	goal-blue
+COMPONENT	9	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	9	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	10	0	1	Blue Goal South	-24.250000,1.500000,6.500000	0.000000,0.000000,0.000000	3.500000,3.000000,1.000000
+TAGS	10	2	wall	goal-blue
+COMPONENT	10	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	10	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	11	0	1	Orange Goal Back	26.000000,1.500000,0.000000	0.000000,0.000000,0.000000	0.750000,3.000000,13.000000
+TAGS	11	2	wall	goal-orange
+COMPONENT	11	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	11	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
+END_COMPONENT
+ENTITY	12	0	1	Orange Goal North	24.250000,1.500000,-6.500000	0.000000,0.000000,0.000000	3.500000,3.000000,1.000000
+TAGS	12	2	wall	goal-orange
+COMPONENT	12	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	12	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
+END_COMPONENT
+ENTITY	13	0	1	Orange Goal South	24.250000,1.500000,6.500000	0.000000,0.000000,0.000000	3.500000,3.000000,1.000000
+TAGS	13	2	wall	goal-orange
+COMPONENT	13	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	13	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
+END_COMPONENT
+ENTITY	14	0	1	Blue Goal Crossbar	-22.500000,3.750000,0.000000	0.000000,0.000000,0.000000	0.900000,0.500000,13.000000
+COMPONENT	14	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	14	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	15	0	1	Orange Goal Crossbar	22.500000,3.750000,0.000000	0.000000,0.000000,0.000000	0.900000,0.500000,13.000000
+COMPONENT	15	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	15	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
+END_COMPONENT
+ENTITY	16	0	1	Centre Line	0.000000,-0.035000,0.000000	0.000000,0.000000,0.000000	0.180000,0.035000,27.000000
+COMPONENT	16	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
+END_COMPONENT
+ENTITY	20	0	1	Blue Car	-12.000000,0.750000,0.000000	0.000000,-90.000000,0.000000	2.400000,0.800000,4.000000
+TAGS	20	2	car	blue
+COMPONENT	20	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.050000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	20	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
+END_COMPONENT
+COMPONENT	20	RigidbodyComponent	1
+PROPERTY	Mass	0	850.000000	0
+PROPERTY	Linear Drag	0	0.040000	0
+PROPERTY	Angular Drag	0	0.000000	0
+PROPERTY	Friction	0	0.900000	0
+PROPERTY	Restitution	0	0.000000	0
+PROPERTY	Use Gravity	4	true	0
+PROPERTY	Is Kinematic	4	false	0
+PROPERTY	Freeze Rotation	4	false	0
+PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
+PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
+PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
+END_COMPONENT
+COMPONENT	20	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
+PROPERTY	playerNumber	1	1	0
+PROPERTY	acceleration	0	28.000000	0
+PROPERTY	boostAcceleration	0	23.000000	0
+PROPERTY	maximumSpeed	0	18.000000	0
+PROPERTY	maximumBoostSpeed	0	25.000000	0
+PROPERTY	maximumAngularSpeed	0	7.000000	0
+PROPERTY	angularMomentumDrag	0	2.500000	0
+PROPERTY	lateralGrip	0	8.000000	0
+PROPERTY	groundSteerForce	0	2600.000000	0
+PROPERTY	airControlForce	0	3000.000000	0
+PROPERTY	groundedYawDamping	0	520.000000	0
+PROPERTY	controlLeverArm	0	1.350000	0
+PROPERTY	jumpImpulse	0	7.000000	0
+PROPERTY	jumpBufferDuration	0	0.160000	0
+PROPERTY	groundProbeDistance	0	1.600000	0
+PROPERTY	respawnHeight	0	-4.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+ENTITY	21	20	1	Blue Cabin	0.000000,0.700000,0.250000	0.000000,0.000000,0.000000	0.700000,0.650000,0.520000
+COMPONENT	21	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
+END_COMPONENT
+ENTITY	22	0	1	Orange Car	12.000000,0.750000,0.000000	0.000000,90.000000,0.000000	2.400000,0.800000,4.000000
+TAGS	22	2	car	orange
+COMPONENT	22	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.050000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	22	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
+END_COMPONENT
+COMPONENT	22	RigidbodyComponent	1
+PROPERTY	Mass	0	850.000000	0
+PROPERTY	Linear Drag	0	0.040000	0
+PROPERTY	Angular Drag	0	0.000000	0
+PROPERTY	Friction	0	0.900000	0
+PROPERTY	Restitution	0	0.000000	0
+PROPERTY	Use Gravity	4	true	0
+PROPERTY	Is Kinematic	4	false	0
+PROPERTY	Freeze Rotation	4	false	0
+PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
+PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
+PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
+END_COMPONENT
+COMPONENT	22	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
+PROPERTY	playerNumber	1	2	0
+PROPERTY	acceleration	0	28.000000	0
+PROPERTY	boostAcceleration	0	42.000000	0
+PROPERTY	maximumSpeed	0	18.000000	0
+PROPERTY	maximumBoostSpeed	0	25.000000	0
+PROPERTY	maximumAngularSpeed	0	7.000000	0
+PROPERTY	angularMomentumDrag	0	1.000000	0
+PROPERTY	lateralGrip	0	8.000000	0
+PROPERTY	groundSteerForce	0	2600.000000	0
+PROPERTY	airControlForce	0	750.000000	0
+PROPERTY	groundedYawDamping	0	520.000000	0
+PROPERTY	controlLeverArm	0	1.350000	0
+PROPERTY	jumpImpulse	0	7.000000	0
+PROPERTY	jumpBufferDuration	0	0.160000	0
+PROPERTY	groundProbeDistance	0	1.600000	0
+PROPERTY	respawnHeight	0	-4.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+ENTITY	23	22	1	Orange Cabin	0.000000,0.700000,0.250000	0.000000,0.000000,0.000000	0.700000,0.650000,0.520000
+COMPONENT	23	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
+END_COMPONENT
+ENTITY	30	0	1	Ball	0.000000,1.200000,0.000000	0.000000,0.000000,0.000000	2.200000,2.200000,2.200000
+TAGS	30	1	ball
+COMPONENT	30	ColliderComponent	1
+PROPERTY	Shape	6	1	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	30	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
+END_COMPONENT
+COMPONENT	30	RigidbodyComponent	1
+PROPERTY	Mass	0	18.000000	0
+PROPERTY	Linear Drag	0	0.050000	0
+PROPERTY	Angular Drag	0	0.050000	0
+PROPERTY	Friction	0	0.450000	0
+PROPERTY	Restitution	0	0.820000	0
+PROPERTY	Use Gravity	4	true	0
+PROPERTY	Is Kinematic	4	false	0
+PROPERTY	Freeze Rotation	4	false	0
+PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
+PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
+PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
+END_COMPONENT
+COMPONENT	30	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.RocketBall	0
+PROPERTY	maximumSpeed	0	30.000000	0
+PROPERTY	lostBallHeight	0	-5.000000	0
+END_COMPONENT
+ENTITY	40	0	1	Match Manager	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	40	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.RocketLegMatch	0
+PROPERTY	ball	9	30	0
+PROPERTY	blueCar	9	20	0
+PROPERTY	orangeCar	9	22	0
+PROPERTY	documentPath	2	UI/rocketleg-hud.rml	0
+PROPERTY	goalLine	0	22.500000	0
+PROPERTY	goalHalfWidth	0	6.000000	0
+PROPERTY	kickoffDelay	0	1.500000	0
+PROPERTY	winningScore	1	5	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+ENTITY	50	0	1	Chase Camera	-20.500000,4.050000,0.000000	-14.000000,-90.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	50	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.RocketChaseCamera	0
+PROPERTY	blueCar	9	20	0
+PROPERTY	orangeCar	9	22	0
+PROPERTY	ball	9	30	0
+PROPERTY	distance	0	8.500000	0
+PROPERTY	height	0	3.300000	0
+PROPERTY	lookHeight	0	1.000000	0
+PROPERTY	lookAhead	0	4.000000	0
+PROPERTY	positionSharpness	0	9.000000	0
+PROPERTY	rotationSharpness	0	12.000000	0
+PROPERTY	startInBallCam	4	true	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+COMPONENT	50	CameraComponent	1
+PROPERTY	FOV	0	72.000000	0
+PROPERTY	NearPlane	0	0.100000	0
+PROPERTY	FarPlane	0	300.000000	0
+PROPERTY	MainCamera	4	true	0
+PROPERTY	PostProcessPresetAsset	2	project://PostProcessing/main.plutopostprocess	0
+END_COMPONENT
+ENTITY	51	0	1	Arena Sun	0.000000,20.000000,0.000000	-55.000000,35.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	51	LightComponent	1
+PROPERTY	Color	3	0.850000,0.920000,1.000000	0
+PROPERTY	Intensity	0	7.000000	0
+PROPERTY	Range	0	100.000000	0
+PROPERTY	CastsShadows	4	true	0
+PROPERTY	Direction	3	-0.573576,-0.671010,-0.469846	0
+PROPERTY	LightType	6	1	3	Point	Directional	Spot
+PROPERTY	Static	4	true	0
+PROPERTY	Shadow Cascade Count	1	4	0
+PROPERTY	Shadow Resolution	1	2048	0
+PROPERTY	Shadow Cascade Resolution Falloff	0	0.750000	0
+PROPERTY	Shadow Distance (0 = Camera Far)	0	100.000000	0
+PROPERTY	Shadow Caster Distance (0 = Shadow Distance)	0	0.000000	0
+PROPERTY	Near Shadow Distance (0 = Auto)	0	8.000000	0
+PROPERTY	Shadow Split Lambda	0	0.900000	0
+PROPERTY	Shadow Cascade Blend Distance	0	4.000000	0
+PROPERTY	Shadow Softness (0 = Hard Shadows)	0	1.500000	0
+PROPERTY	Shadow Min Caster Texel Radius	0	0.000000	0
+PROPERTY	Shadow Filter Enabled	4	true	0
+PROPERTY	Shadow Filter Render Scale	0	0.500000	0
+PROPERTY	Shadow Filter Radius	1	2	0
+PROPERTY	Shadow Filter Depth Scale	0	0.015000	0
+PROPERTY	Shadow Filter Min Depth Scale	0	0.050000	0
+PROPERTY	Shadow Filter Normal Threshold	0	0.720000	0
+PROPERTY	Shadow Filter Normal Softness	0	0.260000	0
+END_COMPONENT
+ENTITY	52	0	1	Centre Light	0.000000,10.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	52	LightComponent	1
+PROPERTY	Color	3	0.450000,0.650000,1.000000	0
+PROPERTY	Intensity	0	13.000000	0
+PROPERTY	Range	0	42.000000	0
+PROPERTY	CastsShadows	4	false	0
+PROPERTY	Direction	3	0.000000,0.000000,-1.000000	0
+PROPERTY	LightType	6	0	3	Point	Directional	Spot
+PROPERTY	Static	4	false	0
+END_COMPONENT
+ENTITY	60	0	1	HUD	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	60	CanvasComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	RenderMode	6	0	4	Screen Space	World Screen Space	Screen Space Camera	World Space
+PROPERTY	ScaleMode	6	1	3	ConstantPixels	ScaleWithScreenSize	ConstantPhysicalSize
+PROPERTY	ScaleFactor	0	1.000000	0
+PROPERTY	ReferenceResolution	7	1920.000000,1080.000000	0
+PROPERTY	MatchWidthOrHeight	0	0.500000	0
+PROPERTY	ScreenMatchMode	6	0	3	MatchWidthOrHeight	Expand	Shrink
+PROPERTY	SortingOrder	1	0	0
+PROPERTY	WorldSizeMode	6	0	3	WorldUnits	ConstantScreenSize	DistanceScaled
+PROPERTY	FaceCamera	4	true	0
+PROPERTY	Backend	6	1	2	Legacy Native	RmlUi
+PROPERTY	ContentSource	6	0	2	RML Document	Text
+PROPERTY	DocumentPath	2	project://UI/rocketleg-hud.rml	0
+END_COMPONENT
+ENTITY	61	60	1	ScoreText	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	61	RectTransformComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	AnchorPreset	6	1	10	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight	Stretch
+PROPERTY	AnchoredPosition	7	0.000000,-48.000000	0
+PROPERTY	SizeDelta	7	760.000000,90.000000	0
+PROPERTY	Pivot	7	0.500000,1.000000	0
+PROPERTY	AnchorMin	7	0.500000,1.000000	0
+PROPERTY	AnchorMax	7	0.500000,1.000000	0
+PROPERTY	Margin	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	MinimumSize	7	0.000000,0.000000	0
+PROPERTY	MaximumSize	7	100000.000000,100000.000000	0
+PROPERTY	Rotation	0	0.000000	0
+PROPERTY	LocalScale	7	1.000000,1.000000	0
+PROPERTY	Opacity	0	1.000000	0
+PROPERTY	ClipChildren	4	false	0
+PROPERTY	RaycastTarget	4	true	0
+PROPERTY	LayoutMode	6	0	4	None	Horizontal	Vertical	Grid
+PROPERTY	LayoutPadding	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	LayoutSpacing	7	0.000000,0.000000	0
+PROPERTY	GridColumns	1	1	0
+PROPERTY	ControlChildWidth	4	true	0
+PROPERTY	ControlChildHeight	4	true	0
+PROPERTY	ExpandChildWidth	4	false	0
+PROPERTY	ExpandChildHeight	4	false	0
+PROPERTY	HorizontalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+PROPERTY	VerticalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+END_COMPONENT
+COMPONENT	61	UITextComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	Text	2	BLUE  0  -  0  ORANGE	0
+PROPERTY	Color	5	1.000000,1.000000,1.000000,1.000000	0
+PROPERTY	FontSize	0	46.000000	0
+PROPERTY	FontPath	2		0
+PROPERTY	RichText	4	true	0
+PROPERTY	Alignment	6	4	9	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight
+PROPERTY	Wrap	4	true	0
+PROPERTY	LineSpacing	0	1.000000	0
+PROPERTY	OutlineColor	5	0.000000,0.000000,0.000000,0.950000	0
+PROPERTY	OutlineWidth	0	2.000000	0
+END_COMPONENT
+ENTITY	62	60	1	StatusText	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	62	RectTransformComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	AnchorPreset	6	4	10	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight	Stretch
+PROPERTY	AnchoredPosition	7	0.000000,30.000000	0
+PROPERTY	SizeDelta	7	900.000000,100.000000	0
+PROPERTY	Pivot	7	0.500000,0.500000	0
+PROPERTY	AnchorMin	7	0.500000,0.500000	0
+PROPERTY	AnchorMax	7	0.500000,0.500000	0
+PROPERTY	Margin	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	MinimumSize	7	0.000000,0.000000	0
+PROPERTY	MaximumSize	7	100000.000000,100000.000000	0
+PROPERTY	Rotation	0	0.000000	0
+PROPERTY	LocalScale	7	1.000000,1.000000	0
+PROPERTY	Opacity	0	1.000000	0
+PROPERTY	ClipChildren	4	false	0
+PROPERTY	RaycastTarget	4	true	0
+PROPERTY	LayoutMode	6	0	4	None	Horizontal	Vertical	Grid
+PROPERTY	LayoutPadding	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	LayoutSpacing	7	0.000000,0.000000	0
+PROPERTY	GridColumns	1	1	0
+PROPERTY	ControlChildWidth	4	true	0
+PROPERTY	ControlChildHeight	4	true	0
+PROPERTY	ExpandChildWidth	4	false	0
+PROPERTY	ExpandChildHeight	4	false	0
+PROPERTY	HorizontalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+PROPERTY	VerticalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+END_COMPONENT
+COMPONENT	62	UITextComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	Text	2	KICKOFF!	0
+PROPERTY	Color	5	1.000000,0.950000,0.500000,1.000000	0
+PROPERTY	FontSize	0	42.000000	0
+PROPERTY	FontPath	2		0
+PROPERTY	RichText	4	true	0
+PROPERTY	Alignment	6	4	9	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight
+PROPERTY	Wrap	4	true	0
+PROPERTY	LineSpacing	0	1.000000	0
+PROPERTY	OutlineColor	5	0.000000,0.000000,0.000000,1.000000	0
+PROPERTY	OutlineWidth	0	2.000000	0
+END_COMPONENT
+ENTITY	63	60	1	ControlsText	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	63	RectTransformComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	AnchorPreset	6	7	10	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight	Stretch
+PROPERTY	AnchoredPosition	7	0.000000,28.000000	0
+PROPERTY	SizeDelta	7	1300.000000,70.000000	0
+PROPERTY	Pivot	7	0.500000,0.000000	0
+PROPERTY	AnchorMin	7	0.500000,0.000000	0
+PROPERTY	AnchorMax	7	0.500000,0.000000	0
+PROPERTY	Margin	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	MinimumSize	7	0.000000,0.000000	0
+PROPERTY	MaximumSize	7	100000.000000,100000.000000	0
+PROPERTY	Rotation	0	0.000000	0
+PROPERTY	LocalScale	7	1.000000,1.000000	0
+PROPERTY	Opacity	0	1.000000	0
+PROPERTY	ClipChildren	4	false	0
+PROPERTY	RaycastTarget	4	true	0
+PROPERTY	LayoutMode	6	0	4	None	Horizontal	Vertical	Grid
+PROPERTY	LayoutPadding	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	LayoutSpacing	7	0.000000,0.000000	0
+PROPERTY	GridColumns	1	1	0
+PROPERTY	ControlChildWidth	4	true	0
+PROPERTY	ControlChildHeight	4	true	0
+PROPERTY	ExpandChildWidth	4	false	0
+PROPERTY	ExpandChildHeight	4	false	0
+PROPERTY	HorizontalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+PROPERTY	VerticalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+END_COMPONENT
+COMPONENT	63	UITextComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	Text	2	BLUE: WASD Q/E + SHIFT/SPACE    ORANGE: ARROWS ,/. + RSHIFT/ENTER    C: BALL CAM    TAB: FOLLOW	0
+PROPERTY	Color	5	0.900000,0.930000,1.000000,0.920000	0
+PROPERTY	FontSize	0	19.000000	0
+PROPERTY	FontPath	2		0
+PROPERTY	RichText	4	true	0
+PROPERTY	Alignment	6	4	9	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight
+PROPERTY	Wrap	4	true	0
+PROPERTY	LineSpacing	0	1.000000	0
+PROPERTY	OutlineColor	5	0.000000,0.000000,0.000000,0.900000	0
+PROPERTY	OutlineWidth	0	1.000000	0
+END_COMPONENT
+ENTITY	64	60	1	TitleText	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	64	RectTransformComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	AnchorPreset	6	0	10	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight	Stretch
+PROPERTY	AnchoredPosition	7	32.000000,-30.000000	0
+PROPERTY	SizeDelta	7	360.000000,64.000000	0
+PROPERTY	Pivot	7	0.000000,1.000000	0
+PROPERTY	AnchorMin	7	0.000000,1.000000	0
+PROPERTY	AnchorMax	7	0.000000,1.000000	0
+PROPERTY	Margin	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	MinimumSize	7	0.000000,0.000000	0
+PROPERTY	MaximumSize	7	100000.000000,100000.000000	0
+PROPERTY	Rotation	0	0.000000	0
+PROPERTY	LocalScale	7	1.000000,1.000000	0
+PROPERTY	Opacity	0	1.000000	0
+PROPERTY	ClipChildren	4	false	0
+PROPERTY	RaycastTarget	4	true	0
+PROPERTY	LayoutMode	6	0	4	None	Horizontal	Vertical	Grid
+PROPERTY	LayoutPadding	5	0.000000,0.000000,0.000000,0.000000	0
+PROPERTY	LayoutSpacing	7	0.000000,0.000000	0
+PROPERTY	GridColumns	1	1	0
+PROPERTY	ControlChildWidth	4	true	0
+PROPERTY	ControlChildHeight	4	true	0
+PROPERTY	ExpandChildWidth	4	false	0
+PROPERTY	ExpandChildHeight	4	false	0
+PROPERTY	HorizontalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+PROPERTY	VerticalContentSize	6	0	3	Unconstrained	Minimum	Preferred
+END_COMPONENT
+COMPONENT	64	UITextComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	Text	2	ROCKETLEG	0
+PROPERTY	Color	5	0.700000,0.850000,1.000000,1.000000	0
+PROPERTY	FontSize	0	30.000000	0
+PROPERTY	FontPath	2		0
+PROPERTY	RichText	4	true	0
+PROPERTY	Alignment	6	3	9	TopLeft	TopCenter	TopRight	MiddleLeft	MiddleCenter	MiddleRight	BottomLeft	BottomCenter	BottomRight
+PROPERTY	Wrap	4	true	0
+PROPERTY	LineSpacing	0	1.000000	0
+PROPERTY	OutlineColor	5	0.000000,0.000000,0.000000,0.900000	0
+PROPERTY	OutlineWidth	0	1.000000	0
+END_COMPONENT
+ENTITY	65	0	1	Sky	0.000000,300.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+COMPONENT	65	PhysicalSkyComponent	1
+PROPERTY	Rayleigh Strength	0	1.000000	0
+PROPERTY	Mie Strength	0	0.650000	0
+PROPERTY	Mie Anisotropy	0	0.800000	0
+PROPERTY	Ozone Strength	0	1.000000	0
+PROPERTY	Sun Intensity	0	12.000000	0
+PROPERTY	Sun Angular Radius	0	0.270000	0
+PROPERTY	Sun Color	3	1.000000,0.980000,0.920000	0
+PROPERTY	Exposure	0	1.000000	0
+PROPERTY	Night Intensity	0	0.035000	0
+PROPERTY	Star Intensity	0	1.000000	0
+PROPERTY	Moon Intensity	0	0.800000	0
+PROPERTY	Moon Angular Radius	0	0.260000	0
+PROPERTY	Moon Color	3	0.550000,0.650000,1.000000	0
+PROPERTY	Ground Color	3	0.012000,0.015000,0.020000	0
+END_COMPONENT
+COMPONENT	65	VolumetricCloudComponent	1
+PROPERTY	Size	3	1000.000000,300.000000,1000.000000	0
+PROPERTY	Coverage	0	0.550000	0
+PROPERTY	Density	0	0.420000	0
+PROPERTY	Extinction	0	0.012000	0
+PROPERTY	Scattering Albedo	0	0.900000	0
+PROPERTY	Anisotropy	0	0.650000	0
+PROPERTY	Ambient Light	0	0.220000	0
+PROPERTY	Cloud Color	3	1.000000,0.980000,0.950000	0
+PROPERTY	Base Noise Scale	0	0.006000	0
+PROPERTY	Detail Noise Scale	0	0.035000	0
+PROPERTY	Detail Erosion	0	0.320000	0
+PROPERTY	Wind Direction	3	1.000000,0.000000,0.250000	0
+PROPERTY	Wind Speed	0	8.000000	0
+PROPERTY	Render Scale	0	0.500000	0
+PROPERTY	Primary Steps	1	24	0
+PROPERTY	Light Steps	1	3	0
+END_COMPONENT

@@ -390,6 +390,27 @@ namespace PlutoGE::platform
         {
             m_inputState.ClearKeyStates();
         }
+        else if (m_window)
+        {
+            // Editor viewport focus can disable script input for a frame. Key
+            // callbacks do not emit a second press event for keys that remain
+            // physically held when gameplay input is enabled again, so rebuild
+            // the current state from GLFW. Mirror it into previous state to
+            // resume IsKeyDown immediately without creating false Pressed edges.
+            auto *window = static_cast<GLFWwindow *>(m_window);
+            for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key)
+            {
+                const bool down = glfwGetKey(window, key) == GLFW_PRESS;
+                m_inputState.keys[static_cast<std::size_t>(key)] = down;
+                m_inputState.previousKeys[static_cast<std::size_t>(key)] = down;
+            }
+            for (int button = GLFW_MOUSE_BUTTON_1; button <= GLFW_MOUSE_BUTTON_LAST; ++button)
+            {
+                const bool down = glfwGetMouseButton(window, button) == GLFW_PRESS;
+                m_inputState.mouseState.buttons[button] = down;
+                m_inputState.mouseState.previousButtons[button] = down;
+            }
+        }
 
         ApplyCursorMode();
     }

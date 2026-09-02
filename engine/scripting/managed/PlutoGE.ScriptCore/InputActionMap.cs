@@ -87,6 +87,17 @@ public sealed class InputActionMap
                 InputBindingKind.MouseAxis => binding.MouseAxis == MouseAxis.X ? Input.MouseDelta.X : Input.MouseDelta.Y,
                 _ => 0.0f
             };
+            // GLFW's standard gamepad mapping exposes triggers as -1 at rest
+            // and +1 when fully pressed. Input actions treat them as one-way
+            // controls so they can be combined with keyboard bindings without
+            // producing a phantom negative input while released.
+            if (binding.Kind == InputBindingKind.GamepadAxis &&
+                (binding.Axis == GamepadAxis.LeftTrigger || binding.Axis == GamepadAxis.RightTrigger))
+            {
+                sample = Input.IsGamepadConnected(binding.Gamepad)
+                    ? (sample + 1.0f) * 0.5f
+                    : 0.0f;
+            }
             if (MathF.Abs(sample) < Math.Clamp(binding.DeadZone, 0.0f, 0.99f)) sample = 0.0f;
             value += sample * binding.Scale;
         }

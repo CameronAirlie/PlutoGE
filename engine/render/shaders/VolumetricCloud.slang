@@ -36,7 +36,7 @@ float fbm(float3 p)
 
 float densityAt(float3 worldPosition, float4x4 inverseVolume)
 {
-    const float3 local = mul(inverseVolume, float4(worldPosition, 1.0)).xyz;
+    const float3 local = transformWorldToLocalPosition(worldPosition, inverseVolume, pass.flipY);
     if (any(abs(local) > 0.5))
         return 0.0;
     const float height = local.y + 0.5;
@@ -57,8 +57,8 @@ float densityAt(float3 worldPosition, float4x4 inverseVolume)
 
 float2 intersectVolume(float3 origin, float3 direction, float4x4 inverseVolume)
 {
-    const float3 localOrigin = mul(inverseVolume, float4(origin, 1.0)).xyz;
-    const float3 localDirection = mul(inverseVolume, float4(direction, 0.0)).xyz;
+    const float3 localOrigin = transformWorldToLocalPosition(origin, inverseVolume, pass.flipY);
+    const float3 localDirection = transformWorldToLocalDirection(direction, inverseVolume, pass.flipY);
     const float3 safeDirection = sign(localDirection) * max(abs(localDirection), 0.000001);
     const float3 t0 = (-0.5 - localOrigin) / safeDirection;
     const float3 t1 = (0.5 - localOrigin) / safeDirection;
@@ -94,12 +94,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float4 scene = sceneTexture.Sample(uv);
     const float4x4 inverseVolume = pass.worldToLocal;
-    // The renderer uses reverse-Z, so zero is the far plane. Building the ray
-    // from the near plane loses substantial direction precision in large
-    // worlds and can make the volume intersection cover the whole screen.
-    const float3 farPosition = reconstructWorldPosition(uv, 0.0, pass.inverseViewProjection,
-                                                         pass.flipY, pass.zeroToOneDepth);
-    const float3 rayDirection = normalize(farPosition - pass.cameraPosition.xyz);
+    const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);
     float end = hit.y;
     const float depth = depthTexture.Sample(uv).r;

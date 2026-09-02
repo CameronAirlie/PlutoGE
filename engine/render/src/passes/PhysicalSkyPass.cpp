@@ -73,8 +73,8 @@ namespace PlutoGE::render
                 out vec4 FragColor;
 
                 uniform sampler2D uSceneDepth;
-                uniform mat4 uInverseView;
-                uniform mat4 uInverseProjection;
+                uniform mat4 uInverseViewProjection;
+                uniform vec3 uCameraPosition;
                 uniform vec3 uSunDirection;
                 uniform vec3 uSunColor;
                 uniform vec3 uMoonColor;
@@ -116,8 +116,13 @@ namespace PlutoGE::render
                         float horizontal = sin(elevation);
                         return normalize(vec3(cos(azimuth) * horizontal, cos(elevation), sin(azimuth) * horizontal));
                     }
-                    vec4 view = uInverseProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
-                    return normalize((uInverseView * vec4(normalize(view.xyz / max(view.w, 0.0001)), 0.0)).xyz);
+                    // Match the RHI sky path exactly: reconstruct a point on
+                    // the reverse-Z far plane and form the ray in world space.
+                    vec4 world = uInverseViewProjection * vec4(uv * 2.0 - 1.0, -1.0, 1.0);
+                    float safeW = abs(world.w) > 0.000001
+                        ? world.w
+                        : (world.w < 0.0 ? -0.000001 : 0.000001);
+                    return normalize(world.xyz / safeW - uCameraPosition);
                 }
 
                 float RayleighPhase(float cosine)
@@ -359,8 +364,9 @@ namespace PlutoGE::render
         Graphics::Disable(GL_BLEND);
         m_shader->Bind();
         m_shader->SetUniform("uEnvironmentCapture", 0);
-        m_shader->SetUniform("uInverseView", glm::inverse(ctx.cameraData.view));
-        m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
+        const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
+        m_shader->SetUniform("uInverseViewProjection", glm::inverse(ctx.cameraData.projection * ctx.cameraData.view));
+        m_shader->SetUniform("uCameraPosition", glm::vec3(inverseView[3]));
         SetSkyUniforms(*m_shader, *sky, sunDirection);
         Graphics::ActiveTexture(GL_TEXTURE0);
         Graphics::BindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());

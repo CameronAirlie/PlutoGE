@@ -195,8 +195,11 @@ namespace PlutoGE::render
                     indexCount = range.indexCount;
                 }
                 BasicDraw draw{.mesh = &mesh->second, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
-                draw.contributesToGi = command.isStatic &&
-                                       (!command.jointMatrices || command.jointMatrices->empty());
+                // Scene imports commonly leave rigid architectural submeshes marked non-static.
+                // VCT content signatures already invalidate moved rigid draws, so the Static flag
+                // is a caching hint rather than a requirement for contributing to GI. Skinned
+                // geometry remains excluded until the voxelizer supports joint transforms.
+                draw.contributesToGi = !command.jointMatrices || command.jointMatrices->empty();
                 if (command.material)
                 {
                     const auto &material = command.material->GetConfig();
@@ -286,9 +289,28 @@ namespace PlutoGE::render
             }
             if (cascadeCount > 1 && effectiveLighting.shadowNearCascadeDistance > cameraNear)
             {
-                effectiveLighting.shadowCascadeSplits[0] = std::min(
+                const float nearCascadeEnd = std::clamp(
                     effectiveLighting.shadowNearCascadeDistance,
-                    effectiveLighting.shadowCascadeSplits[1] - 0.01f);
+                    cameraNear + 0.01f,
+                    shadowDistance - 0.01f * static_cast<float>(cascadeCount - 1));
+                effectiveLighting.shadowCascadeSplits[0] = nearCascadeEnd;
+                // Treat the explicitly-sized near cascade as a fixed first
+                // partition, then redistribute the remaining range. Merely
+                // replacing split zero can leave split one almost coincident
+                // with it for high logarithmic lambdas (for example 8.00 and
+                // 8.08), producing a visibly degenerate shadow projection.
+                for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
+                {
+                    const float factor = static_cast<float>(cascade) /
+                                         static_cast<float>(cascadeCount - 1);
+                    const float logarithmic = nearCascadeEnd *
+                        std::pow(shadowDistance / nearCascadeEnd, factor);
+                    const float uniform = nearCascadeEnd +
+                        (shadowDistance - nearCascadeEnd) * factor;
+                    effectiveLighting.shadowCascadeSplits[cascade] = glm::mix(
+                        uniform, logarithmic,
+                        std::clamp(effectiveLighting.shadowSplitLambda, 0.0f, 1.0f));
+                }
             }
             for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
                 effectiveLighting.shadowCascadeSplits[cascade] = std::max(
@@ -347,6 +369,8 @@ namespace PlutoGE::render
         const auto terminalDiagnostic = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
                                                      { return (effect.type == BasicPostProcessEffectType::SSAO && effect.parameters[1].y > 0.5f) ||
                                                               (effect.type == BasicPostProcessEffectType::SSGI && effect.parameters[1].z > 0.5f) ||
+                                                              (effect.type == BasicPostProcessEffectType::VCTGI &&
+                                                               (effect.parameters[3].z > 0.5f || effect.parameters[3].x > 0.5f)) ||
                                                               (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u); });
         if (terminalDiagnostic != basicEffects.end())
             basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());

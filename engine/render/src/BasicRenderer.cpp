@@ -90,6 +90,14 @@ namespace PlutoGE::render
             glm::uvec2 padding{};
             glm::vec4 lightDirectionIntensity{0.0f};
             glm::vec4 lightColor{0.0f};
+            std::array<glm::mat4, 4> shadowMatrices{
+                glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+            glm::mat4 view{1.0f};
+            glm::vec4 shadowCascadeSplits{0.0f};
+            std::uint32_t shadowsEnabled = 0, shadowFlipY = 0;
+            float shadowDepthScale = 1.0f, shadowDepthBias = 0.0f;
+            std::array<glm::vec4, 4> shadowInverseResolutions{};
+            glm::vec4 shadowCascadeParameters{0.0f}; // count, blend distance, softness, padding
         };
         struct alignas(16) VctObjectParameters { glm::mat4 model{1.0f}; };
         struct alignas(16) VctMaterialParameters
@@ -97,7 +105,8 @@ namespace PlutoGE::render
             glm::vec4 baseColor{1.0f};
             glm::vec2 uvScale{1.0f}; float metallic = 0.0f, alphaCutoff = 0.5f;
             glm::vec3 emission{0.0f}; std::uint32_t alphaMode = 0;
-            std::uint32_t hasAlbedoTexture = 0; glm::uvec3 padding{};
+            std::uint32_t hasAlbedoTexture = 0, hasMetallicTexture = 0;
+            std::uint32_t metallicChannel = 0, padding = 0;
         };
         struct alignas(16) VctResolveParameters
         { std::uint32_t resolution = 1, destinationZOffset = 0; glm::uvec2 padding{}; };
@@ -123,7 +132,7 @@ namespace PlutoGE::render
         };
         struct alignas(16) VctMetadataParameters
         { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0; glm::uvec3 padding{}; };
-        static_assert(sizeof(VctVoxelParameters) == 64);
+        static_assert(sizeof(VctVoxelParameters) == 496);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64);
         static_assert(sizeof(VctResolveParameters) == 16);
@@ -166,6 +175,9 @@ namespace PlutoGE::render
                 HashVctValue(hash, draw.alphaMode);
                 const bool hasBaseColorTexture = static_cast<bool>(draw.baseColorTexture);
                 HashVctValue(hash, hasBaseColorTexture);
+                const bool hasMetallicTexture = static_cast<bool>(draw.metallicTexture);
+                HashVctValue(hash, hasMetallicTexture);
+                HashVctValue(hash, draw.metallicChannel);
             }
             return hash;
         }
@@ -499,7 +511,12 @@ namespace PlutoGE::render
                     {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
                     {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
                     {6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
-                    {7, 0, 7, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment}};
+                    {7, 0, 7, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
+                    {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {10, 0, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {11, 0, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {12, 0, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
                 voxelization.vertexLayout = {
                     .stride = sizeof(BasicVertex),
                     .attributes = {
@@ -1154,9 +1171,13 @@ namespace PlutoGE::render
 
     rhi::Buffer &BasicRenderer::AcquireVctBuffer(std::size_t index)
     {
+        constexpr std::size_t vctParameterBufferSize = 512;
+        static_assert(sizeof(VctVoxelParameters) <= vctParameterBufferSize);
+        static_assert(sizeof(VctTraceParameters) <= vctParameterBufferSize);
+        static_assert(sizeof(VctTemporalParameters) <= vctParameterBufferSize);
         while (m_vctBuffers.size() <= index)
             m_vctBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                {256, rhi::BufferUsage::Uniform, "VCT pass parameters"}));
+                {vctParameterBufferSize, rhi::BufferUsage::Uniform, "VCT pass parameters"}));
         return m_vctBuffers[index];
     }
 
@@ -1252,9 +1273,35 @@ namespace PlutoGE::render
         if (rebuildIndex < cascadeCount)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
-            const VctVoxelParameters voxel{cascade.pendingOrigin, cascade.pendingSize, resolution, 1, {},
-                glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
-                glm::vec4(lighting.directionalColor, 1.0f)};
+            VctVoxelParameters voxel;
+            voxel.volumeOrigin = cascade.pendingOrigin;
+            voxel.volumeSize = cascade.pendingSize;
+            voxel.resolution = resolution;
+            voxel.hasDirectionalLight = lighting.directionalIntensity > 0.0f ? 1u : 0u;
+            voxel.lightDirectionIntensity = glm::vec4(
+                glm::normalize(lighting.directionalDirection), lighting.directionalIntensity);
+            voxel.lightColor = glm::vec4(lighting.directionalColor, 1.0f);
+            voxel.shadowMatrices = lighting.shadowMatrices;
+            voxel.view = lighting.view;
+            voxel.shadowCascadeSplits = lighting.shadowCascadeSplits;
+            voxel.shadowsEnabled = lighting.shadowsEnabled ? 1u : 0u;
+            voxel.shadowFlipY = lighting.shadowFlipY ? 1u : 0u;
+            voxel.shadowDepthScale = lighting.shadowDepthScale;
+            voxel.shadowDepthBias = lighting.shadowDepthBias;
+            const auto shadowCascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
+            for (std::uint32_t shadowCascade = 0; shadowCascade < shadowCascadeCount; ++shadowCascade)
+            {
+                const float scale = std::pow(
+                    std::clamp(lighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
+                    static_cast<float>(shadowCascade));
+                const float cascadeResolution = std::max(
+                    1.0f, std::round(static_cast<float>(lighting.shadowResolution) * scale));
+                voxel.shadowInverseResolutions[shadowCascade] = glm::vec4(1.0f / cascadeResolution);
+            }
+            voxel.shadowCascadeParameters = glm::vec4(
+                static_cast<float>(shadowCascadeCount),
+                std::max(lighting.shadowCascadeBlendDistance, 0.0f),
+                std::max(lighting.shadowSoftness, 0.0f), 0.0f);
             auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
             m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
             rhi::RenderingInfo raster;
@@ -1283,12 +1330,21 @@ namespace PlutoGE::render
                 auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
                 const VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
                     draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
-                    draw.baseColorTexture ? 1u : 0u, {}};
+                    draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
+                    draw.metallicChannel, 0u};
                 m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
                 commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
                 commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
                 commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
                                      m_fallbackSampler.Get());
+                commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
+                                     m_fallbackSampler.Get());
+                const auto fallbackShadow = m_fallbackDataTexture.Get();
+                for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
+                    commands.BindTexture(10 + shadowCascade,
+                        m_shadowDepthTargets[shadowCascade]
+                            ? m_shadowDepthTargets[shadowCascade].Get() : fallbackShadow,
+                        m_shadowSampler.Get());
                 commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                 commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                 const auto available = draw.firstIndex < draw.mesh->m_indexCount

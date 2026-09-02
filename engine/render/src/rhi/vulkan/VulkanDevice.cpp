@@ -1819,7 +1819,12 @@ namespace PlutoGE::render::rhi::vulkan
         vkDestroyShaderModule(m_impl->device, fragment, nullptr);
         if (geometry)
             vkDestroyShaderModule(m_impl->device, geometry, nullptr);
-        Check(result, "vkCreateGraphicsPipelines");
+        if (result != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "vkCreateGraphicsPipelines failed for '" + descriptor.debugName +
+                "' (VkResult " + std::to_string(result) + ")");
+        }
         return m_impl->pipelines.Insert(std::move(resource));
     }
 

@@ -68,6 +68,7 @@ namespace PlutoGE::ui
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;
         bool m_vulkanAvailable = false;
+        std::uint64_t m_frameSequence = 0;
         std::string m_vulkanStatus = "Vulkan not probed";
     };
 }

@@ -1,5 +1,7 @@
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RmlUiRhiRenderer.h"
+#include "PlutoGE/render/ShaderArtifacts.h"
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
@@ -498,16 +500,32 @@ namespace PlutoGE::render
         return instance;
     }
 
-    bool RmlUiRuntime::Initialize(platform::Window &window)
+    bool RmlUiRuntime::Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice)
     {
-        if (m_context)
+        if (m_context && static_cast<bool>(m_rhiRenderer) == (rhiDevice != nullptr))
             return true;
+        if (m_context)
+            Shutdown();
 
         m_window = &window;
         m_hotReloadEnabled = core::Engine::GetInstance().GetConfig().isEditorHost;
-        m_renderer = std::make_unique<RenderInterface_GL3>();
-        if (!static_cast<bool>(*m_renderer))
+        if (rhiDevice)
         {
+            const ShaderArtifactLibrary shaders;
+            m_rhiRenderer = std::make_unique<RmlUiRhiRenderer>(
+                *rhiDevice, shaders.Load("RmlUi", "vertex"), shaders.Load("RmlUi", "fragment"));
+        }
+        else
+        {
+            m_renderer = std::make_unique<RenderInterface_GL3>();
+        }
+        Rml::RenderInterface *renderInterface = rhiDevice
+                                                    ? static_cast<Rml::RenderInterface *>(m_rhiRenderer.get())
+                                                    : static_cast<Rml::RenderInterface *>(m_renderer.get());
+        if (!renderInterface || (m_rhiRenderer && !static_cast<bool>(*m_rhiRenderer)) ||
+            (m_renderer && !static_cast<bool>(*m_renderer)))
+        {
+            m_rhiRenderer.reset();
             m_renderer.reset();
             m_window = nullptr;
             return false;
@@ -515,11 +533,12 @@ namespace PlutoGE::render
 
         m_system = std::make_unique<SystemInterface_GLFW>();
         m_system->SetWindow(static_cast<GLFWwindow *>(window.GetWindow()));
-        Rml::SetRenderInterface(m_renderer.get());
+        Rml::SetRenderInterface(renderInterface);
         Rml::SetSystemInterface(m_system.get());
         if (!Rml::Initialise())
         {
             m_system.reset();
+            m_rhiRenderer.reset();
             m_renderer.reset();
             m_window = nullptr;
             return false;
@@ -528,11 +547,14 @@ namespace PlutoGE::render
         const auto extents = window.GetExtents();
         m_width = std::max(extents.width, 1);
         m_height = std::max(extents.height, 1);
+        if (m_rhiRenderer)
+            m_rhiRenderer->SetViewport(m_width, m_height);
         m_context = Rml::CreateContext("PlutoGE.Runtime", {m_width, m_height});
         if (!m_context)
         {
             Rml::Shutdown();
             m_system.reset();
+            m_rhiRenderer.reset();
             m_renderer.reset();
             m_window = nullptr;
             return false;
@@ -542,7 +564,7 @@ namespace PlutoGE::render
 
     void RmlUiRuntime::Shutdown()
     {
-        if (!m_context && !m_renderer && !m_system)
+        if (!m_context && !m_renderer && !m_rhiRenderer && !m_system)
             return;
 
         ResetRuntimeState();
@@ -555,6 +577,7 @@ namespace PlutoGE::render
         }
         Rml::Shutdown();
         m_system.reset();
+        m_rhiRenderer.reset();
         m_renderer.reset();
         m_window = nullptr;
         m_width = 0;
@@ -786,7 +809,7 @@ namespace PlutoGE::render
                 else if (m_reportedLoadFailures.insert(reference + "#font").second)
                     std::cerr << "[RmlUi] Generated text has no usable font. Assign UI Text FontPath.\n";
             }
-            if (request.worldSurface)
+            if (request.worldSurface && m_renderer)
             {
                 auto &target = m_worldSurfaceTargets[key];
                 const int surfaceWidth = std::clamp(static_cast<int>(std::ceil(request.size.x)), 1, 4096);
@@ -1582,6 +1605,73 @@ namespace PlutoGE::render
 
         const auto endFrameBegin = Clock::now();
         m_renderer->EndFrame();
+        m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
+    }
+
+    void RmlUiRuntime::RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device,
+                                 rhi::TextureHandle target, int width, int height,
+                                 std::uint64_t frameSequence, const glm::mat4 &view,
+                                 const glm::mat4 &projection)
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto elapsedMs = [](const auto begin, const auto end)
+        {
+            return std::chrono::duration<float, std::milli>(end - begin).count();
+        };
+        m_cpuTiming = {};
+
+        auto &window = core::Engine::GetInstance().GetWindow();
+        const auto initializeBegin = Clock::now();
+        if (!target || !Initialize(window, &device))
+        {
+            m_cpuTiming.initializeMs = elapsedMs(initializeBegin, Clock::now());
+            return;
+        }
+        m_cpuTiming.initializeMs = elapsedMs(initializeBegin, Clock::now());
+
+        const auto resizeBegin = Clock::now();
+        if (width != m_width || height != m_height)
+        {
+            m_width = width;
+            m_height = height;
+            m_context->SetDimensions({width, height});
+            m_rhiRenderer->SetViewport(width, height);
+            m_documentScales.clear();
+        }
+        m_cpuTiming.resizeMs = elapsedMs(resizeBegin, Clock::now());
+
+        const auto synchronizeBegin = Clock::now();
+        SynchronizeDocuments(scene, view, projection);
+        m_cpuTiming.synchronizeMs = elapsedMs(synchronizeBegin, Clock::now());
+        m_cpuTiming.documentCount = static_cast<int>(m_documents.size());
+        m_cpuTiming.visibleDocumentCount = static_cast<int>(std::count_if(
+            m_documents.begin(), m_documents.end(), [](const auto &entry)
+            {
+                return entry.second && entry.second->IsVisible();
+            }));
+        if (m_documents.empty())
+            return;
+
+        const auto inputBegin = Clock::now();
+        if (frameSequence != m_lastInputFrame)
+        {
+            ProcessInput(window, scene);
+            m_context->Update();
+            m_lastInputFrame = frameSequence;
+        }
+        m_cpuTiming.inputUpdateMs = elapsedMs(inputBegin, Clock::now());
+
+        m_rhiRenderer->SetViewport(width, height);
+        const auto beginFrameBegin = Clock::now();
+        m_rhiRenderer->BeginFrame(target);
+        m_cpuTiming.beginFrameMs = elapsedMs(beginFrameBegin, Clock::now());
+
+        const auto renderBegin = Clock::now();
+        m_context->Render();
+        m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
+
+        const auto endFrameBegin = Clock::now();
+        m_rhiRenderer->EndFrame();
         m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
     }
 }

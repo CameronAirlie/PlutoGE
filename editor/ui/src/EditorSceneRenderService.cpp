@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/rhi/RenderDeviceFactory.h"
@@ -185,12 +186,14 @@ namespace PlutoGE::ui
 
     void EditorSceneRenderService::Shutdown()
     {
+        render::RmlUiRuntime::Get().Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
         m_device = nullptr;
         m_ownedDevice.reset();
         m_viewportTexture = {};
+        m_frameSequence = 0;
         m_isVulkan = false;
     }
 
@@ -294,6 +297,11 @@ namespace PlutoGE::ui
                                          postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView))
                 return false;
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
+            if (scene && scene->HasRmlRuntimeUI())
+                render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
+                                                      static_cast<int>(width), static_cast<int>(height),
+                                                      ++m_frameSequence, cameraData.view,
+                                                      cameraData.projection);
         }
         catch (const std::exception &error)
         {

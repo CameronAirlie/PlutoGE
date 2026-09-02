@@ -253,6 +253,11 @@ namespace PlutoGE::render::rhi::opengl
             pipeline->descriptor.depthTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
             glDepthMask(pipeline->descriptor.depthWrite ? GL_TRUE : GL_FALSE);
             pipeline->descriptor.blend.enabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
+            if (pipeline->descriptor.blend.enabled)
+            {
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            }
             const auto compare = pipeline->descriptor.depthCompare == CompareOperation::GreaterOrEqual ? GL_GEQUAL : GL_LESS;
             glDepthFunc(compare);
             if (pipeline->descriptor.cullMode == CullMode::None)

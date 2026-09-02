@@ -9,6 +9,7 @@
 #include <functional>
 #include <vector>
 #include <glm/mat4x4.hpp>
+#include "PlutoGE/render/rhi/Types.h"
 
 namespace Rml
 {
@@ -33,6 +34,11 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::render
 {
+    namespace rhi
+    {
+        class IRenderDevice;
+    }
+    class RmlUiRhiRenderer;
     struct RmlUiCpuTiming
     {
         float initializeMs = 0.0f;
@@ -68,12 +74,15 @@ namespace PlutoGE::render
     public:
         static RmlUiRuntime &Get();
 
-        bool Initialize(platform::Window &window);
+        bool Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice = nullptr);
         void ResetRuntimeState();
         void Shutdown();
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
                     const glm::mat4 &view, const glm::mat4 &projection,
                     const std::function<void()> &drawWorldSurfaces = {});
+        void RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device, rhi::TextureHandle target,
+                       int width, int height, std::uint64_t frameSequence,
+                       const glm::mat4 &view, const glm::mat4 &projection);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }
@@ -122,6 +131,7 @@ namespace PlutoGE::render
         };
 
         std::unique_ptr<RenderInterface_GL3> m_renderer;
+        std::unique_ptr<RmlUiRhiRenderer> m_rhiRenderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
         Rml::Context *m_context = nullptr;
         platform::Window *m_window = nullptr;

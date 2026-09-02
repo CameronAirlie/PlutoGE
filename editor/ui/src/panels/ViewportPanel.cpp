@@ -1819,7 +1819,10 @@ namespace PlutoGE::ui
 
     void ViewportPanel::SetGraphicsApi(render::rhi::GraphicsApi graphicsApi)
     {
-        if (m_config.graphicsApi == graphicsApi && m_rhiRenderService && m_rhiRenderService->IsInitialized())
+        // Hidden viewports deliberately defer renderer initialization. Treat an
+        // unchanged API as a no-op even in that state; otherwise the hidden
+        // Game Viewport shuts down shared render state every editor frame.
+        if (m_config.graphicsApi == graphicsApi)
             return;
 
         ShutdownRhiPreview();

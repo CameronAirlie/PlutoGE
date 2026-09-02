@@ -1,5 +1,7 @@
 #include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/scene/Scene.h"
 
 namespace PlutoGE::render
 {
@@ -21,6 +23,7 @@ namespace PlutoGE::render
 
     void RhiRenderService::Shutdown()
     {
+        RmlUiRuntime::Get().Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
@@ -29,12 +32,14 @@ namespace PlutoGE::render
         m_renderer.reset();
         m_device = nullptr;
         m_swapchain = nullptr;
+        m_frameSequence = 0;
     }
 
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
-                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader)
+                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
+                                                 const scene::Scene *scene)
     {
         if (!m_swapchain || !m_renderer)
             return false;
@@ -49,6 +54,11 @@ namespace PlutoGE::render
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
                                      cameraData, lighting, commands, commands, {}, {}, texturePixelReader))
             return false;
+        if (scene && scene->HasRmlRuntimeUI())
+            RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
+                                         static_cast<int>(m_swapchain->GetWidth()),
+                                         static_cast<int>(m_swapchain->GetHeight()), ++m_frameSequence,
+                                         cameraData.view, cameraData.projection);
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }
 

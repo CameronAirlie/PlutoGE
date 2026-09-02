@@ -1843,7 +1843,16 @@ namespace PlutoGE::render::rhi::vulkan
                                                      : descriptor.colorFormats.size();
         std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount);
         for (auto &blend : blendAttachments)
+        {
             blend.colorWriteMask = 0xf;
+            blend.blendEnable = descriptor.blend.enabled;
+            blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend.colorBlendOp = VK_BLEND_OP_ADD;
+            blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
         VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         blending.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
         blending.pAttachments = blendAttachments.data();

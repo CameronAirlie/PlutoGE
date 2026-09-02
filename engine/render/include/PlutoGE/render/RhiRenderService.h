@@ -5,6 +5,11 @@
 
 #include <memory>
 
+namespace PlutoGE::scene
+{
+    class Scene;
+}
+
 namespace PlutoGE::render
 {
     class RhiRenderService
@@ -20,7 +25,8 @@ namespace PlutoGE::render
         [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
-                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {});
+                                                 const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {},
+                                                 const PlutoGE::scene::Scene *scene = nullptr);
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
@@ -32,5 +38,6 @@ namespace PlutoGE::render
         std::unique_ptr<BasicRenderer> m_renderer;
         std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
+        std::uint64_t m_frameSequence = 0;
     };
 }

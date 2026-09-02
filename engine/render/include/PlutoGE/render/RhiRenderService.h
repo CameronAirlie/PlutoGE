@@ -27,6 +27,7 @@ namespace PlutoGE::render
         BasicMesh CreateMesh(const BasicMeshData &data);
 
     private:
+        rhi::IRenderDevice *m_device = nullptr;
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;
         std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;

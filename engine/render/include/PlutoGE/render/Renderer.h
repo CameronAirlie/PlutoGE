@@ -218,6 +218,9 @@ namespace PlutoGE::render
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
         void BeginProfilingFrame();
+        // Resets frame-local CPU counters without resolving legacy OpenGL GPU
+        // queries. Vulkan editor hosts use this before scene submission.
+        void BeginCpuProfilingFrame();
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         bool CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights = {}, const scene::Scene *scene = nullptr);
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});

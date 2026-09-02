@@ -177,6 +177,13 @@ namespace PlutoGE::ui
         report << "RHI descriptor preparation CPU: " << rhi.descriptorCpuMs << " ms\n";
         report << "RHI uniform upload: " << rhi.uniformBytesUploaded << " bytes in "
                << rhi.uniformUploadCpuMs << " ms CPU\n";
+        const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
+        report << "RHI scene total CPU: " << rhiScene.totalMs << " ms\n";
+        report << "RHI command translation: " << rhiScene.commandTranslationMs << " ms ("
+               << rhiScene.visibleDrawCount << " visible draws, " << rhiScene.shadowDrawCount
+               << " shadow draws)\n";
+        report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
+        report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
         for (const auto &scope : rhi.gpuScopes)
             report << scope.name << ": " << scope.milliseconds << " ms GPU, "
                    << scope.cpuMilliseconds << " ms CPU recording\n";

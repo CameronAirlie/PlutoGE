@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <chrono>
 
 namespace PlutoGE::render
 {
@@ -153,6 +154,12 @@ namespace PlutoGE::render
                                   const TexturePixelReader &texturePixelReader,
                                   PostProcessDebugView debugView)
     {
+        const auto totalStart = std::chrono::steady_clock::now();
+        const auto millisecondsBetween = [](const auto start, const auto end)
+        {
+            return std::chrono::duration<float, std::milli>(end - start).count();
+        };
+        m_timingStats = {};
         if (!m_renderer || !m_device || width == 0 || height == 0 || !m_renderer->Resize(width, height))
             return false;
 
@@ -180,11 +187,12 @@ namespace PlutoGE::render
         };
 
         const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
-                                     std::vector<BasicDraw> &destination)
+                                     std::vector<BasicDraw> &destination,
+                                     bool shadowOnly)
         {
             for (const auto &command : sourceCommands)
             {
-                if (!command.mesh)
+                if (!command.mesh || (shadowOnly && !command.castsShadow))
                     continue;
                 auto mesh = m_meshes.find(command.mesh);
                 if (mesh == m_meshes.end())
@@ -223,28 +231,36 @@ namespace PlutoGE::render
                 if (command.material)
                 {
                     const auto &material = command.material->GetConfig();
-                    draw.baseColor = material.color;
-                    draw.uvScale = material.uvScale;
-                    draw.metallic = material.metallic;
-                    draw.roughness = material.roughness;
-                    draw.emission = material.emission;
-                    draw.subsurface = material.subsurface;
-                    draw.subsurfaceColor = material.subsurfaceColor;
-                    draw.subsurfaceRadius = material.subsurfaceRadius;
-                    draw.alphaCutoff = material.alphaCutoff;
-                    draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
-                    draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
-                    draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
-                    draw.flipNormalY = material.flipNormalY;
-                    draw.castsShadow = draw.castsShadow && material.castsShadow;
-                    draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
-                                                          m_srgbTextures, "Scene albedo");
-                    draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
-                                                       m_linearTextures, "Scene normal");
-                    draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
-                                                         m_linearTextures, "Scene metallic");
-                    draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                          m_linearTextures, "Scene roughness");
+                    if (shadowOnly)
+                    {
+                        if (!material.castsShadow)
+                            continue;
+                    }
+                    else
+                    {
+                        draw.baseColor = material.color;
+                        draw.uvScale = material.uvScale;
+                        draw.metallic = material.metallic;
+                        draw.roughness = material.roughness;
+                        draw.emission = material.emission;
+                        draw.subsurface = material.subsurface;
+                        draw.subsurfaceColor = material.subsurfaceColor;
+                        draw.subsurfaceRadius = material.subsurfaceRadius;
+                        draw.alphaCutoff = material.alphaCutoff;
+                        draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
+                        draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
+                        draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
+                        draw.flipNormalY = material.flipNormalY;
+                        draw.castsShadow = draw.castsShadow && material.castsShadow;
+                        draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
+                                                              m_srgbTextures, "Scene albedo");
+                        draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
+                                                           m_linearTextures, "Scene normal");
+                        draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
+                                                             m_linearTextures, "Scene metallic");
+                        draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
+                                                              m_linearTextures, "Scene roughness");
+                    }
                 }
                 if (command.instanceModels && !command.instanceModels->empty())
                     for (const auto &model : *command.instanceModels)
@@ -256,10 +272,17 @@ namespace PlutoGE::render
                     destination.push_back(draw);
             }
         };
-        appendDraws(commands, draws);
+        appendDraws(commands, draws, false);
         std::vector<BasicDraw> shadowDraws;
-        shadowDraws.reserve(shadowCommands.size());
-        appendDraws(shadowCommands, shadowDraws);
+        if (lighting.shadowsEnabled)
+        {
+            shadowDraws.reserve(shadowCommands.size());
+            appendDraws(shadowCommands, shadowDraws, true);
+        }
+        const auto translationEnd = std::chrono::steady_clock::now();
+        m_timingStats.commandTranslationMs = millisecondsBetween(totalStart, translationEnd);
+        m_timingStats.visibleDrawCount = draws.size();
+        m_timingStats.shadowDrawCount = shadowDraws.size();
 
         // Visibility is transient. Evicting resources that are merely outside
         // the current camera frustum makes camera rotation synchronously rebuild
@@ -417,8 +440,13 @@ namespace PlutoGE::render
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
+        const auto setupEnd = std::chrono::steady_clock::now();
+        m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
                            debugView);
+        const auto renderEnd = std::chrono::steady_clock::now();
+        m_timingStats.renderRecordingMs = millisecondsBetween(setupEnd, renderEnd);
+        m_timingStats.totalMs = millisecondsBetween(totalStart, renderEnd);
         return true;
     }
 

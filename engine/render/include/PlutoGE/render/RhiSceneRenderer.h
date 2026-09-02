@@ -10,6 +10,16 @@
 
 namespace PlutoGE::render
 {
+    struct RhiSceneTimingStats
+    {
+        float commandTranslationMs = 0.0f;
+        float sceneSetupMs = 0.0f;
+        float renderRecordingMs = 0.0f;
+        float totalMs = 0.0f;
+        std::size_t visibleDrawCount = 0;
+        std::size_t shadowDrawCount = 0;
+    };
+
     class Mesh;
     class Texture;
     class IPostProcessEffect;
@@ -41,6 +51,7 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept;
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneCommandCount; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_drawCount; }
+        [[nodiscard]] const RhiSceneTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
 
     private:
         rhi::IRenderDevice *m_device = nullptr;
@@ -50,6 +61,7 @@ namespace PlutoGE::render
         std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
         std::size_t m_sceneCommandCount = 0;
         std::size_t m_drawCount = 0;
+        RhiSceneTimingStats m_timingStats;
         std::uint64_t m_temporalFrameIndex = 0;
         glm::vec2 m_previousTemporalJitterNdc{0.0f};
     };

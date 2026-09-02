@@ -202,6 +202,14 @@ namespace PlutoGE::ui
         ImGui::Text("RHI descriptor preparation CPU: %.2f ms", rhi.descriptorCpuMs);
         ImGui::Text("RHI uniform upload: %llu bytes, %.2f ms CPU",
                     static_cast<unsigned long long>(rhi.uniformBytesUploaded), rhi.uniformUploadCpuMs);
+        const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
+        ImGui::Text("RHI scene CPU: %.2f ms", rhiScene.totalMs);
+        ImGui::Text("  Translation: %.2f ms (%llu visible, %llu shadow draws)",
+                    rhiScene.commandTranslationMs,
+                    static_cast<unsigned long long>(rhiScene.visibleDrawCount),
+                    static_cast<unsigned long long>(rhiScene.shadowDrawCount));
+        ImGui::Text("  Setup: %.2f ms, recording: %.2f ms",
+                    rhiScene.sceneSetupMs, rhiScene.renderRecordingMs);
         for (const auto &scope : rhi.gpuScopes)
             ImGui::Text("%s: %.2f ms GPU, %.2f ms CPU recording", scope.name.c_str(),
                         scope.milliseconds, scope.cpuMilliseconds);

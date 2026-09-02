@@ -623,6 +623,13 @@ namespace PlutoGE::render
         UpdatePostProcessGpuTimingTotal();
         m_gpuTimingsResolvedThisFrame = true;
 
+        BeginCpuProfilingFrame();
+    }
+
+    void Renderer::BeginCpuProfilingFrame()
+    {
+        if (!m_config.enableProfiling)
+            return;
         m_cpuFrameStats = {};
         m_profiledRenderCount = 0;
     }
@@ -1651,7 +1658,9 @@ namespace PlutoGE::render
 
     void Renderer::PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight)
     {
+        const auto preparationStart = std::chrono::high_resolution_clock::now();
         EnsureRenderCommandsSorted();
+        const auto sortEnd = std::chrono::high_resolution_clock::now();
         UpdateRenderCommandLods(cameraData, viewportHeight);
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
@@ -1679,6 +1688,26 @@ namespace PlutoGE::render
         }
         if (m_renderCommandsDirty)
             std::sort(m_visibleRenderCommands.begin(), m_visibleRenderCommands.end(), CompareRenderCommandKeysImpl);
+        if (m_config.enableProfiling)
+        {
+            const auto preparationEnd = std::chrono::high_resolution_clock::now();
+            m_cpuFrameStats.renderFrameCommandSortMs +=
+                std::chrono::duration<float, std::milli>(sortEnd - preparationStart).count();
+            m_cpuFrameStats.renderFrameVisibilityMs +=
+                std::chrono::duration<float, std::milli>(preparationEnd - sortEnd).count();
+            m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
+            m_cpuFrameStats.frustumCulledRenderCommandCount =
+                static_cast<int>(m_renderCommands.size() - m_visibleRenderCommands.size());
+            m_cpuFrameStats.visibleSingleLodCommandCount = 0;
+            m_cpuFrameStats.visibleMultiLodCommandCount = 0;
+            for (const auto &command : m_visibleRenderCommands)
+            {
+                if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
+                    ++m_cpuFrameStats.visibleMultiLodCommandCount;
+                else
+                    ++m_cpuFrameStats.visibleSingleLodCommandCount;
+            }
+        }
     }
 
     void Renderer::RecordShadowCpuBreakdown(float targetBindMs, float casterBatchBuildMs,

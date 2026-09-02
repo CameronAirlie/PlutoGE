@@ -53,6 +53,11 @@ namespace PlutoGE::ui
         [[nodiscard]] render::rhi::TextureHandle GetViewportTexture() const noexcept { return m_viewportTexture; }
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetSceneCommandCount() : 0; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_sceneRenderer ? m_sceneRenderer->GetDrawCount() : 0; }
+        [[nodiscard]] const render::RhiSceneTimingStats &GetTimingStats() const noexcept
+        {
+            static const render::RhiSceneTimingStats empty;
+            return m_sceneRenderer ? m_sceneRenderer->GetTimingStats() : empty;
+        }
         [[nodiscard]] bool IsVulkanAvailable() const noexcept { return m_vulkanAvailable; }
         [[nodiscard]] const std::string &GetVulkanStatus() const noexcept { return m_vulkanStatus; }
 

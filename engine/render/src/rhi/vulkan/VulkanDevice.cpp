@@ -416,10 +416,22 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.uniformUploadCpuMs = 0.0f;
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
             Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(frame)");
-            Check(vkResetDescriptorPool(m_impl.device, frame.descriptorPool, 0), "vkResetDescriptorPool(frame)");
+            auto &descriptorCache = m_descriptorSetCaches[m_frameIndex];
+            if (m_descriptorPoolResetPending[m_frameIndex] ||
+                descriptorCache.size() >= MaxCachedDescriptorSetsPerFrame)
+            {
+                Check(vkResetDescriptorPool(m_impl.device, frame.descriptorPool, 0),
+                      "vkResetDescriptorPool(cache capacity)");
+                descriptorCache.clear();
+                m_descriptorPoolResetPending[m_frameIndex] = false;
+            }
             m_impl.BeginUniformFrame(m_frameIndex);
             m_emptyDescriptorSets.clear();
-            m_descriptorSetCache.clear();
+            // Descriptor sets are owned by the corresponding in-flight frame pool.
+            // Retaining each frame's cache across fence-protected reuse avoids rebuilding
+            // identical material and pass sets every frame. Dynamic uniform offsets remain
+            // frame-local and are supplied when the cached sets are bound.
+            m_descriptorSetCache = &descriptorCache;
             m_lastDescriptorKeyValid.fill(false);
             m_boundDescriptorSets.fill(VK_NULL_HANDLE);
             m_boundDynamicOffsetCounts.fill(0);
@@ -440,6 +452,31 @@ namespace PlutoGE::render::rhi::vulkan
             frame.hasTimestamps = false;
             m_impl.activeFrameIndex = m_frameIndex;
             m_recording = true;
+        }
+
+        void InvalidateDescriptorCaches()
+        {
+            for (std::size_t index = 0; index < FrameCount; ++index)
+            {
+                m_descriptorSetCaches[index].clear();
+                if (m_recording && index == m_frameIndex)
+                {
+                    // Descriptor sets already referenced by the command buffer
+                    // must remain valid until submission completes. Prevent
+                    // future cache hits now and recycle the pool when this
+                    // frame slot returns behind its fence.
+                    m_descriptorPoolResetPending[index] = true;
+                    continue;
+                }
+                Check(vkResetDescriptorPool(m_impl.device, m_frames[index].descriptorPool, 0),
+                      "vkResetDescriptorPool(cache invalidation)");
+                m_descriptorPoolResetPending[index] = false;
+            }
+            if (!m_recording)
+                m_descriptorSetCache = nullptr;
+            m_lastDescriptorKeyValid.fill(false);
+            m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_emptyDescriptorSets.clear();
         }
 
         void BeginRendering(const RenderingInfo &info) override
@@ -797,7 +834,7 @@ namespace PlutoGE::render::rhi::vulkan
                     sets[setIndex] = m_lastDescriptorSets[setIndex];
                     continue;
                 }
-                if (const auto found = m_descriptorSetCache.find(key); found != m_descriptorSetCache.end())
+                if (const auto found = m_descriptorSetCache->find(key); found != m_descriptorSetCache->end())
                 {
                     sets[setIndex] = found->second;
                     m_lastDescriptorKeys[setIndex] = key;
@@ -824,7 +861,7 @@ namespace PlutoGE::render::rhi::vulkan
                     const auto setIndex = allocatedSetIndices[allocationIndex];
                     sets[setIndex] = allocatedSets[allocationIndex];
                     newlyAllocated[setIndex] = true;
-                    m_descriptorSetCache.emplace(keys[setIndex], allocatedSets[allocationIndex]);
+                    m_descriptorSetCache->emplace(keys[setIndex], allocatedSets[allocationIndex]);
                     m_lastDescriptorKeys[setIndex] = keys[setIndex];
                     m_lastDescriptorSets[setIndex] = allocatedSets[allocationIndex];
                     m_lastDescriptorKeyValid[setIndex] = true;
@@ -957,6 +994,7 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr std::size_t MaxDescriptorSets = 32;
         static constexpr std::size_t MaxDescriptorBindings = 32;
         static constexpr std::size_t MaxResourceSlots = 32;
+        static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
         static constexpr std::uint32_t MaxTimestampQueries = 32;
         void ResolveTimestamps(FrameResources &frame)
         {
@@ -991,7 +1029,10 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<std::uint32_t, MaxResourceSlots> m_storageMipLevels{};
         std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
         std::unordered_map<VkDescriptorSetLayout, VkDescriptorSet> m_emptyDescriptorSets;
-        std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash> m_descriptorSetCache;
+        std::array<std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash>, FrameCount>
+            m_descriptorSetCaches;
+        std::array<bool, FrameCount> m_descriptorPoolResetPending{};
+        std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash> *m_descriptorSetCache = nullptr;
         std::array<DescriptorSetKey, MaxDescriptorSets> m_lastDescriptorKeys{};
         std::array<VkDescriptorSet, MaxDescriptorSets> m_lastDescriptorSets{};
         std::array<bool, MaxDescriptorSets> m_lastDescriptorKeyValid{};
@@ -1942,6 +1983,7 @@ namespace PlutoGE::render::rhi::vulkan
         if (auto r = m_impl->textures.Remove(h))
         {
             vkDeviceWaitIdle(m_impl->device);
+            m_impl->context->InvalidateDescriptorCaches();
             for (const auto view : r->storageViews)
                 vkDestroyImageView(m_impl->device, view, nullptr);
             vkDestroyImageView(m_impl->device, r->view, nullptr);
@@ -1953,6 +1995,7 @@ namespace PlutoGE::render::rhi::vulkan
         if (auto r = m_impl->samplers.Remove(h))
         {
             Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(sampler destruction)");
+            m_impl->context->InvalidateDescriptorCaches();
             vkDestroySampler(m_impl->device, r->sampler, nullptr);
         }
     }
@@ -1961,6 +2004,7 @@ namespace PlutoGE::render::rhi::vulkan
         if (auto r = m_impl->pipelines.Remove(h))
         {
             Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(pipeline destruction)");
+            m_impl->context->InvalidateDescriptorCaches();
             vkDestroyPipeline(m_impl->device, r->pipeline, nullptr);
             vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr);
             for (auto l : r->setLayouts)

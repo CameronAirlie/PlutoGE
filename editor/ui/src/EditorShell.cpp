@@ -2781,7 +2781,7 @@ namespace PlutoGE::ui
         viewportConfig.initialRenderScale = 1.0f;
         viewportConfig.editorViewport = true;
         viewportConfig.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
-                                               : render::rhi::GraphicsApi::OpenGL;
+                                               : m_engine.GetConfig().graphicsApi;
         viewportConfig.sharedRenderDevice = m_engine.GetRenderDevice();
         auto *viewportPanel = new ViewportPanel(viewportConfig, m_editorSceneRenderService.get());
         viewportPanel->Initialize();
@@ -2799,7 +2799,7 @@ namespace PlutoGE::ui
         viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
         viewportConfig2.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
-                                                : render::rhi::GraphicsApi::OpenGL;
+                                                : m_engine.GetConfig().graphicsApi;
         viewportConfig2.sharedRenderDevice = m_engine.GetRenderDevice();
         if (m_project && m_project->GetManifest().runtimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
         {
@@ -2920,16 +2920,18 @@ namespace PlutoGE::ui
 
         while (!window.ShouldClose())
         {
-            viewportPanel->SetGraphicsApi(m_project ? m_project->GetManifest().graphicsApi
-                                                    : render::rhi::GraphicsApi::OpenGL);
-            viewportPanel2->SetGraphicsApi(m_project ? m_project->GetManifest().graphicsApi
-                                                     : render::rhi::GraphicsApi::OpenGL);
+            const auto viewportGraphicsApi = m_project ? m_project->GetManifest().graphicsApi
+                                                       : m_engine.GetConfig().graphicsApi;
+            viewportPanel->SetGraphicsApi(viewportGraphicsApi);
+            viewportPanel2->SetGraphicsApi(viewportGraphicsApi);
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
-            if (!vulkanEditorHost)
+            if (vulkanEditorHost)
+                renderer.BeginCpuProfilingFrame();
+            else
                 renderer.BeginProfilingFrame();
             const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
@@ -3201,7 +3203,11 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                const bool useRhiViewport = m_project != nullptr;
+                // A project selects its configured preview backend. Without a
+                // project, inherit the editor host backend; a Vulkan host has no
+                // initialized legacy OpenGL renderer to fall back to.
+                const bool useRhiViewport = m_project != nullptr ||
+                                            viewportGraphicsApi == render::rhi::GraphicsApi::Vulkan;
                 if (useRhiViewport)
                     renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
                 else
@@ -3245,7 +3251,10 @@ namespace PlutoGE::ui
             const auto viewportRenderEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.viewportRenderMs = std::chrono::duration<float, std::milli>(viewportRenderEnd - viewportRenderStart).count();
             if (m_editorSceneRenderService && m_editorSceneRenderService->GetRenderDevice())
+            {
                 frameTimingStats.rhiTimingStats = m_editorSceneRenderService->GetRenderDevice()->GetTimingStats();
+                frameTimingStats.rhiSceneTimingStats = m_editorSceneRenderService->GetTimingStats();
+            }
 
             renderer.ClearRenderCommands();
 

@@ -12,16 +12,10 @@ namespace PlutoGE::render
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))
             return false;
-        auto sceneRenderer = std::make_unique<RhiSceneRenderer>();
-        if (!sceneRenderer->Initialize(device, shaders))
-        {
-            renderer->Shutdown();
-            return false;
-        }
         m_graphicsApi = device.GetApi();
+        m_device = &device;
         m_swapchain = &swapchain;
         m_renderer = std::move(renderer);
-        m_sceneRenderer = std::move(sceneRenderer);
         return true;
     }
 
@@ -33,6 +27,7 @@ namespace PlutoGE::render
         if (m_renderer)
             m_renderer->Shutdown();
         m_renderer.reset();
+        m_device = nullptr;
         m_swapchain = nullptr;
     }
 
@@ -41,8 +36,16 @@ namespace PlutoGE::render
                                                  std::span<const RenderCommand> commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader)
     {
-        if (!m_sceneRenderer || !m_swapchain)
+        if (!m_swapchain || !m_renderer)
             return false;
+        if (!m_sceneRenderer)
+        {
+            const ShaderArtifactLibrary shaderArtifacts;
+            auto sceneRenderer = std::make_unique<RhiSceneRenderer>();
+            if (!sceneRenderer->Initialize(*m_device, shaderArtifacts.LoadBasicRendererPackage()))
+                return false;
+            m_sceneRenderer = std::move(sceneRenderer);
+        }
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
                                      cameraData, lighting, commands, commands, {}, {}, texturePixelReader))
             return false;

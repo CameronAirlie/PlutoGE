@@ -78,6 +78,27 @@ int main()
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        // The Vulkan editor host owns its presentation renderer and creates
+        // independent off-screen renderers for its viewports on the same device.
+        // Keep this lifecycle covered so pipeline creation and cache invalidation
+        // cannot make switching the editor default backend unsafe.
+        {
+            BasicRenderer viewportRenderer;
+            if (!viewportRenderer.Initialize(device, shaders))
+                return 11;
+        }
+
+        // Post-process graph changes can retire last frame's transient images
+        // while the next frame is being recorded. Cache invalidation must defer
+        // recycling that active frame's descriptor pool rather than throwing
+        // from a noexcept resource destructor.
+        const auto retiredTexture = device.CreateTexture(
+            {4, 4, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment,
+             "Descriptor invalidation regression", true});
+        device.GetImmediateContext().BeginFrame();
+        device.DestroyTexture(retiredTexture);
+        device.GetImmediateContext().Submit();
+
         constexpr std::array<BasicVertex, 8> vertices = {{
             {{{-0.5f, -0.5f, -0.5f}}, {{-0.577f, -0.577f, -0.577f}}, {{0, 0}}},
             {{{0.5f, -0.5f, -0.5f}}, {{0.577f, -0.577f, -0.577f}}, {{1, 0}}},

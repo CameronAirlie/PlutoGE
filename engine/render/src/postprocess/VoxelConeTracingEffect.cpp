@@ -602,6 +602,17 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
 
     void VoxelConeTracingEffect::ReleaseVolume()
     {
+        const auto deleteTextures = [](auto &textures)
+        {
+            std::vector<unsigned int> liveTextures;
+            liveTextures.reserve(std::size(textures));
+            for (const unsigned int texture : textures)
+                if (texture != 0)
+                    liveTextures.push_back(texture);
+            if (!liveTextures.empty())
+                Graphics::DeleteTextures(static_cast<GLsizei>(liveTextures.size()), liveTextures.data());
+        };
+
         for (auto &cascade : m_cascades)
         {
             if (cascade.framebuffer)
@@ -610,10 +621,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             const unsigned int transientTextures[] = {
                 cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
                 cascade.accumulationCount, cascade.accumulationOpacity};
-            Graphics::DeleteTextures(static_cast<GLsizei>(std::size(transientTextures)), transientTextures);
+            deleteTextures(transientTextures);
             // pendingShadowMaps are persistent staging textures reused by
             // progressive voxel rebuilds.
-            Graphics::DeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
+            deleteTextures(cascade.pendingShadowMaps);
             cascade.pendingShadowMaps.fill(0);
             cascade.pendingShadowSourceMaps.fill(0);
             cascade.accumulationR = 0;
@@ -631,7 +642,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             cascade.hasVolume = false;
             cascade.rebuildInProgress = false;
         }
-        Graphics::DeleteTextures(static_cast<GLsizei>(m_radianceAtlases.size()), m_radianceAtlases.data());
+        deleteTextures(m_radianceAtlases);
         m_radianceAtlases.fill(0);
         m_allocatedResolution = 0;
         m_allocatedCascadeCount = 0;

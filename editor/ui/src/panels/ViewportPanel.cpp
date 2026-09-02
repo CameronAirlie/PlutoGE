@@ -1825,7 +1825,9 @@ namespace PlutoGE::ui
         ShutdownRhiPreview();
         m_config.graphicsApi = graphicsApi;
         m_useRhiPreview = true;
-        InitializeRhiPreview();
+        // Renderer creation is intentionally deferred until this viewport is
+        // actually rendered. Docked/hidden viewports otherwise compile a full
+        // duplicate Vulkan pipeline set during editor startup.
     }
 
     void ViewportPanel::InitializeRhiPreview()
@@ -1846,6 +1848,8 @@ namespace PlutoGE::ui
     void ViewportPanel::ShutdownRhiPreview()
     {
         ReleaseRegisteredTexture();
+        if (m_rhiRenderService)
+            m_rhiRenderService->Shutdown();
         m_rhiViewportTexture = {};
         m_activeRhiVulkan = false;
         m_rhiSceneCommandCount = 0;
@@ -3857,7 +3861,7 @@ namespace PlutoGE::ui
         }
 
         const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
-        if (m_useRhiPreview && m_rhiRenderService && m_rhiRenderService->IsInitialized())
+        if ((m_useRhiPreview || requiresRhiViewport) && m_rhiRenderService)
         {
             renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
             RenderRhiFrame(cameraData, renderer.GetVisibleRenderCommands(), renderer.GetSceneRenderCommands(),
@@ -3882,6 +3886,12 @@ namespace PlutoGE::ui
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
             return;
+        if (!m_rhiRenderService->IsInitialized())
+        {
+            InitializeRhiPreview();
+            if (!m_rhiRenderService->IsInitialized())
+                return;
+        }
 
         const auto *target = GetSceneRenderTarget();
         if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0)

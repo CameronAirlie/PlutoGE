@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/scene/Scene.h"
@@ -41,6 +42,7 @@ namespace PlutoGE::ui
         int gameViewportHeight = 0;
         std::uint64_t renderedViewportPixels = 0;
         render::rhi::RenderDeviceTimingStats rhiTimingStats;
+        render::RhiSceneTimingStats rhiSceneTimingStats;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> componentTimings;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> animationTimings;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> scriptUpdateTimings;

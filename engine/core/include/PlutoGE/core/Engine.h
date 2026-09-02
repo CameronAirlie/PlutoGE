@@ -44,7 +44,7 @@ namespace PlutoGE::core
     struct EngineConfig
     {
         platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
-        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
+        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::Vulkan;
         bool vSync = true;
         bool isEditorHost = false;
     };

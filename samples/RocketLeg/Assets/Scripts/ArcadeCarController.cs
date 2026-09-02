@@ -28,7 +28,7 @@ public sealed class ArcadeCarController : ScriptBehaviour
     [SerializedField] private float controlLeverArm  = 1.35000002f;
     [SerializedField] private float jumpImpulse  = 7.0f;
     [SerializedField] private float jumpBufferDuration = 0.16f;
-    [SerializedField] private float groundProbeDistance = 1.6f;
+    [SerializedField] private float groundProbeDistance = 0.35f;
     [SerializedField] private float respawnHeight  = -4.0f;
     [SerializedField, InputMappingAsset] private string inputMappingAsset = "project://Input/RocketLeg.plutoinput";
 
@@ -41,7 +41,9 @@ public sealed class ArcadeCarController : ScriptBehaviour
     private float _roll;
     private bool _freeAirRoll;
     private bool _boosting;
+    private bool _jumpHeld;
     private bool _jumpQueued;
+    private bool _jumpAvailable = true;
     private float _jumpBufferTimer;
     private float _groundedGraceTimer;
     private InputActionMap? _inputActions;
@@ -89,11 +91,16 @@ public sealed class ArcadeCarController : ScriptBehaviour
         _roll = GetAxis("AirRoll");
         _freeAirRoll = IsDown("FreeAirRoll");
         _boosting = IsDown("Boost");
-        if (WasPressed("Jump"))
+        // Keep the edge locally instead of relying only on the engine's
+        // one-render-frame pressed flag. Fixed updates can run before or after
+        // that flag is sampled, while the held state remains stable.
+        var jumpDown = IsDown("Jump");
+        if ((jumpDown && !_jumpHeld) || WasPressed("Jump"))
         {
             _jumpQueued = true;
             _jumpBufferTimer = MathF.Max(jumpBufferDuration, 0.0f);
         }
+        _jumpHeld = jumpDown;
 
         if (GameObject.WorldPosition.Y < respawnHeight)
         {
@@ -125,16 +132,31 @@ public sealed class ArcadeCarController : ScriptBehaviour
         if (grounded)
         {
             _groundedGraceTimer = 0.12f;
+            // Do not re-arm while the car is still rising through the ground
+            // probe range immediately after an impulse.
+            if (velocity.Y <= 0.5f)
+                _jumpAvailable = true;
         }
         else
         {
             _groundedGraceTimer = MathF.Max(0.0f, _groundedGraceTimer - fixedDeltaTime);
         }
 
-        if (_jumpQueued && _groundedGraceTimer > 0.0f)
+        if (_jumpQueued && (_jumpAvailable || _groundedGraceTimer > 0.0f))
         {
+            // A discrete impulse also wakes a sleeping Bullet body. Jump
+            // availability starts armed at spawn and is re-armed by a valid
+            // landing, so a missed first-frame ground query cannot suppress
+            // the car's first jump.
+            _body.AddImpulse(Vector3.Zero);
             _body.AddImpulse(up * jumpImpulse * _body.Mass);
+            // AddImpulse is applied to the native body immediately, while the
+            // managed velocity property is synchronized after this callback.
+            // Keep our local velocity in step with the known impulse so the
+            // speed cap below cannot restore the pre-jump velocity.
+            velocity += up * jumpImpulse;
             _jumpQueued = false;
+            _jumpAvailable = false;
             _jumpBufferTimer = 0.0f;
             _groundedGraceTimer = 0.0f;
             grounded = false;
@@ -209,7 +231,7 @@ public sealed class ArcadeCarController : ScriptBehaviour
 
         // Forces and collisions still determine both momentum vectors. Only
         // their magnitudes are capped, preserving combined pitch/yaw/roll.
-        _body.Velocity = ClampMagnitude(_body.Velocity, MathF.Max(maximumBoostSpeed, 0.0f));
+        _body.Velocity = ClampMagnitude(velocity, MathF.Max(maximumBoostSpeed, 0.0f));
         _body.AngularVelocity = ClampMagnitude(_body.AngularVelocity, MathF.Max(maximumAngularSpeed, 0.0f));
 
     }
@@ -224,6 +246,8 @@ public sealed class ArcadeCarController : ScriptBehaviour
         GameObject.WorldPosition = worldPosition;
         GameObject.WorldRotation = worldRotation;
         _jumpQueued = false;
+        _jumpHeld = false;
+        _jumpAvailable = true;
         _jumpBufferTimer = 0.0f;
         _groundedGraceTimer = 0.0f;
         if (_body is not null)
@@ -243,30 +267,30 @@ public sealed class ArcadeCarController : ScriptBehaviour
 
     private bool IsGrounded()
     {
-        var center = GameObject.WorldPosition + Vector3.UnitY * 0.2f;
-        if (HasGroundBelow(center)) return true;
-
-        // A centre-only ray can miss while the chassis is rocking even though
-        // one or more corners are in contact. Probe a wheel-like footprint so
-        // valid landings consistently refresh jump grace.
         var scale = GameObject.Scale;
+        // Start just inside the chassis underside. The old probes began above
+        // its centre, so their large range detected distant surfaces yet could
+        // become unreliable at actual resting contact as the body rocked.
+        var halfHeight = MathF.Max(MathF.Abs(scale.Y) * 0.5f, 0.1f);
+        var underside = GameObject.WorldPosition + Vector3.UnitY * (0.08f - halfHeight);
+        if (HasGroundBelow(underside)) return true;
+
+        // Probe a wheel-like footprint so one touching corner is sufficient.
         var right = SafeDirection(GameObject.Right, Vector3.UnitX) * MathF.Max(MathF.Abs(scale.X) * 0.36f, 0.3f);
         var forward = SafeDirection(GameObject.Forward, -Vector3.UnitZ) * MathF.Max(MathF.Abs(scale.Z) * 0.36f, 0.5f);
-        return HasGroundBelow(center + right + forward) ||
-               HasGroundBelow(center + right - forward) ||
-               HasGroundBelow(center - right + forward) ||
-               HasGroundBelow(center - right - forward);
+        return HasGroundBelow(underside + right + forward) ||
+               HasGroundBelow(underside + right - forward) ||
+               HasGroundBelow(underside - right + forward) ||
+               HasGroundBelow(underside - right - forward);
     }
 
     private bool HasGroundBelow(Vector3 origin)
     {
-        return Physics.RaycastTagged(
-                   origin,
-                   -Vector3.UnitY,
-                   MathF.Max(groundProbeDistance, 0.1f),
-                   "ground",
-                   GameObject,
-                   out var hit) &&
+        var distance = MathF.Max(groundProbeDistance, 0.1f);
+        // Grounding is a physical property, not a tagging requirement. The
+        // arena floor keeps its tag for filtering elsewhere, but jumping must
+        // also work on imported floors, ramps and goal geometry.
+        return Physics.Raycast(origin, -Vector3.UnitY, distance, GameObject, out var hit) &&
                Vector3.Dot(hit.Normal, Vector3.UnitY) > 0.5f;
     }
 

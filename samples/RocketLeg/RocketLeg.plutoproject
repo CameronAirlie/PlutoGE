@@ -33,7 +33,7 @@ ASSET	project://Managed/PlutoGE.ScriptCore.pdb	81452	Unknown
 ASSET	project://Managed/PlutoGE.ScriptCore.runtimeconfig.json	369	Unknown
 ASSET	project://Managed/RocketLeg.Scripts.deps.json	862	Unknown
 ASSET	project://Managed/RocketLeg.Scripts.dll	18432	Assembly
-ASSET	project://Managed/RocketLeg.Scripts.pdb	17296	Unknown
+ASSET	project://Managed/RocketLeg.Scripts.pdb	17428	Unknown
 ASSET	project://Materials/Arena.plutomaterial	213	Material
 ASSET	project://Materials/Ball.plutomaterial	208	Material
 ASSET	project://Materials/Blue.plutomaterial	210	Material
@@ -42,8 +42,8 @@ ASSET	project://Materials/GoalOrange.plutomaterial	205	Material
 ASSET	project://Materials/Orange.plutomaterial	211	Material
 ASSET	project://Materials/Wall.plutomaterial	213	Material
 ASSET	project://PostProcessing/main.plutopostprocess	5278	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	36058	Scene
-ASSET	project://Scripts/ArcadeCarController.cs	13361	Script
+ASSET	project://Scenes/Main.plutoscene	36056	Scene
+ASSET	project://Scripts/ArcadeCarController.cs	15038	Script
 ASSET	project://Scripts/RocketBall.cs	1849	Script
 ASSET	project://Scripts/RocketChaseCamera.cs	7706	Script
 ASSET	project://Scripts/RocketLegMatch.cs	6234	Script

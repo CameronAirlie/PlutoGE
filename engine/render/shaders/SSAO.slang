@@ -22,7 +22,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
     const float3 centerPosition = reconstructWorldPosition(uv, centerDepth,
                                                            pass.inverseViewProjection,
-                                                           pass.flipY);
+                                                           pass.flipY, pass.zeroToOneDepth);
     const float noiseAngle = frac(52.9829189 * frac(dot(floor(input.position.xy),
                                                        float2(0.06711056, 0.00583715)))) * 6.2831853;
     const float radius = max(pass.parameters[0].x, 0.05);
@@ -49,7 +49,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         if (sceneDepth <= 0.000001) continue;
         const float3 samplePosition = reconstructWorldPosition(sampleUv, sceneDepth,
                                                                pass.inverseViewProjection,
-                                                               pass.flipY);
+                                                               pass.flipY, pass.zeroToOneDepth);
         const float3 separation = samplePosition - centerPosition;
         const float distanceToSample = length(separation);
         const float rangeWeight = 1.0 - smoothstep(radius * 0.5, radius,

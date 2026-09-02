@@ -26,7 +26,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     {
         const float3 surfacePosition = reconstructWorldPosition(uv, depth,
                                                                 pass.inverseViewProjection,
-                                                                pass.flipY);
+                                                                pass.flipY, pass.zeroToOneDepth);
         const float averageHeight = (surfacePosition.y + pass.cameraPosition.y) * 0.5;
         heightDensity = exp(clamp(-max(pass.parameters[1].x, 0.0) *
                                   (averageHeight - pass.parameters[1].y), -8.0, 8.0));

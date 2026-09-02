@@ -381,7 +381,7 @@ namespace PlutoGE::render
             }
             if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
                 effectiveLighting.shadowFlipY = true;
-            else
+            if (!m_device->UsesZeroToOneClipDepth())
             {
                 effectiveLighting.shadowDepthScale = 0.5f;
                 effectiveLighting.shadowDepthBias = 0.5f;

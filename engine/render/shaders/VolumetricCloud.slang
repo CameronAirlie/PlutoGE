@@ -94,14 +94,16 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float4 scene = sceneTexture.Sample(uv);
     const float4x4 inverseVolume = pass.worldToLocal;
-    const float3 farPosition = reconstructWorldPosition(uv, 1.0, pass.inverseViewProjection, pass.flipY);
+    const float3 farPosition = reconstructWorldPosition(uv, 1.0, pass.inverseViewProjection,
+                                                         pass.flipY, pass.zeroToOneDepth);
     const float3 rayDirection = normalize(farPosition - pass.cameraPosition.xyz);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);
     float end = hit.y;
     const float depth = depthTexture.Sample(uv).r;
     if (depth > 0.000001)
     {
-        const float3 opaquePosition = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY);
+        const float3 opaquePosition = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                                pass.flipY, pass.zeroToOneDepth);
         end = min(end, max(dot(opaquePosition - pass.cameraPosition.xyz, rayDirection), 0.0));
     }
     const float start = max(hit.x, 0.0);

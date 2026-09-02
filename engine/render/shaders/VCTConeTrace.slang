@@ -11,7 +11,7 @@ struct TraceParameters
     uint flipY;
     uint debugView;
     uint indirectOnly;
-    uint padding;
+    uint zeroToOneDepth;
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TraceParameters pass; };
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -111,7 +111,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float4 scene = sceneTexture.Sample(uv);
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return pass.indirectOnly != 0 ? 0.0 : scene;
-    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY);
+    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                      pass.flipY, pass.zeroToOneDepth);
     const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
     float3 coordinate;
     const int cascade = findCascade(position, coordinate);

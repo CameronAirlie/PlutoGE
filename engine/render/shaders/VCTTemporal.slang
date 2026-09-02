@@ -12,6 +12,7 @@ struct TemporalParameters
     uint flipY;
     uint hasHistory;
     uint debugView;
+    uint zeroToOneDepth;
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TemporalParameters pass; };
 [[vk::binding(1, 0)]] Sampler2D currentIndirect : register(t1, space0);
@@ -36,7 +37,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 current = currentIndirect.Sample(uv).rgb;
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return float4(current, 0.0);
-    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY);
+    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                      pass.flipY, pass.zeroToOneDepth);
     const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
     const float currentViewDepth = max(-mul(pass.view, float4(position, 1.0)).z, 0.0);
     if (pass.hasHistory == 0) return float4(current, currentViewDepth);

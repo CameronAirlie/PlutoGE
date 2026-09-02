@@ -53,7 +53,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (centerDepth <= 0.000001)
         return float4(1.0, 0.0, 0.5, 0.5);
     const float3 centerWorld = reconstructWorldPosition(textureUv, centerDepth,
-                                                        pass.inverseViewProjection, pass.flipY);
+                                                        pass.inverseViewProjection, pass.flipY,
+                                                        pass.zeroToOneDepth);
     const float3 centerView = mul(pass.view, float4(centerWorld, 1.0)).xyz;
     const float3 centerNormal = decodeNormal(normalTexture.Sample(textureUv).xyz);
     const int blurRadius = clamp(int(pass.parameters[1].x), 0, 4);
@@ -75,7 +76,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             if (sampleDepth <= 0.000001)
                 continue;
             const float3 sampleWorld = reconstructWorldPosition(sampleUv, sampleDepth,
-                                                                pass.inverseViewProjection, pass.flipY);
+                                                                pass.inverseViewProjection, pass.flipY,
+                                                                pass.zeroToOneDepth);
             const float sampleViewDepth = -mul(pass.view, float4(sampleWorld, 1.0)).z;
             const float depthDelta = abs(sampleViewDepth + centerView.z);
             if (depthDelta > 0.35)

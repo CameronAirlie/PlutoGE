@@ -6,7 +6,7 @@ struct PostProcessParameterBlock
     uint quality;
     float2 inverseResolution;
     float time;
-    float padding;
+    uint zeroToOneDepth;
     float4 parameters[6];
     column_major float4x4 inverseViewProjection;
     column_major float4x4 view;

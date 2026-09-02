@@ -73,7 +73,8 @@ namespace PlutoGE::render
             glm::vec4 cameraPosition{0.0f};
             std::uint32_t mode = 0;
             std::uint32_t flipY = 0;
-            glm::uvec2 padding{};
+            std::uint32_t zeroToOneDepth = 0;
+            std::uint32_t padding = 0;
         };
         static_assert(sizeof(BasicDebugViewParameters) == 96);
 
@@ -85,7 +86,7 @@ namespace PlutoGE::render
             std::uint32_t quality = 0;
             glm::vec2 inverseResolution{0.0f};
             float time = 0.0f;
-            float padding = 0.0f;
+            std::uint32_t zeroToOneDepth = 0;
             std::array<glm::vec4, 6> parameters{};
             glm::mat4 inverseViewProjection{1.0f};
             glm::mat4 view{1.0f};
@@ -134,23 +135,23 @@ namespace PlutoGE::render
             std::array<glm::vec4, 3> cascadeOriginSize{};
             glm::vec4 traceSettings{};
             glm::uvec4 traceCounts{};
-            std::uint32_t flipY = 0, debugView = 0, indirectOnly = 0, padding = 0;
+            std::uint32_t flipY = 0, debugView = 0, indirectOnly = 0, zeroToOneDepth = 0;
         };
         struct alignas(16) VctTemporalParameters
         {
             glm::mat4 inverseViewProjection{1.0f}, view{1.0f}, previousView{1.0f};
             glm::vec2 inverseResolution{0.0f}; float temporalBlend = 0.0f, depthThreshold = 0.0f;
-            float normalThreshold = 0.0f; std::uint32_t flipY = 0, hasHistory = 0, debugView = 0;
+            float normalThreshold = 0.0f; std::uint32_t flipY = 0, hasHistory = 0, debugView = 0, zeroToOneDepth = 0;
         };
         struct alignas(16) VctMetadataParameters
-        { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0; glm::uvec3 padding{}; };
+        { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
         static_assert(sizeof(VctVoxelParameters) == 496);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64);
         static_assert(sizeof(VctResolveParameters) == 16);
         static_assert(sizeof(VctMipParameters) == 32);
         static_assert(sizeof(VctTraceParameters) == 224);
-        static_assert(sizeof(VctTemporalParameters) == 224);
+        static_assert(sizeof(VctTemporalParameters) == 240);
         static_assert(sizeof(VctMetadataParameters) == 144);
 
         template <typename T>
@@ -606,7 +607,8 @@ namespace PlutoGE::render
             constexpr std::array<std::uint8_t, 4> neutralData = {255, 255, 255, 255};
             m_fallbackNormalTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral normal"}, Bytes(std::span(neutralNormal))));
             m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
-            m_fallbackSampler = rhi::Sampler(device, device.CreateSampler({true, true, "BasicRenderer material sampler"}));
+            m_fallbackSampler = rhi::Sampler(device, device.CreateSampler(
+                                                        {true, true, "BasicRenderer material sampler", true}));
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -1065,7 +1067,7 @@ namespace PlutoGE::render
                 effect.quality,
                 glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
                 static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
-                0.0f,
+                m_device->UsesZeroToOneClipDepth() ? 1u : 0u,
                 effectParameters,
                 m_inverseViewProjection,
                 m_postProcessView,
@@ -1121,6 +1123,7 @@ namespace PlutoGE::render
                 m_postProcessCameraPosition,
                 static_cast<std::uint32_t>(debugView),
                 m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u,
+                m_device->UsesZeroToOneClipDepth() ? 1u : 0u,
             };
             m_device->UpdateBuffer(m_debugViewBuffer.Get(), 0, Bytes(debugParameters));
             rhi::RenderingInfo displayInfo;
@@ -1175,7 +1178,8 @@ namespace PlutoGE::render
             effect.exposure, std::max(effect.gamma, 0.001f),
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
-            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
+                static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
+                m_device->UsesZeroToOneClipDepth() ? 1u : 0u, parameters,
             m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
             m_postProcessCameraPosition, effect.worldToLocal};
         auto &meterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
@@ -1461,6 +1465,7 @@ namespace PlutoGE::render
         trace.traceCounts = {availableCascades, cascadeCount, effect.quality,
                              static_cast<std::uint32_t>(std::floor(std::log2(resolution)))};
         trace.flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+        trace.zeroToOneDepth = m_device->UsesZeroToOneClipDepth() ? 1u : 0u;
         trace.debugView = static_cast<std::uint32_t>(std::clamp(effect.parameters[3].x, 0.0f, 2.0f));
         trace.indirectOnly = effect.parameters[3].z > 0.5f ? 1u : 0u;
         auto &traceBuffer = AcquireVctBuffer(m_vctBufferCursor++);
@@ -1480,7 +1485,7 @@ namespace PlutoGE::render
         VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,
             {1.0f / m_width, 1.0f / m_height}, effect.parameters[1].y, effect.parameters[1].z,
             effect.parameters[1].w, trace.flipY, m_vctHistoryValid ? 1u : 0u,
-            effect.parameters[3].x == 3.0f ? 1u : 0u};
+            effect.parameters[3].x == 3.0f ? 1u : 0u, trace.zeroToOneDepth};
         auto &temporalBuffer = AcquireVctBuffer(m_vctBufferCursor++);
         m_device->UpdateBuffer(temporalBuffer.Get(), 0, Bytes(temporal));
         rhi::RenderingInfo temporalInfo; temporalInfo.colorAttachments = {m_vctHistoryTargets[next].Get()};
@@ -1490,7 +1495,8 @@ namespace PlutoGE::render
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
         commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get()); commands.BindTexture(6, m_vctHistoryTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
         commands.BindTexture(7, m_vctMetadataTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
-        const VctMetadataParameters metadata{m_inverseViewProjection, m_postProcessView, trace.flipY, {}};
+        const VctMetadataParameters metadata{m_inverseViewProjection, m_postProcessView,
+                                             trace.flipY, trace.zeroToOneDepth, {}};
         auto &metadataBuffer = AcquireVctBuffer(m_vctBufferCursor++); m_device->UpdateBuffer(metadataBuffer.Get(), 0, Bytes(metadata));
         rhi::RenderingInfo metadataInfo; metadataInfo.colorAttachments = {m_vctMetadataTargets[next].Get()};
         metadataInfo.width = m_width; metadataInfo.height = m_height; metadataInfo.clearDepth = false;
@@ -1517,7 +1523,8 @@ namespace PlutoGE::render
             effect.exposure, std::max(effect.gamma, 0.001f),
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
             glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
-            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, parameters,
+            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
+            m_device->UsesZeroToOneClipDepth() ? 1u : 0u, parameters,
             m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
             m_postProcessCameraPosition, effect.worldToLocal};
 
@@ -1631,7 +1638,8 @@ namespace PlutoGE::render
                     effect.exposure, (std::max)(effect.gamma, 0.001f),
                     m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
                     glm::vec2(1.0f / static_cast<float>(context.width), 1.0f / static_cast<float>(context.height)),
-                    static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f, effect.parameters,
+                    static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
+                    m_device->UsesZeroToOneClipDepth() ? 1u : 0u, effect.parameters,
                     m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
                     m_postProcessCameraPosition, effect.worldToLocal};
                 auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);

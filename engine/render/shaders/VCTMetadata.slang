@@ -5,7 +5,8 @@ struct MetadataParameters
     column_major float4x4 inverseViewProjection;
     column_major float4x4 view;
     uint flipY;
-    uint3 padding;
+    uint zeroToOneDepth;
+    uint2 padding;
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { MetadataParameters pass; };
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
@@ -24,7 +25,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return 0.0;
-    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY);
+    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                      pass.flipY, pass.zeroToOneDepth);
     const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
     return float4(encodeNormal(normal), max(-mul(pass.view, float4(position, 1.0)).z, 0.0), 1.0);
 }

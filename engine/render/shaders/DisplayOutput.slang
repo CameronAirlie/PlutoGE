@@ -7,7 +7,8 @@
     float4 cameraPosition;
     uint debugViewMode;
     uint flipY;
-    uint2 debugPadding;
+    uint zeroToOneDepth;
+    uint debugPadding;
 };
 
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -42,7 +43,7 @@ float3 debugSample(uint mode, float2 uv)
     if (mode == 2)
     {
         if (depth <= 0.000001) return 0.0;
-        const float3 world = reconstructWorldPosition(uv, depth, inverseViewProjection, flipY);
+        const float3 world = reconstructWorldPosition(uv, depth, inverseViewProjection, flipY, zeroToOneDepth);
         return frac(abs(world) * 0.05);
     }
     if (mode == 3) return normalTexture.Sample(uv).rgb;
@@ -50,7 +51,7 @@ float3 debugSample(uint mode, float2 uv)
     if (mode == 5)
     {
         if (depth <= 0.000001) return 0.0;
-        const float3 world = reconstructWorldPosition(uv, depth, inverseViewProjection, flipY);
+        const float3 world = reconstructWorldPosition(uv, depth, inverseViewProjection, flipY, zeroToOneDepth);
         const float linearized = 1.0 - exp(-length(world - cameraPosition.xyz) * 0.02);
         return linearized.xxx;
     }

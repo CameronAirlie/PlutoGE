@@ -245,6 +245,8 @@ namespace PlutoGE::render
                 .coneCount = m_coneCount,
                 .traceResolutionDivisor = m_traceResolutionDivisor,
                 .updateInterval = m_updateInterval,
+                .voxelizationCommandBudget = m_voxelizationCommandBudget,
+                .voxelizationLodBias = m_voxelizationLodBias,
                 .debugView = m_debugView,
                 .volumeSize = m_volumeSize,
                 .intensity = m_intensity,

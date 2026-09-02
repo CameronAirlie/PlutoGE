@@ -455,7 +455,8 @@ namespace PlutoGE::render::rhi::vulkan
                 m_colors.push_back(color);
             }
             m_depth = m_impl.textures.Get(info.depthAttachment);
-            if ((m_colors.empty() && !m_depth) || (info.depthAttachment && !m_depth))
+            if ((!info.attachmentless && m_colors.empty() && !m_depth) ||
+                (info.depthAttachment && !m_depth))
                 throw std::invalid_argument("Invalid Vulkan render attachments");
             if (!m_recording)
                 throw std::logic_error("Vulkan rendering requires BeginFrame");
@@ -609,8 +610,14 @@ namespace PlutoGE::render::rhi::vulkan
         void BindUniformBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *resource = m_impl.buffers.Get(handle);
-            if (!m_pipeline || slot >= MaxResourceSlots || !resource || resource->usage != BufferUsage::Uniform)
-                throw std::invalid_argument("Invalid Vulkan uniform binding");
+            if (!m_pipeline)
+                throw std::invalid_argument("Cannot bind a Vulkan uniform buffer without a pipeline");
+            if (slot >= MaxResourceSlots)
+                throw std::invalid_argument("Vulkan uniform binding slot is out of range");
+            if (!resource)
+                throw std::invalid_argument("Invalid or stale Vulkan uniform buffer");
+            if (resource->usage != BufferUsage::Uniform)
+                throw std::invalid_argument("Vulkan buffer was not created for uniform usage");
             auto *previous = m_impl.buffers.Get(m_uniformBuffers[slot]);
             // Dynamic offsets select the individual buffer contents. The descriptor itself only
             // changes when its range changes, so equally-sized per-draw buffers can share a set.
@@ -678,6 +685,24 @@ namespace PlutoGE::render::rhi::vulkan
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
+        void ClearStorageImageUint(TextureHandle textureHandle, std::uint32_t value) override
+        {
+            auto *texture = m_impl.textures.Get(textureHandle);
+            if (!texture || !texture->descriptor.storage || texture->descriptor.format != Format::R32Uint)
+                throw std::invalid_argument("Vulkan uint clear requires an R32Uint storage image");
+            m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_GENERAL,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            VkClearColorValue clear{};
+            clear.uint32[0] = value;
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, texture->mipLevels, 0, 1};
+            vkCmdClearColorImage(CommandBuffer(), texture->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
 
     private:
@@ -760,7 +785,8 @@ namespace PlutoGE::render::rhi::vulkan
                     else
                     {
                         if (binding.slot >= MaxResourceSlots || !m_storageImages[binding.slot])
-                            throw std::logic_error("Vulkan command has an incomplete storage image binding");
+                            throw std::logic_error("Vulkan command has an incomplete storage image binding at slot " +
+                                                   std::to_string(binding.slot));
                         key.resources[key.resourceCount++] = EncodeHandle(m_storageImages[binding.slot]);
                         key.resources[key.resourceCount++] = m_storageMipLevels[binding.slot];
                     }
@@ -1752,7 +1778,9 @@ namespace PlutoGE::render::rhi::vulkan
         depth.depthTestEnable = descriptor.depthTest;
         depth.depthWriteEnable = descriptor.depthWrite;
         depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
-        const std::size_t colorAttachmentCount = descriptor.colorFormats.empty() ? 1 : descriptor.colorFormats.size();
+        const std::size_t colorAttachmentCount = descriptor.colorFormats.empty()
+                                                     ? (descriptor.colorFormat == Format::Undefined ? 0u : 1u)
+                                                     : descriptor.colorFormats.size();
         std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount);
         for (auto &blend : blendAttachments)
             blend.colorWriteMask = 0xf;
@@ -1764,7 +1792,7 @@ namespace PlutoGE::render::rhi::vulkan
         dynamicState.dynamicStateCount = dynamicStates.size();
         dynamicState.pDynamicStates = dynamicStates.data();
         std::vector<VkFormat> colorFormats;
-        if (descriptor.colorFormats.empty())
+        if (descriptor.colorFormats.empty() && descriptor.colorFormat != Format::Undefined)
             colorFormats.push_back(ToVkFormat(descriptor.colorFormat));
         else
             for (const auto format : descriptor.colorFormats)

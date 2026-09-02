@@ -8,6 +8,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 namespace PlutoGE::render
 {
@@ -81,6 +82,93 @@ namespace PlutoGE::render
             glm::mat4 worldToLocal{1.0f};
         };
         static_assert(sizeof(BasicPostProcessParameters) == 400);
+
+        struct alignas(16) VctVoxelParameters
+        {
+            glm::vec3 volumeOrigin{0.0f}; float volumeSize = 1.0f;
+            std::uint32_t resolution = 1, hasDirectionalLight = 0;
+            glm::uvec2 padding{};
+            glm::vec4 lightDirectionIntensity{0.0f};
+            glm::vec4 lightColor{0.0f};
+        };
+        struct alignas(16) VctObjectParameters { glm::mat4 model{1.0f}; };
+        struct alignas(16) VctMaterialParameters
+        {
+            glm::vec4 baseColor{1.0f};
+            glm::vec2 uvScale{1.0f}; float metallic = 0.0f, alphaCutoff = 0.5f;
+            glm::vec3 emission{0.0f}; std::uint32_t alphaMode = 0;
+            std::uint32_t hasAlbedoTexture = 0; glm::uvec3 padding{};
+        };
+        struct alignas(16) VctResolveParameters
+        { std::uint32_t resolution = 1, destinationZOffset = 0; glm::uvec2 padding{}; };
+        struct alignas(16) VctMipParameters
+        {
+            std::uint32_t axis = 0; std::int32_t sign = 1;
+            std::uint32_t cascadeIndex = 0, cascadeMipSize = 1, sourceMip = 0;
+            glm::uvec3 padding{};
+        };
+        struct alignas(16) VctTraceParameters
+        {
+            glm::mat4 inverseViewProjection{1.0f}, view{1.0f};
+            std::array<glm::vec4, 3> cascadeOriginSize{};
+            glm::vec4 traceSettings{};
+            glm::uvec4 traceCounts{};
+            std::uint32_t flipY = 0, debugView = 0, indirectOnly = 0, padding = 0;
+        };
+        struct alignas(16) VctTemporalParameters
+        {
+            glm::mat4 inverseViewProjection{1.0f}, view{1.0f}, previousView{1.0f};
+            glm::vec2 inverseResolution{0.0f}; float temporalBlend = 0.0f, depthThreshold = 0.0f;
+            float normalThreshold = 0.0f; std::uint32_t flipY = 0, hasHistory = 0, debugView = 0;
+        };
+        struct alignas(16) VctMetadataParameters
+        { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0; glm::uvec3 padding{}; };
+        static_assert(sizeof(VctVoxelParameters) == 64);
+        static_assert(sizeof(VctObjectParameters) == 64);
+        static_assert(sizeof(VctMaterialParameters) == 64);
+        static_assert(sizeof(VctResolveParameters) == 16);
+        static_assert(sizeof(VctMipParameters) == 32);
+        static_assert(sizeof(VctTraceParameters) == 224);
+        static_assert(sizeof(VctTemporalParameters) == 224);
+        static_assert(sizeof(VctMetadataParameters) == 144);
+
+        template <typename T>
+        void HashVctValue(std::uint64_t &hash, const T &value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            for (const auto byte : std::as_bytes(std::span(&value, 1)))
+            {
+                hash ^= std::to_integer<std::uint8_t>(byte);
+                hash *= 1099511628211ull;
+            }
+        }
+
+        std::uint64_t VctContentSignature(std::span<const BasicDraw> draws,
+                                          const BasicLighting &lighting)
+        {
+            std::uint64_t hash = 14695981039346656037ull;
+            HashVctValue(hash, lighting.directionalDirection);
+            HashVctValue(hash, lighting.directionalColor);
+            HashVctValue(hash, lighting.directionalIntensity);
+            for (const auto &draw : draws)
+            {
+                if (!draw.contributesToGi || !draw.mesh || !draw.mesh->IsValid())
+                    continue;
+                HashVctValue(hash, draw.mesh);
+                HashVctValue(hash, draw.model);
+                HashVctValue(hash, draw.firstIndex);
+                HashVctValue(hash, draw.indexCount);
+                HashVctValue(hash, draw.baseColor);
+                HashVctValue(hash, draw.uvScale);
+                HashVctValue(hash, draw.metallic);
+                HashVctValue(hash, draw.alphaCutoff);
+                HashVctValue(hash, draw.emission);
+                HashVctValue(hash, draw.alphaMode);
+                const bool hasBaseColorTexture = static_cast<bool>(draw.baseColorTexture);
+                HashVctValue(hash, hasBaseColorTexture);
+            }
+            return hash;
+        }
 
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
@@ -260,7 +348,7 @@ namespace PlutoGE::render
                 "Auto exposure post process", "Temporal anti-aliasing post process",
                 "Screen-space ambient occlusion", "Screen-space global illumination",
                 "Screen-space reflections", "Volumetric fog", "Physical sky",
-                "Volumetric clouds", "Scene composite"};
+                "Volumetric clouds", "Scene composite", "Voxel cone traced global illumination"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
@@ -378,8 +466,7 @@ namespace PlutoGE::render
                     {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
                     {3, 0, 3, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
                     {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
-                    {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
-                    {6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                    {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
                 compute.debugName = "VCT accumulation resolve";
                 m_vctResolvePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
             }
@@ -393,6 +480,81 @@ namespace PlutoGE::render
                     {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
                 compute.debugName = "VCT directional mip generation";
                 m_vctDirectionalMipPipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
+            }
+            if ((!shaders.vctVoxelization.vertexShader.glsl.empty() ||
+                 !shaders.vctVoxelization.vertexShader.spirv.empty()) &&
+                (!shaders.vctVoxelization.geometryShader.glsl.empty() ||
+                 !shaders.vctVoxelization.geometryShader.spirv.empty()) &&
+                (!shaders.vctVoxelization.fragmentShader.glsl.empty() ||
+                 !shaders.vctVoxelization.fragmentShader.spirv.empty()))
+            {
+                auto voxelization = shaders.vctVoxelization;
+                voxelization.colorFormat = rhi::Format::Undefined;
+                voxelization.depthFormat = rhi::Format::Undefined;
+                voxelization.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                    {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                    {2, 0, 2, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                    {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
+                    {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
+                    {6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
+                    {7, 0, 7, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment}};
+                voxelization.vertexLayout = {
+                    .stride = sizeof(BasicVertex),
+                    .attributes = {
+                        {0, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
+                        {1, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, normal))},
+                        {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
+                voxelization.cullMode = rhi::CullMode::None;
+                voxelization.depthTest = false;
+                voxelization.depthWrite = false;
+                voxelization.debugName = "VCT dominant-axis voxelization";
+                m_vctVoxelizationPipeline = rhi::GraphicsPipeline(
+                    device, device.CreateGraphicsPipeline(voxelization));
+            }
+            constexpr std::array<const char *, 3> vctPostNames{
+                "VCT cone trace", "VCT temporal resolve", "VCT history metadata"};
+            for (std::size_t index = 0; index < m_vctPostProcessPipelines.size(); ++index)
+            {
+                const auto &stage = shaders.vctPostProcess[index];
+                if ((stage.vertex.glsl.empty() && stage.vertex.spirv.empty()) ||
+                    (stage.fragment.glsl.empty() && stage.fragment.spirv.empty()))
+                    continue;
+                rhi::GraphicsPipelineDescriptor descriptor;
+                descriptor.vertexShader = stage.vertex;
+                descriptor.fragmentShader = stage.fragment;
+                descriptor.depthFormat = rhi::Format::Undefined;
+                descriptor.colorFormat = index == 0 ? rhi::Format::R16G16B16A16Float
+                                                     : rhi::Format::R32G32B32A32Float;
+                descriptor.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment}};
+                const auto addTexture = [&](std::uint32_t slot)
+                {
+                    descriptor.resourceBindings.push_back(
+                        {slot, 0, slot, rhi::ResourceBindingType::SampledTexture,
+                         rhi::ShaderStageMask::Fragment});
+                };
+                if (index == 0)
+                {
+                    addTexture(1); addTexture(2); addTexture(3);
+                    for (std::uint32_t slot = 7; slot <= 12; ++slot) addTexture(slot);
+                }
+                else if (index == 1)
+                {
+                    addTexture(1); addTexture(2); addTexture(3); addTexture(5);
+                    addTexture(6); addTexture(7);
+                }
+                else
+                {
+                    addTexture(2); addTexture(3);
+                }
+                descriptor.cullMode = rhi::CullMode::None;
+                descriptor.depthTest = false;
+                descriptor.depthWrite = false;
+                descriptor.debugName = vctPostNames[index];
+                m_vctPostProcessPipelines[index] = rhi::GraphicsPipeline(
+                    device, device.CreateGraphicsPipeline(descriptor));
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             for (auto &buffer : m_shadowCameraBuffers)
@@ -422,6 +584,7 @@ namespace PlutoGE::render
 
     void BasicRenderer::Shutdown()
     {
+        ResetVctResources();
         m_depthTarget.Reset();
         m_displayTarget.Reset();
         for (auto &target : m_postProcessTargets)
@@ -466,6 +629,9 @@ namespace PlutoGE::render
             pipeline.Reset();
         m_vctResolvePipeline.Reset();
         m_vctDirectionalMipPipeline.Reset();
+        m_vctVoxelizationPipeline.Reset();
+        for (auto &pipeline : m_vctPostProcessPipelines)
+            pipeline.Reset();
         for (auto &pipeline : m_postProcessPipelines)
             pipeline.Reset();
         m_shadowPipeline.Reset();
@@ -508,6 +674,7 @@ namespace PlutoGE::render
             return false;
         if (width == m_width && height == m_height && m_colorTarget && m_depthTarget)
             return true;
+        ResetVctResources();
 
         rhi::Texture newColor(*m_device, m_device->CreateTexture(
                                              {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "BasicRenderer HDR color", true}));
@@ -610,6 +777,7 @@ namespace PlutoGE::render
                 if (effect.type == BasicPostProcessEffectType::Bloom ||
                     effect.type == BasicPostProcessEffectType::AutoExposure ||
                     effect.type == BasicPostProcessEffectType::SSAO ||
+                    effect.type == BasicPostProcessEffectType::VCTGI ||
                     effect.type == BasicPostProcessEffectType::TAA)
                     return false;
                 const auto index = static_cast<std::size_t>(effect.type);
@@ -821,6 +989,12 @@ namespace PlutoGE::render
                 m_outputColor = RenderSsao(m_outputColor, effect, commands);
                 continue;
             }
+            if (effect.type == BasicPostProcessEffectType::VCTGI)
+            {
+                m_outputColor = RenderVctgi(m_outputColor, effect, lighting,
+                                            shadowDraws.empty() ? draws : shadowDraws, commands);
+                continue;
+            }
             const auto effectIndex = static_cast<std::size_t>(effect.type);
             if (effectIndex >= m_postProcessPipelines.size())
                 continue;
@@ -976,6 +1150,247 @@ namespace PlutoGE::render
         m_exposureHistoryIndex = 1u - m_exposureHistoryIndex;
         m_exposureHistoryValid = true;
         return destination->Get();
+    }
+
+    rhi::Buffer &BasicRenderer::AcquireVctBuffer(std::size_t index)
+    {
+        while (m_vctBuffers.size() <= index)
+            m_vctBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                {256, rhi::BufferUsage::Uniform, "VCT pass parameters"}));
+        return m_vctBuffers[index];
+    }
+
+    void BasicRenderer::ResetVctResources()
+    {
+        for (auto &cascade : m_vctCascades)
+        {
+            for (auto &texture : cascade.accumulation) texture.Reset();
+            cascade = {};
+        }
+        for (auto &texture : m_vctRadianceAtlases) texture.Reset();
+        m_vctTraceTarget.Reset();
+        for (auto &texture : m_vctHistoryTargets) texture.Reset();
+        for (auto &texture : m_vctMetadataTargets) texture.Reset();
+        m_vctResolution = m_vctCascadeCount = 0;
+        m_vctHistoryIndex = 0;
+        m_vctHistoryValid = false;
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderVctgi(rhi::TextureHandle source,
+                                                  const BasicPostProcessEffect &effect,
+                                                  const BasicLighting &lighting,
+                                                  std::span<const BasicDraw> draws,
+                                                  rhi::ICommandContext &commands)
+    {
+        if (!source || !m_vctVoxelizationPipeline || !m_vctResolvePipeline ||
+            !m_vctDirectionalMipPipeline ||
+            std::ranges::any_of(m_vctPostProcessPipelines, [](const auto &pipeline) { return !pipeline; }))
+            return source;
+        const auto resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
+        const auto cascadeCount = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        if (resolution != m_vctResolution || cascadeCount != m_vctCascadeCount ||
+            !m_vctTraceTarget)
+        {
+            ResetVctResources();
+            m_vctResolution = resolution;
+            m_vctCascadeCount = cascadeCount;
+            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+                for (std::size_t channel = 0; channel < 4; ++channel)
+                    m_vctCascades[cascade].accumulation[channel] = rhi::Texture(
+                        *m_device, m_device->CreateTexture({.width = resolution, .height = resolution,
+                            .format = rhi::Format::R32Uint, .usage = rhi::TextureUsage::Sampled,
+                            .debugName = "VCT accumulation", .sampled = true, .depth = resolution,
+                            .storage = true, .mipLevels = 1}));
+            const auto mipLevels = 1u + static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
+            for (std::size_t direction = 0; direction < m_vctRadianceAtlases.size(); ++direction)
+                m_vctRadianceAtlases[direction] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {.width = resolution, .height = resolution,
+                     .format = rhi::Format::R16G16B16A16Float, .usage = rhi::TextureUsage::Sampled,
+                     .debugName = "VCT directional radiance atlas", .sampled = true,
+                     .depth = resolution * cascadeCount, .storage = true, .mipLevels = mipLevels}));
+            m_vctTraceTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                {m_width, m_height, rhi::Format::R16G16B16A16Float,
+                 rhi::TextureUsage::ColorAttachment, "VCT cone trace", true}));
+            for (std::size_t index = 0; index < 2; ++index)
+            {
+                m_vctHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R32G32B32A32Float,
+                     rhi::TextureUsage::ColorAttachment, "VCT temporal history", true}));
+                m_vctMetadataTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R32G32B32A32Float,
+                     rhi::TextureUsage::ColorAttachment, "VCT metadata history", true}));
+            }
+        }
+        m_vctBufferCursor = 0;
+        const float baseSize = std::max(effect.parameters[0].x, 4.0f);
+        const auto contentSignature = VctContentSignature(draws, lighting);
+        const auto updateInterval = static_cast<std::uint64_t>(
+            std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
+        std::size_t rebuildIndex = cascadeCount;
+        for (std::uint32_t index = 0; index < cascadeCount; ++index)
+        {
+            auto &cascade = m_vctCascades[index];
+            const float size = baseSize * std::pow(2.0f, static_cast<float>(index));
+            const float snap = size / static_cast<float>(resolution) * 8.0f;
+            const glm::vec3 desired = glm::floor((lighting.cameraPosition - glm::vec3(size * 0.5f)) / snap) * snap;
+            const bool intervalElapsed = !cascade.valid ||
+                m_frameIndex - cascade.lastUpdateFrame >= updateInterval;
+            const bool requiresRefresh = !cascade.valid || cascade.size != size ||
+                glm::any(glm::notEqual(cascade.origin, desired)) ||
+                cascade.contentSignature != contentSignature;
+            if (!cascade.rebuilding && intervalElapsed && requiresRefresh)
+            {
+                cascade.pendingOrigin = desired;
+                cascade.pendingSize = size;
+                cascade.nextDraw = 0;
+                cascade.pendingSignature = contentSignature;
+                cascade.rebuilding = true;
+                for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
+            }
+            if (cascade.rebuilding && rebuildIndex == cascadeCount) rebuildIndex = index;
+        }
+        if (rebuildIndex < cascadeCount)
+        {
+            auto &cascade = m_vctCascades[rebuildIndex];
+            const VctVoxelParameters voxel{cascade.pendingOrigin, cascade.pendingSize, resolution, 1, {},
+                glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
+                glm::vec4(lighting.directionalColor, 1.0f)};
+            auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+            m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
+            rhi::RenderingInfo raster;
+            raster.width = raster.height = resolution; raster.clearColor = raster.clearDepth = false;
+            raster.attachmentless = true;
+            commands.BeginRendering(raster);
+            commands.BindPipeline(m_vctVoxelizationPipeline.Get());
+            commands.BindUniformBuffer(0, voxelBuffer.Get());
+            for (std::size_t channel = 0; channel < 4; ++channel)
+                commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
+            const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+            std::size_t submitted = 0;
+            while (cascade.nextDraw < draws.size() && submitted < budget)
+            {
+                const auto &draw = draws[cascade.nextDraw++];
+                const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
+                                                     cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                if (!draw.contributesToGi || !draw.mesh || !draw.mesh->IsValid() ||
+                    glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
+                        draw.shadowBoundsRadius * draw.shadowBoundsRadius)
+                    continue;
+                const auto objectBufferIndex = m_vctBufferCursor++;
+                auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
+                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
+                const auto materialBufferIndex = m_vctBufferCursor++;
+                auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
+                const VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
+                    draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
+                    draw.baseColorTexture ? 1u : 0u, {}};
+                m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
+                commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
+                commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
+                commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                                     m_fallbackSampler.Get());
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                const auto available = draw.firstIndex < draw.mesh->m_indexCount
+                                           ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
+                const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
+                if (count) { commands.DrawIndexed(count, draw.firstIndex); ++submitted; }
+            }
+            commands.EndRendering();
+            commands.ShaderMemoryBarrier();
+            if (cascade.nextDraw >= draws.size())
+            {
+                const VctResolveParameters resolve{
+                    resolution, static_cast<std::uint32_t>(rebuildIndex) * resolution, {}};
+                auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
+                for (auto &atlas : m_vctRadianceAtlases)
+                {
+                    commands.BindPipeline(m_vctResolvePipeline.Get());
+                    commands.BindUniformBuffer(0, resolveBuffer.Get());
+                    for (std::size_t channel = 0; channel < 4; ++channel)
+                        commands.BindStorageImage(static_cast<std::uint32_t>(1 + channel), cascade.accumulation[channel].Get());
+                    commands.BindStorageImage(5, atlas.Get());
+                    commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, (resolution + 3) / 4);
+                    commands.ShaderMemoryBarrier();
+                }
+                const auto maximumMip = static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
+                for (std::size_t direction = 0; direction < m_vctRadianceAtlases.size(); ++direction)
+                    for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
+                    {
+                        const std::uint32_t mipSize = std::max(1u, resolution >> mip);
+                        const VctMipParameters params{static_cast<std::uint32_t>(direction / 2),
+                            direction % 2 == 0 ? 1 : -1,
+                            static_cast<std::uint32_t>(rebuildIndex), mipSize, mip - 1, {}};
+                        auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
+                        m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
+                        commands.BindPipeline(m_vctDirectionalMipPipeline.Get());
+                        commands.BindUniformBuffer(0, buffer.Get());
+                        commands.BindTexture(1, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+                        commands.BindStorageImage(2, m_vctRadianceAtlases[direction].Get(), mip);
+                        commands.Dispatch((mipSize + 3) / 4, (mipSize + 3) / 4, (mipSize + 3) / 4);
+                        commands.ShaderMemoryBarrier();
+                    }
+                cascade.contentSignature = cascade.pendingSignature;
+                cascade.origin = cascade.pendingOrigin;
+                cascade.size = cascade.pendingSize;
+                cascade.lastUpdateFrame = m_frameIndex;
+                cascade.rebuilding = false; cascade.valid = true;
+                m_vctHistoryValid = false;
+            }
+        }
+        std::uint32_t availableCascades = 0;
+        while (availableCascades < cascadeCount && m_vctCascades[availableCascades].valid) ++availableCascades;
+        if (availableCascades == 0) return source;
+        VctTraceParameters trace;
+        trace.inverseViewProjection = m_inverseViewProjection; trace.view = m_postProcessView;
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            const auto sourceIndex = std::min<std::size_t>(index, availableCascades - 1);
+            trace.cascadeOriginSize[index] = glm::vec4(m_vctCascades[sourceIndex].origin,
+                                                       m_vctCascades[sourceIndex].size);
+        }
+        trace.traceSettings = {effect.parameters[0].y, effect.parameters[0].z,
+                               effect.parameters[0].w, effect.parameters[1].x};
+        trace.traceCounts = {availableCascades, cascadeCount, effect.quality,
+                             static_cast<std::uint32_t>(std::floor(std::log2(resolution)))};
+        trace.flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+        trace.debugView = static_cast<std::uint32_t>(std::clamp(effect.parameters[3].x, 0.0f, 2.0f));
+        trace.indirectOnly = effect.parameters[3].z > 0.5f ? 1u : 0u;
+        auto &traceBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+        m_device->UpdateBuffer(traceBuffer.Get(), 0, Bytes(trace));
+        rhi::RenderingInfo traceInfo; traceInfo.colorAttachments = {m_vctTraceTarget.Get()};
+        traceInfo.width = m_width; traceInfo.height = m_height; traceInfo.clearDepth = false;
+        commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
+        commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+        for (std::size_t direction = 0; direction < 6; ++direction)
+            commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+        commands.Draw(3); commands.EndRendering();
+        const auto next = static_cast<std::uint8_t>(1u - m_vctHistoryIndex);
+        VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,
+            {1.0f / m_width, 1.0f / m_height}, effect.parameters[1].y, effect.parameters[1].z,
+            effect.parameters[1].w, trace.flipY, m_vctHistoryValid ? 1u : 0u,
+            effect.parameters[3].x == 3.0f ? 1u : 0u};
+        auto &temporalBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+        m_device->UpdateBuffer(temporalBuffer.Get(), 0, Bytes(temporal));
+        rhi::RenderingInfo temporalInfo; temporalInfo.colorAttachments = {m_vctHistoryTargets[next].Get()};
+        temporalInfo.width = m_width; temporalInfo.height = m_height; temporalInfo.clearDepth = false;
+        commands.BeginRendering(temporalInfo); commands.BindPipeline(m_vctPostProcessPipelines[1].Get());
+        commands.BindUniformBuffer(0, temporalBuffer.Get()); commands.BindTexture(1, m_vctTraceTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get()); commands.BindTexture(6, m_vctHistoryTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
+        commands.BindTexture(7, m_vctMetadataTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
+        const VctMetadataParameters metadata{m_inverseViewProjection, m_postProcessView, trace.flipY, {}};
+        auto &metadataBuffer = AcquireVctBuffer(m_vctBufferCursor++); m_device->UpdateBuffer(metadataBuffer.Get(), 0, Bytes(metadata));
+        rhi::RenderingInfo metadataInfo; metadataInfo.colorAttachments = {m_vctMetadataTargets[next].Get()};
+        metadataInfo.width = m_width; metadataInfo.height = m_height; metadataInfo.clearDepth = false;
+        commands.BeginRendering(metadataInfo); commands.BindPipeline(m_vctPostProcessPipelines[2].Get());
+        commands.BindUniformBuffer(0, metadataBuffer.Get()); commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
+        m_vctHistoryIndex = next; m_vctHistoryValid = true; m_vctPreviousView = m_postProcessView;
+        return m_vctHistoryTargets[next].Get();
     }
 
     rhi::TextureHandle BasicRenderer::RenderSsao(rhi::TextureHandle source,

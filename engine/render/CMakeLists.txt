@@ -102,6 +102,32 @@ if (PLUTO_SLANGC_EXECUTABLE)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
     endfunction()
 
+    function(pluto_add_slang_geometry_shader MODULE SOURCE VERTEX_ENTRY GEOMETRY_ENTRY FRAGMENT_ENTRY)
+        set(outputs
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.glsl"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv")
+        add_custom_command(
+        OUTPUT ${outputs}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PLUTO_RHI_SHADER_OUTPUT_DIR}"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl.raw"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.glsl.raw"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMENT "Compiling ${MODULE} Slang geometry pipeline for OpenGL and Vulkan"
+        VERBATIM)
+        set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
+    endfunction()
+
     pluto_add_slang_graphics_shader(BasicLit "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DisplayOutput "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DisplayOutput.slang" vertexMain fragmentMain)
@@ -131,6 +157,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(BloomComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain compositeMain)
     pluto_add_slang_compute_shader(VCTResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTResolve.slang" computeMain)
     pluto_add_slang_compute_shader(VCTDirectionalMip "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTDirectionalMip.slang" computeMain)
+    pluto_add_slang_geometry_shader(VCTVoxelize "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTVoxelize.slang" vertexMain geometryMain fragmentMain)
+    pluto_add_slang_graphics_shader(VCTConeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTConeTrace.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(VCTTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTTemporal.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(VCTMetadata "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTMetadata.slang" vertexMain fragmentMain)
     get_property(PLUTO_RHI_SHADER_OUTPUTS GLOBAL PROPERTY PLUTO_RHI_SHADER_OUTPUTS)
     add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_RHI_SHADER_OUTPUTS})
     add_dependencies(PlutoGERender PlutoGERhiShaders)

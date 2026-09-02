@@ -17,6 +17,7 @@
 #include "PlutoGE/render/postprocess/SSREffect.h"
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include <algorithm>
 #include <array>
@@ -252,6 +253,28 @@ namespace PlutoGE::render
             });
         }
 
+        std::optional<BasicPostProcessEffect> AdaptVctgi(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<VoxelConeTracingEffect>(effect, [](const VoxelConeTracingEffect &typed)
+            {
+                const auto settings = typed.GetSettings();
+                BasicPostProcessEffect result{BasicPostProcessEffectType::VCTGI};
+                result.quality = static_cast<std::uint32_t>(settings.coneCount);
+                result.parameters[0] = {settings.volumeSize, settings.intensity, settings.aperture, settings.maxDistance};
+                result.parameters[1] = {settings.normalBias, settings.temporalBlend,
+                                        settings.historyDepthThreshold, settings.historyNormalThreshold};
+                result.parameters[2] = {static_cast<float>(settings.resolution),
+                                        static_cast<float>(settings.cascadeCount),
+                                        static_cast<float>(settings.traceResolutionDivisor),
+                                        static_cast<float>(settings.updateInterval)};
+                result.parameters[3] = {static_cast<float>(settings.debugView),
+                                        static_cast<float>(settings.voxelizationLodBias),
+                                        settings.indirectOnly ? 1.0f : 0.0f,
+                                        static_cast<float>(settings.voxelizationCommandBudget)};
+                return result;
+            });
+        }
+
         constexpr std::array kAdapters{
             AdapterRegistration{"ToneMapping", AdaptToneMapping},
             AdapterRegistration{"GammaCorrection", AdaptGammaCorrection},
@@ -270,6 +293,7 @@ namespace PlutoGE::render
             AdapterRegistration{"SSR", AdaptSsr},
             AdapterRegistration{"VolumetricFog", AdaptVolumetricFog},
             AdapterRegistration{"SceneComposite", AdaptSceneComposite},
+            AdapterRegistration{"VCTGI", AdaptVctgi},
         };
     }
 

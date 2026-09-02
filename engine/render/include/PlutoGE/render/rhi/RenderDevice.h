@@ -47,6 +47,8 @@ namespace PlutoGE::render::rhi
         // legacy clearColorValue is applied to every attachment.
         std::vector<std::array<float, 4>> clearColorValues;
         float clearDepthValue = 0.0f;
+        // Allows raster work that writes only storage resources from shaders.
+        bool attachmentless = false;
     };
 
     class ICommandContext
@@ -71,6 +73,7 @@ namespace PlutoGE::render::rhi
         virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
         // Makes prior shader writes visible to subsequent shader reads/writes.
         virtual void ShaderMemoryBarrier() {}
+        virtual void ClearStorageImageUint(TextureHandle, std::uint32_t = 0) {}
         // Submit all rendering recorded since the previous call. Explicit APIs
         // use this as the frame boundary; immediate APIs may make it a no-op.
         virtual void Submit() {}

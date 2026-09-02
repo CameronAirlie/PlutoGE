@@ -26,6 +26,8 @@ namespace PlutoGE::render
             int coneCount = 5;
             int traceResolutionDivisor = 4;
             int updateInterval = 1;
+            int voxelizationCommandBudget = 8;
+            int voxelizationLodBias = 0;
             int debugView = 0;
             float volumeSize = 48.0f;
             float intensity = 1.0f;

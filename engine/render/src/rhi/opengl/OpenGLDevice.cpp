@@ -71,6 +71,8 @@ namespace PlutoGE::render::rhi::opengl
                 return {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT};
             case Format::R32Float:
                 return {GL_R32F, GL_RED, GL_FLOAT};
+            case Format::R32Uint:
+                return {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT};
             case Format::R32G32Float:
                 return {GL_RG32F, GL_RG, GL_FLOAT};
             case Format::R32G32B32A32Float:
@@ -146,7 +148,7 @@ namespace PlutoGE::render::rhi::opengl
                 throw std::logic_error("OpenGL RHI rendering is already active");
             m_rendering = true;
 
-            if (info.colorAttachments.empty() && !info.depthAttachment)
+            if (info.colorAttachments.empty() && !info.depthAttachment && !info.attachmentless)
             {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
@@ -176,6 +178,13 @@ namespace PlutoGE::render::rhi::opengl
                 else
                     glDrawBuffers(static_cast<GLsizei>(drawBuffers.size()), drawBuffers.data());
                 glReadBuffer(drawBuffers.empty() ? GL_NONE : drawBuffers.front());
+                if (info.attachmentless)
+                {
+                    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH,
+                                            static_cast<GLint>(info.width));
+                    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT,
+                                            static_cast<GLint>(info.height));
+                }
                 if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     throw std::runtime_error("RHI render target framebuffer is incomplete");
             }
@@ -338,6 +347,35 @@ namespace PlutoGE::render::rhi::opengl
         void ShaderMemoryBarrier() override
         {
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+        }
+        void ClearStorageImageUint(TextureHandle textureHandle, std::uint32_t value) override
+        {
+            auto *texture = m_impl.textures.Get(textureHandle);
+            if (!texture || !texture->descriptor.storage || texture->descriptor.format != Format::R32Uint)
+                throw std::invalid_argument("OpenGL uint clear requires an R32Uint storage image");
+            if (glClearTexImage)
+            {
+                glClearTexImage(texture->name, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &value);
+                return;
+            }
+            // glClearTexImage is OpenGL 4.4 while compute/image load-store are
+            // available in 4.3. Keep the RHI path functional on 4.3 contexts.
+            const auto texelCount = static_cast<std::size_t>(texture->descriptor.width) *
+                                    texture->descriptor.height * texture->descriptor.depth;
+            std::vector<std::uint32_t> clearData(texelCount, value);
+            const GLenum target = texture->descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
+            glBindTexture(target, texture->name);
+            if (texture->descriptor.depth > 1)
+                glTexSubImage3D(target, 0, 0, 0, 0,
+                                static_cast<GLsizei>(texture->descriptor.width),
+                                static_cast<GLsizei>(texture->descriptor.height),
+                                static_cast<GLsizei>(texture->descriptor.depth),
+                                GL_RED_INTEGER, GL_UNSIGNED_INT, clearData.data());
+            else
+                glTexSubImage2D(target, 0, 0, 0,
+                                static_cast<GLsizei>(texture->descriptor.width),
+                                static_cast<GLsizei>(texture->descriptor.height),
+                                GL_RED_INTEGER, GL_UNSIGNED_INT, clearData.data());
         }
 
         void Submit() override {}

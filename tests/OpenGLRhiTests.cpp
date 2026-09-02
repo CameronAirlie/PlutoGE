@@ -141,6 +141,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shaders.bloom[index].vertex.glsl = ReadText((std::string(bloomModules[index]) + ".vertex.glsl").c_str());
             shaders.bloom[index].fragment.glsl = ReadText((std::string(bloomModules[index]) + ".fragment.glsl").c_str());
         }
+        shaders.vctCompute[0].glsl = ReadText("VCTResolve.compute.glsl");
+        shaders.vctCompute[1].glsl = ReadText("VCTDirectionalMip.compute.glsl");
+        shaders.vctVoxelization.vertexShader.glsl = ReadText("VCTVoxelize.vertex.glsl");
+        shaders.vctVoxelization.geometryShader.glsl = ReadText("VCTVoxelize.geometry.glsl");
+        shaders.vctVoxelization.fragmentShader.glsl = ReadText("VCTVoxelize.fragment.glsl");
+        constexpr std::array<const char *, 3> vctModules{"VCTConeTrace", "VCTTemporal", "VCTMetadata"};
+        for (std::size_t index = 0; index < vctModules.size(); ++index)
+        {
+            shaders.vctPostProcess[index].vertex.glsl = ReadText((std::string(vctModules[index]) + ".vertex.glsl").c_str());
+            shaders.vctPostProcess[index].fragment.glsl = ReadText((std::string(vctModules[index]) + ".fragment.glsl").c_str());
+        }
         try
         {
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
@@ -232,6 +243,27 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             std::cerr << "Backend-neutral OpenGL post-process chain produced a blank image\n";
             return 10;
+        }
+        auto vctgi = render::BasicPostProcessEffect{render::BasicPostProcessEffectType::VCTGI};
+        vctgi.quality = 3;
+        vctgi.parameters[0] = {16.0f, 1.0f, 0.5f, 32.0f};
+        vctgi.parameters[1] = {0.1f, 0.9f, 0.05f, 0.8f};
+        vctgi.parameters[2] = {32.0f, 1.0f, 1.0f, 1.0f};
+        vctgi.parameters[3].w = 256.0f;
+        try
+        {
+            basicRenderer.Render(projection * view, render::BasicLighting{}, draws,
+                                 std::span(&vctgi, 1));
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "OpenGL VCTGI execution failed: " << error.what() << '\n';
+            return 12;
+        }
+        if (const GLenum error = glGetError(); error != GL_NO_ERROR)
+        {
+            std::cerr << "OpenGL VCTGI execution produced error: " << error << '\n';
+            return 12;
         }
 
         auto swapchain = device.CreateSwapchain({

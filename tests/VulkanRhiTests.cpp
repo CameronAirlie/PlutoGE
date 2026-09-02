@@ -63,6 +63,17 @@ int main()
             shaders.ssao[index].vertex.spirv = ReadSpirv((std::string(ssaoModules[index]) + ".vertex.spv").c_str());
             shaders.ssao[index].fragment.spirv = ReadSpirv((std::string(ssaoModules[index]) + ".fragment.spv").c_str());
         }
+        shaders.vctCompute[0].spirv = ReadSpirv("VCTResolve.compute.spv");
+        shaders.vctCompute[1].spirv = ReadSpirv("VCTDirectionalMip.compute.spv");
+        shaders.vctVoxelization.vertexShader.spirv = ReadSpirv("VCTVoxelize.vertex.spv");
+        shaders.vctVoxelization.geometryShader.spirv = ReadSpirv("VCTVoxelize.geometry.spv");
+        shaders.vctVoxelization.fragmentShader.spirv = ReadSpirv("VCTVoxelize.fragment.spv");
+        constexpr std::array<const char *, 3> vctModules{"VCTConeTrace", "VCTTemporal", "VCTMetadata"};
+        for (std::size_t index = 0; index < vctModules.size(); ++index)
+        {
+            shaders.vctPostProcess[index].vertex.spirv = ReadSpirv((std::string(vctModules[index]) + ".vertex.spv").c_str());
+            shaders.vctPostProcess[index].fragment.spirv = ReadSpirv((std::string(vctModules[index]) + ".fragment.spv").c_str());
+        }
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
@@ -174,6 +185,18 @@ int main()
             std::cerr << "Vulkan SSAO produced an all-white AO diagnostic ("
                       << occludedPixels << " occluded pixels)\n";
             return 8;
+        }
+        auto vctgi = BasicPostProcessEffect{BasicPostProcessEffectType::VCTGI};
+        vctgi.quality = 3;
+        vctgi.parameters[0] = {16.0f, 1.0f, 0.5f, 32.0f};
+        vctgi.parameters[1] = {0.1f, 0.9f, 0.05f, 0.8f};
+        vctgi.parameters[2] = {32.0f, 1.0f, 1.0f, 1.0f};
+        vctgi.parameters[3].w = 256.0f;
+        renderer.Render(projection * view, neutralLighting, draws, std::span(&vctgi, 1));
+        if (device.ReadTextureRgba8(renderer.GetColorTexture()).size() != 96u * 64u * 4u)
+        {
+            std::cerr << "Vulkan VCTGI returned an invalid image\n";
+            return 9;
         }
         auto colorGrading = BasicPostProcessEffect{BasicPostProcessEffectType::ColorGrading};
         colorGrading.parameters[0] = {0.0f, 1.05f, 1.05f, 0.04f};

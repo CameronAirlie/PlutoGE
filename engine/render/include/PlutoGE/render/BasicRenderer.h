@@ -34,6 +34,7 @@ namespace PlutoGE::render
         PhysicalSky,
         VolumetricCloud,
         SceneComposite,
+        VCTGI,
         Count,
     };
 
@@ -64,6 +65,7 @@ namespace PlutoGE::render
         {
         case BasicPostProcessEffectType::SSGI:
         case BasicPostProcessEffectType::SceneComposite:
+        case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessStage::LightingComposite;
         case BasicPostProcessEffectType::SSAO:
             return BasicPostProcessStage::AmbientOcclusion;
@@ -112,6 +114,7 @@ namespace PlutoGE::render
                    BasicPostProcessInput::Motion | BasicPostProcessInput::History;
         case BasicPostProcessEffectType::SSAO:
         case BasicPostProcessEffectType::SSGI:
+        case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
@@ -164,6 +167,8 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 2> vctCompute;
+        rhi::GraphicsPipelineDescriptor vctVoxelization;
+        std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
     };
 
     class BasicMesh
@@ -209,6 +214,7 @@ namespace PlutoGE::render
         float shadowBoundsRadius = -1.0f;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
+        bool contributesToGi = true;
     };
 
     struct BasicLighting
@@ -298,6 +304,13 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle RenderSsao(rhi::TextureHandle source,
                                                     const BasicPostProcessEffect &effect,
                                                     rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::TextureHandle RenderVctgi(rhi::TextureHandle source,
+                                                     const BasicPostProcessEffect &effect,
+                                                     const BasicLighting &lighting,
+                                                     std::span<const BasicDraw> draws,
+                                                     rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::Buffer &AcquireVctBuffer(std::size_t index);
+        void ResetVctResources();
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
         void EnsureShadowTargets(const BasicLighting &lighting);
 
@@ -341,6 +354,34 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 3> m_ssaoPipelines;
         rhi::GraphicsPipeline m_vctResolvePipeline;
         rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
+        rhi::GraphicsPipeline m_vctVoxelizationPipeline;
+        std::array<rhi::GraphicsPipeline, 3> m_vctPostProcessPipelines;
+        struct VctCascade
+        {
+            std::array<rhi::Texture, 4> accumulation;
+            glm::vec3 origin{0.0f};
+            float size = 0.0f;
+            glm::vec3 pendingOrigin{0.0f};
+            float pendingSize = 0.0f;
+            std::size_t nextDraw = 0;
+            std::uint64_t contentSignature = 0;
+            std::uint64_t pendingSignature = 0;
+            std::uint64_t lastUpdateFrame = 0;
+            bool valid = false;
+            bool rebuilding = false;
+        };
+        std::array<VctCascade, 3> m_vctCascades;
+        std::array<rhi::Texture, 6> m_vctRadianceAtlases;
+        rhi::Texture m_vctTraceTarget;
+        std::array<rhi::Texture, 2> m_vctHistoryTargets;
+        std::array<rhi::Texture, 2> m_vctMetadataTargets;
+        std::vector<rhi::Buffer> m_vctBuffers;
+        std::size_t m_vctBufferCursor = 0;
+        std::uint32_t m_vctResolution = 0;
+        std::uint32_t m_vctCascadeCount = 0;
+        std::uint8_t m_vctHistoryIndex = 0;
+        bool m_vctHistoryValid = false;
+        glm::mat4 m_vctPreviousView{1.0f};
         rhi::Texture m_ssaoRawTarget;
         std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;

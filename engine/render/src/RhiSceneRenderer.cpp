@@ -195,6 +195,8 @@ namespace PlutoGE::render
                     indexCount = range.indexCount;
                 }
                 BasicDraw draw{.mesh = &mesh->second, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                draw.contributesToGi = command.isStatic &&
+                                       (!command.jointMatrices || command.jointMatrices->empty());
                 if (command.material)
                 {
                     const auto &material = command.material->GetConfig();

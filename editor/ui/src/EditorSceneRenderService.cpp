@@ -199,7 +199,8 @@ namespace PlutoGE::ui
                                           std::span<const render::RenderCommand> commands,
                                           std::span<const render::RenderCommand> shadowCommands,
                                           std::span<render::IPostProcessEffect *const> postProcessEffects,
-                                          const scene::Scene *scene)
+                                          const scene::Scene *scene,
+                                          render::PostProcessDebugView debugView)
     {
         if (!m_sceneRenderer || !m_device)
             return false;
@@ -290,7 +291,7 @@ namespace PlutoGE::ui
         try
         {
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
-                                         postProcessEffects, atmosphereEffects, readOpenGlTexture))
+                                         postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView))
                 return false;
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
         }

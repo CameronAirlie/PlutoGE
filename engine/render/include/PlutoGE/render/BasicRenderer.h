@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/RenderDebugView.h"
+
 #include "PlutoGE/render/rhi/Resource.h"
 
 #include <array>
@@ -215,6 +217,7 @@ namespace PlutoGE::render
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
         bool contributesToGi = true;
+        float normalizedLod = 0.0f;
     };
 
     struct BasicLighting
@@ -235,6 +238,7 @@ namespace PlutoGE::render
         std::array<glm::mat4, 4> shadowMatrices{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         glm::vec4 shadowCascadeSplits{0.0f};
+        std::array<glm::vec4, 4> shadowCascadeMetrics{}; // world texel size, depth range
         bool shadowFlipY = false;
         float shadowDepthScale = 1.0f;
         float shadowDepthBias = 0.0f;
@@ -284,7 +288,8 @@ namespace PlutoGE::render
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                     std::span<const BasicDraw> draws,
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},
-                    std::span<const BasicDraw> shadowDraws = {});
+                    std::span<const BasicDraw> shadowDraws = {},
+                    PostProcessDebugView debugView = PostProcessDebugView::None);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -320,6 +325,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_displayPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
+        rhi::Buffer m_debugViewBuffer;
         std::array<rhi::Buffer, 4> m_shadowCameraBuffers;
         // Shadow object transforms are cascade-independent and are uploaded
         // once per caster, then referenced by every intersecting cascade.
@@ -344,6 +350,7 @@ namespace PlutoGE::render
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
         rhi::Texture m_albedoTarget;
+        rhi::Texture m_debugTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
         // screen-tile corruption. Keep one stable output per ordinary pass.

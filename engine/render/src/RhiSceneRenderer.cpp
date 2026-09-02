@@ -29,12 +29,19 @@ namespace PlutoGE::render
             return result;
         }
 
-        glm::mat4 BuildDirectionalShadowMatrix(const CameraData &camera,
-                                               const BasicLighting &lighting,
-                                               float cascadeNear,
-                                               float shadowDistance,
-                                               float casterDistance,
-                                               std::uint32_t shadowResolution)
+        struct DirectionalShadowProjection
+        {
+            glm::mat4 matrix{1.0f};
+            float worldTexelSize = 0.0f;
+            float depthRange = 1.0f;
+        };
+
+        DirectionalShadowProjection BuildDirectionalShadowProjection(const CameraData &camera,
+                                                                     const BasicLighting &lighting,
+                                                                     float cascadeNear,
+                                                                     float shadowDistance,
+                                                                     float casterDistance,
+                                                                     std::uint32_t shadowResolution)
         {
             const glm::mat4 inverseView = glm::inverse(camera.view);
             const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
@@ -100,9 +107,14 @@ namespace PlutoGE::render
             maximum.x += snapOffset.x;
             minimum.y += snapOffset.y;
             maximum.y += snapOffset.y;
-            return glm::orthoRH_ZO(minimum.x, maximum.x, minimum.y, maximum.y,
-                                   std::max(-maximum.z, 0.01f), std::max(-minimum.z, 0.02f)) *
-                   lightView;
+            const float nearPlane = std::max(-maximum.z, 0.01f);
+            const float farPlane = std::max(-minimum.z, nearPlane + 0.01f);
+            return {
+                glm::orthoRH_ZO(minimum.x, maximum.x, minimum.y, maximum.y,
+                                nearPlane, farPlane) * lightView,
+                std::max(extent.x, extent.y) / static_cast<float>(std::max(shadowResolution, 1u)),
+                farPlane - nearPlane,
+            };
         }
     }
 
@@ -138,7 +150,8 @@ namespace PlutoGE::render
                                   std::span<const RenderCommand> shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
-                                  const TexturePixelReader &texturePixelReader)
+                                  const TexturePixelReader &texturePixelReader,
+                                  PostProcessDebugView debugView)
     {
         if (!m_renderer || !m_device || width == 0 || height == 0 || !m_renderer->Resize(width, height))
             return false;
@@ -195,6 +208,13 @@ namespace PlutoGE::render
                     indexCount = range.indexCount;
                 }
                 BasicDraw draw{.mesh = &mesh->second, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                const std::size_t lodCount = command.submeshIndex < command.mesh->GetSubmeshCount()
+                                                 ? command.mesh->GetSubmeshLodCount(command.submeshIndex)
+                                                 : 1u;
+                draw.normalizedLod = lodCount > 1
+                                         ? static_cast<float>(command.lodIndex) /
+                                               static_cast<float>(lodCount - 1)
+                                         : 0.0f;
                 // Scene imports commonly leave rigid architectural submeshes marked non-static.
                 // VCT content signatures already invalidate moved rigid draws, so the Static flag
                 // is a caching hint rather than a requirement for contributing to GI. Skinned
@@ -322,7 +342,7 @@ namespace PlutoGE::render
             {
                 const float cascadeNear = cascade == 0 ? cameraNear
                                                        : effectiveLighting.shadowCascadeSplits[cascade - 1];
-                effectiveLighting.shadowMatrices[cascade] = BuildDirectionalShadowMatrix(
+                const auto projection = BuildDirectionalShadowProjection(
                     cameraData, effectiveLighting, cascadeNear,
                     effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
                     std::clamp(static_cast<std::uint32_t>(std::lround(
@@ -330,6 +350,9 @@ namespace PlutoGE::render
                                                                             std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
                                                                             static_cast<float>(cascade)))),
                                256u, 8192u));
+                effectiveLighting.shadowMatrices[cascade] = projection.matrix;
+                effectiveLighting.shadowCascadeMetrics[cascade] = {
+                    projection.worldTexelSize, projection.depthRange, 0.0f, 0.0f};
             }
             if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
                 effectiveLighting.shadowFlipY = true;
@@ -394,7 +417,8 @@ namespace PlutoGE::render
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
-        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws);
+        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
+                           debugView);
         return true;
     }
 

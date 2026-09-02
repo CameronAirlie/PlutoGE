@@ -3887,7 +3887,8 @@ namespace PlutoGE::ui
         if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
                                         static_cast<std::uint32_t>(target->GetHeight()),
                                         cameraData, commands, shadowCommands, postProcessEffects,
-                                        EditorShell::GetInstance().GetEngine().GetScene()))
+                                        EditorShell::GetInstance().GetEngine().GetScene(),
+                                        EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView()))
         {
             // A Vulkan project must never silently display the legacy OpenGL
             // scene as if it came from the selected backend. Keep the RHI path

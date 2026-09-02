@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/RenderDebugView.h"
 #include "PlutoGE/render/rhi/Types.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/EditorCompositor.h"
@@ -13,7 +14,6 @@
 
 namespace PlutoGE::render
 {
-    enum class PostProcessDebugView;
     class RenderTarget;
     class SpatialUpscaler;
     class Mesh;

@@ -44,7 +44,8 @@ namespace PlutoGE::ui
                     std::span<const render::RenderCommand> commands,
                     std::span<const render::RenderCommand> shadowCommands,
                     std::span<render::IPostProcessEffect *const> postProcessEffects,
-                    const scene::Scene *scene);
+                    const scene::Scene *scene,
+                    render::PostProcessDebugView debugView);
 
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
         [[nodiscard]] bool IsVulkan() const noexcept { return m_isVulkan; }

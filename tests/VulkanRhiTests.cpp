@@ -166,6 +166,23 @@ int main()
                       << red << ", " << green << ", " << blue << ")\n";
             return 4;
         }
+        renderer.Render(projection * view, neutralLighting, draws, {}, {}, PostProcessDebugView::Lod);
+        const auto lodDebugPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        std::size_t blueLodPixels = 0;
+        for (std::size_t i = 0; i + 3 < lodDebugPixels.size(); i += 4)
+        {
+            const auto r = std::to_integer<unsigned char>(lodDebugPixels[i]);
+            const auto g = std::to_integer<unsigned char>(lodDebugPixels[i + 1]);
+            const auto b = std::to_integer<unsigned char>(lodDebugPixels[i + 2]);
+            if (b > r + 40 && b > g + 20)
+                ++blueLodPixels;
+        }
+        if (blueLodPixels < 100)
+        {
+            std::cerr << "Vulkan RHI LOD debug view did not produce diagnostic output ("
+                      << blueLodPixels << " blue pixels)\n";
+            return 10;
+        }
         auto ssao = BasicPostProcessEffect{BasicPostProcessEffectType::SSAO};
         ssao.quality = 32;
         ssao.parameters[0] = {1.5f, 0.02f, 3.0f, 1.0f};

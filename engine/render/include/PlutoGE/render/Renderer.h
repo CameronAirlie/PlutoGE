@@ -5,6 +5,7 @@
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/RenderDebugView.h"
 #include <array>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -38,20 +39,6 @@ namespace PlutoGE::render
     class Texture;
     class LightPropagationVolumePass;
     class PhysicalSkyPass;
-
-    enum class PostProcessDebugView
-    {
-        None = 0,
-        Quadrants,
-        Position,
-        Normal,
-        Albedo,
-        Depth,
-        ShadowCascades,
-        DirectionalShadowMaskRaw,
-        DirectionalShadowMaskFiltered,
-        Lod,
-    };
 
     struct RendererConfig
     {

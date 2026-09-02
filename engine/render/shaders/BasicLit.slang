@@ -24,6 +24,7 @@ struct FragmentOutput
     float4 material : SV_Target2;
     float4 motion : SV_Target3;
     float4 albedo : SV_Target4;
+    float4 debug : SV_Target5;
 };
 
 [[vk::binding(0, 0)]]
@@ -40,6 +41,7 @@ cbuffer CameraParameters : register(b0, space0)
     float shadowDepthBias;
     float4 shadowInverseResolutions[4];
     float4 shadowCascadeSplits;
+    float4 shadowCascadeMetrics[4];
     float4 shadowCascadeParameters;
     float4 shadowFilterParameters;
     float4 shadowFilterEdgeParameters;
@@ -54,6 +56,7 @@ cbuffer ObjectParameters : register(b0, space2)
 {
     column_major float4x4 model;
     column_major float4x4 previousModel;
+    float4 objectDebugParameters;
 };
 
 [[vk::binding(0, 1)]]
@@ -175,7 +178,14 @@ float sampleShadowCascade(int cascade, float2 uv)
     return directionalShadowTexture3.Sample(uv).r;
 }
 
-float evaluateShadowCascade(int cascade, float3 worldPosition)
+float compareShadowCascade(int cascade, float2 uv, float receiverDepth)
+{
+    if (!all(uv >= 0.0) || !all(uv <= 1.0))
+        return 1.0;
+    return receiverDepth <= sampleShadowCascade(cascade, uv) ? 1.0 : 0.0;
+}
+
+float evaluateShadowCascade(int cascade, float3 worldPosition, float depthBias)
 {
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
@@ -190,14 +200,13 @@ float evaluateShadowCascade(int cascade, float3 worldPosition)
     float visibleSamples = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
-            visibleSamples += shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <=
-                                      sampleShadowCascade(cascade, shadowUv + float2(x, y) * texel)
-                                  ? 1.0
-                                  : 0.0;
+            visibleSamples += compareShadowCascade(
+                cascade, shadowUv + float2(x, y) * texel,
+                shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias);
     return visibleSamples / 9.0;
 }
 
-float evaluateShadowCascadeTap(int cascade, float3 worldPosition)
+float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBias)
 {
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
@@ -206,10 +215,8 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition)
         shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
-    return shadowCoord.z * shadowDepthScale + shadowDepthBias - 0.0015 <=
-                   sampleShadowCascade(cascade, shadowUv)
-               ? 1.0
-               : 0.0;
+    return compareShadowCascade(cascade, shadowUv,
+                                shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias);
 }
 
 [shader("vertex")]
@@ -291,6 +298,8 @@ FragmentOutput fragmentMain(VertexOutput input)
                                       (wrappedNdotL * 0.65 + backScatter * 0.35) *
                                       directionalColor.rgb * directionalDirectionIntensity.w * subsurfaceStrength;
     float shadowVisibility = 1.0;
+    float rawShadowVisibility = 1.0;
+    float normalizedCascade = 0.0;
     if (shadowsEnabled != 0)
     {
         const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
@@ -304,15 +313,34 @@ FragmentOutput fragmentMain(VertexOutput input)
                 break;
             }
         }
-        shadowVisibility = evaluateShadowCascade(cascade, input.worldPosition);
+        const float cascadeWorldTexel = max(shadowCascadeMetrics[cascade].x, 0.00001);
+        const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
+        const float slope = 1.0 - ndotl;
+        const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
+        const float depthBias = cascadeWorldTexel * lerp(0.05, 0.30, slope) / cascadeDepthRange;
+        const float3 receiverPosition = input.worldPosition + normal * normalBias;
+        shadowVisibility = evaluateShadowCascade(cascade, receiverPosition, depthBias);
+        rawShadowVisibility = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
+        normalizedCascade = cascadeCount > 1 ? (float)cascade / (float)(cascadeCount - 1) : 0.0;
         if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
         {
             const float blend = saturate((receiverDistance -
                                           (shadowCascadeSplits[cascade] - shadowCascadeParameters.y)) /
                                          shadowCascadeParameters.y);
             if (blend > 0.0)
+            {
+                const float nextWorldTexel = max(shadowCascadeMetrics[cascade + 1].x, 0.00001);
+                const float nextDepthRange = max(shadowCascadeMetrics[cascade + 1].y, 0.0001);
+                const float nextNormalBias = nextWorldTexel * lerp(0.08, 0.60, slope);
+                const float nextDepthBias = nextWorldTexel * lerp(0.05, 0.30, slope) / nextDepthRange;
+                const float3 nextReceiverPosition = input.worldPosition + normal * nextNormalBias;
                 shadowVisibility = lerp(shadowVisibility,
-                                        evaluateShadowCascade(cascade + 1, input.worldPosition), blend);
+                                        evaluateShadowCascade(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
+                rawShadowVisibility = lerp(rawShadowVisibility,
+                                           evaluateShadowCascadeTap(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
+                normalizedCascade = lerp(normalizedCascade,
+                                         (float)(cascade + 1) / (float)(cascadeCount - 1), blend);
+            }
         }
     }
     float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
@@ -341,5 +369,7 @@ FragmentOutput fragmentMain(VertexOutput input)
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
     output.motion = float4((currentNdc - previousNdc) * 0.25 + 0.5, 0.0, 1.0);
     output.albedo = sampledColor;
+    output.debug = float4(saturate(objectDebugParameters.x), normalizedCascade,
+                          rawShadowVisibility, shadowVisibility);
     return output;
 }

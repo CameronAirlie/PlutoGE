@@ -49,6 +49,7 @@ namespace PlutoGE::render
             float shadowDepthBias = 0.0f;
             std::array<glm::vec4, 4> shadowInverseResolutions{};
             glm::vec4 shadowCascadeSplits{0.0f};
+            std::array<glm::vec4, 4> shadowCascadeMetrics{};
             glm::vec4 shadowCascadeParameters{0.0f};    // count, blend distance, softness, padding
             glm::vec4 shadowFilterParameters{0.0f};     // enabled, radius, render scale, depth scale
             glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
@@ -57,13 +58,24 @@ namespace PlutoGE::render
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
         };
-        static_assert(sizeof(BasicFrameParameters) == 752);
+        static_assert(sizeof(BasicFrameParameters) == 816);
 
         struct alignas(16) BasicObjectParameters
         {
             glm::mat4 model{1.0f};
             glm::mat4 previousModel{1.0f};
+            glm::vec4 debugParameters{0.0f}; // normalized LOD
         };
+
+        struct alignas(16) BasicDebugViewParameters
+        {
+            glm::mat4 inverseViewProjection{1.0f};
+            glm::vec4 cameraPosition{0.0f};
+            std::uint32_t mode = 0;
+            std::uint32_t flipY = 0;
+            glm::uvec2 padding{};
+        };
+        static_assert(sizeof(BasicDebugViewParameters) == 96);
 
         struct alignas(16) BasicPostProcessParameters
         {
@@ -257,7 +269,7 @@ namespace PlutoGE::render
             descriptor.fragmentShader = shaders.fragment;
             descriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
-                                       rhi::Format::R8G8B8A8Unorm};
+                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float};
             descriptor.resourceBindings = {
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                 {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
@@ -311,7 +323,13 @@ namespace PlutoGE::render
                 displayDescriptor.depthFormat = rhi::Format::Undefined;
                 displayDescriptor.colorFormat = rhi::Format::R8G8B8A8Unorm;
                 displayDescriptor.resourceBindings = {
-                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
                 displayDescriptor.cullMode = rhi::CullMode::None;
                 displayDescriptor.depthTest = false;
                 displayDescriptor.depthWrite = false;
@@ -575,6 +593,8 @@ namespace PlutoGE::render
                     device, device.CreateGraphicsPipeline(descriptor));
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
+            m_debugViewBuffer = rhi::Buffer(device, device.CreateBuffer(
+                {sizeof(BasicDebugViewParameters), rhi::BufferUsage::Uniform, "BasicRenderer debug view"}));
             for (auto &buffer : m_shadowCameraBuffers)
                 buffer = rhi::Buffer(device, device.CreateBuffer(
                                                  {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
@@ -620,6 +640,7 @@ namespace PlutoGE::render
         m_materialTarget.Reset();
         m_motionTarget.Reset();
         m_albedoTarget.Reset();
+        m_debugTarget.Reset();
         for (auto &target : m_shadowDepthTargets)
             target.Reset();
         for (auto &target : m_shadowColorTargets)
@@ -635,6 +656,7 @@ namespace PlutoGE::render
         m_objectBuffers.clear();
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
+        m_debugViewBuffer.Reset();
         for (auto &buffer : m_shadowCameraBuffers)
             buffer.Reset();
         m_shadowObjectBuffers.clear();
@@ -718,6 +740,8 @@ namespace PlutoGE::render
                                                      {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_albedoTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                                                      {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer albedo", true}));
+        m_debugTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                                                    {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "G-buffer debug", true}));
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
@@ -782,7 +806,8 @@ namespace PlutoGE::render
     void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                                std::span<const BasicDraw> draws,
                                std::span<const BasicPostProcessEffect> postProcessEffects,
-                               std::span<const BasicDraw> shadowDraws)
+                               std::span<const BasicDraw> shadowDraws,
+                               PostProcessDebugView debugView)
     {
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
@@ -837,6 +862,7 @@ namespace PlutoGE::render
             lighting.shadowDepthBias,
             inverseShadowResolutions,
             lighting.shadowCascadeSplits,
+            lighting.shadowCascadeMetrics,
             glm::vec4(static_cast<float>(std::clamp(lighting.shadowCascadeCount, 1u, 4u)),
                       std::max(lighting.shadowCascadeBlendDistance, 0.0f),
                       std::max(lighting.shadowSoftness, 0.0f), 0.0f),
@@ -906,7 +932,7 @@ namespace PlutoGE::render
         }
         rhi::RenderingInfo renderingInfo;
         renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
-                                          m_motionTarget.Get(), m_albedoTarget.Get()};
+                                          m_motionTarget.Get(), m_albedoTarget.Get(), m_debugTarget.Get()};
         renderingInfo.depthAttachment = m_depthTarget.Get();
         renderingInfo.width = m_width;
         renderingInfo.height = m_height;
@@ -919,6 +945,7 @@ namespace PlutoGE::render
             {0.0f, 1.0f, 0.0f, 1.0f},    // Non-metallic, fully rough material.
             {0.5f, 0.5f, 0.0f, 1.0f},    // Encoded zero motion.
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
+            {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
@@ -935,8 +962,12 @@ namespace PlutoGE::render
                                                             {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
             }
             auto &objectBuffer = m_objectBuffers[drawIndex++];
-            const BasicObjectParameters objectParameters{draw.model,
-                                                         m_hasPreviousFrame && drawIndex - 1 < m_previousModels.size() ? m_previousModels[drawIndex - 1] : draw.model};
+            const BasicObjectParameters objectParameters{
+                draw.model,
+                m_hasPreviousFrame && drawIndex - 1 < m_previousModels.size()
+                    ? m_previousModels[drawIndex - 1]
+                    : draw.model,
+                glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
             m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
             commands.BindUniformBuffer(16, objectBuffer.Get());
             if (m_materialBuffers.size() < drawIndex)
@@ -1085,6 +1116,13 @@ namespace PlutoGE::render
         }
         if (m_displayPipeline && m_displayTarget)
         {
+            const BasicDebugViewParameters debugParameters{
+                m_inverseViewProjection,
+                m_postProcessCameraPosition,
+                static_cast<std::uint32_t>(debugView),
+                m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u,
+            };
+            m_device->UpdateBuffer(m_debugViewBuffer.Get(), 0, Bytes(debugParameters));
             rhi::RenderingInfo displayInfo;
             displayInfo.colorAttachments = {m_displayTarget.Get()};
             displayInfo.width = m_width;
@@ -1092,7 +1130,13 @@ namespace PlutoGE::render
             displayInfo.clearDepth = false;
             commands.BeginRendering(displayInfo);
             commands.BindPipeline(m_displayPipeline.Get());
+            commands.BindUniformBuffer(0, m_debugViewBuffer.Get());
             commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+            commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(4, m_albedoTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(5, m_materialTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(6, m_debugTarget.Get(), m_screenSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = m_displayTarget.Get();

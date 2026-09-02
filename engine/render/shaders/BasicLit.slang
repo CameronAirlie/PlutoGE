@@ -315,13 +315,24 @@ FragmentOutput fragmentMain(VertexOutput input)
         }
         const float cascadeWorldTexel = max(shadowCascadeMetrics[cascade].x, 0.00001);
         const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
-        const float slope = 1.0 - ndotl;
+        // Shadow bias must follow the actual receiver plane. A normal-map
+        // perturbation is a lighting detail and can point the bias back into
+        // the geometry, which becomes visible as acne in wider cascades.
+        float3 shadowNormal = cross(ddx(input.worldPosition), ddy(input.worldPosition));
+        const float shadowNormalLengthSquared = dot(shadowNormal, shadowNormal);
+        shadowNormal = shadowNormalLengthSquared > 0.000000000001
+            ? shadowNormal * rsqrt(shadowNormalLengthSquared)
+            : normalize(input.worldNormal);
+        if (dot(shadowNormal, input.worldNormal) < 0.0)
+            shadowNormal = -shadowNormal;
+        const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
+        const float slope = 1.0 - shadowNdotl;
         const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
         // A large caster range can make the world-space-derived bias approach
         // zero in the near cascade. Retain a texel-scaled floor to prevent
         // every receiver from self-shadowing while preserving cascade scale.
         const float worldDepthBias =
-            cascadeWorldTexel * lerp(0.05, 0.30, slope) / cascadeDepthRange;
+            cascadeWorldTexel * lerp(0.25, 1.00, slope) / cascadeDepthRange;
         // Only the tightly fitted first cascade needs a normalized-depth
         // floor. Applying it to lower-resolution, wide-coverage cascades
         // turns the same texel fraction into a large world-space offset and
@@ -330,7 +341,7 @@ FragmentOutput fragmentMain(VertexOutput input)
             ? max(worldDepthBias,
                   shadowInverseResolutions[0].x * lerp(0.5, 2.0, slope))
             : worldDepthBias;
-        const float3 receiverPosition = input.worldPosition + normal * normalBias;
+        const float3 receiverPosition = input.worldPosition + shadowNormal * normalBias;
         shadowVisibility = evaluateShadowCascade(cascade, receiverPosition, depthBias);
         rawShadowVisibility = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
         normalizedCascade = cascadeCount > 1 ? (float)cascade / (float)(cascadeCount - 1) : 0.0;
@@ -345,12 +356,12 @@ FragmentOutput fragmentMain(VertexOutput input)
                 const float nextDepthRange = max(shadowCascadeMetrics[cascade + 1].y, 0.0001);
                 const float nextNormalBias = nextWorldTexel * lerp(0.08, 0.60, slope);
                 const float nextWorldDepthBias =
-                    nextWorldTexel * lerp(0.05, 0.30, slope) / nextDepthRange;
+                    nextWorldTexel * lerp(0.25, 1.00, slope) / nextDepthRange;
                 // A blended next cascade is necessarily cascade 1 or later,
                 // so it must retain the world-scaled bias without the near
                 // cascade's normalized-depth floor.
                 const float nextDepthBias = nextWorldDepthBias;
-                const float3 nextReceiverPosition = input.worldPosition + normal * nextNormalBias;
+                const float3 nextReceiverPosition = input.worldPosition + shadowNormal * nextNormalBias;
                 shadowVisibility = lerp(shadowVisibility,
                                         evaluateShadowCascade(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
                 rawShadowVisibility = lerp(rawShadowVisibility,

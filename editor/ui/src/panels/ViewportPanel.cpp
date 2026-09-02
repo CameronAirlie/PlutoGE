@@ -77,7 +77,7 @@ namespace PlutoGE::ui
             "Normal",
             "Albedo",
             "Depth",
-            "Shadow Cascades",
+            "Shadow Cascades (0 Red, 1 Green, 2 Blue, 3 Yellow)",
             "Shadow Mask Raw",
             "Shadow Mask Filtered",
             "LOD",

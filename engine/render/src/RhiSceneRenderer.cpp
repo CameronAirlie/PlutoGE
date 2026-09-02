@@ -95,7 +95,19 @@ namespace PlutoGE::render
                                 0.01f;
             glm::vec3 minimum = lightSpaceCenter - glm::vec3(radius + guard, radius + guard, radius);
             glm::vec3 maximum = lightSpaceCenter + glm::vec3(radius + guard, radius + guard, radius);
-            minimum.z -= std::max(casterDistance, farDistance);
+            // The receiver slice alone is not a sufficient shadow-caster
+            // volume. A directional-light caster may be outside the camera
+            // slice on the light-facing side while its projection still
+            // reaches a receiver inside it. Extrude toward the light (the
+            // negative light direction), and include the full caster sphere.
+            // Extending minimum.z instead grows the volume downstream and
+            // makes valid casters cross the near plane as the camera rotates.
+            const float casterExtrusion = std::max(casterDistance, farDistance);
+            const glm::vec3 extrudedCenter = center - lightDirection * casterExtrusion;
+            const glm::vec3 lightSpaceExtrudedCenter =
+                glm::vec3(lightView * glm::vec4(extrudedCenter, 1.0f));
+            minimum.z = std::min(minimum.z, lightSpaceExtrudedCenter.z - radius - 0.01f);
+            maximum.z = std::max(maximum.z, lightSpaceExtrudedCenter.z + radius + 0.01f);
             const glm::vec2 extent(maximum.x - minimum.x, maximum.y - minimum.y);
             const glm::vec2 texelSize = extent / static_cast<float>(std::max(shadowResolution, 1u));
             // Anchor the grid to absolute world zero, not the moving cascade

@@ -2457,7 +2457,10 @@ namespace PlutoGE::ui
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered)
     {
         m_isTransformGizmoUsing = false;
-        if (!m_renderTarget || !m_renderTarget->IsInitialized() || viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+        const bool rhiTargetReady = m_rhiRenderService && m_rhiRenderService->IsInitialized() &&
+                                    (m_useRhiPreview || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
+        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !rhiTargetReady) ||
+            viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
         {
             return;
         }

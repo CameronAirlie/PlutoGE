@@ -70,7 +70,10 @@ FullscreenVertexOutput vertexMain(uint vertexId: SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float2 uv = orientFullscreenUv(input.uv, flipY);
+    // The editor presents this texture through ImGui with vertically flipped
+    // image UVs. Keep the final compositor in render-target space; applying
+    // the backend flip here as well inverts both the image and picking.
+    const float2 uv = input.uv;
     if (debugViewMode == 0)
         return float4(saturate(sceneTexture.Sample(uv).rgb), 1.0);
     if (debugViewMode == 1)

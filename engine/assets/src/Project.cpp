@@ -25,6 +25,7 @@ namespace PlutoGE::assets
                                  ? render::rhi::TemporalUpscaler::Dlss
                                  : render::rhi::TemporalUpscaler::None;
         options.quality = runtimeUpscalerQuality;
+        options.sharpness = std::clamp(runtimeUpscaleSharpness, 0.0f, 1.0f);
         return options;
     }
 

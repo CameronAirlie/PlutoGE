@@ -621,6 +621,15 @@ namespace PlutoGE::render::rhi::vulkan
                 case UpscalerQuality::UltraPerformance: scale = 1.0f / 3.0f; break;
                 case UpscalerQuality::Dlaa: scale = 1.0f; break;
                 }
+                // Prevent tiny docked viewports from producing pathologically
+                // small temporal inputs while retaining the requested ratio at
+                // normal game resolutions.
+                constexpr float minimumRenderWidth = 320.0f;
+                constexpr float minimumRenderHeight = 180.0f;
+                const float minimumSafeFraction = std::min(
+                    1.0f, std::max(minimumRenderWidth / static_cast<float>(std::max(output.width, 1u)),
+                                   minimumRenderHeight / static_cast<float>(std::max(output.height, 1u))));
+                scale = std::max(scale, minimumSafeFraction);
                 return {std::max(1u, static_cast<std::uint32_t>(std::lround(output.width * scale))),
                         std::max(1u, static_cast<std::uint32_t>(std::lround(output.height * scale)))};
             }
@@ -650,8 +659,8 @@ namespace PlutoGE::render::rhi::vulkan
                     -static_cast<float>(frame.renderSize.width) * frame.motionVectorScale[0],
                     static_cast<float>(frame.renderSize.height) * frame.motionVectorScale[1]};
                 dispatch.renderSize = {frame.renderSize.width, frame.renderSize.height};
-                dispatch.enableSharpening = false;
-                dispatch.sharpness = 0.0f;
+                dispatch.sharpness = std::clamp(options.sharpness, 0.0f, 1.0f);
+                dispatch.enableSharpening = dispatch.sharpness > 0.0001f;
                 const auto now = std::chrono::steady_clock::now();
                 dispatch.frameTimeDelta = m_previousDispatch.time_since_epoch().count() == 0
                                               ? 16.67f
@@ -2381,6 +2390,7 @@ namespace PlutoGE::render::rhi::vulkan
         info.magFilter = info.minFilter = descriptor.linearFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
         info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        info.mipLodBias = descriptor.mipLodBias;
         info.maxLod = VK_LOD_CLAMP_NONE;
         SamplerResource resource;
         Check(vkCreateSampler(m_impl->device, &info, nullptr, &resource.sampler), "vkCreateSampler");

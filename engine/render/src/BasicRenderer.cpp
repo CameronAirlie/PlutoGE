@@ -709,6 +709,7 @@ namespace PlutoGE::render
         m_vctVolumeSampler.Reset();
         m_screenSampler.Reset();
         m_fallbackSampler.Reset();
+        m_materialMipLodBias = 0.0f;
         m_fallbackTexture.Reset();
         m_fallbackNormalTexture.Reset();
         m_fallbackDataTexture.Reset();
@@ -776,6 +777,12 @@ namespace PlutoGE::render
         return mesh;
     }
 
+    void BasicRenderer::SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
+    {
+        options.sharpness = std::clamp(options.sharpness, 0.0f, 1.0f);
+        m_upscalerOptions = options;
+    }
+
     bool BasicRenderer::Resize(std::uint32_t width, std::uint32_t height,
                                std::uint32_t outputWidth, std::uint32_t outputHeight)
     {
@@ -785,6 +792,25 @@ namespace PlutoGE::render
         outputHeight = outputHeight == 0 ? height : outputHeight;
         const bool needsTemporalOutput =
             m_upscalerOptions.technology != rhi::TemporalUpscaler::None;
+        // Temporal reconstruction needs more detailed source mips than native
+        // rendering. This is AMD's recommended log2(render/display) - 1 bias.
+        const float materialMipLodBias = needsTemporalOutput
+                                             ? std::clamp(std::log2(
+                                                   static_cast<float>(width) /
+                                                   static_cast<float>(outputWidth)) - 1.0f,
+                                                   -4.0f, 0.0f)
+                                             : 0.0f;
+        if (!m_fallbackSampler || std::abs(materialMipLodBias - m_materialMipLodBias) > 0.001f)
+        {
+            rhi::Sampler materialSampler(*m_device, m_device->CreateSampler(
+                {.linearFiltering = true,
+                 .repeat = true,
+                 .debugName = "BasicRenderer material sampler",
+                 .mipFiltering = true,
+                 .mipLodBias = materialMipLodBias}));
+            m_fallbackSampler = std::move(materialSampler);
+            m_materialMipLodBias = materialMipLodBias;
+        }
         if (width == m_width && height == m_height && outputWidth == m_outputWidth &&
             outputHeight == m_outputHeight && m_colorTarget && m_depthTarget &&
             static_cast<bool>(m_temporalUpscalerOutput) == needsTemporalOutput)

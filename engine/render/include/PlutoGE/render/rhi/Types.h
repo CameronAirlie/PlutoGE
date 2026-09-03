@@ -116,6 +116,7 @@ namespace PlutoGE::render::rhi
         UpscalerQuality quality = UpscalerQuality::Quality;
         bool hdr = true;
         bool autoExposure = true;
+        float sharpness = 0.25f;
         auto operator<=>(const TemporalUpscalerOptions &) const = default;
     };
 
@@ -277,5 +278,6 @@ namespace PlutoGE::render::rhi
         bool repeat = true;
         std::string debugName;
         bool mipFiltering = false;
+        float mipLodBias = 0.0f;
     };
 }

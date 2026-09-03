@@ -76,6 +76,8 @@ int main()
     GraphicsPipelineDescriptor pipeline;
     assert(pipeline.depthCompare == CompareOperation::GreaterOrEqual);
     assert(pipeline.depthTest && pipeline.depthWrite);
+    assert(TemporalUpscalerOptions{}.sharpness == 0.25f);
+    assert(SamplerDescriptor{}.mipLodBias == 0.0f);
     const auto fallbackSupport = device.GetTemporalUpscalerSupport(TemporalUpscaler::Dlss);
     assert(!fallbackSupport.supported && !fallbackSupport.reason.empty());
     const auto fsrFallbackSupport = device.GetTemporalUpscalerSupport(TemporalUpscaler::Fsr2);

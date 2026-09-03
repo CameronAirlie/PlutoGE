@@ -61,6 +61,7 @@ int main()
     const auto temporalUpscaler = reloadedProject->GetManifest().GetTemporalUpscalerOptions();
     assert(temporalUpscaler.technology == PlutoGE::render::rhi::TemporalUpscaler::Fsr2);
     assert(temporalUpscaler.quality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
+    assert(temporalUpscaler.sharpness == 0.4f);
     assert(reloadedProject->GetManifest().runtimeRenderScale == 0.75f);
     assert(reloadedProject->GetManifest().runtimeUpscaleSharpness == 0.4f);
 

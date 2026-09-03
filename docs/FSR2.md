@@ -38,7 +38,9 @@ RUNTIME_UPSCALER_QUALITY	Quality
 Old `RUNTIME_DLSS_QUALITY` project entries remain readable for compatibility.
 For docked editor viewports, use Quality or Balanced. Ultra Performance renders
 at one third resolution on each axis and is intended for very high-resolution
-output, so it is a poor preview mode for a small panel.
+output, so it is a poor preview mode for a small panel. PlutoGE preserves a
+320x180 minimum temporal input for small viewports while retaining the selected
+quality ratio at normal game resolutions.
 
 ## Frame contract
 
@@ -47,6 +49,11 @@ normalized motion vectors, reset state, pre-exposure, render dimensions, and
 full-resolution RGBA16F output. The Vulkan adapter converts PlutoGE's motion
 and jitter conventions to AMD's expected coordinate system and recreates its
 device-owned context after a resolution or initialization-option change.
+
+FSR2 RCAS sharpening uses `RUNTIME_UPSCALE_SHARPNESS`. The renderer also applies
+the temporal mip bias `log2(render width / output width) - 1` through its
+backend-neutral material sampler, keeping texture detail available at reduced
+internal resolutions.
 
 The initial integration does not yet provide optional reactive or transparency
 and composition masks. FSR2 remains functional without them, but adding those

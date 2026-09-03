@@ -59,11 +59,20 @@ namespace PlutoGE::render
         {
             if (m_upscalerOptions == options)
                 return;
-            if (m_device && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
+            const bool reconstructionChanged =
+                m_upscalerOptions.technology != options.technology ||
+                m_upscalerOptions.quality != options.quality ||
+                m_upscalerOptions.hdr != options.hdr ||
+                m_upscalerOptions.autoExposure != options.autoExposure;
+            if (reconstructionChanged && m_device &&
+                m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
                 m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
             m_upscalerOptions = options;
-            m_upscalerStatus = {};
-            ResetTemporalHistory();
+            if (reconstructionChanged)
+            {
+                m_upscalerStatus = {};
+                ResetTemporalHistory();
+            }
         }
         void ResetTemporalHistory() noexcept
         {

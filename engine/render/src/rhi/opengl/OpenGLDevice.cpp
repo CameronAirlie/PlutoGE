@@ -571,6 +571,7 @@ namespace PlutoGE::render::rhi::opengl
         glSamplerParameteri(name, GL_TEXTURE_MAG_FILTER, descriptor.linearFiltering ? GL_LINEAR : GL_NEAREST);
         glSamplerParameteri(name, GL_TEXTURE_WRAP_S, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glSamplerParameteri(name, GL_TEXTURE_WRAP_T, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+        glSamplerParameterf(name, GL_TEXTURE_LOD_BIAS, descriptor.mipLodBias);
         LabelObject(GL_SAMPLER, name, descriptor.debugName);
         return m_impl->samplers.Insert(SamplerResource{name});
     }

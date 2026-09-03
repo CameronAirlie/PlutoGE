@@ -3748,7 +3748,10 @@ namespace PlutoGE::ui
                     }
                     ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
                     ImGui::SliderFloat("Runtime Render Scale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
-                    ImGui::SliderFloat("Runtime Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial &&
+                                         projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Fsr2);
+                    ImGui::SliderFloat("Upscale Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
                     ImGui::EndDisabled();
                     if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
                         projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2)

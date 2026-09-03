@@ -309,10 +309,7 @@ namespace PlutoGE::render
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
-        void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
-        {
-            m_upscalerOptions = options;
-        }
+        void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                     std::span<const BasicDraw> draws,
@@ -463,6 +460,7 @@ namespace PlutoGE::render
         std::uint32_t m_postProcessWidth = 0;
         std::uint32_t m_postProcessHeight = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;
+        float m_materialMipLodBias = 0.0f;
         bool m_temporalUpscalerEvaluatedLastFrame = false;
         std::uint64_t m_frameIndex = 0;
         glm::mat4 m_inverseViewProjection{1.0f};

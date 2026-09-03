@@ -36,6 +36,9 @@ RUNTIME_UPSCALER_QUALITY	Quality
 ```
 
 Old `RUNTIME_DLSS_QUALITY` project entries remain readable for compatibility.
+For docked editor viewports, use Quality or Balanced. Ultra Performance renders
+at one third resolution on each axis and is intended for very high-resolution
+output, so it is a poor preview mode for a small panel.
 
 ## Frame contract
 

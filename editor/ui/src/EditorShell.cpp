@@ -3769,6 +3769,8 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndCombo();
                         }
+                        if (projectRuntimeUpscalerQuality == render::rhi::UpscalerQuality::UltraPerformance)
+                            ImGui::TextWrapped("Ultra Performance is a 3x reconstruction mode intended for very high output resolutions. Use Quality or Balanced for docked editor viewports.");
                     }
                     if (ImGui::SliderFloat("Editor Font Size", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
                     {

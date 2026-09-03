@@ -217,6 +217,8 @@ namespace PlutoGE::render
             .reason = useTemporalUpscaler ? std::string{} : upscalerSupport.reason,
         };
         const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize;
+        if (resolutionChanged)
+            ResetTemporalHistory();
         auto effectiveUpscaler = m_upscalerOptions;
         if (!useTemporalUpscaler)
             effectiveUpscaler.technology = rhi::TemporalUpscaler::None;
@@ -491,7 +493,16 @@ namespace PlutoGE::render
         glm::vec2 jitterPixels(0.0f);
         if (useTemporalUpscaler || taa != basicEffects.end())
         {
-            const std::uint64_t sample = m_temporalFrameIndex++ % 16u + 1u;
+            // AMD's temporal sequence length grows with the square of the
+            // upscaling ratio (18/23/32/72 samples for the standard modes).
+            // Reusing a short sequence at 3x visibly repeats the camera offset.
+            const float upscaleRatio = useTemporalUpscaler
+                                           ? static_cast<float>(outputSize.width) /
+                                                 static_cast<float>(std::max(renderSize.width, 1u))
+                                           : std::sqrt(2.0f);
+            const std::uint64_t jitterPhaseCount = static_cast<std::uint64_t>(
+                std::max(1l, std::lround(8.0f * upscaleRatio * upscaleRatio)));
+            const std::uint64_t sample = m_temporalFrameIndex++ % jitterPhaseCount + 1u;
             const float strength = taa != basicEffects.end()
                                        ? std::clamp(taa->parameters[1].w, 0.0f, 2.0f)
                                        : 1.0f;
@@ -502,8 +513,20 @@ namespace PlutoGE::render
                                                   2.0f / static_cast<float>(height));
             if (taa != basicEffects.end())
                 taa->parameters[2] = {jitterNdc * 0.5f, m_previousTemporalJitterNdc * 0.5f};
-            projection[2][0] += jitterNdc.x;
-            projection[2][1] += jitterNdc.y;
+            if (useTemporalUpscaler)
+            {
+                // Match FidelityFX's screen-pixel convention. With GLM's
+                // perspective layout and Vulkan's negative-height viewport,
+                // these signs move the raster sample by (+x, +y) pixels.
+                projection[2][0] -= jitterNdc.x;
+                projection[2][1] += jitterNdc.y;
+            }
+            else
+            {
+                // Preserve the existing native TAA convention.
+                projection[2][0] += jitterNdc.x;
+                projection[2][1] += jitterNdc.y;
+            }
             m_previousTemporalJitterNdc = jitterNdc;
         }
         else
@@ -512,7 +535,10 @@ namespace PlutoGE::render
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
         glm::mat4 unjitteredProjection = projection;
-        unjitteredProjection[2][0] -= width != 0 ? jitterPixels.x * 2.0f / static_cast<float>(width) : 0.0f;
+        const float jitterProjectionX = width != 0
+                                            ? jitterPixels.x * 2.0f / static_cast<float>(width)
+                                            : 0.0f;
+        unjitteredProjection[2][0] += useTemporalUpscaler ? jitterProjectionX : -jitterProjectionX;
         unjitteredProjection[2][1] -= height != 0 ? jitterPixels.y * 2.0f / static_cast<float>(height) : 0.0f;
         const glm::mat4 currentUnjitteredViewProjection = unjitteredProjection * cameraData.view;
         rhi::TemporalUpscalerFrame upscalerFrame{};
@@ -547,6 +573,9 @@ namespace PlutoGE::render
             upscalerFrame.contextId = m_upscalerContextId;
             upscalerFrame.frameIndex = m_temporalFrameIndex;
             upscalerFrame.resetHistory = !m_upscalerHistoryValid || resolutionChanged;
+            // BasicRenderer compares this frame's jittered clip position with
+            // the preceding frame's jittered clip position.
+            upscalerFrame.motionVectorsJittered = true;
         }
         const auto setupEnd = std::chrono::steady_clock::now();
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);

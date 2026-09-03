@@ -642,7 +642,7 @@ namespace PlutoGE::render::rhi::vulkan
                 dispatch.exposure = EmptyResource(L"FSR2 exposure");
                 dispatch.reactive = EmptyResource(L"FSR2 reactive mask");
                 dispatch.transparencyAndComposition = EmptyResource(L"FSR2 composition mask");
-                dispatch.jitterOffset = {frame.jitterPixels[0], -frame.jitterPixels[1]};
+                dispatch.jitterOffset = {frame.jitterPixels[0], frame.jitterPixels[1]};
                 // PlutoGE stores current-minus-previous motion in normalized UV
                 // units. FSR2 expects previous-minus-current with Vulkan's Y
                 // direction, expressed in render pixels.

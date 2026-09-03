@@ -65,7 +65,12 @@ namespace PlutoGE::render
             m_upscalerStatus = {};
             ResetTemporalHistory();
         }
-        void ResetTemporalHistory() noexcept { m_upscalerHistoryValid = false; }
+        void ResetTemporalHistory() noexcept
+        {
+            m_upscalerHistoryValid = false;
+            m_temporalFrameIndex = 0;
+            m_previousTemporalJitterNdc = glm::vec2(0.0f);
+        }
         bool Render(std::uint32_t width, std::uint32_t height,
                     const CameraData &cameraData, const BasicLighting &lighting,
                     std::span<const RenderCommand> commands,

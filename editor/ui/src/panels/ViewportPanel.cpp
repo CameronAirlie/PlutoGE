@@ -2309,6 +2309,8 @@ namespace PlutoGE::ui
                             upscaler.active ? "Active" : "Fallback");
                 ImGui::TextDisabled("Internal: %u x %u", upscaler.renderSize.width, upscaler.renderSize.height);
                 ImGui::TextDisabled("Output: %u x %u", upscaler.outputSize.width, upscaler.outputSize.height);
+                if (m_temporalUpscalerOptions.quality == render::rhi::UpscalerQuality::UltraPerformance)
+                    ImGui::TextWrapped("Ultra Performance renders at one third resolution per axis. Quality or Balanced is recommended for a docked editor viewport.");
                 if (!upscaler.active && !upscaler.reason.empty())
                     ImGui::TextWrapped("Reason: %s", upscaler.reason.c_str());
             }

@@ -33,11 +33,12 @@ public sealed class RaycastVehicleSettings : ScriptableObject
     [SerializedField] public float PeakLateralSlipAngle = 12.0f;
     [SerializedField] public float FullLateralSlipAngle = 30.0f;
     [SerializedField] public float SlidingTyreLateralGrip = 0.5f;
+    [SerializedField] public float FrontSlidingTyreLateralGrip = 0.65f;
     [SerializedField] public float FrontLateralSlipTolerance = 1.5f;
     [SerializedField] public float LateralGripLossRate = 12.0f;
-    [SerializedField] public float LateralGripRecoveryRate = 3.5f;
+    [SerializedField] public float LateralGripRecoveryRate = 5.0f;
     [SerializedField] public float FrontLateralGripRecoveryRate = 12.0f;
-    [SerializedField] public float RegripLateralSlipAngle = 11.0f;
+    [SerializedField] public float RegripLateralSlipAngle = 14.0f;
     [SerializedField] public float FrontRegripLateralSlipAngle = 18.0f;
     [SerializedField] public float PeakLongitudinalSlip = 0.12f;
     [SerializedField] public float FullLongitudinalSlip = 1.0f;

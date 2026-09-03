@@ -48,11 +48,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float peakLateralSlipAngle = 12.0f;
     [SerializedField] private float fullLateralSlipAngle = 30.0f;
     [SerializedField] private float slidingTyreLateralGrip = 0.5f;
+    [SerializedField] private float frontSlidingTyreLateralGrip = 0.65f;
     [SerializedField] private float frontLateralSlipTolerance = 1.5f;
     [SerializedField] private float lateralGripLossRate = 12.0f;
-    [SerializedField] private float lateralGripRecoveryRate = 3.5f;
+    [SerializedField] private float lateralGripRecoveryRate = 5.0f;
     [SerializedField] private float frontLateralGripRecoveryRate = 12.0f;
-    [SerializedField] private float regripLateralSlipAngle = 11.0f;
+    [SerializedField] private float regripLateralSlipAngle = 14.0f;
     [SerializedField] private float frontRegripLateralSlipAngle = 18.0f;
     [SerializedField] private float peakLongitudinalSlip = 0.12f;
     [SerializedField] private float fullLongitudinalSlip = 1.0f;
@@ -197,6 +198,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         peakLateralSlipAngle = vehicleSettings.PeakLateralSlipAngle;
         fullLateralSlipAngle = vehicleSettings.FullLateralSlipAngle;
         slidingTyreLateralGrip = vehicleSettings.SlidingTyreLateralGrip;
+        frontSlidingTyreLateralGrip = vehicleSettings.FrontSlidingTyreLateralGrip;
         frontLateralSlipTolerance = vehicleSettings.FrontLateralSlipTolerance;
         lateralGripLossRate = vehicleSettings.LateralGripLossRate;
         lateralGripRecoveryRate = vehicleSettings.LateralGripRecoveryRate;
@@ -522,9 +524,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 MathF.Max(peakLateralSlipAngle, 0.0f) * slipTolerance,
                 MathF.Max(fullLateralSlipAngle, peakLateralSlipAngle + 0.1f) * slipTolerance,
                 lateralSlipAngle));
+            var slidingGrip = wheel.Steering
+                ? frontSlidingTyreLateralGrip
+                : slidingTyreLateralGrip;
             var slidingLateralRetention = Lerp(
                 1.0f,
-                Math.Clamp(slidingTyreLateralGrip, 0.0f, 1.0f),
+                Math.Clamp(slidingGrip, 0.0f, 1.0f),
                 postPeakLateralSlip);
             var wheelLockedByHandbrake = !wheel.Steering && handbrake;
             if (wheelLockedByHandbrake)

@@ -593,15 +593,24 @@ namespace PlutoGE::render::rhi::vulkan
 
             ~Fsr2Vulkan() { Shutdown(); }
 
-            void Shutdown()
+            void Shutdown(bool waitForDevice = true)
             {
                 if (m_contextCreated)
                 {
-                    vkDeviceWaitIdle(m_device);
+                    if (waitForDevice)
+                        vkDeviceWaitIdle(m_device);
                     ffxFsr2ContextDestroy(&m_context);
                     m_contextCreated = false;
                 }
                 m_scratch.clear();
+            }
+
+            [[nodiscard]] bool RequiresRecreation(const TemporalUpscalerOptions &options,
+                                                  const TemporalUpscalerFrame &frame) const
+            {
+                return m_contextCreated &&
+                       (frame.renderSize != m_renderSize || frame.outputSize != m_outputSize ||
+                        ContextFlags(options, frame) != m_flags);
             }
 
             [[nodiscard]] TemporalUpscalerSupport Support() const
@@ -692,11 +701,7 @@ namespace PlutoGE::render::rhi::vulkan
             bool EnsureContext(const TemporalUpscalerOptions &options,
                                const TemporalUpscalerFrame &frame)
             {
-                const std::uint32_t flags =
-                    (options.hdr ? FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE : 0u) |
-                    (options.autoExposure ? FFX_FSR2_ENABLE_AUTO_EXPOSURE : 0u) |
-                    (frame.depthInverted ? FFX_FSR2_ENABLE_DEPTH_INVERTED : 0u) |
-                    (frame.motionVectorsJittered ? FFX_FSR2_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION : 0u);
+                const std::uint32_t flags = ContextFlags(options, frame);
                 if (m_contextCreated && frame.renderSize == m_renderSize &&
                     frame.outputSize == m_outputSize && flags == m_flags)
                     return true;
@@ -744,6 +749,17 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 return ffxGetTextureResourceVK(&m_context, VK_NULL_HANDLE, VK_NULL_HANDLE,
                                                1, 1, VK_FORMAT_UNDEFINED, name);
+            }
+
+            [[nodiscard]] static std::uint32_t ContextFlags(const TemporalUpscalerOptions &options,
+                                                            const TemporalUpscalerFrame &frame)
+            {
+                return (options.hdr ? FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE : 0u) |
+                       (options.autoExposure ? FFX_FSR2_ENABLE_AUTO_EXPOSURE : 0u) |
+                       (frame.depthInverted ? FFX_FSR2_ENABLE_DEPTH_INVERTED : 0u) |
+                       (frame.motionVectorsJittered
+                            ? FFX_FSR2_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION
+                            : 0u);
             }
 
             void Fail(std::string reason)
@@ -819,11 +835,27 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr VkDeviceSize UniformArenaSize = 32ull * 1024ull * 1024ull;
         std::string deviceName;
         float timestampPeriodNs = 1.0f;
+        // Covers every submission on the graphics queue, including scene,
+        // runtime UI, and swapchain copies, so retirement also accounts for a
+        // presented texture's final read.
+        std::uint64_t lastSubmittedSubmission = 0;
+        std::uint64_t completedSubmission = 0;
         RenderDeviceTimingStats timingStats;
+        std::unordered_map<std::string, RenderDeviceTimingStats> timingStatsBySubmission;
         detail::HandleRegistry<BufferHandle, BufferResource> buffers;
         detail::HandleRegistry<TextureHandle, TextureResource> textures;
         detail::HandleRegistry<SamplerHandle, SamplerResource> samplers;
         detail::HandleRegistry<PipelineHandle, PipelineResource> pipelines;
+        template <typename Resource>
+        struct DeferredResource
+        {
+            std::uint64_t retireAfterSubmission = 0;
+            Resource resource;
+        };
+        std::vector<DeferredResource<BufferResource>> deferredBuffers;
+        std::vector<DeferredResource<TextureResource>> deferredTextures;
+        std::vector<DeferredResource<SamplerResource>> deferredSamplers;
+        std::vector<DeferredResource<PipelineResource>> deferredPipelines;
         std::unique_ptr<VulkanCommandContext> context;
 #if PLUTO_HAS_STREAMLINE
         std::unique_ptr<StreamlineVulkan> streamline;
@@ -832,6 +864,7 @@ namespace PlutoGE::render::rhi::vulkan
         // Each viewport needs independent reconstruction history. A shared
         // device may render the editor and game views at different sizes.
         std::unordered_map<std::uint64_t, std::unique_ptr<Fsr2Vulkan>> fsr2Contexts;
+        std::vector<DeferredResource<std::unique_ptr<Fsr2Vulkan>>> deferredFsr2Contexts;
 #endif
 
         void BeginUniformFrame(std::size_t frameIndex)
@@ -871,6 +904,48 @@ namespace PlutoGE::render::rhi::vulkan
             if (arena.dirtyStart == VK_WHOLE_SIZE || arena.dirtyEnd <= arena.dirtyStart)
                 return;
             vmaFlushAllocation(allocator, arena.allocation, arena.dirtyStart, arena.dirtyEnd - arena.dirtyStart);
+        }
+
+        void CollectDeferredResources(std::uint64_t completedSubmission)
+        {
+            const auto collect = [completedSubmission](auto &resources, const auto &destroy)
+            {
+                resources.erase(std::remove_if(resources.begin(), resources.end(),
+                                               [&](auto &entry)
+                                               {
+                                                   if (entry.retireAfterSubmission > completedSubmission)
+                                                       return false;
+                                                   destroy(entry.resource);
+                                                   return true;
+                                               }),
+                                resources.end());
+            };
+            collect(deferredPipelines, [&](auto &resource)
+                    {
+                        if (resource.pipeline) vkDestroyPipeline(device, resource.pipeline, nullptr);
+                        if (resource.layout) vkDestroyPipelineLayout(device, resource.layout, nullptr);
+                        for (const auto layout : resource.setLayouts)
+                            vkDestroyDescriptorSetLayout(device, layout, nullptr);
+                    });
+            collect(deferredSamplers, [&](auto &resource)
+                    { if (resource.sampler) vkDestroySampler(device, resource.sampler, nullptr); });
+            collect(deferredTextures, [&](auto &resource)
+                    {
+                        for (const auto view : resource.storageViews)
+                            vkDestroyImageView(device, view, nullptr);
+                        if (resource.view) vkDestroyImageView(device, resource.view, nullptr);
+                        if (resource.image) vmaDestroyImage(allocator, resource.image, resource.allocation);
+                    });
+            collect(deferredBuffers, [&](auto &resource)
+                    { if (resource.buffer) vmaDestroyBuffer(allocator, resource.buffer, resource.allocation); });
+#if PLUTO_HAS_FSR2
+            collect(deferredFsr2Contexts, [](auto &context)
+                    {
+                        if (context)
+                            context->Shutdown(false);
+                        context.reset();
+                    });
+#endif
         }
 
         void Immediate(const auto &record)
@@ -960,7 +1035,7 @@ namespace PlutoGE::render::rhi::vulkan
             }
         }
 
-        void BeginFrame() override
+        void BeginFrame(std::string_view submissionLabel = {}) override
         {
             if (m_recording)
                 throw std::logic_error("Vulkan frame is already recording");
@@ -971,6 +1046,8 @@ namespace PlutoGE::render::rhi::vulkan
                                                       std::chrono::steady_clock::now() - waitStart)
                                                       .count();
             ResolveTimestamps(frame);
+            if (frame.submissionSerial != 0)
+                m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
             m_impl.timingStats.descriptorAllocationCalls = 0;
             m_impl.timingStats.descriptorSetsAllocated = 0;
             m_impl.timingStats.descriptorWrites = 0;
@@ -992,6 +1069,7 @@ namespace PlutoGE::render::rhi::vulkan
                 descriptorCache.clear();
                 m_descriptorPoolResetPending[m_frameIndex] = false;
             }
+            m_impl.CollectDeferredResources(m_impl.completedSubmission);
             m_impl.BeginUniformFrame(m_frameIndex);
             m_emptyDescriptorSets.clear();
             // Descriptor sets are owned by the corresponding in-flight frame pool.
@@ -1017,6 +1095,7 @@ namespace PlutoGE::render::rhi::vulkan
             frame.nextQuery = 2;
             frame.scopes.clear();
             frame.hasTimestamps = false;
+            frame.submissionLabel = submissionLabel.empty() ? "Unlabelled" : std::string(submissionLabel);
             m_impl.activeFrameIndex = m_frameIndex;
             m_recording = true;
         }
@@ -1026,18 +1105,10 @@ namespace PlutoGE::render::rhi::vulkan
             for (std::size_t index = 0; index < FrameCount; ++index)
             {
                 m_descriptorSetCaches[index].clear();
-                if (m_recording && index == m_frameIndex)
-                {
-                    // Descriptor sets already referenced by the command buffer
-                    // must remain valid until submission completes. Prevent
-                    // future cache hits now and recycle the pool when this
-                    // frame slot returns behind its fence.
-                    m_descriptorPoolResetPending[index] = true;
-                    continue;
-                }
-                Check(vkResetDescriptorPool(m_impl.device, m_frames[index].descriptorPool, 0),
-                      "vkResetDescriptorPool(cache invalidation)");
-                m_descriptorPoolResetPending[index] = false;
+                // A pool may still be referenced by its frame-slot command
+                // buffer. Recycle it only after BeginFrame has waited for that
+                // slot's fence.
+                m_descriptorPoolResetPending[index] = true;
             }
             if (!m_recording)
                 m_descriptorSetCache = nullptr;
@@ -1154,6 +1225,15 @@ namespace PlutoGE::render::rhi::vulkan
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
             Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(frame)");
+            frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
+            auto &published = m_impl.timingStatsBySubmission[frame.submissionLabel];
+            const float resolvedGpuMs = published.frameGpuMs;
+            const bool hasResolvedGpu = published.hasGpuResult;
+            auto resolvedGpuScopes = std::move(published.gpuScopes);
+            published = m_impl.timingStats;
+            published.frameGpuMs = resolvedGpuMs;
+            published.hasGpuResult = hasResolvedGpu;
+            published.gpuScopes = std::move(resolvedGpuScopes);
             m_recording = false;
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
         }
@@ -1317,6 +1397,11 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                  0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
+
+        [[nodiscard]] std::uint64_t RetirementSubmission() const noexcept
+        {
+            return m_impl.lastSubmittedSubmission + (m_recording ? 1u : 0u);
         }
 
         [[nodiscard]] VkCommandBuffer NativeCommandBuffer() const
@@ -1581,6 +1666,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::vector<Scope> scopes;
             std::uint32_t nextQuery = 2;
             bool hasTimestamps = false;
+            std::string submissionLabel = "Unlabelled";
+            std::uint64_t submissionSerial = 0;
         };
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
@@ -1601,11 +1688,12 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 return static_cast<float>(values[end] - values[start]) * m_impl.timestampPeriodNs * 1.0e-6f;
             };
-            m_impl.timingStats.frameGpuMs = milliseconds(0, 1);
-            m_impl.timingStats.gpuScopes.clear();
+            auto &timing = m_impl.timingStatsBySubmission[frame.submissionLabel];
+            timing.frameGpuMs = milliseconds(0, 1);
+            timing.gpuScopes.clear();
             for (const auto &scope : frame.scopes)
-                m_impl.timingStats.gpuScopes.push_back({scope.name, milliseconds(scope.start, scope.end), scope.cpuMs});
-            m_impl.timingStats.hasGpuResult = true;
+                timing.gpuScopes.push_back({scope.name, milliseconds(scope.start, scope.end), scope.cpuMs});
+            timing.hasGpuResult = true;
         }
         [[nodiscard]] VkCommandBuffer CommandBuffer() const { return m_frames[m_frameIndex].commandBuffer; }
         [[nodiscard]] VkDescriptorPool DescriptorPool() const { return m_frames[m_frameIndex].descriptorPool; }
@@ -1727,6 +1815,8 @@ namespace PlutoGE::render::rhi::vulkan
 
             auto &frame = m_frames[m_frameIndex];
             Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            if (frame.submissionSerial != 0)
+                m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
             std::uint32_t imageIndex = 0;
             VkResult acquired = vkAcquireNextImageKHR(m_impl.device, m_swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &imageIndex);
             if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
@@ -1809,6 +1899,7 @@ namespace PlutoGE::render::rhi::vulkan
             submit.signalSemaphoreCount = 1;
             submit.pSignalSemaphores = &frame.renderFinished;
             Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
+            frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
 
             VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             present.waitSemaphoreCount = 1;
@@ -1960,6 +2051,7 @@ namespace PlutoGE::render::rhi::vulkan
             VkSemaphore imageAvailable = VK_NULL_HANDLE;
             VkSemaphore renderFinished = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
+            std::uint64_t submissionSerial = 0;
         };
         std::array<FrameResources, 2> m_frames;
         std::size_t m_frameIndex = 0;
@@ -2208,6 +2300,7 @@ namespace PlutoGE::render::rhi::vulkan
         m_impl->fsr2Contexts.clear();
 #endif
         m_impl->context.reset();
+        m_impl->CollectDeferredResources(UINT64_MAX);
         for (auto &slot : m_impl->readbacks)
         {
             // VMA_ALLOCATION_CREATE_MAPPED_BIT owns the persistent mapping.
@@ -2654,9 +2747,10 @@ namespace PlutoGE::render::rhi::vulkan
     {
         if (auto r = m_impl->buffers.Remove(h))
         {
-            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(buffer destruction)");
-            if (r->buffer)
-                vmaDestroyBuffer(m_impl->allocator, r->buffer, r->allocation);
+            const auto retireAfter = m_impl->context ? m_impl->context->RetirementSubmission() : 0u;
+            m_impl->deferredBuffers.push_back({retireAfter, std::move(*r)});
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
         }
     }
     void VulkanDevice::DestroyTexture(TextureHandle h)
@@ -2672,37 +2766,47 @@ namespace PlutoGE::render::rhi::vulkan
             }
         if (auto r = m_impl->textures.Remove(h))
         {
-            vkDeviceWaitIdle(m_impl->device);
             m_impl->context->InvalidateDescriptorCaches();
-            for (const auto view : r->storageViews)
-                vkDestroyImageView(m_impl->device, view, nullptr);
-            vkDestroyImageView(m_impl->device, r->view, nullptr);
-            vmaDestroyImage(m_impl->allocator, r->image, r->allocation);
+            const auto retireAfter = m_impl->context->RetirementSubmission();
+            m_impl->deferredTextures.push_back({retireAfter, std::move(*r)});
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
         }
     }
     void VulkanDevice::DestroySampler(SamplerHandle h)
     {
         if (auto r = m_impl->samplers.Remove(h))
         {
-            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(sampler destruction)");
             m_impl->context->InvalidateDescriptorCaches();
-            vkDestroySampler(m_impl->device, r->sampler, nullptr);
+            const auto retireAfter = m_impl->context->RetirementSubmission();
+            m_impl->deferredSamplers.push_back({retireAfter, std::move(*r)});
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
         }
     }
     void VulkanDevice::DestroyPipeline(PipelineHandle h)
     {
         if (auto r = m_impl->pipelines.Remove(h))
         {
-            Check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle(pipeline destruction)");
             m_impl->context->InvalidateDescriptorCaches();
-            vkDestroyPipeline(m_impl->device, r->pipeline, nullptr);
-            vkDestroyPipelineLayout(m_impl->device, r->layout, nullptr);
-            for (auto l : r->setLayouts)
-                vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr);
+            const auto retireAfter = m_impl->context->RetirementSubmission();
+            m_impl->deferredPipelines.push_back({retireAfter, std::move(*r)});
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
         }
     }
     ICommandContext &VulkanDevice::GetImmediateContext() { return *m_impl->context; }
-    RenderDeviceTimingStats VulkanDevice::GetTimingStats() const { return m_impl->timingStats; }
+    RenderDeviceTimingStats VulkanDevice::GetTimingStats(std::string_view submissionLabel) const
+    {
+        if (!submissionLabel.empty())
+        {
+            const auto found = m_impl->timingStatsBySubmission.find(std::string(submissionLabel));
+            if (found != m_impl->timingStatsBySubmission.end())
+                return found->second;
+            return {};
+        }
+        return m_impl->timingStats;
+    }
     TemporalUpscalerSupport VulkanDevice::GetTemporalUpscalerSupport(TemporalUpscaler upscaler) const
     {
         if (upscaler == TemporalUpscaler::Fsr2)
@@ -2775,6 +2879,11 @@ namespace PlutoGE::render::rhi::vulkan
         if (options.technology == TemporalUpscaler::Fsr2 && m_impl->device)
         {
             auto &context = m_impl->fsr2Contexts[frame.contextId];
+            if (context && context->RequiresRecreation(options, frame))
+            {
+                const auto retireAfter = m_impl->context->RetirementSubmission();
+                m_impl->deferredFsr2Contexts.push_back({retireAfter, std::move(context)});
+            }
             if (!context)
                 context = std::make_unique<Fsr2Vulkan>(m_impl->physicalDevice, m_impl->device);
             result = context->Evaluate(options, frame, commandBuffer,
@@ -2788,7 +2897,17 @@ namespace PlutoGE::render::rhi::vulkan
     void VulkanDevice::ReleaseTemporalUpscalerContext(std::uint64_t contextId)
     {
 #if PLUTO_HAS_FSR2
-        m_impl->fsr2Contexts.erase(contextId);
+        const auto found = m_impl->fsr2Contexts.find(contextId);
+        if (found != m_impl->fsr2Contexts.end())
+        {
+            const auto retireAfter = m_impl->context
+                                         ? m_impl->context->RetirementSubmission()
+                                         : 0u;
+            m_impl->deferredFsr2Contexts.push_back({retireAfter, std::move(found->second)});
+            m_impl->fsr2Contexts.erase(found);
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
+        }
 #else
         static_cast<void>(contextId);
 #endif

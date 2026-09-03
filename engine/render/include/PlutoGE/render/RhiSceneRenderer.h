@@ -16,6 +16,12 @@ namespace PlutoGE::render
         float commandTranslationMs = 0.0f;
         float sceneSetupMs = 0.0f;
         float renderRecordingMs = 0.0f;
+        float beginFrameMs = 0.0f;
+        float shadowRecordingMs = 0.0f;
+        float geometryRecordingMs = 0.0f;
+        float postProcessRecordingMs = 0.0f;
+        float temporalUpscalerMs = 0.0f;
+        float submitMs = 0.0f;
         float totalMs = 0.0f;
         std::size_t visibleDrawCount = 0;
         std::size_t visibleInstanceCount = 0;
@@ -37,6 +43,9 @@ namespace PlutoGE::render
         rhi::Extent2D outputSize;
         bool requested = false;
         bool active = false;
+        // The upscaler is active but receives the full output resolution, so
+        // it provides temporal reconstruction without a raster cost saving.
+        bool nativeInput = false;
         std::string reason;
     };
 

@@ -296,6 +296,16 @@ namespace PlutoGE::render
         }
     };
 
+    struct BasicRendererTimingStats
+    {
+        float beginFrameMs = 0.0f;
+        float shadowRecordingMs = 0.0f;
+        float geometryRecordingMs = 0.0f;
+        float postProcessRecordingMs = 0.0f;
+        float temporalUpscalerMs = 0.0f;
+        float submitMs = 0.0f;
+    };
+
     class BasicRenderer
     {
     public:
@@ -330,6 +340,7 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t GetOutputHeight() const noexcept { return m_outputHeight; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
         [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
+        [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
         [[nodiscard]] bool WasTemporalUpscalerEvaluated() const noexcept
         {
             return m_temporalUpscalerEvaluatedLastFrame;
@@ -474,5 +485,6 @@ namespace PlutoGE::render
         bool m_hasPreviousFrame = false;
         rhi::TextureHandle m_outputColor;
         BasicRendererFrameStats m_frameStats;
+        BasicRendererTimingStats m_timingStats;
     };
 }

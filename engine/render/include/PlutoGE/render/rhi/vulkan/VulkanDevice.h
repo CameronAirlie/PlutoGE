@@ -55,7 +55,7 @@ namespace PlutoGE::render::rhi::vulkan
         bool EvaluateTemporalUpscaler(const TemporalUpscalerOptions &options,
                                       const TemporalUpscalerFrame &frame) override;
         void ReleaseTemporalUpscalerContext(std::uint64_t contextId) override;
-        [[nodiscard]] RenderDeviceTimingStats GetTimingStats() const override;
+        [[nodiscard]] RenderDeviceTimingStats GetTimingStats(std::string_view submissionLabel = {}) const override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);

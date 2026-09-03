@@ -3250,7 +3250,7 @@ namespace PlutoGE::ui
             frameTimingStats.viewportRenderMs = std::chrono::duration<float, std::milli>(viewportRenderEnd - viewportRenderStart).count();
             if (m_editorSceneRenderService && m_editorSceneRenderService->GetRenderDevice())
             {
-                frameTimingStats.rhiTimingStats = m_editorSceneRenderService->GetRenderDevice()->GetTimingStats();
+                frameTimingStats.rhiTimingStats = m_editorSceneRenderService->GetRenderDevice()->GetTimingStats("Scene");
                 frameTimingStats.rhiSceneTimingStats = m_editorSceneRenderService->GetTimingStats();
             }
 

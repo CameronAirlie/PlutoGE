@@ -44,6 +44,15 @@
             }
         },
         {
+            "name": "gcc-profile",
+            "displayName": "GCC optimized profiling build",
+            "description": "RelWithDebInfo editor build for representative CPU/GPU performance measurements",
+            "inherits": "gcc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
             "name": "msvc",
             "displayName": "Visual Studio Community 2022 Release - amd64",
             "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
@@ -91,6 +100,11 @@
             "name": "gcc-nvidia",
             "displayName": "Build GCC with NVIDIA Streamline",
             "configurePreset": "gcc-nvidia"
+        },
+        {
+            "name": "gcc-profile",
+            "displayName": "Build optimized profiling editor",
+            "configurePreset": "gcc-profile"
         },
         {
             "name": "all",

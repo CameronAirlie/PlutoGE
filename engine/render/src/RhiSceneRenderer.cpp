@@ -584,6 +584,9 @@ namespace PlutoGE::render
                            debugView, useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
+        m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
+                                       m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&
+                                       renderSize == outputSize;
         if (useTemporalUpscaler && !m_upscalerStatus.active)
             m_upscalerStatus.reason = "Temporal upscaler evaluation did not complete";
         if (m_upscalerStatus.active)
@@ -600,6 +603,13 @@ namespace PlutoGE::render
             m_previousOutputSize = {};
         }
         const auto &frameStats = m_renderer->GetFrameStats();
+        const auto &rendererTiming = m_renderer->GetTimingStats();
+        m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;
+        m_timingStats.shadowRecordingMs = rendererTiming.shadowRecordingMs;
+        m_timingStats.geometryRecordingMs = rendererTiming.geometryRecordingMs;
+        m_timingStats.postProcessRecordingMs = rendererTiming.postProcessRecordingMs;
+        m_timingStats.temporalUpscalerMs = rendererTiming.temporalUpscalerMs;
+        m_timingStats.submitMs = rendererTiming.submitMs;
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
         m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();

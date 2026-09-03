@@ -192,8 +192,8 @@ namespace PlutoGE::ui
         ImGui::Text("Rendered viewport pixels: %llu",
                     static_cast<unsigned long long>(frameTimingStats.renderedViewportPixels));
         const auto &rhi = frameTimingStats.rhiTimingStats;
-        if (rhi.hasGpuResult) ImGui::Text("RHI GPU frame: %.2f ms", rhi.frameGpuMs);
-        else ImGui::TextUnformatted("RHI GPU frame: pending");
+        if (rhi.hasGpuResult) ImGui::Text("RHI scene GPU frame: %.2f ms", rhi.frameGpuMs);
+        else ImGui::TextUnformatted("RHI scene GPU frame: pending");
         ImGui::Text("RHI frame fence wait: %.2f ms", rhi.frameFenceWaitMs);
         ImGui::Text("RHI descriptors: %llu allocation calls, %llu sets, %llu writes",
                     static_cast<unsigned long long>(rhi.descriptorAllocationCalls),
@@ -231,6 +231,12 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount));
         ImGui::Text("  Setup: %.2f ms, recording: %.2f ms",
                     rhiScene.sceneSetupMs, rhiScene.renderRecordingMs);
+        ImGui::Text("  Begin/fence: %.2f ms, shadows: %.2f ms, geometry: %.2f ms",
+                    rhiScene.beginFrameMs, rhiScene.shadowRecordingMs,
+                    rhiScene.geometryRecordingMs);
+        ImGui::Text("  Post process: %.2f ms, upscaler: %.2f ms, submit: %.2f ms",
+                    rhiScene.postProcessRecordingMs, rhiScene.temporalUpscalerMs,
+                    rhiScene.submitMs);
         for (const auto &scope : rhi.gpuScopes)
             ImGui::Text("%s: %.2f ms GPU, %.2f ms CPU recording", scope.name.c_str(),
                         scope.milliseconds, scope.cpuMilliseconds);

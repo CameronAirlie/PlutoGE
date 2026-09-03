@@ -60,7 +60,10 @@ namespace PlutoGE::render::rhi
     {
     public:
         virtual ~ICommandContext() = default;
-        virtual void BeginFrame() {}
+        // A device can receive more than one submission per application frame
+        // (for example, the scene followed by runtime UI). The stable label
+        // keeps timing results associated with the work that produced them.
+        virtual void BeginFrame(std::string_view submissionLabel = {}) { (void)submissionLabel; }
         virtual void BeginGpuScope(std::string_view) {}
         virtual void EndGpuScope() {}
         virtual void BeginRendering(const RenderingInfo &info) = 0;
@@ -149,7 +152,11 @@ namespace PlutoGE::render::rhi
             return false;
         }
         virtual void ReleaseTemporalUpscalerContext(std::uint64_t) {}
-        [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats() const { return {}; }
+        [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats(std::string_view submissionLabel = {}) const
+        {
+            (void)submissionLabel;
+            return {};
+        }
     };
 
     class IShaderCompiler

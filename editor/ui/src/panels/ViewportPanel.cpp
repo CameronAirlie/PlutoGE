@@ -2009,6 +2009,8 @@ namespace PlutoGE::ui
                 {
                     rhiLabel += " | " + std::string(TemporalUpscalerLabel(upscaler.options.technology)) +
                                 (upscaler.active ? " active" : " fallback");
+                    if (upscaler.nativeInput)
+                        rhiLabel += " (native input)";
                     rhiLabelColor = upscaler.active ? IM_COL32(110, 235, 150, 255)
                                                     : IM_COL32(255, 180, 80, 255);
                 }
@@ -2263,6 +2265,8 @@ namespace PlutoGE::ui
                         ImGui::TextDisabled("Internal: %u x %u -> Output: %u x %u",
                                             upscaler.renderSize.width, upscaler.renderSize.height,
                                             upscaler.outputSize.width, upscaler.outputSize.height);
+                        if (upscaler.nativeInput)
+                            ImGui::TextWrapped("Native input: this viewport is too small for the requested mode to reduce raster resolution safely.");
                         if (!upscaler.active && !upscaler.reason.empty())
                             ImGui::TextWrapped("Reason: %s", upscaler.reason.c_str());
                     }
@@ -2309,6 +2313,8 @@ namespace PlutoGE::ui
                             upscaler.active ? "Active" : "Fallback");
                 ImGui::TextDisabled("Internal: %u x %u", upscaler.renderSize.width, upscaler.renderSize.height);
                 ImGui::TextDisabled("Output: %u x %u", upscaler.outputSize.width, upscaler.outputSize.height);
+                if (upscaler.nativeInput)
+                    ImGui::TextWrapped("Native input: temporal reconstruction is active, but this viewport is too small to provide an upscaling performance benefit.");
                 if (m_temporalUpscalerOptions.technology == render::rhi::TemporalUpscaler::Fsr2)
                     ImGui::TextDisabled("RCAS sharpness: %.2f", m_temporalUpscalerOptions.sharpness);
                 if (m_temporalUpscalerOptions.quality == render::rhi::UpscalerQuality::UltraPerformance)

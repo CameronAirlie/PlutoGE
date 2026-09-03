@@ -114,7 +114,7 @@ namespace PlutoGE::render
         if (!m_device || !target || m_frameActive)
             return;
         auto &commands = m_device->GetImmediateContext();
-        commands.BeginFrame();
+        commands.BeginFrame("Runtime UI");
         rhi::RenderingInfo info;
         info.colorAttachments = {target};
         info.width = static_cast<std::uint32_t>(m_width);

@@ -169,7 +169,7 @@ namespace PlutoGE::ui
         }
         report << "Rendered viewport pixels: " << frameTimingStats.renderedViewportPixels << "\n";
         const auto &rhi = frameTimingStats.rhiTimingStats;
-        report << "RHI GPU frame: " << (rhi.hasGpuResult ? std::to_string(rhi.frameGpuMs) + " ms" : "pending") << "\n";
+        report << "RHI scene GPU frame: " << (rhi.hasGpuResult ? std::to_string(rhi.frameGpuMs) + " ms" : "pending") << "\n";
         report << "RHI frame fence wait: " << rhi.frameFenceWaitMs << " ms\n";
         report << "RHI descriptor allocation calls: " << rhi.descriptorAllocationCalls << "\n";
         report << "RHI descriptor sets allocated: " << rhi.descriptorSetsAllocated << "\n";
@@ -199,6 +199,12 @@ namespace PlutoGE::ui
                << rhiScene.shadowCascadeUpdateCount << " updates\n";
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
+        report << "RHI begin/fence CPU: " << rhiScene.beginFrameMs << " ms\n";
+        report << "RHI shadow recording CPU: " << rhiScene.shadowRecordingMs << " ms\n";
+        report << "RHI geometry recording CPU: " << rhiScene.geometryRecordingMs << " ms\n";
+        report << "RHI post-process recording CPU: " << rhiScene.postProcessRecordingMs << " ms\n";
+        report << "RHI temporal upscaler CPU: " << rhiScene.temporalUpscalerMs << " ms\n";
+        report << "RHI submit CPU: " << rhiScene.submitMs << " ms\n";
         for (const auto &scope : rhi.gpuScopes)
             report << scope.name << ": " << scope.milliseconds << " ms GPU, "
                    << scope.cpuMilliseconds << " ms CPU recording\n";

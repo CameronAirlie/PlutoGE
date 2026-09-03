@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ranges>
 #include <stdexcept>
@@ -932,6 +933,7 @@ namespace PlutoGE::render
                                const glm::mat4 *motionViewProjection)
     {
         m_frameStats = {};
+        m_timingStats = {};
         m_temporalUpscalerEvaluatedLastFrame = false;
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
@@ -943,7 +945,15 @@ namespace PlutoGE::render
 
         EnsureShadowTargets(lighting);
         auto &commands = m_device->GetImmediateContext();
-        commands.BeginFrame();
+        const auto beginFrameStart = std::chrono::steady_clock::now();
+        commands.BeginFrame("Scene");
+        const auto beginFrameEnd = std::chrono::steady_clock::now();
+        const auto elapsedMs = [](const auto begin, const auto end)
+        {
+            return std::chrono::duration<float, std::milli>(end - begin).count();
+        };
+        m_timingStats.beginFrameMs = elapsedMs(beginFrameStart, beginFrameEnd);
+        const auto shadowRecordingStart = beginFrameEnd;
 
         std::array<glm::vec4, 4> inverseShadowResolutions{};
         for (std::size_t cascade = 0; cascade < inverseShadowResolutions.size(); ++cascade)
@@ -1116,6 +1126,8 @@ namespace PlutoGE::render
                 m_shadowCacheValid[cascade] = true;
             }
         }
+        const auto shadowRecordingEnd = std::chrono::steady_clock::now();
+        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
         rhi::RenderingInfo renderingInfo;
         renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
                                           m_motionTarget.Get(), m_albedoTarget.Get(), m_debugTarget.Get()};
@@ -1133,6 +1145,7 @@ namespace PlutoGE::render
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
+        const auto geometryRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
         std::size_t drawIndex = 0;
@@ -1233,8 +1246,11 @@ namespace PlutoGE::render
         }
         commands.EndRendering();
         commands.EndGpuScope();
+        const auto geometryRecordingEnd = std::chrono::steady_clock::now();
+        m_timingStats.geometryRecordingMs = elapsedMs(geometryRecordingStart, geometryRecordingEnd);
 
         m_outputColor = m_colorTarget.Get();
+        const auto postProcessRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;
         m_postProcessWidth = m_width;
@@ -1258,7 +1274,16 @@ namespace PlutoGE::render
             frame.renderSize = {m_width, m_height};
             frame.outputSize = {m_outputWidth, m_outputHeight};
             upscalePending = false;
-            if (m_device->EvaluateTemporalUpscaler(m_upscalerOptions, frame))
+            // GPU scopes cannot nest, so close the internal-resolution
+            // post-process segment and give reconstruction its own query pair.
+            commands.EndGpuScope();
+            commands.BeginGpuScope("RHI Temporal Upscaler");
+            const auto upscalerStart = std::chrono::steady_clock::now();
+            const bool evaluated = m_device->EvaluateTemporalUpscaler(m_upscalerOptions, frame);
+            m_timingStats.temporalUpscalerMs += elapsedMs(upscalerStart, std::chrono::steady_clock::now());
+            commands.EndGpuScope();
+            commands.BeginGpuScope("RHI Output Post Process");
+            if (evaluated)
             {
                 m_outputColor = m_temporalUpscalerOutput.Get();
                 m_postProcessWidth = m_outputWidth;
@@ -1401,6 +1426,10 @@ namespace PlutoGE::render
             m_outputColor = m_displayTarget.Get();
         }
         commands.EndGpuScope();
+        const auto postProcessRecordingEnd = std::chrono::steady_clock::now();
+        m_timingStats.postProcessRecordingMs = std::max(
+            0.0f, elapsedMs(postProcessRecordingStart, postProcessRecordingEnd) -
+                      m_timingStats.temporalUpscalerMs);
         ++m_frameIndex;
         m_previousMotionViewProjection = currentMotionViewProjection;
         m_previousModels.clear();
@@ -1408,7 +1437,9 @@ namespace PlutoGE::render
             if (draw.mesh && draw.mesh->IsValid())
                 m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
+        const auto submitStart = std::chrono::steady_clock::now();
         commands.Submit();
+        m_timingStats.submitMs = elapsedMs(submitStart, std::chrono::steady_clock::now());
     }
 
     rhi::Buffer &BasicRenderer::AcquirePostProcessBuffer(std::size_t index)

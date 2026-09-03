@@ -17,6 +17,8 @@ namespace PlutoGE::render
     public:
         bool Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain);
         void Shutdown();
+        void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
+        [[nodiscard]] rhi::TemporalUpscalerSupport GetTemporalUpscalerSupport() const;
 
         [[nodiscard]] bool Resize(std::uint32_t width, std::uint32_t height);
         [[nodiscard]] bool RenderAndPresent(const glm::mat4 &viewProjection,
@@ -39,5 +41,6 @@ namespace PlutoGE::render
         std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
         std::uint64_t m_frameSequence = 0;
+        rhi::TemporalUpscalerOptions m_upscalerOptions;
     };
 }

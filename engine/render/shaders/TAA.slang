@@ -28,7 +28,7 @@ float luma(float3 color)
     return dot(color, float3(0.2126, 0.7152, 0.0722));
 }
 
-float2 responsiveEncodedMotion(float2 uv)
+float2 responsiveMotion(float2 uv)
 {
     float closestDepth = depthTexture.Sample(uv).r;
     float2 bestMotion = motionTexture.Sample(uv).xy;
@@ -65,8 +65,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (pass.parameters[5].w < 0.5)
         return float4(current.rgb, currentDepth);
 
-    const float2 encodedMotion = (responsiveEncodedMotion(currentUv) * 2.0 - 1.0) *
-                                 textureOrientation;
+    const float2 encodedMotion = responsiveMotion(currentUv) * textureOrientation;
     // Projection jitter contributes the negative current-to-previous jitter
     // delta in raster space. Remove it so stationary geometry has zero motion.
     const float2 motion = encodedMotion + currentJitterUv - previousJitterUv;

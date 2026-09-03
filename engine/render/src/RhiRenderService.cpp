@@ -12,6 +12,7 @@ namespace PlutoGE::render
         BasicRendererShaderPackage shaders = shaderArtifacts.LoadBasicRendererPackage();
 
         auto renderer = std::make_unique<BasicRenderer>();
+        renderer->SetTemporalUpscalerOptions(m_upscalerOptions);
         if (!renderer->Initialize(device, shaders) || !renderer->Resize(swapchain.GetWidth(), swapchain.GetHeight()))
             return false;
         m_graphicsApi = device.GetApi();
@@ -49,6 +50,7 @@ namespace PlutoGE::render
             auto sceneRenderer = std::make_unique<RhiSceneRenderer>();
             if (!sceneRenderer->Initialize(*m_device, shaderArtifacts.LoadBasicRendererPackage()))
                 return false;
+            sceneRenderer->SetTemporalUpscalerOptions(m_upscalerOptions);
             m_sceneRenderer = std::move(sceneRenderer);
         }
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
@@ -86,5 +88,24 @@ namespace PlutoGE::render
         if (!m_renderer)
             throw std::logic_error("RHI render service is not initialized");
         return m_renderer->CreateMesh(data);
+    }
+
+    void RhiRenderService::SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
+    {
+        m_upscalerOptions = options;
+        if (m_renderer)
+            m_renderer->SetTemporalUpscalerOptions(options);
+        if (m_sceneRenderer)
+        {
+            m_sceneRenderer->SetTemporalUpscalerOptions(options);
+            m_sceneRenderer->ResetTemporalHistory();
+        }
+    }
+
+    rhi::TemporalUpscalerSupport RhiRenderService::GetTemporalUpscalerSupport() const
+    {
+        if (!m_device)
+            return {false, "The RHI render service is not initialized"};
+        return m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology);
     }
 }

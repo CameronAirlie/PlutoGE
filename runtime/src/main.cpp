@@ -403,6 +403,14 @@ int RunRuntime(int argc, char **argv)
         }};
     config.vSync = project->GetManifest().vSyncEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
+    if (config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan &&
+        project->GetManifest().runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Dlss)
+    {
+        config.temporalUpscaler.technology = PlutoGE::render::rhi::TemporalUpscaler::Dlss;
+        config.temporalUpscaler.quality = project->GetManifest().runtimeDlssQuality;
+        config.temporalUpscaler.hdr = true;
+        config.temporalUpscaler.autoExposure = true;
+    }
 
     if (!engine.Initialize(config))
     {

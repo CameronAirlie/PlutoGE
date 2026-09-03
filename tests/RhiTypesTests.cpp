@@ -76,5 +76,9 @@ int main()
     GraphicsPipelineDescriptor pipeline;
     assert(pipeline.depthCompare == CompareOperation::GreaterOrEqual);
     assert(pipeline.depthTest && pipeline.depthWrite);
+    const auto fallbackSupport = device.GetTemporalUpscalerSupport(TemporalUpscaler::Dlss);
+    assert(!fallbackSupport.supported && !fallbackSupport.reason.empty());
+    const Extent2D outputSize{1920, 1080};
+    assert(device.GetOptimalRenderSize({.technology = TemporalUpscaler::Dlss}, outputSize) == outputSize);
     return 0;
 }

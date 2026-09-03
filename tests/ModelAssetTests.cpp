@@ -47,14 +47,16 @@ int main()
     std::filesystem::create_directories(packageRoot);
     const auto projectPath = projectRoot / "ModelAssetPathTests.plutoproject";
     Project project(projectPath, ProjectManifest{.assetDirectory = "Assets"});
-    project.GetManifest().runtimeUpscaler = RuntimeUpscalerMode::Spatial;
+    project.GetManifest().runtimeUpscaler = RuntimeUpscalerMode::Dlss;
+    project.GetManifest().runtimeDlssQuality = PlutoGE::render::rhi::UpscalerQuality::Balanced;
     project.GetManifest().graphicsApi = PlutoGE::render::rhi::GraphicsApi::Vulkan;
     project.GetManifest().runtimeRenderScale = 0.75f;
     project.GetManifest().runtimeUpscaleSharpness = 0.4f;
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);
     assert(reloadedProject);
-    assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Spatial);
+    assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Dlss);
+    assert(reloadedProject->GetManifest().runtimeDlssQuality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
     assert(reloadedProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan);
     assert(reloadedProject->GetManifest().runtimeRenderScale == 0.75f);
     assert(reloadedProject->GetManifest().runtimeUpscaleSharpness == 0.4f);

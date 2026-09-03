@@ -430,7 +430,10 @@ FragmentOutput fragmentMain(VertexOutput input)
     output.material = float4(materialMetallic, materialRoughness, length(emission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
-    output.motion = float4((currentNdc - previousNdc) * 0.25 + 0.5, 0.0, 1.0);
+    // Signed current-to-previous displacement in normalized texture space.
+    // Keeping the buffer unbiased makes it directly consumable by temporal
+    // upscalers and avoids losing sub-pixel precision around an encoded 0.5.
+    output.motion = float4((currentNdc - previousNdc) * 0.5, 0.0, 1.0);
     output.albedo = sampledColor;
     output.debug = float4(saturate(objectDebugParameters.x), normalizedCascade,
                           rawShadowVisibility, shadowVisibility);

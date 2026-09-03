@@ -47,6 +47,7 @@ namespace PlutoGE::core
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::Vulkan;
         bool vSync = true;
         bool isEditorHost = false;
+        render::rhi::TemporalUpscalerOptions temporalUpscaler;
     };
 
     struct MeshImportStatus

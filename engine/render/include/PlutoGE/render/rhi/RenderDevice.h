@@ -122,6 +122,15 @@ namespace PlutoGE::render::rhi
         // True when clip-space Z is interpreted as [0, 1]. Vulkan always uses
         // this convention; OpenGL only does so when clip control is available.
         [[nodiscard]] virtual bool UsesZeroToOneClipDepth() const noexcept { return false; }
+        [[nodiscard]] virtual TemporalUpscalerSupport GetTemporalUpscalerSupport(TemporalUpscaler) const
+        {
+            return {false, "Temporal upscaling is not implemented by this render device"};
+        }
+        [[nodiscard]] virtual Extent2D GetOptimalRenderSize(const TemporalUpscalerOptions &,
+                                                            Extent2D outputSize) const
+        {
+            return outputSize;
+        }
         [[nodiscard]] virtual std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) = 0;
         [[nodiscard]] virtual BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
         [[nodiscard]] virtual TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) = 0;
@@ -134,6 +143,11 @@ namespace PlutoGE::render::rhi
         virtual void DestroySampler(SamplerHandle sampler) = 0;
         virtual void DestroyPipeline(PipelineHandle pipeline) = 0;
         [[nodiscard]] virtual ICommandContext &GetImmediateContext() = 0;
+        virtual bool EvaluateTemporalUpscaler(const TemporalUpscalerOptions &,
+                                              const TemporalUpscalerFrame &)
+        {
+            return false;
+        }
         [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats() const { return {}; }
     };
 

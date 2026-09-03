@@ -9,12 +9,23 @@
 #include <vk_mem_alloc.h>
 #include <glm/gtc/packing.hpp>
 
+#if PLUTO_HAS_STREAMLINE
+#define NOMINMAX
+#include <Windows.h>
+#include <sl.h>
+#include <sl_dlss.h>
+#include <sl_helpers_vk.h>
+#include <sl_security.h>
+#endif
+
 #include <array>
 #include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#include <ranges>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -212,6 +223,355 @@ namespace PlutoGE::render::rhi::vulkan
             bool compute = false;
         };
 
+#if PLUTO_HAS_STREAMLINE
+        class StreamlineVulkan
+        {
+        public:
+            StreamlineVulkan()
+            {
+                wchar_t executable[MAX_PATH]{};
+                const DWORD length = GetModuleFileNameW(nullptr, executable, MAX_PATH);
+                if (length == 0 || length == MAX_PATH)
+                {
+                    m_reason = "Unable to resolve the executable directory";
+                    return;
+                }
+                std::filesystem::path pluginDirectory(executable);
+                pluginDirectory = pluginDirectory.parent_path();
+                const auto interposerPath = pluginDirectory / L"sl.interposer.dll";
+                if (!sl::security::verifyEmbeddedSignature(interposerPath.c_str()))
+                {
+                    m_reason = "sl.interposer.dll failed NVIDIA signature verification";
+                    return;
+                }
+                m_module = LoadLibraryW(interposerPath.c_str());
+                if (!m_module)
+                {
+                    m_reason = "sl.interposer.dll was not found beside the executable";
+                    return;
+                }
+                if (!LoadFunctions())
+                {
+                    m_reason = "The Streamline interposer does not export the required API";
+                    return;
+                }
+
+                const sl::Feature features[]{sl::kFeatureDLSS};
+                const wchar_t *pluginPath = pluginDirectory.c_str();
+                sl::Preferences preferences{};
+                preferences.featuresToLoad = features;
+                preferences.numFeaturesToLoad = 1;
+                preferences.pathsToPlugins = &pluginPath;
+                preferences.numPathsToPlugins = 1;
+                preferences.projectId = PLUTO_STREAMLINE_PROJECT_ID;
+                preferences.engine = sl::EngineType::eCustom;
+                preferences.engineVersion = "0.1.0";
+                preferences.renderAPI = sl::RenderAPI::eVulkan;
+                preferences.flags |= sl::PreferenceFlags::eUseManualHooking |
+                                     sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+                const auto result = m_init(preferences, sl::kSDKVersion);
+                if (result != sl::Result::eOk)
+                {
+                    m_reason = "Streamline initialization failed (result " +
+                               std::to_string(static_cast<int>(result)) + ")";
+                    return;
+                }
+                m_initialized = true;
+                if (m_getRequirements(sl::kFeatureDLSS, m_requirements) != sl::Result::eOk ||
+                    !(m_requirements.flags & sl::FeatureRequirementFlags::eVulkanSupported))
+                {
+                    m_reason = "The installed Streamline DLSS plugin does not support Vulkan";
+                    return;
+                }
+                m_requirementsAvailable = true;
+            }
+
+            [[nodiscard]] PFN_vkGetInstanceProcAddr GetInstanceProcAddrProxy() const noexcept
+            {
+                return m_initialized && m_module
+                           ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+                                 GetProcAddress(m_module, "vkGetInstanceProcAddr"))
+                           : nullptr;
+            }
+
+            ~StreamlineVulkan()
+            {
+                Shutdown();
+                if (m_module)
+                    FreeLibrary(m_module);
+            }
+
+            void Shutdown()
+            {
+                if (m_initialized)
+                {
+                    if (m_deviceConfigured && m_freeResources)
+                        m_freeResources(sl::kFeatureDLSS, sl::ViewportHandle(0));
+                    m_shutdown();
+                    m_initialized = false;
+                    m_deviceConfigured = false;
+                    m_supported = false;
+                }
+            }
+
+            [[nodiscard]] std::vector<const char *> InstanceExtensions() const
+            {
+                if (!m_requirementsAvailable)
+                    return {};
+                return {m_requirements.vkInstanceExtensions,
+                        m_requirements.vkInstanceExtensions + m_requirements.vkNumInstanceExtensions};
+            }
+
+            [[nodiscard]] std::vector<const char *> DeviceExtensions() const
+            {
+                if (!m_requirementsAvailable)
+                    return {};
+                return {m_requirements.vkDeviceExtensions,
+                        m_requirements.vkDeviceExtensions + m_requirements.vkNumDeviceExtensions};
+            }
+
+            [[nodiscard]] bool SupportsAdapter(VkPhysicalDevice physicalDevice) const
+            {
+                if (!m_requirementsAvailable)
+                    return false;
+                sl::AdapterInfo adapter{};
+                adapter.vkPhysicalDevice = physicalDevice;
+                return m_isSupported(sl::kFeatureDLSS, adapter) == sl::Result::eOk;
+            }
+
+            bool ConfigureDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
+                                 std::uint32_t graphicsQueueFamily)
+            {
+                if (!SupportsAdapter(physicalDevice))
+                {
+                    m_reason = "DLSS is not supported by the selected Vulkan adapter or driver";
+                    return false;
+                }
+                sl::VulkanInfo info{};
+                info.instance = instance;
+                info.physicalDevice = physicalDevice;
+                info.device = device;
+                info.graphicsQueueFamily = graphicsQueueFamily;
+                info.graphicsQueueIndex = 0;
+                info.computeQueueFamily = graphicsQueueFamily;
+                info.computeQueueIndex = 0;
+                const auto result = m_setVulkanInfo(info);
+                if (result != sl::Result::eOk)
+                {
+                    m_reason = "slSetVulkanInfo failed (result " +
+                               std::to_string(static_cast<int>(result)) + ")";
+                    return false;
+                }
+                if (!LoadFeatureFunctions())
+                {
+                    m_reason = "The DLSS plugin functions could not be loaded";
+                    return false;
+                }
+                m_deviceConfigured = true;
+                m_supported = true;
+                m_reason.clear();
+                return true;
+            }
+
+            [[nodiscard]] TemporalUpscalerSupport Support() const
+            {
+                return {m_supported, m_supported ? std::string{} : m_reason};
+            }
+
+            void RecordEvaluationFailure()
+            {
+                m_supported = false;
+                m_reason = "DLSS evaluation failed; using the renderer fallback";
+            }
+
+            [[nodiscard]] const sl::FeatureRequirements *Requirements() const noexcept
+            {
+                return m_requirementsAvailable ? &m_requirements : nullptr;
+            }
+
+            [[nodiscard]] Extent2D OptimalSize(const TemporalUpscalerOptions &options,
+                                               Extent2D outputSize) const
+            {
+                if (!m_supported || outputSize.width == 0 || outputSize.height == 0)
+                    return outputSize;
+                sl::DLSSOptions native = MakeOptions(options, outputSize);
+                sl::DLSSOptimalSettings settings{};
+                return m_getOptimalSettings(native, settings) == sl::Result::eOk &&
+                               settings.optimalRenderWidth != 0 && settings.optimalRenderHeight != 0
+                           ? Extent2D{settings.optimalRenderWidth, settings.optimalRenderHeight}
+                           : outputSize;
+            }
+
+            bool Evaluate(const TemporalUpscalerOptions &options, const TemporalUpscalerFrame &frame,
+                          VkCommandBuffer commandBuffer, const std::array<TextureResource *, 4> &textures)
+            {
+                if (!m_supported || !commandBuffer || std::ranges::any_of(textures, [](auto *value) { return !value; }))
+                    return false;
+                sl::FrameToken *token = nullptr;
+                const std::uint32_t frameIndex = static_cast<std::uint32_t>(frame.frameIndex);
+                if (m_getFrameToken(token, &frameIndex) != sl::Result::eOk || !token)
+                    return false;
+
+                auto nativeOptions = MakeOptions(options, frame.outputSize);
+                nativeOptions.preExposure = frame.preExposure;
+                if (m_setOptions(sl::ViewportHandle(0), nativeOptions) != sl::Result::eOk)
+                    return false;
+
+                sl::Constants constants{};
+                CopyMatrix(frame.cameraViewToClip, constants.cameraViewToClip);
+                CopyMatrix(frame.clipToCameraView, constants.clipToCameraView);
+                CopyMatrix(frame.clipToPreviousClip, constants.clipToPrevClip);
+                CopyMatrix(frame.previousClipToClip, constants.prevClipToClip);
+                constants.clipToLensClip = IdentityMatrix();
+                constants.jitterOffset = {frame.jitterPixels[0], frame.jitterPixels[1]};
+                constants.mvecScale = {frame.motionVectorScale[0], frame.motionVectorScale[1]};
+                constants.cameraPinholeOffset = {0.0f, 0.0f};
+                constants.cameraPos = MakeFloat3(frame.cameraPosition);
+                constants.cameraUp = MakeFloat3(frame.cameraUp);
+                constants.cameraRight = MakeFloat3(frame.cameraRight);
+                constants.cameraFwd = MakeFloat3(frame.cameraForward);
+                constants.cameraNear = frame.cameraNear;
+                constants.cameraFar = frame.cameraFar;
+                constants.cameraFOV = frame.cameraVerticalFovRadians;
+                constants.cameraAspectRatio = frame.cameraAspectRatio;
+                constants.depthInverted = frame.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                constants.cameraMotionIncluded = frame.motionVectorsIncludeCamera ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                constants.motionVectors3D = sl::Boolean::eFalse;
+                constants.reset = frame.resetHistory ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                constants.motionVectorsJittered = frame.motionVectorsJittered ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                if (m_setConstants(constants, *token, sl::ViewportHandle(0)) != sl::Result::eOk)
+                    return false;
+
+                std::array<sl::Resource, 4> resources{
+                    MakeResource(*textures[0]), MakeResource(*textures[1]),
+                    MakeResource(*textures[2]), MakeResource(*textures[3])};
+                const sl::Extent renderExtent{0, 0, frame.renderSize.width, frame.renderSize.height};
+                const sl::Extent outputExtent{0, 0, frame.outputSize.width, frame.outputSize.height};
+                std::array<sl::ResourceTag, 4> tags{
+                    sl::ResourceTag(&resources[0], sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent),
+                    sl::ResourceTag(&resources[1], sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent),
+                    sl::ResourceTag(&resources[2], sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent),
+                    sl::ResourceTag(&resources[3], sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &outputExtent)};
+                auto *nativeCommandBuffer = reinterpret_cast<sl::CommandBuffer *>(commandBuffer);
+                if (m_setTags(*token, sl::ViewportHandle(0), tags.data(),
+                              static_cast<std::uint32_t>(tags.size()), nativeCommandBuffer) != sl::Result::eOk)
+                    return false;
+                const sl::ViewportHandle viewport(0);
+                const sl::BaseStructure *inputs[]{&viewport};
+                return m_evaluate(sl::kFeatureDLSS, *token, inputs, 1, nativeCommandBuffer) == sl::Result::eOk;
+            }
+
+        private:
+            template <typename T>
+            bool Load(T *&function, const char *name)
+            {
+                function = reinterpret_cast<T *>(GetProcAddress(m_module, name));
+                return function != nullptr;
+            }
+
+            bool LoadFunctions()
+            {
+                return Load(m_init, "slInit") && Load(m_shutdown, "slShutdown") &&
+                       Load(m_isSupported, "slIsFeatureSupported") &&
+                       Load(m_getRequirements, "slGetFeatureRequirements") &&
+                       Load(m_setVulkanInfo, "slSetVulkanInfo") && Load(m_getFrameToken, "slGetNewFrameToken") &&
+                       Load(m_setTags, "slSetTagForFrame") && Load(m_setConstants, "slSetConstants") &&
+                       Load(m_evaluate, "slEvaluateFeature") && Load(m_freeResources, "slFreeResources") &&
+                       Load(m_getFeatureFunction, "slGetFeatureFunction");
+            }
+
+            bool LoadFeatureFunctions()
+            {
+                void *function = nullptr;
+                if (m_getFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", function) != sl::Result::eOk)
+                    return false;
+                m_getOptimalSettings = reinterpret_cast<PFun_slDLSSGetOptimalSettings *>(function);
+                function = nullptr;
+                if (m_getFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", function) != sl::Result::eOk)
+                    return false;
+                m_setOptions = reinterpret_cast<PFun_slDLSSSetOptions *>(function);
+                return m_getOptimalSettings && m_setOptions;
+            }
+
+            static sl::DLSSOptions MakeOptions(const TemporalUpscalerOptions &options, Extent2D output)
+            {
+                sl::DLSSOptions result{};
+                result.outputWidth = output.width;
+                result.outputHeight = output.height;
+                result.colorBuffersHDR = options.hdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                result.useAutoExposure = options.autoExposure ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+                switch (options.quality)
+                {
+                case UpscalerQuality::Performance: result.mode = sl::DLSSMode::eMaxPerformance; break;
+                case UpscalerQuality::Balanced: result.mode = sl::DLSSMode::eBalanced; break;
+                case UpscalerQuality::Quality: result.mode = sl::DLSSMode::eMaxQuality; break;
+                case UpscalerQuality::UltraPerformance: result.mode = sl::DLSSMode::eUltraPerformance; break;
+                case UpscalerQuality::Dlaa: result.mode = sl::DLSSMode::eDLAA; break;
+                }
+                return result;
+            }
+
+            static sl::Resource MakeResource(const TextureResource &texture)
+            {
+                sl::Resource result(sl::ResourceType::eTex2d, texture.image, nullptr, texture.view,
+                                    static_cast<std::uint32_t>(texture.layout));
+                result.width = texture.descriptor.width;
+                result.height = texture.descriptor.height;
+                result.nativeFormat = static_cast<std::uint32_t>(ToVkFormat(texture.descriptor.format));
+                result.mipLevels = texture.mipLevels;
+                result.arrayLayers = 1;
+                result.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                               (texture.descriptor.sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0) |
+                               (texture.descriptor.storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0) |
+                               (texture.descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0) |
+                               (texture.descriptor.usage == TextureUsage::DepthStencilAttachment ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0);
+                return result;
+            }
+
+            static void CopyMatrix(const std::array<float, 16> &source, sl::float4x4 &destination)
+            {
+                for (std::size_t row = 0; row < 4; ++row)
+                    destination.row[row] = {source[row * 4], source[row * 4 + 1],
+                                            source[row * 4 + 2], source[row * 4 + 3]};
+            }
+
+            static sl::float4x4 IdentityMatrix()
+            {
+                sl::float4x4 result{};
+                for (std::size_t row = 0; row < 4; ++row)
+                    result.row[row] = {row == 0 ? 1.0f : 0.0f, row == 1 ? 1.0f : 0.0f,
+                                       row == 2 ? 1.0f : 0.0f, row == 3 ? 1.0f : 0.0f};
+                return result;
+            }
+
+            static sl::float3 MakeFloat3(const std::array<float, 3> &value)
+            {
+                return {value[0], value[1], value[2]};
+            }
+
+            HMODULE m_module = nullptr;
+            bool m_initialized = false;
+            bool m_requirementsAvailable = false;
+            bool m_deviceConfigured = false;
+            bool m_supported = false;
+            std::string m_reason = "Streamline support was not initialized";
+            sl::FeatureRequirements m_requirements{};
+            PFun_slInit *m_init = nullptr;
+            PFun_slShutdown *m_shutdown = nullptr;
+            PFun_slIsFeatureSupported *m_isSupported = nullptr;
+            PFun_slGetFeatureRequirements *m_getRequirements = nullptr;
+            PFun_slSetVulkanInfo *m_setVulkanInfo = nullptr;
+            PFun_slGetNewFrameToken *m_getFrameToken = nullptr;
+            PFun_slSetTagForFrame *m_setTags = nullptr;
+            PFun_slSetConstants *m_setConstants = nullptr;
+            PFun_slEvaluateFeature *m_evaluate = nullptr;
+            PFun_slFreeResources *m_freeResources = nullptr;
+            PFun_slGetFeatureFunction *m_getFeatureFunction = nullptr;
+            PFun_slDLSSGetOptimalSettings *m_getOptimalSettings = nullptr;
+            PFun_slDLSSSetOptions *m_setOptions = nullptr;
+        };
+#endif
+
         VkImageAspectFlags Aspect(const TextureResource &texture)
         {
             return texture.descriptor.format == Format::D32Float ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -271,6 +631,9 @@ namespace PlutoGE::render::rhi::vulkan
         detail::HandleRegistry<SamplerHandle, SamplerResource> samplers;
         detail::HandleRegistry<PipelineHandle, PipelineResource> pipelines;
         std::unique_ptr<VulkanCommandContext> context;
+#if PLUTO_HAS_STREAMLINE
+        std::unique_ptr<StreamlineVulkan> streamline;
+#endif
 
         void BeginUniformFrame(std::size_t frameIndex)
         {
@@ -755,6 +1118,23 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                  0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
+
+        [[nodiscard]] VkCommandBuffer NativeCommandBuffer() const
+        {
+            if (!m_recording || m_rendering)
+                return VK_NULL_HANDLE;
+            return CommandBuffer();
+        }
+
+        void InvalidateAfterExternalCommands()
+        {
+            m_pipeline = nullptr;
+            m_boundPipelineLayout = VK_NULL_HANDLE;
+            m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_boundDynamicOffsetCounts.fill(0);
+            m_lastDescriptorKeyValid.fill(false);
+            m_descriptorBindingsDirty = true;
         }
 
     private:
@@ -1400,23 +1780,41 @@ namespace PlutoGE::render::rhi::vulkan
 
     VulkanDevice::VulkanDevice(const SwapchainDescriptor &presentation) : m_impl(std::make_unique<Impl>())
     {
+#if PLUTO_HAS_STREAMLINE
+        // Streamline must be initialized before the first Vulkan API call. The
+        // integration remains optional at runtime so missing/incompatible
+        // plugins never prevent the Vulkan fallback renderer from starting.
+        m_impl->streamline = std::make_unique<StreamlineVulkan>();
+        if (const auto proxy = m_impl->streamline->GetInstanceProcAddrProxy())
+            volkInitializeCustom(proxy);
+        else
+            Check(volkInitialize(), "volkInitialize");
+#else
         Check(volkInitialize(), "volkInitialize");
+#endif
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         app.pApplicationName = "PlutoGE";
         app.pEngineName = "PlutoGE";
         app.apiVersion = VK_API_VERSION_1_3;
         VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         instanceInfo.pApplicationInfo = &app;
-        std::uint32_t instanceExtensionCount = 0;
-        const char **instanceExtensions = nullptr;
+        std::vector<const char *> enabledInstanceExtensions;
         if (presentation.nativeWindow)
         {
-            instanceExtensions = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
+            std::uint32_t instanceExtensionCount = 0;
+            const char **instanceExtensions = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
             if (!instanceExtensions || instanceExtensionCount == 0)
                 throw std::runtime_error("GLFW did not provide Vulkan surface extensions");
-            instanceInfo.enabledExtensionCount = instanceExtensionCount;
-            instanceInfo.ppEnabledExtensionNames = instanceExtensions;
+            enabledInstanceExtensions.assign(instanceExtensions, instanceExtensions + instanceExtensionCount);
         }
+#if PLUTO_HAS_STREAMLINE
+        for (const auto *extension : m_impl->streamline->InstanceExtensions())
+            if (std::ranges::none_of(enabledInstanceExtensions, [extension](const char *existing)
+                                     { return std::strcmp(existing, extension) == 0; }))
+                enabledInstanceExtensions.push_back(extension);
+#endif
+        instanceInfo.enabledExtensionCount = static_cast<std::uint32_t>(enabledInstanceExtensions.size());
+        instanceInfo.ppEnabledExtensionNames = enabledInstanceExtensions.data();
         Check(vkCreateInstance(&instanceInfo, nullptr, &m_impl->instance), "vkCreateInstance");
         volkLoadInstance(m_impl->instance);
         if (presentation.nativeWindow)
@@ -1427,6 +1825,11 @@ namespace PlutoGE::render::rhi::vulkan
             throw std::runtime_error("No Vulkan physical device is available");
         std::vector<VkPhysicalDevice> devices(count);
         Check(vkEnumeratePhysicalDevices(m_impl->instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
+#if PLUTO_HAS_STREAMLINE
+        std::stable_sort(devices.begin(), devices.end(), [this](VkPhysicalDevice lhs, VkPhysicalDevice rhs)
+                         { return m_impl->streamline->SupportsAdapter(lhs) &&
+                                  !m_impl->streamline->SupportsAdapter(rhs); });
+#endif
         for (auto device : devices)
         {
             std::uint32_t familyCount = 0;
@@ -1483,20 +1886,65 @@ namespace PlutoGE::render::rhi::vulkan
             queues[1].pQueuePriorities = &priority;
             queueCount = 2;
         }
-        VkPhysicalDeviceDynamicRenderingFeatures dynamic{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
-        dynamic.dynamicRendering = VK_TRUE;
-        const char *swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+#if PLUTO_HAS_STREAMLINE
+        const bool enableStreamlineForAdapter = m_impl->streamline->SupportsAdapter(m_impl->physicalDevice);
+#endif
+        std::vector<const char *> enabledDeviceExtensions;
+        if (m_impl->surface)
+            enabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#if PLUTO_HAS_STREAMLINE
+        if (enableStreamlineForAdapter)
+            for (const auto *extension : m_impl->streamline->DeviceExtensions())
+                if (std::ranges::none_of(enabledDeviceExtensions, [extension](const char *existing)
+                                         { return std::strcmp(existing, extension) == 0; }))
+                    enabledDeviceExtensions.push_back(extension);
+#endif
+
+        VkPhysicalDeviceVulkan12Features requested12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceVulkan13Features requested13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+#if PLUTO_HAS_STREAMLINE
+        if (enableStreamlineForAdapter)
+            if (const auto *requirements = m_impl->streamline->Requirements())
+        {
+            requested12 = sl::getVkPhysicalDeviceVulkan12Features(requirements->vkNumFeatures12,
+                                                                  requirements->vkFeatures12);
+            requested13 = sl::getVkPhysicalDeviceVulkan13Features(requirements->vkNumFeatures13,
+                                                                  requirements->vkFeatures13);
+        }
+#endif
+        requested13.dynamicRendering = VK_TRUE;
+        VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceVulkan13Features supported13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+        supported12.pNext = &supported13;
+        VkPhysicalDeviceFeatures2 supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        supported.pNext = &supported12;
+        vkGetPhysicalDeviceFeatures2(m_impl->physicalDevice, &supported);
+#if PLUTO_HAS_STREAMLINE
+        sl::getMergedSupportedVkPhysicalDeviceVulkanFeatures(
+            reinterpret_cast<VkBaseOutStructure *>(&requested12), nullptr,
+            reinterpret_cast<const VkBaseOutStructure *>(&supported12));
+        sl::getMergedSupportedVkPhysicalDeviceVulkanFeatures(
+            reinterpret_cast<VkBaseOutStructure *>(&requested13), nullptr,
+            reinterpret_cast<const VkBaseOutStructure *>(&supported13));
+#else
+        requested13.dynamicRendering = supported13.dynamicRendering;
+#endif
+        if (!requested13.dynamicRendering)
+            throw std::runtime_error("The selected Vulkan device does not support dynamic rendering");
+        requested12.pNext = &requested13;
         VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-        deviceInfo.pNext = &dynamic;
+        deviceInfo.pNext = &requested12;
         deviceInfo.queueCreateInfoCount = queueCount;
         deviceInfo.pQueueCreateInfos = queues.data();
-        if (m_impl->surface)
-        {
-            deviceInfo.enabledExtensionCount = 1;
-            deviceInfo.ppEnabledExtensionNames = &swapchainExtension;
-        }
+        deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(enabledDeviceExtensions.size());
+        deviceInfo.ppEnabledExtensionNames = enabledDeviceExtensions.data();
         Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice");
         volkLoadDevice(m_impl->device);
+#if PLUTO_HAS_STREAMLINE
+        if (enableStreamlineForAdapter)
+            m_impl->streamline->ConfigureDevice(m_impl->instance, m_impl->physicalDevice,
+                                                m_impl->device, m_impl->queueFamily);
+#endif
         vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue);
         vkGetDeviceQueue(m_impl->device, m_impl->presentQueueFamily, 0, &m_impl->presentQueue);
         VmaVulkanFunctions functions{};
@@ -1550,6 +1998,10 @@ namespace PlutoGE::render::rhi::vulkan
             return;
         if (m_impl->device)
             vkDeviceWaitIdle(m_impl->device);
+#if PLUTO_HAS_STREAMLINE
+        if (m_impl->streamline)
+            m_impl->streamline->Shutdown();
+#endif
         m_impl->context.reset();
         for (auto &slot : m_impl->readbacks)
         {
@@ -2045,6 +2497,58 @@ namespace PlutoGE::render::rhi::vulkan
     }
     ICommandContext &VulkanDevice::GetImmediateContext() { return *m_impl->context; }
     RenderDeviceTimingStats VulkanDevice::GetTimingStats() const { return m_impl->timingStats; }
+    TemporalUpscalerSupport VulkanDevice::GetTemporalUpscalerSupport(TemporalUpscaler upscaler) const
+    {
+        if (upscaler != TemporalUpscaler::Dlss)
+            return {false, "Only DLSS is implemented by the Vulkan temporal-upscaler adapter"};
+#if PLUTO_HAS_STREAMLINE
+        return m_impl->streamline ? m_impl->streamline->Support()
+                                  : TemporalUpscalerSupport{false, "Streamline was not initialized"};
+#else
+        return {false, "PlutoGE was built without Streamline (PLUTO_ENABLE_STREAMLINE=OFF)"};
+#endif
+    }
+
+    Extent2D VulkanDevice::GetOptimalRenderSize(const TemporalUpscalerOptions &options,
+                                                Extent2D outputSize) const
+    {
+#if PLUTO_HAS_STREAMLINE
+        if (options.technology == TemporalUpscaler::Dlss && m_impl->streamline)
+            return m_impl->streamline->OptimalSize(options, outputSize);
+#endif
+        return outputSize;
+    }
+
+    bool VulkanDevice::EvaluateTemporalUpscaler(const TemporalUpscalerOptions &options,
+                                                const TemporalUpscalerFrame &frame)
+    {
+#if PLUTO_HAS_STREAMLINE
+        if (options.technology != TemporalUpscaler::Dlss || !m_impl->streamline || !m_impl->context)
+            return false;
+        auto *color = m_impl->textures.Get(frame.color);
+        auto *depth = m_impl->textures.Get(frame.depth);
+        auto *motion = m_impl->textures.Get(frame.motionVectors);
+        auto *output = m_impl->textures.Get(frame.output);
+        if (!color || !depth || !motion || !output || !output->descriptor.storage)
+            return false;
+        const auto commandBuffer = m_impl->context->NativeCommandBuffer();
+        if (!commandBuffer)
+            return false;
+        m_impl->Transition(commandBuffer, *output, VK_IMAGE_LAYOUT_GENERAL,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        const bool result = m_impl->streamline->Evaluate(options, frame, commandBuffer,
+                                                         {color, depth, motion, output});
+        if (!result)
+            m_impl->streamline->RecordEvaluationFailure();
+        m_impl->context->InvalidateAfterExternalCommands();
+        return result;
+#else
+        (void)options;
+        (void)frame;
+        return false;
+#endif
+    }
     const std::string &VulkanDevice::GetDeviceName() const noexcept { return m_impl->deviceName; }
 
     std::optional<VulkanEditorContext> VulkanDevice::GetEditorContext(const ISwapchain &swapchain) const noexcept

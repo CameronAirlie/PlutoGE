@@ -809,9 +809,19 @@ namespace PlutoGE::assets
 
             if (tokens[0] == "RUNTIME_UPSCALER" && tokens.size() >= 2)
             {
-                manifest.runtimeUpscaler = tokens[1] == "Spatial"
-                                               ? RuntimeUpscalerMode::Spatial
-                                               : RuntimeUpscalerMode::None;
+                manifest.runtimeUpscaler = tokens[1] == "Spatial" ? RuntimeUpscalerMode::Spatial
+                                           : tokens[1] == "DLSS" ? RuntimeUpscalerMode::Dlss
+                                                                  : RuntimeUpscalerMode::None;
+                continue;
+            }
+
+            if (tokens[0] == "RUNTIME_DLSS_QUALITY" && tokens.size() >= 2)
+            {
+                manifest.runtimeDlssQuality = tokens[1] == "Performance" ? render::rhi::UpscalerQuality::Performance
+                                              : tokens[1] == "Balanced" ? render::rhi::UpscalerQuality::Balanced
+                                              : tokens[1] == "UltraPerformance" ? render::rhi::UpscalerQuality::UltraPerformance
+                                              : tokens[1] == "DLAA" ? render::rhi::UpscalerQuality::Dlaa
+                                                                    : render::rhi::UpscalerQuality::Quality;
                 continue;
             }
 
@@ -1174,7 +1184,13 @@ namespace PlutoGE::assets
         output << "GRAPHICS_API\t"
                << (m_manifest.graphicsApi == render::rhi::GraphicsApi::Vulkan ? "Vulkan" : "OpenGL") << '\n';
         output << "RUNTIME_UPSCALER\t"
-               << (m_manifest.runtimeUpscaler == RuntimeUpscalerMode::Spatial ? "Spatial" : "None") << '\n';
+               << (m_manifest.runtimeUpscaler == RuntimeUpscalerMode::Spatial ? "Spatial"
+                   : m_manifest.runtimeUpscaler == RuntimeUpscalerMode::Dlss ? "DLSS" : "None") << '\n';
+        const auto dlssQuality = m_manifest.runtimeDlssQuality == render::rhi::UpscalerQuality::Performance ? "Performance"
+                                 : m_manifest.runtimeDlssQuality == render::rhi::UpscalerQuality::Balanced ? "Balanced"
+                                 : m_manifest.runtimeDlssQuality == render::rhi::UpscalerQuality::UltraPerformance ? "UltraPerformance"
+                                 : m_manifest.runtimeDlssQuality == render::rhi::UpscalerQuality::Dlaa ? "DLAA" : "Quality";
+        output << "RUNTIME_DLSS_QUALITY\t" << dlssQuality << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
         output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
         output << "EDITOR_FONT_SIZE\t" << std::clamp(m_manifest.editorFontSize, 10.0f, 24.0f) << '\n';

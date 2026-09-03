@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <numeric>
 
 namespace PlutoGE::render
@@ -28,6 +29,15 @@ namespace PlutoGE::render
                 result += fraction * static_cast<float>(index % base);
                 index /= base;
             }
+            return result;
+        }
+
+        std::array<float, 16> RowMajor(const glm::mat4 &matrix)
+        {
+            std::array<float, 16> result{};
+            for (std::size_t row = 0; row < 4; ++row)
+                for (std::size_t column = 0; column < 4; ++column)
+                    result[row * 4 + column] = matrix[column][row];
             return result;
         }
 
@@ -156,6 +166,10 @@ namespace PlutoGE::render
         m_drawCount = 0;
         m_temporalFrameIndex = 0;
         m_previousTemporalJitterNdc = glm::vec2(0.0f);
+        m_previousUpscalerViewProjection = glm::mat4(1.0f);
+        m_previousRenderSize = {};
+        m_previousOutputSize = {};
+        m_upscalerHistoryValid = false;
     }
 
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height,
@@ -173,8 +187,25 @@ namespace PlutoGE::render
             return std::chrono::duration<float, std::milli>(end - start).count();
         };
         m_timingStats = {};
-        if (!m_renderer || !m_device || width == 0 || height == 0 || !m_renderer->Resize(width, height))
+        if (!m_renderer || !m_device || width == 0 || height == 0)
             return false;
+        const rhi::Extent2D outputSize{width, height};
+        const bool useTemporalUpscaler = m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
+            m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology).supported;
+        const rhi::Extent2D renderSize = useTemporalUpscaler
+            ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
+            : outputSize;
+        if (renderSize.width == 0 || renderSize.height == 0)
+            return false;
+        const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize;
+        auto effectiveUpscaler = m_upscalerOptions;
+        if (!useTemporalUpscaler)
+            effectiveUpscaler.technology = rhi::TemporalUpscaler::None;
+        m_renderer->SetTemporalUpscalerOptions(effectiveUpscaler);
+        if (!m_renderer->Resize(renderSize.width, renderSize.height, outputSize.width, outputSize.height))
+            return false;
+        width = renderSize.width;
+        height = renderSize.height;
 
         m_sceneCommandCount = commands.size();
         std::vector<BasicDraw> draws;
@@ -438,15 +469,20 @@ namespace PlutoGE::render
             basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());
         const auto taa = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
                                       { return effect.type == BasicPostProcessEffectType::TAA; });
-        if (taa != basicEffects.end())
+        glm::vec2 jitterPixels(0.0f);
+        if (useTemporalUpscaler || taa != basicEffects.end())
         {
             const std::uint64_t sample = m_temporalFrameIndex++ % 16u + 1u;
-            const float strength = std::clamp(taa->parameters[1].w, 0.0f, 2.0f);
-            const glm::vec2 jitterPixels{Halton(sample, 2u) - 0.5f, Halton(sample, 3u) - 0.5f};
-            const glm::vec2 jitterNdc = jitterPixels * strength *
+            const float strength = taa != basicEffects.end()
+                                       ? std::clamp(taa->parameters[1].w, 0.0f, 2.0f)
+                                       : 1.0f;
+            jitterPixels = glm::vec2(Halton(sample, 2u) - 0.5f,
+                                     Halton(sample, 3u) - 0.5f) * strength;
+            const glm::vec2 jitterNdc = jitterPixels *
                                         glm::vec2(2.0f / static_cast<float>(width),
                                                   2.0f / static_cast<float>(height));
-            taa->parameters[2] = {jitterNdc * 0.5f, m_previousTemporalJitterNdc * 0.5f};
+            if (taa != basicEffects.end())
+                taa->parameters[2] = {jitterNdc * 0.5f, m_previousTemporalJitterNdc * 0.5f};
             projection[2][0] += jitterNdc.x;
             projection[2][1] += jitterNdc.y;
             m_previousTemporalJitterNdc = jitterNdc;
@@ -456,10 +492,59 @@ namespace PlutoGE::render
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
+        glm::mat4 unjitteredProjection = projection;
+        unjitteredProjection[2][0] -= width != 0 ? jitterPixels.x * 2.0f / static_cast<float>(width) : 0.0f;
+        unjitteredProjection[2][1] -= height != 0 ? jitterPixels.y * 2.0f / static_cast<float>(height) : 0.0f;
+        const glm::mat4 currentUnjitteredViewProjection = unjitteredProjection * cameraData.view;
+        rhi::TemporalUpscalerFrame upscalerFrame{};
+        if (useTemporalUpscaler)
+        {
+            const glm::mat4 clipToPrevious = m_upscalerHistoryValid
+                ? m_previousUpscalerViewProjection * glm::inverse(currentUnjitteredViewProjection)
+                : glm::mat4(1.0f);
+            const glm::mat4 inverseView = glm::inverse(cameraData.view);
+            const glm::vec3 cameraPosition(inverseView[3]);
+            const glm::vec3 cameraRight = glm::normalize(glm::vec3(inverseView[0]));
+            const glm::vec3 cameraUp = glm::normalize(glm::vec3(inverseView[1]));
+            const glm::vec3 cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
+            upscalerFrame.renderSize = renderSize;
+            upscalerFrame.outputSize = outputSize;
+            upscalerFrame.jitterPixels = {jitterPixels.x, jitterPixels.y};
+            // BasicLit writes signed motion in normalized UV units.
+            upscalerFrame.motionVectorScale = {1.0f, 1.0f};
+            upscalerFrame.cameraViewToClip = RowMajor(unjitteredProjection);
+            upscalerFrame.clipToCameraView = RowMajor(glm::inverse(unjitteredProjection));
+            upscalerFrame.clipToPreviousClip = RowMajor(clipToPrevious);
+            upscalerFrame.previousClipToClip = RowMajor(glm::inverse(clipToPrevious));
+            upscalerFrame.cameraPosition = {cameraPosition.x, cameraPosition.y, cameraPosition.z};
+            upscalerFrame.cameraRight = {cameraRight.x, cameraRight.y, cameraRight.z};
+            upscalerFrame.cameraUp = {cameraUp.x, cameraUp.y, cameraUp.z};
+            upscalerFrame.cameraForward = {cameraForward.x, cameraForward.y, cameraForward.z};
+            upscalerFrame.cameraNear = cameraData.nearPlane;
+            upscalerFrame.cameraFar = cameraData.farPlane;
+            upscalerFrame.cameraVerticalFovRadians =
+                2.0f * std::atan(1.0f / std::max(std::abs(unjitteredProjection[1][1]), 0.0001f));
+            upscalerFrame.cameraAspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            upscalerFrame.frameIndex = m_temporalFrameIndex;
+            upscalerFrame.resetHistory = !m_upscalerHistoryValid || resolutionChanged;
+        }
         const auto setupEnd = std::chrono::steady_clock::now();
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
-                           debugView);
+                           debugView, useTemporalUpscaler ? &upscalerFrame : nullptr);
+        if (useTemporalUpscaler)
+        {
+            m_previousUpscalerViewProjection = currentUnjitteredViewProjection;
+            m_previousRenderSize = renderSize;
+            m_previousOutputSize = outputSize;
+            m_upscalerHistoryValid = true;
+        }
+        else
+        {
+            m_upscalerHistoryValid = false;
+            m_previousRenderSize = {};
+            m_previousOutputSize = {};
+        }
         const auto &frameStats = m_renderer->GetFrameStats();
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;

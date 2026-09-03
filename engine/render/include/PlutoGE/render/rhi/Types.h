@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -80,6 +81,42 @@ namespace PlutoGE::render::rhi
         Always
     };
 
+    enum class TemporalUpscaler : std::uint8_t
+    {
+        None,
+        Dlss
+    };
+
+    enum class UpscalerQuality : std::uint8_t
+    {
+        Performance,
+        Balanced,
+        Quality,
+        UltraPerformance,
+        Dlaa
+    };
+
+    struct Extent2D
+    {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        auto operator<=>(const Extent2D &) const = default;
+    };
+
+    struct TemporalUpscalerSupport
+    {
+        bool supported = false;
+        std::string reason;
+    };
+
+    struct TemporalUpscalerOptions
+    {
+        TemporalUpscaler technology = TemporalUpscaler::None;
+        UpscalerQuality quality = UpscalerQuality::Quality;
+        bool hdr = true;
+        bool autoExposure = true;
+    };
+
     template <typename Tag>
     struct Handle
     {
@@ -96,6 +133,38 @@ namespace PlutoGE::render::rhi
     using SamplerHandle = Handle<struct SamplerTag>;
     using PipelineHandle = Handle<struct PipelineTag>;
     using RenderPassHandle = Handle<struct RenderPassTag>;
+
+    // Backend-neutral inputs for temporal reconstruction. Matrices are stored
+    // row-major so SDK adapters do not depend on the engine's math library.
+    struct TemporalUpscalerFrame
+    {
+        TextureHandle color;
+        TextureHandle depth;
+        TextureHandle motionVectors;
+        TextureHandle output;
+        Extent2D renderSize;
+        Extent2D outputSize;
+        std::array<float, 2> jitterPixels{};
+        std::array<float, 2> motionVectorScale{1.0f, 1.0f};
+        std::array<float, 16> cameraViewToClip{};
+        std::array<float, 16> clipToCameraView{};
+        std::array<float, 16> clipToPreviousClip{};
+        std::array<float, 16> previousClipToClip{};
+        std::array<float, 3> cameraPosition{};
+        std::array<float, 3> cameraUp{};
+        std::array<float, 3> cameraRight{};
+        std::array<float, 3> cameraForward{};
+        float cameraNear = 0.1f;
+        float cameraFar = 1000.0f;
+        float cameraVerticalFovRadians = 1.0f;
+        float cameraAspectRatio = 1.0f;
+        float preExposure = 1.0f;
+        std::uint64_t frameIndex = 0;
+        bool resetHistory = false;
+        bool depthInverted = true;
+        bool motionVectorsIncludeCamera = true;
+        bool motionVectorsJittered = false;
+    };
 
     struct Viewport
     {

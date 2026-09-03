@@ -2866,6 +2866,7 @@ namespace PlutoGE::ui
         assets::RuntimeUpscalerMode projectRuntimeUpscaler = assets::RuntimeUpscalerMode::None;
         float projectRuntimeRenderScale = 1.0f;
         float projectRuntimeUpscaleSharpness = 0.25f;
+        render::rhi::UpscalerQuality projectRuntimeDlssQuality = render::rhi::UpscalerQuality::Quality;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         std::string projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
@@ -2899,6 +2900,7 @@ namespace PlutoGE::ui
             projectRuntimeUpscaler = manifest.runtimeUpscaler;
             projectRuntimeRenderScale = manifest.runtimeRenderScale;
             projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
+            projectRuntimeDlssQuality = manifest.runtimeDlssQuality;
             projectEditorFontSize = manifest.editorFontSize;
             projectEditorFont = manifest.editorFont;
         };
@@ -3712,12 +3714,12 @@ namespace PlutoGE::ui
                     {
                         ImGui::TextDisabled("The project backend is authoritative; editor presentation is handled by the active compositor backend.");
                     }
-                    const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
-                                                           ? "Spatial"
-                                                           : "None";
+                    const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial ? "Spatial"
+                                                        : projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ? "DLSS"
+                                                                                                                       : "None";
                     if (ImGui::BeginCombo("Runtime Upscaler", runtimeUpscalerLabel))
                     {
-                        constexpr std::array<const char *, 2> upscalerLabels = {"None", "Spatial"};
+                        constexpr std::array<const char *, 3> upscalerLabels = {"None", "Spatial", "DLSS"};
                         for (int modeIndex = 0; modeIndex < static_cast<int>(upscalerLabels.size()); ++modeIndex)
                         {
                             const auto mode = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
@@ -3729,10 +3731,29 @@ namespace PlutoGE::ui
                         }
                         ImGui::EndCombo();
                     }
-                    ImGui::BeginDisabled(projectRuntimeUpscaler == assets::RuntimeUpscalerMode::None);
+                    ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
                     ImGui::SliderFloat("Runtime Render Scale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
                     ImGui::SliderFloat("Runtime Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
                     ImGui::EndDisabled();
+                    if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss)
+                    {
+                        constexpr std::array<const char *, 5> qualityLabels = {
+                            "Performance", "Balanced", "Quality", "Ultra Performance", "DLAA"};
+                        const auto qualityIndex = static_cast<std::size_t>(
+                            std::clamp(static_cast<int>(projectRuntimeDlssQuality), 0, 4));
+                        if (ImGui::BeginCombo("DLSS Quality", qualityLabels[qualityIndex]))
+                        {
+                            for (std::size_t index = 0; index < qualityLabels.size(); ++index)
+                            {
+                                const bool selected = qualityIndex == index;
+                                if (ImGui::Selectable(qualityLabels[index], selected))
+                                    projectRuntimeDlssQuality = static_cast<render::rhi::UpscalerQuality>(index);
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
                     if (ImGui::SliderFloat("Editor Font Size", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
                     {
                         m_panelManager.SetEditorFontSize(projectEditorFontSize);
@@ -3792,6 +3813,7 @@ namespace PlutoGE::ui
                         manifest.runtimeUpscaler = projectRuntimeUpscaler;
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
                         manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
+                        manifest.runtimeDlssQuality = projectRuntimeDlssQuality;
                         manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
                         manifest.editorFont = projectEditorFont;
                         const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();

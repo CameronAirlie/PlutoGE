@@ -185,6 +185,62 @@ target_include_directories(PlutoGERender PUBLIC
 target_compile_definitions(PlutoGERender PRIVATE
     PLUTO_RHI_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
+option(PLUTO_ENABLE_STREAMLINE "Enable NVIDIA Streamline/DLSS for the Vulkan RHI" OFF)
+set(PLUTO_STREAMLINE_SDK_ROOT "" CACHE PATH "Path to an extracted NVIDIA Streamline SDK release")
+set(PLUTO_STREAMLINE_PROJECT_ID "" CACHE STRING "NVIDIA Streamline project GUID")
+if (PLUTO_ENABLE_STREAMLINE)
+    if (NOT WIN32)
+        message(FATAL_ERROR "PlutoGE's Streamline integration currently supports Windows only")
+    endif()
+    if (NOT EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/include/sl.h")
+        message(FATAL_ERROR "PLUTO_STREAMLINE_SDK_ROOT must point to an extracted Streamline SDK release")
+    endif()
+    if (PLUTO_STREAMLINE_PROJECT_ID STREQUAL "")
+        message(FATAL_ERROR "PLUTO_STREAMLINE_PROJECT_ID must be the GUID registered for this application")
+    endif()
+    target_include_directories(PlutoGERender PRIVATE "${PLUTO_STREAMLINE_SDK_ROOT}/include")
+    target_compile_definitions(PlutoGERender PRIVATE
+        PLUTO_HAS_STREAMLINE=1
+        PLUTO_STREAMLINE_PROJECT_ID="${PLUTO_STREAMLINE_PROJECT_ID}")
+
+    set(PLUTO_STREAMLINE_RUNTIME_DLLS)
+    set(PLUTO_STREAMLINE_REQUIRED_DLL_NAMES
+        sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll)
+    foreach(runtime_dll IN LISTS PLUTO_STREAMLINE_REQUIRED_DLL_NAMES)
+        if (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/${runtime_dll}")
+            list(APPEND PLUTO_STREAMLINE_RUNTIME_DLLS
+                 "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/${runtime_dll}")
+        endif()
+    endforeach()
+    list(LENGTH PLUTO_STREAMLINE_RUNTIME_DLLS PLUTO_STREAMLINE_RUNTIME_DLL_COUNT)
+    if (NOT PLUTO_STREAMLINE_RUNTIME_DLLS)
+        message(WARNING "The Streamline SDK has no runtime DLLs under bin/x64; DLSS will compile but remain unavailable at runtime")
+    elseif (NOT PLUTO_STREAMLINE_RUNTIME_DLL_COUNT EQUAL 4)
+        message(FATAL_ERROR "The Streamline release must provide sl.interposer.dll, sl.common.dll, sl.dlss.dll, and nvngx_dlss.dll")
+    else()
+        install(FILES ${PLUTO_STREAMLINE_RUNTIME_DLLS} DESTINATION . COMPONENT Runtime)
+    endif()
+    # Cache the resolved list so the top-level executable targets, which are
+    # declared after engine/render, can attach their post-build copy steps.
+    set(PLUTO_STREAMLINE_RUNTIME_DLLS "${PLUTO_STREAMLINE_RUNTIME_DLLS}"
+        CACHE INTERNAL "Resolved Streamline runtime modules" FORCE)
+    if (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/LICENSE.txt")
+        install(FILES "${PLUTO_STREAMLINE_SDK_ROOT}/LICENSE.txt"
+                DESTINATION Licenses/ThirdParty RENAME Streamline-LICENSE.txt COMPONENT Runtime)
+    elseif (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/license.txt")
+        install(FILES "${PLUTO_STREAMLINE_SDK_ROOT}/license.txt"
+                DESTINATION Licenses/ThirdParty RENAME Streamline-LICENSE.txt COMPONENT Runtime)
+    endif()
+    if (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/nvngx_dlss.license.txt")
+        install(FILES "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/nvngx_dlss.license.txt"
+                DESTINATION Licenses/ThirdParty RENAME DLSS-LICENSE.txt COMPONENT Runtime)
+    endif()
+else()
+    set(PLUTO_STREAMLINE_RUNTIME_DLLS ""
+        CACHE INTERNAL "Resolved Streamline runtime modules" FORCE)
+    target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_STREAMLINE=0)
+endif()
+
 target_link_libraries(PlutoGERender PUBLIC
     # Add dependencies here
     PlutoGE::Platform

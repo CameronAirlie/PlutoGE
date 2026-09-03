@@ -13,7 +13,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     const float4 center = sceneTexture.Sample(uv);
-    float2 velocity = (motionTexture.Sample(uv).xy * 2.0 - 1.0) * pass.parameters[0].x * pass.parameters[0].y;
+    float2 velocity = motionTexture.Sample(uv).xy * pass.parameters[0].x * pass.parameters[0].y;
     const float maximumUvRadius = pass.parameters[0].z * max(pass.inverseResolution.x, pass.inverseResolution.y);
     const float lengthSquared = dot(velocity, velocity);
     if (lengthSquared < pass.parameters[0].w * pass.parameters[0].w * 0.000001)

@@ -254,6 +254,7 @@ namespace PlutoGE::core
                 m_window.Close();
                 return false;
             }
+            m_rhiRenderService.SetTemporalUpscalerOptions(m_config.temporalUpscaler);
         }
         catch (const std::exception &error)
         {

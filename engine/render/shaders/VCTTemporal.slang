@@ -43,7 +43,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float currentViewDepth = max(-mul(pass.view, float4(position, 1.0)).z, 0.0);
     if (pass.hasHistory == 0) return float4(current, currentViewDepth);
     const float2 orientation = float2(1.0, pass.flipY != 0 ? -1.0 : 1.0);
-    const float2 motion = (motionTexture.Sample(uv).xy * 2.0 - 1.0) * orientation;
+    const float2 motion = motionTexture.Sample(uv).xy * orientation;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0)) return float4(current, currentViewDepth);
     const float4 metadata = historyMetadata.Sample(historyUv);

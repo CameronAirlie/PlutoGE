@@ -307,13 +307,19 @@ namespace PlutoGE::render
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
         void Shutdown();
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
-        bool Resize(std::uint32_t width, std::uint32_t height);
+        bool Resize(std::uint32_t width, std::uint32_t height,
+                    std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
+        void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
+        {
+            m_upscalerOptions = options;
+        }
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                     std::span<const BasicDraw> draws,
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},
                     std::span<const BasicDraw> shadowDraws = {},
-                    PostProcessDebugView debugView = PostProcessDebugView::None);
+                    PostProcessDebugView debugView = PostProcessDebugView::None,
+                    const rhi::TemporalUpscalerFrame *upscalerFrame = nullptr);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -322,6 +328,8 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept { return m_motionTarget.Get(); }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept { return m_height; }
+        [[nodiscard]] std::uint32_t GetOutputWidth() const noexcept { return m_outputWidth; }
+        [[nodiscard]] std::uint32_t GetOutputHeight() const noexcept { return m_outputHeight; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
         [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
 
@@ -342,6 +350,9 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::Buffer &AcquireVctBuffer(std::size_t index);
         void ResetVctResources();
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
+        [[nodiscard]] rhi::Texture &AcquirePostProcessTarget(std::size_t index,
+                                                            std::uint32_t width,
+                                                            std::uint32_t height);
         void EnsureShadowTargets(const BasicLighting &lighting);
 
         rhi::IRenderDevice *m_device = nullptr;
@@ -388,6 +399,7 @@ namespace PlutoGE::render
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
         // screen-tile corruption. Keep one stable output per ordinary pass.
         std::vector<rhi::Texture> m_postProcessPassTargets;
+        std::vector<rhi::Extent2D> m_postProcessPassTargetSizes;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
@@ -434,6 +446,7 @@ namespace PlutoGE::render
         std::uint8_t m_ssaoHistoryIndex = 0;
         bool m_ssaoHistoryValid = false;
         rhi::Texture m_depthTarget;
+        rhi::Texture m_temporalUpscalerOutput;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
         std::array<std::uint32_t, 4> m_shadowResolutions{};
@@ -441,6 +454,11 @@ namespace PlutoGE::render
         std::array<bool, 4> m_shadowCacheValid{};
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
+        std::uint32_t m_outputWidth = 0;
+        std::uint32_t m_outputHeight = 0;
+        std::uint32_t m_postProcessWidth = 0;
+        std::uint32_t m_postProcessHeight = 0;
+        rhi::TemporalUpscalerOptions m_upscalerOptions;
         std::uint64_t m_frameIndex = 0;
         glm::mat4 m_inverseViewProjection{1.0f};
         glm::mat4 m_postProcessView{1.0f};

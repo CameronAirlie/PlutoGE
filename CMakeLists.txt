@@ -31,6 +31,17 @@ if (PLUTO_BUILD_RUNTIME)
     add_subdirectory(runtime)
 endif()
 
+if (PLUTO_ENABLE_STREAMLINE AND PLUTO_STREAMLINE_RUNTIME_DLLS)
+    foreach(runtime_target PlutoGEEditor PlutoGERuntime)
+        if (TARGET ${runtime_target})
+            add_custom_command(TARGET ${runtime_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${PLUTO_STREAMLINE_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${runtime_target}>"
+                COMMAND_EXPAND_LISTS VERBATIM)
+        endif()
+    endforeach()
+endif()
+
 if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()

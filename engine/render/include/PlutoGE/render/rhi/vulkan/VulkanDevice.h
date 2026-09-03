@@ -37,6 +37,9 @@ namespace PlutoGE::render::rhi::vulkan
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::Vulkan; }
         [[nodiscard]] bool UsesZeroToOneClipDepth() const noexcept override { return true; }
+        [[nodiscard]] TemporalUpscalerSupport GetTemporalUpscalerSupport(TemporalUpscaler) const override;
+        [[nodiscard]] Extent2D GetOptimalRenderSize(const TemporalUpscalerOptions &options,
+                                                    Extent2D outputSize) const override;
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &, std::span<const std::byte> = {}) override;
@@ -49,6 +52,8 @@ namespace PlutoGE::render::rhi::vulkan
         void DestroySampler(SamplerHandle) override;
         void DestroyPipeline(PipelineHandle) override;
         [[nodiscard]] ICommandContext &GetImmediateContext() override;
+        bool EvaluateTemporalUpscaler(const TemporalUpscalerOptions &options,
+                                      const TemporalUpscalerFrame &frame) override;
         [[nodiscard]] RenderDeviceTimingStats GetTimingStats() const override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.

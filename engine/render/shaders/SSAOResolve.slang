@@ -103,7 +103,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (pass.parameters[5].w > 0.5)
     {
         const float2 orientation = float2(1.0, pass.flipY != 0 ? -1.0 : 1.0);
-        const float2 motion = (motionTexture.Sample(textureUv).xy * 2.0 - 1.0) * orientation;
+        const float2 motion = motionTexture.Sample(textureUv).xy * orientation;
         const float2 historyUv = textureUv - motion;
         if (all(historyUv >= 0.0) && all(historyUv <= 1.0))
         {

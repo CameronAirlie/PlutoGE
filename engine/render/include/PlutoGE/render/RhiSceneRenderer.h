@@ -44,6 +44,11 @@ namespace PlutoGE::render
 
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
         void Shutdown();
+        void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
+        {
+            m_upscalerOptions = options;
+        }
+        void ResetTemporalHistory() noexcept { m_upscalerHistoryValid = false; }
         bool Render(std::uint32_t width, std::uint32_t height,
                     const CameraData &cameraData, const BasicLighting &lighting,
                     std::span<const RenderCommand> commands,
@@ -73,5 +78,10 @@ namespace PlutoGE::render
         RhiSceneTimingStats m_timingStats;
         std::uint64_t m_temporalFrameIndex = 0;
         glm::vec2 m_previousTemporalJitterNdc{0.0f};
+        rhi::TemporalUpscalerOptions m_upscalerOptions;
+        glm::mat4 m_previousUpscalerViewProjection{1.0f};
+        rhi::Extent2D m_previousRenderSize;
+        rhi::Extent2D m_previousOutputSize;
+        bool m_upscalerHistoryValid = false;
     };
 }

@@ -24,8 +24,9 @@ namespace PlutoGE::render
 
         explicit operator bool() const noexcept { return static_cast<bool>(m_pipeline); }
         void SetViewport(int width, int height);
-        void BeginFrame(rhi::TextureHandle target);
-        void EndFrame();
+        // The flags are false when UI is appended to an already active scene frame.
+        void BeginFrame(rhi::TextureHandle target, bool beginSubmission = true);
+        void EndFrame(bool submit = true);
 
         Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                     Rml::Span<const int> indices) override;

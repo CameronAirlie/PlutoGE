@@ -96,7 +96,8 @@ namespace PlutoGE::render
                     std::span<IPostProcessEffect *const> postProcessEffects = {},
                     std::span<const BasicPostProcessEffect> atmosphereEffects = {},
                     const TexturePixelReader &texturePixelReader = {},
-                    PostProcessDebugView debugView = PostProcessDebugView::None);
+                    PostProcessDebugView debugView = PostProcessDebugView::None,
+                    bool submit = true);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept;

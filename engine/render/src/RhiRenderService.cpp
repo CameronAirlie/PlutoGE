@@ -53,14 +53,24 @@ namespace PlutoGE::render
             sceneRenderer->SetTemporalUpscalerOptions(m_upscalerOptions);
             m_sceneRenderer = std::move(sceneRenderer);
         }
+        // Let the first UI frame initialize its pipelines and upload resources
+        // outside an active scene command buffer. Subsequent frames can safely
+        // append UI rendering to the scene submission.
+        const bool combineRuntimeUiSubmission = scene && scene->HasRmlRuntimeUI() &&
+                                                RmlUiRuntime::Get().IsInitialized() &&
+                                                m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
-                                     cameraData, lighting, commands, commands, {}, {}, texturePixelReader))
+                                     cameraData, lighting, commands, commands, {}, {}, texturePixelReader,
+                                     PostProcessDebugView::None, !combineRuntimeUiSubmission))
             return false;
         if (scene && scene->HasRmlRuntimeUI())
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
                                          static_cast<int>(m_swapchain->GetWidth()),
                                          static_cast<int>(m_swapchain->GetHeight()), ++m_frameSequence,
-                                         cameraData.view, cameraData.projection);
+                                         cameraData.view, cameraData.projection,
+                                         !combineRuntimeUiSubmission);
+        if (combineRuntimeUiSubmission)
+            m_device->GetImmediateContext().Submit();
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
     }
 

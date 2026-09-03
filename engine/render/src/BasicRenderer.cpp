@@ -930,7 +930,8 @@ namespace PlutoGE::render
                                std::span<const BasicDraw> shadowDraws,
                                PostProcessDebugView debugView,
                                const rhi::TemporalUpscalerFrame *upscalerFrame,
-                               const glm::mat4 *motionViewProjection)
+                               const glm::mat4 *motionViewProjection,
+                               bool submit)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -1437,9 +1438,12 @@ namespace PlutoGE::render
             if (draw.mesh && draw.mesh->IsValid())
                 m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
-        const auto submitStart = std::chrono::steady_clock::now();
-        commands.Submit();
-        m_timingStats.submitMs = elapsedMs(submitStart, std::chrono::steady_clock::now());
+        if (submit)
+        {
+            const auto submitStart = std::chrono::steady_clock::now();
+            commands.Submit();
+            m_timingStats.submitMs = elapsedMs(submitStart, std::chrono::steady_clock::now());
+        }
     }
 
     rhi::Buffer &BasicRenderer::AcquirePostProcessBuffer(std::size_t index)

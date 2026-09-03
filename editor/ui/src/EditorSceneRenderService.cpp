@@ -304,15 +304,24 @@ namespace PlutoGE::ui
 
         try
         {
+            // Initialization creates GPU resources, so keep the first runtime
+            // UI frame independent. Once initialized, append it to the active
+            // scene command buffer and submit both together.
+            const bool combineRuntimeUiSubmission = m_isVulkan && scene && scene->HasRmlRuntimeUI() &&
+                                                    render::RmlUiRuntime::Get().IsInitialized();
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
-                                         postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView))
+                                         postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView,
+                                         !combineRuntimeUiSubmission))
                 return false;
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
             if (scene && scene->HasRmlRuntimeUI())
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
                                                       static_cast<int>(width), static_cast<int>(height),
                                                       ++m_frameSequence, cameraData.view,
-                                                      cameraData.projection);
+                                                      cameraData.projection,
+                                                      !combineRuntimeUiSubmission);
+            if (combineRuntimeUiSubmission)
+                m_device->GetImmediateContext().Submit();
         }
         catch (const std::exception &error)
         {

@@ -109,12 +109,13 @@ namespace PlutoGE::render
         SetTransform(nullptr);
     }
 
-    void RmlUiRhiRenderer::BeginFrame(rhi::TextureHandle target)
+    void RmlUiRhiRenderer::BeginFrame(rhi::TextureHandle target, bool beginSubmission)
     {
         if (!m_device || !target || m_frameActive)
             return;
         auto &commands = m_device->GetImmediateContext();
-        commands.BeginFrame("Runtime UI");
+        if (beginSubmission)
+            commands.BeginFrame("Runtime UI");
         rhi::RenderingInfo info;
         info.colorAttachments = {target};
         info.width = static_cast<std::uint32_t>(m_width);
@@ -128,13 +129,14 @@ namespace PlutoGE::render
         ApplyScissor();
     }
 
-    void RmlUiRhiRenderer::EndFrame()
+    void RmlUiRhiRenderer::EndFrame(bool submit)
     {
         if (!m_device || !m_frameActive)
             return;
         auto &commands = m_device->GetImmediateContext();
         commands.EndRendering();
-        commands.Submit();
+        if (submit)
+            commands.Submit();
         m_frameActive = false;
     }
 

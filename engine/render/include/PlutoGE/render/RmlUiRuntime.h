@@ -82,7 +82,8 @@ namespace PlutoGE::render
                     const std::function<void()> &drawWorldSurfaces = {});
         void RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device, rhi::TextureHandle target,
                        int width, int height, std::uint64_t frameSequence,
-                       const glm::mat4 &view, const glm::mat4 &projection);
+                       const glm::mat4 &view, const glm::mat4 &projection,
+                       bool manageSubmission = true);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }

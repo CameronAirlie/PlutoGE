@@ -208,7 +208,11 @@ namespace PlutoGE::ui
         ImGui::Text("RHI uniform upload: %llu bytes, %.2f ms CPU",
                     static_cast<unsigned long long>(rhi.uniformBytesUploaded), rhi.uniformUploadCpuMs);
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
-        ImGui::Text("RHI scene CPU: %.2f ms", rhiScene.totalMs);
+        const float activeRhiSceneCpuMs = std::max(0.0f, rhiScene.totalMs - rhi.frameFenceWaitMs);
+        const float activeRhiBeginCpuMs = std::max(0.0f, rhiScene.beginFrameMs - rhi.frameFenceWaitMs);
+        ImGui::Text("RHI scene active CPU: %.2f ms", activeRhiSceneCpuMs);
+        ImGui::Text("RHI scene elapsed: %.2f ms (%.2f ms waiting for GPU)",
+                    rhiScene.totalMs, rhi.frameFenceWaitMs);
         ImGui::Text("  Translation: %.2f ms (%llu groups / %llu instances, %llu shadow candidates)",
                     rhiScene.commandTranslationMs,
                     static_cast<unsigned long long>(rhiScene.visibleDrawCount),
@@ -231,8 +235,8 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount));
         ImGui::Text("  Setup: %.2f ms, recording: %.2f ms",
                     rhiScene.sceneSetupMs, rhiScene.renderRecordingMs);
-        ImGui::Text("  Begin/fence: %.2f ms, shadows: %.2f ms, geometry: %.2f ms",
-                    rhiScene.beginFrameMs, rhiScene.shadowRecordingMs,
+        ImGui::Text("  Begin active: %.2f ms, GPU wait: %.2f ms, shadows: %.2f ms, geometry: %.2f ms",
+                    activeRhiBeginCpuMs, rhi.frameFenceWaitMs, rhiScene.shadowRecordingMs,
                     rhiScene.geometryRecordingMs);
         ImGui::Text("  Post process: %.2f ms, upscaler: %.2f ms, submit: %.2f ms",
                     rhiScene.postProcessRecordingMs, rhiScene.temporalUpscalerMs,

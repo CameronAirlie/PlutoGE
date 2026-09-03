@@ -1611,7 +1611,7 @@ namespace PlutoGE::render
     void RmlUiRuntime::RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device,
                                  rhi::TextureHandle target, int width, int height,
                                  std::uint64_t frameSequence, const glm::mat4 &view,
-                                 const glm::mat4 &projection)
+                                 const glm::mat4 &projection, bool manageSubmission)
     {
         using Clock = std::chrono::steady_clock;
         const auto elapsedMs = [](const auto begin, const auto end)
@@ -1663,7 +1663,7 @@ namespace PlutoGE::render
 
         m_rhiRenderer->SetViewport(width, height);
         const auto beginFrameBegin = Clock::now();
-        m_rhiRenderer->BeginFrame(target);
+        m_rhiRenderer->BeginFrame(target, manageSubmission);
         m_cpuTiming.beginFrameMs = elapsedMs(beginFrameBegin, Clock::now());
 
         const auto renderBegin = Clock::now();
@@ -1671,7 +1671,7 @@ namespace PlutoGE::render
         m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
 
         const auto endFrameBegin = Clock::now();
-        m_rhiRenderer->EndFrame();
+        m_rhiRenderer->EndFrame(manageSubmission);
         m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
     }
 }

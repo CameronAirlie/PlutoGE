@@ -181,7 +181,11 @@ namespace PlutoGE::ui
         report << "RHI uniform upload: " << rhi.uniformBytesUploaded << " bytes in "
                << rhi.uniformUploadCpuMs << " ms CPU\n";
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
-        report << "RHI scene total CPU: " << rhiScene.totalMs << " ms\n";
+        const float activeRhiSceneCpuMs = std::max(0.0f, rhiScene.totalMs - rhi.frameFenceWaitMs);
+        const float activeRhiBeginCpuMs = std::max(0.0f, rhiScene.beginFrameMs - rhi.frameFenceWaitMs);
+        report << "RHI scene active CPU: " << activeRhiSceneCpuMs << " ms\n";
+        report << "RHI scene elapsed: " << rhiScene.totalMs << " ms ("
+               << rhi.frameFenceWaitMs << " ms waiting for GPU)\n";
         report << "RHI command translation: " << rhiScene.commandTranslationMs << " ms ("
                << rhiScene.visibleDrawCount << " translated groups / "
                << rhiScene.visibleInstanceCount << " instances, "
@@ -199,7 +203,7 @@ namespace PlutoGE::ui
                << rhiScene.shadowCascadeUpdateCount << " updates\n";
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
-        report << "RHI begin/fence CPU: " << rhiScene.beginFrameMs << " ms\n";
+        report << "RHI begin active CPU: " << activeRhiBeginCpuMs << " ms\n";
         report << "RHI shadow recording CPU: " << rhiScene.shadowRecordingMs << " ms\n";
         report << "RHI geometry recording CPU: " << rhiScene.geometryRecordingMs << " ms\n";
         report << "RHI post-process recording CPU: " << rhiScene.postProcessRecordingMs << " ms\n";

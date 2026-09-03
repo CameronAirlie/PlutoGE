@@ -1,5 +1,3 @@
-#pragma once
-
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <imgui.h>

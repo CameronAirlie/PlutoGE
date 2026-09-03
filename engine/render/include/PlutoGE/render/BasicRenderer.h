@@ -327,7 +327,9 @@ namespace PlutoGE::render
                     std::span<const BasicDraw> shadowDraws = {},
                     PostProcessDebugView debugView = PostProcessDebugView::None,
                     const rhi::TemporalUpscalerFrame *upscalerFrame = nullptr,
-                    const glm::mat4 *motionViewProjection = nullptr);
+                    const glm::mat4 *motionViewProjection = nullptr,
+                    // Allows a caller to append overlays before one final submit.
+                    bool submit = true);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }

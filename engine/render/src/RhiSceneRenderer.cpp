@@ -187,7 +187,8 @@ namespace PlutoGE::render
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
                                   const TexturePixelReader &texturePixelReader,
-                                  PostProcessDebugView debugView)
+                                  PostProcessDebugView debugView,
+                                  bool submit)
     {
         const auto totalStart = std::chrono::steady_clock::now();
         const auto millisecondsBetween = [](const auto start, const auto end)
@@ -582,7 +583,8 @@ namespace PlutoGE::render
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
                            debugView, useTemporalUpscaler ? &upscalerFrame : nullptr,
-                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr);
+                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr,
+                           submit);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&

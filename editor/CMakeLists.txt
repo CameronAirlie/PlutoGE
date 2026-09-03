@@ -36,6 +36,7 @@ target_link_libraries(PlutoGEEditor PRIVATE
 )
 
 add_dependencies(PlutoGEEditor PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core)
+pluto_attach_streamline_runtime(PlutoGEEditor)
 
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEEditor POST_BUILD

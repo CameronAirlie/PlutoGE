@@ -144,17 +144,8 @@ namespace PlutoGE::assetimport
         {
             static const bool enabled = []()
             {
-#ifdef _WIN32
-                char *value = nullptr;
-                size_t valueLength = 0;
-                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_PROFILE_MESH_IMPORT");
-                const bool isEnabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
-                std::free(value);
-                return isEnabled;
-#else
                 const char *value = std::getenv("PLUTOGE_PROFILE_MESH_IMPORT");
                 return value != nullptr && value[0] != '\0' && value[0] != '0';
-#endif
             }();
             return enabled;
         }
@@ -236,18 +227,8 @@ namespace PlutoGE::assetimport
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
-#ifdef _WIN32
-            char *value = nullptr;
-            size_t valueLength = 0;
-            const errno_t result = _dupenv_s(&value, &valueLength, name);
-            const bool hasValue = result == 0 && value != nullptr && value[0] != '\0';
-            const bool isEnabled = hasValue ? value[0] != '0' : defaultValue;
-            std::free(value);
-            return isEnabled;
-#else
             const char *value = std::getenv(name);
             return value != nullptr && value[0] != '\0' ? value[0] != '0' : defaultValue;
-#endif
         }
 
         struct MeshCookOptions

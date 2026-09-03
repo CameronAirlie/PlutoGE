@@ -30,7 +30,7 @@
             return value / std::sqrt(lengthSquared);
         }
 
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
 #include <Windows.h>
 #include <mmreg.h>
 #include <xaudio2.h>
@@ -47,7 +47,7 @@ namespace PlutoGE::audio
 {
     namespace
     {
-#if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(_WIN32)
+#if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(PLUTOGE_USE_XAUDIO2)
         constexpr std::uint16_t kWaveFormatPcm = 0x0001;
         constexpr std::uint16_t kWaveFormatFloat = 0x0003;
         constexpr std::uint16_t kWaveFormatExtensible = 0xFFFE;
@@ -296,7 +296,7 @@ namespace PlutoGE::audio
         }
 #endif
 
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         float ToXAudioFilterFrequency(float cutoffHz, int sampleRate)
         {
             const float safeSampleRate = static_cast<float>((std::max)(sampleRate, 1));
@@ -379,7 +379,7 @@ namespace PlutoGE::audio
         m_initialized = true;
         return true;
 #else
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         if (m_initialized)
         {
             return true;
@@ -474,7 +474,7 @@ namespace PlutoGE::audio
             alcCloseDevice(device);
         }
 #else
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         if (auto *masterVoice = static_cast<IXAudio2MasteringVoice *>(m_masterVoice))
         {
             masterVoice->DestroyVoice();
@@ -508,7 +508,7 @@ namespace PlutoGE::audio
             return true;
         }
 
-#if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(_WIN32)
+#if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(PLUTOGE_USE_XAUDIO2)
         DecodedClip decodedClip;
         if (!LoadWaveFile(clipPath, decodedClip))
         {
@@ -666,7 +666,7 @@ namespace PlutoGE::audio
         }
 
 #else
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         auto *sourceVoice = static_cast<IXAudio2SourceVoice *>(it->second.sourceVoice);
         if (sourceVoice)
         {
@@ -832,7 +832,7 @@ namespace PlutoGE::audio
         }
 #endif
 
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         auto *sourceVoice = static_cast<IXAudio2SourceVoice *>(voice.sourceVoice);
         if (!sourceVoice)
         {
@@ -995,7 +995,7 @@ namespace PlutoGE::audio
 
     void AudioSystem::Update(const ListenerState &listener, const std::vector<EmitterState> &emitters, float deltaTime)
     {
-#ifndef _WIN32
+#if !defined(PLUTOGE_USE_XAUDIO2)
 #if !defined(PLUTOGE_USE_OPENAL_SOFT)
         (void)listener;
         (void)emitters;
@@ -1245,7 +1245,7 @@ namespace PlutoGE::audio
         }
 #endif
 
-#ifdef _WIN32
+#if defined(PLUTOGE_USE_XAUDIO2)
         auto *xaudio = static_cast<IXAudio2 *>(m_xaudio);
         if (!xaudio || !m_masterVoice)
         {

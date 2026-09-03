@@ -29,17 +29,8 @@ namespace PlutoGE::core
         {
             static const bool enabled = []()
             {
-#ifdef _WIN32
-                char *value = nullptr;
-                size_t valueLength = 0;
-                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_PROFILE_MESH_FINALIZE");
-                const bool isEnabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
-                std::free(value);
-                return isEnabled;
-#else
                 const char *value = std::getenv("PLUTOGE_PROFILE_MESH_FINALIZE");
                 return value != nullptr && value[0] != '\0' && value[0] != '0';
-#endif
             }();
             return enabled;
         }

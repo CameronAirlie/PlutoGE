@@ -409,25 +409,12 @@ namespace PlutoGE::assets
 
         std::filesystem::path GetEnvironmentPath(const char *name)
         {
-#ifdef _WIN32
-            char *value = nullptr;
-            size_t valueSize = 0;
-            if (_dupenv_s(&value, &valueSize, name) != 0 || value == nullptr)
-            {
-                return {};
-            }
-
-            std::filesystem::path result(value);
-            std::free(value);
-            return result;
-#else
             if (const char *value = std::getenv(name))
             {
                 return value;
             }
 
             return {};
-#endif
         }
 
         std::vector<std::filesystem::path> GetDotnetRootCandidates()

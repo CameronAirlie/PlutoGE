@@ -17,7 +17,10 @@ target_compile_definitions(PlutoGEAudio PRIVATE
     PLUTOGE_USE_OPENAL_SOFT=1
 )
 
-if (WIN32)
+if (WIN32 AND MSVC)
+    target_compile_definitions(PlutoGEAudio PRIVATE
+        PLUTOGE_USE_XAUDIO2=1
+    )
     target_link_libraries(PlutoGEAudio PUBLIC
         xaudio2
     )

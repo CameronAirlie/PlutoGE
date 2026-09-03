@@ -30,6 +30,7 @@ endif()
 target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm)
 
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
+pluto_attach_streamline_runtime(PlutoGERuntime)
 
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGERuntime POST_BUILD

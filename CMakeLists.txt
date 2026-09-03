@@ -23,23 +23,21 @@ add_subdirectory(engine)
 # their developer headers, libraries, samples, or data to the end-user package.
 add_subdirectory(third_party EXCLUDE_FROM_ALL)
 
+function(pluto_attach_streamline_runtime runtime_target)
+    if (PLUTO_ENABLE_STREAMLINE AND PLUTO_STREAMLINE_RUNTIME_DLLS)
+        add_custom_command(TARGET ${runtime_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${PLUTO_STREAMLINE_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${runtime_target}>"
+            COMMAND_EXPAND_LISTS VERBATIM)
+    endif()
+endfunction()
+
 if (PLUTO_BUILD_EDITOR)
     add_subdirectory(editor)
 endif()
 
 if (PLUTO_BUILD_RUNTIME)
     add_subdirectory(runtime)
-endif()
-
-if (PLUTO_ENABLE_STREAMLINE AND PLUTO_STREAMLINE_RUNTIME_DLLS)
-    foreach(runtime_target PlutoGEEditor PlutoGERuntime)
-        if (TARGET ${runtime_target})
-            add_custom_command(TARGET ${runtime_target} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${PLUTO_STREAMLINE_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${runtime_target}>"
-                COMMAND_EXPAND_LISTS VERBATIM)
-        endif()
-    endforeach()
 endif()
 
 if (BUILD_TESTING)

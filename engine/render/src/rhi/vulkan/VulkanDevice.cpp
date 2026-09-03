@@ -10,12 +10,14 @@
 #include <glm/gtc/packing.hpp>
 
 #if PLUTO_HAS_STREAMLINE
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <Windows.h>
 #include <sl.h>
 #include <sl_dlss.h>
 #include <sl_helpers_vk.h>
-#include <sl_security.h>
+#include "StreamlineSecurity.h"
 #endif
 
 #include <array>

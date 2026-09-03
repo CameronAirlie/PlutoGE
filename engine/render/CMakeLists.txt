@@ -203,26 +203,36 @@ if (PLUTO_ENABLE_STREAMLINE)
         PLUTO_HAS_STREAMLINE=1
         PLUTO_STREAMLINE_PROJECT_ID="${PLUTO_STREAMLINE_PROJECT_ID}")
 
-    set(PLUTO_STREAMLINE_RUNTIME_DLLS)
-    set(PLUTO_STREAMLINE_REQUIRED_DLL_NAMES
+    # Keep discovery results local while validating the SDK. The public cache
+    # entry is consumed by executable targets later in the configure pass and
+    # may contain results from an earlier configure.
+    set(_pluto_streamline_runtime_dlls)
+    set(_pluto_streamline_missing_dlls)
+    set(_pluto_streamline_required_dll_names
         sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll)
-    foreach(runtime_dll IN LISTS PLUTO_STREAMLINE_REQUIRED_DLL_NAMES)
+    foreach(runtime_dll IN LISTS _pluto_streamline_required_dll_names)
         if (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/${runtime_dll}")
-            list(APPEND PLUTO_STREAMLINE_RUNTIME_DLLS
+            list(APPEND _pluto_streamline_runtime_dlls
                  "${PLUTO_STREAMLINE_SDK_ROOT}/bin/x64/${runtime_dll}")
+        else()
+            list(APPEND _pluto_streamline_missing_dlls "${runtime_dll}")
         endif()
     endforeach()
-    list(LENGTH PLUTO_STREAMLINE_RUNTIME_DLLS PLUTO_STREAMLINE_RUNTIME_DLL_COUNT)
-    if (NOT PLUTO_STREAMLINE_RUNTIME_DLLS)
-        message(WARNING "The Streamline SDK has no runtime DLLs under bin/x64; DLSS will compile but remain unavailable at runtime")
-    elseif (NOT PLUTO_STREAMLINE_RUNTIME_DLL_COUNT EQUAL 4)
-        message(FATAL_ERROR "The Streamline release must provide sl.interposer.dll, sl.common.dll, sl.dlss.dll, and nvngx_dlss.dll")
+    if (NOT _pluto_streamline_runtime_dlls)
+        message(WARNING
+            "The Streamline SDK has no runtime DLLs under bin/x64; "
+            "DLSS will compile but remain unavailable at runtime. Missing: "
+            "${_pluto_streamline_missing_dlls}")
+    elseif (_pluto_streamline_missing_dlls)
+        message(FATAL_ERROR
+            "The Streamline release is incomplete. Missing from bin/x64: "
+            "${_pluto_streamline_missing_dlls}")
     else()
-        install(FILES ${PLUTO_STREAMLINE_RUNTIME_DLLS} DESTINATION . COMPONENT Runtime)
+        install(FILES ${_pluto_streamline_runtime_dlls} DESTINATION . COMPONENT Runtime)
     endif()
     # Cache the resolved list so the top-level executable targets, which are
     # declared after engine/render, can attach their post-build copy steps.
-    set(PLUTO_STREAMLINE_RUNTIME_DLLS "${PLUTO_STREAMLINE_RUNTIME_DLLS}"
+    set(PLUTO_STREAMLINE_RUNTIME_DLLS "${_pluto_streamline_runtime_dlls}"
         CACHE INTERNAL "Resolved Streamline runtime modules" FORCE)
     if (EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/LICENSE.txt")
         install(FILES "${PLUTO_STREAMLINE_SDK_ROOT}/LICENSE.txt"

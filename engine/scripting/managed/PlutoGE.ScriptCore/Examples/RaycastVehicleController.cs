@@ -25,8 +25,9 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private GameObject? centerOfMass = null;
 
     [SerializedField] private float mass    = 1250.0f;
+    [SerializedField] private float chassisAngularDrag = 0.15f;
     [SerializedField] private float wheelRadius    = 0.5f;
-    [SerializedField] private float drivenWheelInertia = 1.5f;
+    [SerializedField] private float drivenWheelInertia = 24.0f;
     [SerializedField] private float suspensionTravel    = 0.32f;
     [SerializedField] private float rideHeight    = 0.42f;
     [SerializedField] private float springStrength    = 24000.0f;
@@ -44,10 +45,19 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float rearGrip    = 5.0f;
     [SerializedField] private float gripLimit    = 1.5f;
     [SerializedField] private float driveGrip    = 1.0f;
+    [SerializedField] private float peakLateralSlipAngle = 12.0f;
+    [SerializedField] private float fullLateralSlipAngle = 30.0f;
+    [SerializedField] private float slidingTyreLateralGrip = 0.5f;
+    [SerializedField] private float frontLateralSlipTolerance = 1.5f;
+    [SerializedField] private float lateralGripLossRate = 12.0f;
+    [SerializedField] private float lateralGripRecoveryRate = 3.5f;
+    [SerializedField] private float frontLateralGripRecoveryRate = 12.0f;
+    [SerializedField] private float regripLateralSlipAngle = 11.0f;
+    [SerializedField] private float frontRegripLateralSlipAngle = 18.0f;
     [SerializedField] private float peakLongitudinalSlip = 0.12f;
     [SerializedField] private float fullLongitudinalSlip = 1.0f;
-    [SerializedField] private float spinningTyreLongitudinalGrip = 0.55f;
-    [SerializedField] private float spinningTyreLateralGrip = 0.15f;
+    [SerializedField] private float spinningTyreLongitudinalGrip = 0.7f;
+    [SerializedField] private float spinningTyreLateralGrip = 0.25f;
     [SerializedField] private float brakeGrip    = 1.0f;
     [SerializedField] private float handbrakeGrip    = 0.45f;
     [SerializedField] private float airDensity = 1.225f;
@@ -136,7 +146,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             _rigidbody.UseGravity = true;
             _rigidbody.FreezeRotation = false;
             _rigidbody.LinearDrag = 0.015f;
-            _rigidbody.AngularDrag = 0.75f;
+            _rigidbody.AngularDrag = MathF.Max(chassisAngularDrag, 0.0f);
             _rigidbody.Friction = 0.02f;
             _rigidbody.CenterOfMass = centerOfMass?.Position ?? Vector3.Zero;
         }
@@ -165,6 +175,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
 
         mass = vehicleSettings.Mass;
+        chassisAngularDrag = vehicleSettings.ChassisAngularDrag;
         wheelRadius = vehicleSettings.WheelRadius;
         drivenWheelInertia = vehicleSettings.DrivenWheelInertia;
         suspensionTravel = vehicleSettings.SuspensionTravel;
@@ -183,6 +194,15 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         rearGrip = vehicleSettings.RearGrip;
         gripLimit = vehicleSettings.GripLimit;
         driveGrip = vehicleSettings.DriveGrip;
+        peakLateralSlipAngle = vehicleSettings.PeakLateralSlipAngle;
+        fullLateralSlipAngle = vehicleSettings.FullLateralSlipAngle;
+        slidingTyreLateralGrip = vehicleSettings.SlidingTyreLateralGrip;
+        frontLateralSlipTolerance = vehicleSettings.FrontLateralSlipTolerance;
+        lateralGripLossRate = vehicleSettings.LateralGripLossRate;
+        lateralGripRecoveryRate = vehicleSettings.LateralGripRecoveryRate;
+        frontLateralGripRecoveryRate = vehicleSettings.FrontLateralGripRecoveryRate;
+        regripLateralSlipAngle = vehicleSettings.RegripLateralSlipAngle;
+        frontRegripLateralSlipAngle = vehicleSettings.FrontRegripLateralSlipAngle;
         peakLongitudinalSlip = vehicleSettings.PeakLongitudinalSlip;
         fullLongitudinalSlip = vehicleSettings.FullLongitudinalSlip;
         spinningTyreLongitudinalGrip = vehicleSettings.SpinningTyreLongitudinalGrip;
@@ -221,6 +241,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         if (_rigidbody is not null)
         {
             _rigidbody.Mass = MathF.Max(mass, 50.0f);
+            _rigidbody.AngularDrag = MathF.Max(chassisAngularDrag, 0.0f);
         }
     }
 
@@ -370,6 +391,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             BaseVisualPosition = visual?.Position ?? Vector3.Zero,
             BaseVisualRotation = visual?.Rotation ?? Vector3.Zero,
             VisualCompression = restCompression01,
+            LateralGripRetention = 1.0f,
         };
     }
 
@@ -436,6 +458,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 diagnostics?.Append($" | w{index}:MISS");
                 wheel.Grounded = false;
                 wheel.Compression = 0.0f;
+                wheel.LateralSlip = 0.0f;
                 _wheels[index] = wheel;
                 continue;
             }
@@ -470,17 +493,80 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var lateralSpeed = Vector3.Dot(pointVelocity, wheelRight);
             var forwardSpeed = Vector3.Dot(pointVelocity, wheelForward);
             var baseGrip = wheel.Steering ? frontGrip : rearGrip;
-            var wheelGrip = (!wheel.Steering && handbrake) ? handbrakeGrip : baseGrip;
+            // The handbrake only lowers the rear contact-patch budget while it
+            // is held. It must not manufacture a persistent sliding state.
+            var wheelGrip = (!wheel.Steering && handbrake)
+                ? baseGrip * Math.Clamp(handbrakeGrip, 0.0f, 1.0f)
+                : baseGrip;
             var lateralForce = -wheelRight * lateralSpeed * wheelGrip * _rigidbody.Mass * 0.25f;
             var normalLoad = MathF.Max(suspensionForce, _rigidbody.Mass * 9.81f * 0.12f);
             var lateralGripRatio = MathF.Max(wheelGrip, 0.0f) / MathF.Max(baseGrip, 0.01f);
             lateralForce = ClampMagnitude(lateralForce,
                 normalLoad * MathF.Max(gripLimit, 0.1f) * lateralGripRatio);
 
+            // A real tyre's lateral force peaks at a modest slip angle, then
+            // falls as it starts sliding. The previous force model merely
+            // clamped lateral force at the peak, so adding more steering could
+            // never make the contact patch lose grip.
+            var lateralSlipAngle = MathF.Atan2(
+                MathF.Abs(lateralSpeed),
+                MathF.Max(MathF.Abs(forwardSpeed), 1.0f)) * 180.0f / MathF.PI;
+            // Steering tyres need some additional slip-angle headroom: their
+            // heading changes before the chassis has had time to yaw into the
+            // corner. Without it, the front axle falls down the sliding side of
+            // the curve first and every drivetrain layout strongly understeers.
+            var slipTolerance = wheel.Steering
+                ? MathF.Max(frontLateralSlipTolerance, 0.1f)
+                : 1.0f;
+            var postPeakLateralSlip = SmoothStep(InverseLerp(
+                MathF.Max(peakLateralSlipAngle, 0.0f) * slipTolerance,
+                MathF.Max(fullLateralSlipAngle, peakLateralSlipAngle + 0.1f) * slipTolerance,
+                lateralSlipAngle));
+            var slidingLateralRetention = Lerp(
+                1.0f,
+                Math.Clamp(slidingTyreLateralGrip, 0.0f, 1.0f),
+                postPeakLateralSlip);
+            var wheelLockedByHandbrake = !wheel.Steering && handbrake;
+            if (wheelLockedByHandbrake)
+            {
+                // Deliberately leave LateralGripRetention untouched. Once the
+                // handbrake is released, measured slip below decides whether
+                // the tyre remains broken away or begins recovering.
+            }
+            else
+            {
+                if (slidingLateralRetention < wheel.LateralGripRetention)
+                {
+                    var lossBlend = 1.0f - MathF.Exp(-MathF.Max(lateralGripLossRate, 0.0f) * deltaTime);
+                    wheel.LateralGripRetention = Lerp(
+                        wheel.LateralGripRetention,
+                        slidingLateralRetention,
+                        lossBlend);
+                }
+                else if (lateralSlipAngle <= MathF.Max(
+                    wheel.Steering ? frontRegripLateralSlipAngle : regripLateralSlipAngle,
+                    0.0f))
+                {
+                    // Sliding tyres only recover after their heading is close
+                    // to their actual travel direction, and do so gradually.
+                    // Every wheel recovers from its own contact-patch state.
+                    // Front tyres can therefore bite again as soon as they are
+                    // aligned even while the rear axle is still sliding.
+                    var recoveryRate = wheel.Steering
+                        ? frontLateralGripRecoveryRate
+                        : lateralGripRecoveryRate;
+                    var recoveryBlend = 1.0f - MathF.Exp(-MathF.Max(recoveryRate, 0.0f) * deltaTime);
+                    wheel.LateralGripRetention = Lerp(
+                        wheel.LateralGripRetention,
+                        slidingLateralRetention,
+                        recoveryBlend);
+                }
+                lateralForce *= MathF.Min(slidingLateralRetention, wheel.LateralGripRetention);
+            }
+
             var tireForce = lateralForce;
             var driveShare = wheel.Steering ? driveSplit.Front * 0.5f : driveSplit.Rear * 0.5f;
             var drivenWheel = driveShare > 0.0f;
-            var wheelLockedByHandbrake = !wheel.Steering && handbrake;
             if (drivePower > 0.0f && driveShare > 0.0f && !wheelLockedByHandbrake)
             {
                 var speedLimiter = 1.0f - SmoothStep(Math.Clamp(MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward)) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f));
@@ -517,15 +603,38 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 // A tyre using most of its friction budget longitudinally has
                 // little cornering authority left. Base this loss on measured
                 // wheel slip rather than requested engine force.
-                tireForce = lateralForce * lateralGripRetention;
+                var lateralContribution = lateralForce * lateralGripRetention;
+                tireForce = lateralContribution;
                 var appliedDrive = ClampMagnitude(rawDrive, tractionLimit);
                 tireForce += appliedDrive;
+
+                // The contact patch is an ellipse: these tyres have different
+                // lateral and longitudinal limits. A circular cap based on the
+                // lower lateral limit incorrectly caused pure third-gear drive
+                // to wheelspin even though it was below longitudinal capacity.
+                // Normalized ellipse usage still makes acceleration consume
+                // rear cornering authority and permits power oversteer.
+                var lateralLimit = normalLoad * MathF.Max(gripLimit, 0.1f) * lateralGripRatio;
+                var longitudinalUsage = appliedDrive.Length() / MathF.Max(tractionLimit, 0.01f);
+                // Engine torque takes its requested share first. The rear
+                // tyre's lateral force then uses what remains in the ellipse.
+                // This preserves straight-line acceleration, avoids turning
+                // transmitted drive into unnecessary wheelspin, and removes
+                // enough rear cornering authority for throttle-on oversteer.
+                var remainingLateralRatio = MathF.Sqrt(MathF.Max(
+                    1.0f - longitudinalUsage * longitudinalUsage,
+                    0.0f));
+                var appliedLateral = ClampMagnitude(
+                    lateralContribution,
+                    lateralLimit * remainingLateralRatio);
+                tireForce = appliedDrive + appliedLateral;
 
                 // Torque which the contact patch cannot transmit accelerates
                 // the wheel instead of vanishing. Since this state stores tread
                 // speed (omega * radius), its acceleration is
                 // excessForce * radius^2 / rotationalInertia.
-                var excessDriveForce = MathF.Max(rawDrive.Length() - appliedDrive.Length(), 0.0f);
+                var transmittedDriveForce = MathF.Abs(Vector3.Dot(tireForce, wheelForward));
+                var excessDriveForce = MathF.Max(rawDrive.Length() - transmittedDriveForce, 0.0f);
                 var surfaceAcceleration = excessDriveForce * wheelRadius * wheelRadius /
                                           MathF.Max(drivenWheelInertia, 0.01f);
                 drivenWheelSurfaceAcceleration = MathF.Max(drivenWheelSurfaceAcceleration, surfaceAcceleration);
@@ -566,6 +675,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             if (handbrake && !wheel.Steering && MathF.Abs(forwardSpeed) > 0.1f)
             {
                 tireForce += -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brakePower * _rigidbody.Mass * 0.18f;
+                // Braking and cornering share the reduced rear contact patch.
+                // Longitudinal lock-up therefore consumes lateral authority,
+                // allowing the front axle to rotate the car into oversteer.
+                var handbrakeForceLimit = normalLoad * MathF.Max(gripLimit, 0.1f) *
+                                          Math.Clamp(handbrakeGrip, 0.0f, 1.0f);
+                tireForce = ClampMagnitude(tireForce, handbrakeForceLimit);
             }
 
             _rigidbody.AddForceAtPosition(tireForce, hit.Point + bodyUp * 0.25f);
@@ -573,6 +688,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             wheel.Grounded = true;
             wheel.Compression = compression01;
             wheel.ForwardSpeed = forwardSpeed;
+            wheel.LateralSlip = MathF.Abs(lateralSpeed) / MathF.Max(MathF.Abs(forwardSpeed), 1.0f);
             wheel.VisualSteerAngle = wheel.Steering ? _steerAngle : 0.0f;
             _wheels[index] = wheel;
         }
@@ -674,6 +790,13 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
         var speed = velocity.Length();
         var slipRatio = MathF.Abs(lateralSpeed) / MathF.Max(MathF.Abs(forwardSpeed), 1.0f);
+        foreach (var wheel in _wheels)
+        {
+            if (wheel.Grounded)
+            {
+                slipRatio = MathF.Max(slipRatio, wheel.LateralSlip);
+            }
+        }
         var wheelSpinSlip = MathF.Max(MathF.Abs(_drivenWheelSpinSpeed) - MathF.Abs(forwardSpeed), 0.0f);
         longitudinalSlip = MathF.Max(longitudinalSlip, wheelSpinSlip / MathF.Max(MathF.Abs(groundedDrivenWheelSpeed), 8.0f));
         var smokeAmount = Math.Clamp(MathF.Max(slipRatio - 0.25f, MathF.Max(longitudinalSlip, wheelSpinSlip / 12.0f)) / 0.75f, 0.0f, 1.0f);
@@ -1047,6 +1170,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         public float Compression;
         public float VisualCompression;
         public float ForwardSpeed;
+        public float LateralSlip;
+        public float LateralGripRetention;
         public float VisualSteerAngle;
         public float SpinDegrees;
         public Vector3 BaseAnchorRotation;

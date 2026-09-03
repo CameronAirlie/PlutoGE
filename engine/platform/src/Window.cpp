@@ -285,7 +285,17 @@ namespace PlutoGE::platform
             glfwDestroyWindow(m_window);
             m_window = nullptr;
         }
+#ifndef _WIN32
         glfwTerminate();
+#else
+        // GLFW's hidden Win32 helper window receives joystick WM_DEVICECHANGE
+        // notifications. Destroying it during glfwTerminate can re-enter the
+        // joystick detector after DirectInput teardown has begun, causing an
+        // access violation on editor exit. Keep GLFW's process-wide Win32
+        // state alive until process termination; actual engine windows and
+        // their graphics contexts are still destroyed above. glfwInit is
+        // idempotent, so graphics-backend restarts safely reuse this state.
+#endif
     }
 
     void Window::RequestClose()

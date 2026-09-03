@@ -78,6 +78,8 @@ namespace PlutoGE::core
         [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
         [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() { return m_renderDevice.get(); }
         [[nodiscard]] render::rhi::ISwapchain *GetSwapchain() { return m_swapchain.get(); }
+        [[nodiscard]] bool IsVSyncEnabled() const noexcept;
+        bool SetVSyncEnabled(bool enabled);
         [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return m_rhiRenderService; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
         [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return m_meshImporter; }

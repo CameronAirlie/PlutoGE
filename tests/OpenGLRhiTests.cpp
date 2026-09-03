@@ -371,7 +371,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             .height = 64,
             .vSync = false,
         });
-        if (!swapchain || swapchain->GetFormat() != Format::R8G8B8A8Srgb ||
+        if (!swapchain || swapchain->IsVSyncEnabled() ||
+            !swapchain->SetVSyncEnabled(true) || !swapchain->IsVSyncEnabled() ||
+            !swapchain->SetVSyncEnabled(false) || swapchain->IsVSyncEnabled() ||
+            swapchain->GetFormat() != Format::R8G8B8A8Srgb ||
             !swapchain->Resize(96, 64) || swapchain->GetWidth() != 96 || swapchain->GetHeight() != 64 ||
             !swapchain->Present(basicRenderer.GetColorTexture()))
         {

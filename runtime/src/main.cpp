@@ -680,6 +680,13 @@ int RunRuntime(int argc, char **argv)
         if (!hasLoggedFirstFrame)
         {
             PlutoGE::g_runtimeDiagnostics.Log("First frame completed successfully");
+            if (config.temporalUpscaler.technology != PlutoGE::render::rhi::TemporalUpscaler::None)
+            {
+                const auto &status = engine.GetRhiRenderService().GetTemporalUpscalerStatus();
+                PlutoGE::g_runtimeDiagnostics.Log(
+                    std::string("Temporal upscaler: ") + (status.active ? "active" : "fallback") +
+                    (status.reason.empty() ? std::string{} : " (" + status.reason + ")"));
+            }
             hasLoggedFirstFrame = true;
         }
 #endif

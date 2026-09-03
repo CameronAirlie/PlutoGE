@@ -425,16 +425,26 @@ namespace PlutoGE::render::rhi::opengl
     public:
         OpenGLSwapchain(OpenGLDevice::Impl &impl, const SwapchainDescriptor &descriptor)
             : m_impl(impl), m_window(static_cast<GLFWwindow *>(descriptor.nativeWindow)),
-              m_width(descriptor.width), m_height(descriptor.height)
+              m_width(descriptor.width), m_height(descriptor.height), m_vSync(descriptor.vSync)
         {
             if (!m_window)
                 throw std::invalid_argument("OpenGL swapchain requires a GLFW window");
-            glfwSwapInterval(descriptor.vSync ? 1 : 0);
+            glfwSwapInterval(m_vSync ? 1 : 0);
         }
 
         [[nodiscard]] Format GetFormat() const noexcept override { return Format::R8G8B8A8Srgb; }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept override { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept override { return m_height; }
+        [[nodiscard]] bool IsVSyncEnabled() const noexcept override { return m_vSync; }
+
+        bool SetVSyncEnabled(bool enabled) override
+        {
+            if (m_vSync == enabled)
+                return true;
+            m_vSync = enabled;
+            glfwSwapInterval(m_vSync ? 1 : 0);
+            return true;
+        }
 
         bool Resize(std::uint32_t width, std::uint32_t height) override
         {
@@ -468,6 +478,7 @@ namespace PlutoGE::render::rhi::opengl
         GLFWwindow *m_window = nullptr;
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
+        bool m_vSync = true;
     };
 
     OpenGLDevice::OpenGLDevice() : m_impl(std::make_unique<Impl>())

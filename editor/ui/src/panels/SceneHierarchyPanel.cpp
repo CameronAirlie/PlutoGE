@@ -453,14 +453,10 @@ namespace PlutoGE::ui
             }
             if (ImGui::MenuItem("Delete Entity", "Del"))
             {
-                const scene::EntityID deletedEntityId = entity->GetID();
-                if (EditorShell::GetInstance().DeleteSelectedEntity())
-                {
-                    if (m_renamingEntityId == deletedEntityId)
-                    {
-                        EndRename(false);
-                    }
-                }
+                // Removing an entity here invalidates both `entity` below and
+                // the parent/root vector currently being traversed. Defer the
+                // edit until every hierarchy node has finished rendering.
+                m_pendingDeleteEntityId = entity->GetID();
             }
             ImGui::EndPopup();
         }
@@ -995,6 +991,26 @@ namespace PlutoGE::ui
         for (auto entity : scene->GetRootEntities())
         {
             RenderEntityNode(entity);
+        }
+
+        if (m_pendingDeleteEntityId != 0)
+        {
+            const auto deletedEntityId = m_pendingDeleteEntityId;
+            m_pendingDeleteEntityId = 0;
+            if (auto *entity = scene->FindEntityByID(deletedEntityId))
+            {
+                EditorShell::GetInstance().SetSelectedEntity(entity);
+                if (EditorShell::GetInstance().DeleteSelectedEntity())
+                {
+                    m_selectedEntityIds.erase(
+                        std::remove(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), deletedEntityId),
+                        m_selectedEntityIds.end());
+                    if (m_renamingEntityId == deletedEntityId)
+                    {
+                        EndRename(false);
+                    }
+                }
+            }
         }
 
         if (m_groupSelectionRequested)

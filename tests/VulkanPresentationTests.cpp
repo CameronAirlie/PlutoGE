@@ -41,6 +41,10 @@ int main()
             auto swapchain = device.CreateSwapchain(descriptor);
             if (!swapchain || swapchain->GetWidth() == 0 || swapchain->GetHeight() == 0)
                 return 2;
+            if (swapchain->IsVSyncEnabled() ||
+                !swapchain->SetVSyncEnabled(true) || !swapchain->IsVSyncEnabled() ||
+                !swapchain->SetVSyncEnabled(false) || swapchain->IsVSyncEnabled())
+                return 8;
 
             render::BasicRendererShaderPackage shaders;
             shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");

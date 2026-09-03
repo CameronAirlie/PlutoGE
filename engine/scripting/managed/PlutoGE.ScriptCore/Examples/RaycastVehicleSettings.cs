@@ -10,8 +10,9 @@ namespace PlutoGE.ScriptCore.Examples;
 public sealed class RaycastVehicleSettings : ScriptableObject
 {
     [SerializedField] public float Mass = 1250.0f;
+    [SerializedField] public float ChassisAngularDrag = 0.15f;
     [SerializedField] public float WheelRadius = 0.5f;
-    [SerializedField] public float DrivenWheelInertia = 1.5f;
+    [SerializedField] public float DrivenWheelInertia = 24.0f;
 
     [SerializedField] public float SuspensionTravel = 0.32f;
     [SerializedField] public float RideHeight = 0.42f;
@@ -29,10 +30,19 @@ public sealed class RaycastVehicleSettings : ScriptableObject
     [SerializedField] public float RearGrip = 5.0f;
     [SerializedField] public float GripLimit = 1.5f;
     [SerializedField] public float DriveGrip = 1.0f;
+    [SerializedField] public float PeakLateralSlipAngle = 12.0f;
+    [SerializedField] public float FullLateralSlipAngle = 30.0f;
+    [SerializedField] public float SlidingTyreLateralGrip = 0.5f;
+    [SerializedField] public float FrontLateralSlipTolerance = 1.5f;
+    [SerializedField] public float LateralGripLossRate = 12.0f;
+    [SerializedField] public float LateralGripRecoveryRate = 3.5f;
+    [SerializedField] public float FrontLateralGripRecoveryRate = 12.0f;
+    [SerializedField] public float RegripLateralSlipAngle = 11.0f;
+    [SerializedField] public float FrontRegripLateralSlipAngle = 18.0f;
     [SerializedField] public float PeakLongitudinalSlip = 0.12f;
     [SerializedField] public float FullLongitudinalSlip = 1.0f;
-    [SerializedField] public float SpinningTyreLongitudinalGrip = 0.55f;
-    [SerializedField] public float SpinningTyreLateralGrip = 0.15f;
+    [SerializedField] public float SpinningTyreLongitudinalGrip = 0.7f;
+    [SerializedField] public float SpinningTyreLateralGrip = 0.25f;
     [SerializedField] public float BrakeGrip = 1.0f;
     [SerializedField] public float HandbrakeGrip = 0.45f;
 

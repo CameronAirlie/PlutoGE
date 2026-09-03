@@ -2317,7 +2317,7 @@ namespace PlutoGE::ui
         {
             ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
         }
-        m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
+        static_cast<void>(m_engine.SetVSyncEnabled(manifest.vSyncEnabled));
 
         std::string scriptErrorMessage;
         bool scriptScaffoldReady = true;
@@ -2697,7 +2697,10 @@ namespace PlutoGE::ui
         {
             std::string projectError;
             if (const auto project = assets::Project::Load(startupProject, &projectError))
+            {
                 config.graphicsApi = project->GetManifest().graphicsApi;
+                config.vSync = project->GetManifest().vSyncEnabled;
+            }
         }
         if (!m_engine.Initialize(config))
         {
@@ -2906,7 +2909,7 @@ namespace PlutoGE::ui
         };
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
-        renderer.SetVSyncEnabled(editorVSyncEnabled);
+        static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
         bool vulkanEditorHost = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
 
         while (!window.ShouldClose())
@@ -3525,7 +3528,7 @@ namespace PlutoGE::ui
                     {
                         if (ConfirmContinueWithUnsavedChanges())
                         {
-                            window.Close();
+                            window.RequestClose();
                         }
                     }
                     ImGui::EndMenu();
@@ -3854,7 +3857,7 @@ namespace PlutoGE::ui
                                 m_statusMessage = scriptErrorMessage;
                             }
                             editorVSyncEnabled = manifest.vSyncEnabled;
-                            renderer.SetVSyncEnabled(editorVSyncEnabled);
+                            static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
                             m_panelManager.SetEditorFontSize(manifest.editorFontSize);
                             m_panelManager.SetEditorFont(manifest.editorFont);
                             if (graphicsApiChanged)
@@ -3978,7 +3981,7 @@ namespace PlutoGE::ui
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 
             const auto presentStart = std::chrono::high_resolution_clock::now();
-            frameTimingStats.vSyncEnabled = renderer.IsVSyncEnabled();
+            frameTimingStats.vSyncEnabled = m_engine.IsVSyncEnabled();
             if (vulkanEditorHost)
             {
                 static_cast<void>(m_engine.GetRhiRenderService().Present());
@@ -4083,7 +4086,7 @@ namespace PlutoGE::ui
                 // and a severely flattened perspective projection.
                 renderTarget = viewportPanel->GetRenderTarget();
                 renderTarget2 = viewportPanel2->GetRenderTarget();
-                renderer.SetVSyncEnabled(editorVSyncEnabled);
+                static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
                 UpdateWindowTitle();
                 m_statusMessage = requestedApi == render::rhi::GraphicsApi::Vulkan
                                       ? "Renderer switched to Vulkan."

@@ -35,6 +35,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace PlutoGE::render::rhi::vulkan
@@ -318,7 +319,9 @@ namespace PlutoGE::render::rhi::vulkan
                 if (m_initialized)
                 {
                     if (m_deviceConfigured && m_freeResources)
-                        m_freeResources(sl::kFeatureDLSS, sl::ViewportHandle(0));
+                        for (const auto viewportId : m_viewports)
+                            m_freeResources(sl::kFeatureDLSS, sl::ViewportHandle(viewportId));
+                    m_viewports.clear();
                     m_shutdown();
                     m_initialized = false;
                     m_deviceConfigured = false;
@@ -354,26 +357,20 @@ namespace PlutoGE::render::rhi::vulkan
             bool ConfigureDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                                  std::uint32_t graphicsQueueFamily)
             {
+                static_cast<void>(instance);
+                static_cast<void>(device);
+                static_cast<void>(graphicsQueueFamily);
                 if (!SupportsAdapter(physicalDevice))
                 {
                     m_reason = "DLSS is not supported by the selected Vulkan adapter or driver";
                     return false;
                 }
-                sl::VulkanInfo info{};
-                info.instance = instance;
-                info.physicalDevice = physicalDevice;
-                info.device = device;
-                info.graphicsQueueFamily = graphicsQueueFamily;
-                info.graphicsQueueIndex = 0;
-                info.computeQueueFamily = graphicsQueueFamily;
-                info.computeQueueIndex = 0;
-                const auto result = m_setVulkanInfo(info);
-                if (result != sl::Result::eOk)
-                {
-                    m_reason = "slSetVulkanInfo failed (result " +
-                               std::to_string(static_cast<int>(result)) + ")";
-                    return false;
-                }
+                // Vulkan was created through the Streamline interposer proxy
+                // loaded by volkInitializeCustom. The proxy has already
+                // registered the instance, device, and queues. NVIDIA requires
+                // slSetVulkanInfo only when vkCreateInstance/vkCreateDevice are
+                // *not* routed through those proxies; mixing both paths is an
+                // invalid integration and leaves feature functions unavailable.
                 if (!LoadFeatureFunctions())
                 {
                     m_reason = "The DLSS plugin functions could not be loaded";
@@ -390,10 +387,21 @@ namespace PlutoGE::render::rhi::vulkan
                 return {m_supported, m_supported ? std::string{} : m_reason};
             }
 
-            void RecordEvaluationFailure()
+            [[nodiscard]] const std::string &EvaluationFailureReason() const noexcept
             {
-                m_supported = false;
-                m_reason = "DLSS evaluation failed; using the renderer fallback";
+                return m_evaluationFailureReason;
+            }
+
+            [[nodiscard]] bool HasViewport(std::uint64_t contextId) const
+            {
+                return m_viewports.contains(static_cast<std::uint32_t>(contextId));
+            }
+
+            void ReleaseViewport(std::uint64_t contextId)
+            {
+                const auto viewportId = static_cast<std::uint32_t>(contextId);
+                if (m_viewports.erase(viewportId) != 0 && m_freeResources)
+                    m_freeResources(sl::kFeatureDLSS, sl::ViewportHandle(viewportId));
             }
 
             [[nodiscard]] const sl::FeatureRequirements *Requirements() const noexcept
@@ -417,17 +425,38 @@ namespace PlutoGE::render::rhi::vulkan
             bool Evaluate(const TemporalUpscalerOptions &options, const TemporalUpscalerFrame &frame,
                           VkCommandBuffer commandBuffer, const std::array<TextureResource *, 4> &textures)
             {
-                if (!m_supported || !commandBuffer || std::ranges::any_of(textures, [](auto *value) { return !value; }))
+                if (!m_supported)
                     return false;
+                if (!commandBuffer)
+                {
+                    m_evaluationFailureReason = "DLSS evaluation has no active Vulkan command buffer";
+                    return false;
+                }
+                if (std::ranges::any_of(textures, [](auto *value) { return !value; }))
+                {
+                    m_evaluationFailureReason = "DLSS evaluation is missing a required render resource";
+                    return false;
+                }
                 sl::FrameToken *token = nullptr;
                 const std::uint32_t frameIndex = static_cast<std::uint32_t>(frame.frameIndex);
-                if (m_getFrameToken(token, &frameIndex) != sl::Result::eOk || !token)
+                const auto tokenResult = m_getFrameToken(token, &frameIndex);
+                if (tokenResult != sl::Result::eOk || !token)
+                {
+                    SetEvaluationFailure("slGetNewFrameToken", tokenResult);
                     return false;
+                }
 
+                const auto viewportId = static_cast<std::uint32_t>(frame.contextId);
+                const sl::ViewportHandle viewport(viewportId);
                 auto nativeOptions = MakeOptions(options, frame.outputSize);
                 nativeOptions.preExposure = frame.preExposure;
-                if (m_setOptions(sl::ViewportHandle(0), nativeOptions) != sl::Result::eOk)
+                const auto optionsResult = m_setOptions(viewport, nativeOptions);
+                if (optionsResult != sl::Result::eOk)
+                {
+                    SetEvaluationFailure("slDLSSSetOptions", optionsResult);
                     return false;
+                }
+                m_viewports.insert(viewportId);
 
                 sl::Constants constants{};
                 CopyMatrix(frame.cameraViewToClip, constants.cameraViewToClip);
@@ -451,8 +480,12 @@ namespace PlutoGE::render::rhi::vulkan
                 constants.motionVectors3D = sl::Boolean::eFalse;
                 constants.reset = frame.resetHistory ? sl::Boolean::eTrue : sl::Boolean::eFalse;
                 constants.motionVectorsJittered = frame.motionVectorsJittered ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-                if (m_setConstants(constants, *token, sl::ViewportHandle(0)) != sl::Result::eOk)
+                const auto constantsResult = m_setConstants(constants, *token, viewport);
+                if (constantsResult != sl::Result::eOk)
+                {
+                    SetEvaluationFailure("slSetConstants", constantsResult);
                     return false;
+                }
 
                 std::array<sl::Resource, 4> resources{
                     MakeResource(*textures[0]), MakeResource(*textures[1]),
@@ -465,15 +498,32 @@ namespace PlutoGE::render::rhi::vulkan
                     sl::ResourceTag(&resources[2], sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &renderExtent),
                     sl::ResourceTag(&resources[3], sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &outputExtent)};
                 auto *nativeCommandBuffer = reinterpret_cast<sl::CommandBuffer *>(commandBuffer);
-                if (m_setTags(*token, sl::ViewportHandle(0), tags.data(),
-                              static_cast<std::uint32_t>(tags.size()), nativeCommandBuffer) != sl::Result::eOk)
+                const auto tagsResult = m_setTags(*token, viewport, tags.data(),
+                                                  static_cast<std::uint32_t>(tags.size()), nativeCommandBuffer);
+                if (tagsResult != sl::Result::eOk)
+                {
+                    SetEvaluationFailure("slSetTagForFrame", tagsResult);
                     return false;
-                const sl::ViewportHandle viewport(0);
+                }
                 const sl::BaseStructure *inputs[]{&viewport};
-                return m_evaluate(sl::kFeatureDLSS, *token, inputs, 1, nativeCommandBuffer) == sl::Result::eOk;
+                const auto evaluateResult =
+                    m_evaluate(sl::kFeatureDLSS, *token, inputs, 1, nativeCommandBuffer);
+                if (evaluateResult != sl::Result::eOk)
+                {
+                    SetEvaluationFailure("slEvaluateFeature", evaluateResult);
+                    return false;
+                }
+                m_evaluationFailureReason.clear();
+                return true;
             }
 
         private:
+            void SetEvaluationFailure(const char *operation, sl::Result result)
+            {
+                m_evaluationFailureReason = std::string(operation) + " failed (Streamline result " +
+                                            std::to_string(static_cast<int>(result)) + ")";
+            }
+
             template <typename T>
             bool Load(T *&function, const char *name)
             {
@@ -486,7 +536,7 @@ namespace PlutoGE::render::rhi::vulkan
                 return Load(m_init, "slInit") && Load(m_shutdown, "slShutdown") &&
                        Load(m_isSupported, "slIsFeatureSupported") &&
                        Load(m_getRequirements, "slGetFeatureRequirements") &&
-                       Load(m_setVulkanInfo, "slSetVulkanInfo") && Load(m_getFrameToken, "slGetNewFrameToken") &&
+                       Load(m_getFrameToken, "slGetNewFrameToken") &&
                        Load(m_setTags, "slSetTagForFrame") && Load(m_setConstants, "slSetConstants") &&
                        Load(m_evaluate, "slEvaluateFeature") && Load(m_freeResources, "slFreeResources") &&
                        Load(m_getFeatureFunction, "slGetFeatureFunction");
@@ -567,12 +617,13 @@ namespace PlutoGE::render::rhi::vulkan
             bool m_deviceConfigured = false;
             bool m_supported = false;
             std::string m_reason = "Streamline support was not initialized";
+            std::string m_evaluationFailureReason;
+            std::unordered_set<std::uint32_t> m_viewports;
             sl::FeatureRequirements m_requirements{};
             PFun_slInit *m_init = nullptr;
             PFun_slShutdown *m_shutdown = nullptr;
             PFun_slIsFeatureSupported *m_isSupported = nullptr;
             PFun_slGetFeatureRequirements *m_getRequirements = nullptr;
-            PFun_slSetVulkanInfo *m_setVulkanInfo = nullptr;
             PFun_slGetNewFrameToken *m_getFrameToken = nullptr;
             PFun_slSetTagForFrame *m_setTags = nullptr;
             PFun_slSetConstants *m_setConstants = nullptr;
@@ -1783,6 +1834,25 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] Format GetFormat() const noexcept override { return m_format; }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept override { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept override { return m_height; }
+        [[nodiscard]] bool IsVSyncEnabled() const noexcept override { return m_vSync; }
+
+        bool SetVSyncEnabled(bool enabled) override
+        {
+            if (m_vSync == enabled)
+                return true;
+            const bool previous = m_vSync;
+            m_vSync = enabled;
+            try
+            {
+                Recreate();
+            }
+            catch (...)
+            {
+                m_vSync = previous;
+                throw;
+            }
+            return true;
+        }
 
         void SetOverlayRecorder(OverlayRecorder recorder) override
         {
@@ -2849,6 +2919,15 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
     }
 
+    std::string VulkanDevice::GetTemporalUpscalerFailureReason(TemporalUpscaler upscaler) const
+    {
+#if PLUTO_HAS_STREAMLINE
+        if (upscaler == TemporalUpscaler::Dlss && m_impl->streamline)
+            return m_impl->streamline->EvaluationFailureReason();
+#endif
+        return {};
+    }
+
     Extent2D VulkanDevice::GetOptimalRenderSize(const TemporalUpscalerOptions &options,
                                                 Extent2D outputSize) const
     {
@@ -2892,8 +2971,6 @@ namespace PlutoGE::render::rhi::vulkan
         {
             result = m_impl->streamline->Evaluate(options, frame, commandBuffer,
                                                    {color, depth, motion, output});
-            if (!result)
-                m_impl->streamline->RecordEvaluationFailure();
         }
 #endif
 #if PLUTO_HAS_FSR2
@@ -2917,6 +2994,18 @@ namespace PlutoGE::render::rhi::vulkan
 
     void VulkanDevice::ReleaseTemporalUpscalerContext(std::uint64_t contextId)
     {
+#if PLUTO_HAS_STREAMLINE
+        if (m_impl->streamline && m_impl->streamline->HasViewport(contextId))
+        {
+            // Streamline requires all pending feature evaluations to finish
+            // before slFreeResources. Reconstruction changes are infrequent,
+            // so an explicit idle here is preferable to leaking old viewport
+            // contexts until device shutdown.
+            if (m_impl->device)
+                vkDeviceWaitIdle(m_impl->device);
+            m_impl->streamline->ReleaseViewport(contextId);
+        }
+#endif
 #if PLUTO_HAS_FSR2
         const auto found = m_impl->fsr2Contexts.find(contextId);
         if (found != m_impl->fsr2Contexts.end())

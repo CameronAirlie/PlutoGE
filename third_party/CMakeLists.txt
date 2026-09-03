@@ -319,6 +319,13 @@ set(ALSOFT_UTILS OFF CACHE BOOL "" FORCE)
 set(ALSOFT_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ALSOFT_TESTS OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
+# MinGW already produces libOpenAL32.dll.a, which is the import library used by
+# this build. OpenAL Soft's optional MSVC-format OpenAL32.lib additionally
+# requires a working host sed executable, making the build depend on tools that
+# are unrelated to compiling or linking PlutoGE.
+if (MINGW)
+    set(ALSOFT_BUILD_IMPORT_LIB OFF CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
     openal_soft
     GIT_REPOSITORY https://github.com/kcat/openal-soft.git

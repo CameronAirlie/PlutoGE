@@ -293,6 +293,23 @@ namespace PlutoGE::core
         return true;
     }
 
+    bool Engine::IsVSyncEnabled() const noexcept
+    {
+        return m_swapchain ? m_swapchain->IsVSyncEnabled() : m_config.vSync;
+    }
+
+    bool Engine::SetVSyncEnabled(bool enabled)
+    {
+        if (m_swapchain && !m_swapchain->SetVSyncEnabled(enabled))
+            return false;
+        m_config.vSync = enabled;
+        // The swapchain owns actual presentation. Keep the legacy OpenGL
+        // renderer's cached state coherent for its remaining callers.
+        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
+            m_renderer.SetVSyncEnabled(enabled);
+        return true;
+    }
+
     ImportedRenderMeshAsset Engine::BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset)
     {
         MeshFinalizeProfile profile;

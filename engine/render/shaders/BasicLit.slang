@@ -200,10 +200,32 @@ float compareShadowCascade(int cascade, float2 uv, float receiverDepth)
     return receiverDepth <= sampleShadowCascade(cascade, uv) ? 1.0 : 0.0;
 }
 
-float evaluateShadowCascade(int cascade, float3 worldPosition, float depthBias)
+float2 computeReceiverPlaneDepthGradient(float3 shadowDx, float3 shadowDy)
+{
+    // shadowCoord.xy is NDC here; the factor of two converts the solved
+    // gradient to the [0, 1] texture coordinates used by the PCF offsets.
+    const float determinant = shadowDx.x * shadowDy.y - shadowDx.y * shadowDy.x;
+    if (abs(determinant) < 0.00000001)
+        return float2(0.0);
+    return 2.0 * float2(
+        shadowDy.y * shadowDx.z - shadowDx.y * shadowDy.z,
+        shadowDx.x * shadowDy.z - shadowDy.x * shadowDx.z) / determinant;
+}
+
+float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, float3 worldDy, float depthBias)
 {
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
+    const float4 lightClipDx = mul(shadowMatrices[cascade], float4(worldDx, 0.0));
+    const float4 lightClipDy = mul(shadowMatrices[cascade], float4(worldDy, 0.0));
+    // Transform the unconditional world-space derivatives with this
+    // cascade's matrix. Taking ddx/ddy after dynamic cascade selection makes
+    // neighboring lanes at a split subtract coordinates from two unrelated
+    // projections, producing a one-pixel shadow seam.
+    const float3 shadowDx = (lightClip.xyz + lightClipDx.xyz) /
+                            (lightClip.w + lightClipDx.w) - shadowCoord;
+    const float3 shadowDy = (lightClip.xyz + lightClipDy.xyz) /
+                            (lightClip.w + lightClipDy.w) - shadowCoord;
     float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
     if (shadowFlipY != 0)
         shadowUv.y = 1.0 - shadowUv.y;
@@ -212,12 +234,19 @@ float evaluateShadowCascade(int cascade, float3 worldPosition, float depthBias)
     const float configuredFilterRadius = shadowFilterParameters.x > 0.5 ? shadowFilterParameters.y : 0.0;
     const float2 texel = shadowInverseResolutions[cascade].xy *
                          max(shadowCascadeParameters.z, configuredFilterRadius);
+    const float receiverDepth = shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias;
+    float2 receiverPlaneGradient = computeReceiverPlaneDepthGradient(shadowDx, shadowDy) * shadowDepthScale;
+    if (shadowFlipY != 0)
+        receiverPlaneGradient.y = -receiverPlaneGradient.y;
     float visibleSamples = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
+        {
+            const float2 tapOffset = float2(x, y) * texel;
             visibleSamples += compareShadowCascade(
-                cascade, shadowUv + float2(x, y) * texel,
-                shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias);
+                cascade, shadowUv + tapOffset,
+                receiverDepth + dot(receiverPlaneGradient, tapOffset));
+        }
     return visibleSamples / 9.0;
 }
 
@@ -343,6 +372,10 @@ FragmentOutput fragmentMain(VertexOutput input)
     float normalizedCascade = 0.0;
     if (shadowsEnabled != 0)
     {
+        // Evaluate derivatives before any per-pixel cascade-dependent work so
+        // they remain continuous when a 2x2 fragment quad straddles a split.
+        const float3 shadowWorldDx = ddx(input.worldPosition);
+        const float3 shadowWorldDy = ddy(input.worldPosition);
         const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
         const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
         int cascade = cascadeCount - 1;
@@ -359,7 +392,7 @@ FragmentOutput fragmentMain(VertexOutput input)
         // Shadow bias must follow the actual receiver plane. A normal-map
         // perturbation is a lighting detail and can point the bias back into
         // the geometry, which becomes visible as acne in wider cascades.
-        float3 shadowNormal = cross(ddx(input.worldPosition), ddy(input.worldPosition));
+        float3 shadowNormal = cross(shadowWorldDx, shadowWorldDy);
         const float shadowNormalLengthSquared = dot(shadowNormal, shadowNormal);
         shadowNormal = shadowNormalLengthSquared > 0.000000000001
             ? shadowNormal * rsqrt(shadowNormalLengthSquared)
@@ -383,7 +416,8 @@ FragmentOutput fragmentMain(VertexOutput input)
                   shadowInverseResolutions[0].x * lerp(0.5, 2.0, slope))
             : worldDepthBias;
         const float3 receiverPosition = input.worldPosition + shadowNormal * normalBias;
-        shadowVisibility = evaluateShadowCascade(cascade, receiverPosition, depthBias);
+        shadowVisibility = evaluateShadowCascade(
+            cascade, receiverPosition, shadowWorldDx, shadowWorldDy, depthBias);
         rawShadowVisibility = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
         normalizedCascade = cascadeCount > 1 ? (float)cascade / (float)(cascadeCount - 1) : 0.0;
         if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
@@ -404,7 +438,8 @@ FragmentOutput fragmentMain(VertexOutput input)
                 const float nextDepthBias = nextWorldDepthBias;
                 const float3 nextReceiverPosition = input.worldPosition + shadowNormal * nextNormalBias;
                 shadowVisibility = lerp(shadowVisibility,
-                                        evaluateShadowCascade(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
+                                        evaluateShadowCascade(cascade + 1, nextReceiverPosition,
+                                                              shadowWorldDx, shadowWorldDy, nextDepthBias), blend);
                 rawShadowVisibility = lerp(rawShadowVisibility,
                                            evaluateShadowCascadeTap(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
                 normalizedCascade = lerp(normalizedCascade,

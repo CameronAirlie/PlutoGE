@@ -38,6 +38,7 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::Vulkan; }
         [[nodiscard]] bool UsesZeroToOneClipDepth() const noexcept override { return true; }
         [[nodiscard]] TemporalUpscalerSupport GetTemporalUpscalerSupport(TemporalUpscaler) const override;
+        [[nodiscard]] std::string GetTemporalUpscalerFailureReason(TemporalUpscaler) const override;
         [[nodiscard]] Extent2D GetOptimalRenderSize(const TemporalUpscalerOptions &options,
                                                     Extent2D outputSize) const override;
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;

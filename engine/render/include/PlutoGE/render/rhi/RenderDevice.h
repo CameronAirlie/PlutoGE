@@ -117,6 +117,8 @@ namespace PlutoGE::render::rhi
         [[nodiscard]] virtual Format GetFormat() const noexcept = 0;
         [[nodiscard]] virtual std::uint32_t GetWidth() const noexcept = 0;
         [[nodiscard]] virtual std::uint32_t GetHeight() const noexcept = 0;
+        [[nodiscard]] virtual bool IsVSyncEnabled() const noexcept = 0;
+        virtual bool SetVSyncEnabled(bool enabled) = 0;
         virtual bool Resize(std::uint32_t width, std::uint32_t height) = 0;
         virtual void SetOverlayPreparation(OverlayRecorder recorder) { (void)recorder; }
         virtual void SetOverlayRecorder(OverlayRecorder recorder) { (void)recorder; }
@@ -134,6 +136,10 @@ namespace PlutoGE::render::rhi
         [[nodiscard]] virtual TemporalUpscalerSupport GetTemporalUpscalerSupport(TemporalUpscaler) const
         {
             return {false, "Temporal upscaling is not implemented by this render device"};
+        }
+        [[nodiscard]] virtual std::string GetTemporalUpscalerFailureReason(TemporalUpscaler) const
+        {
+            return {};
         }
         [[nodiscard]] virtual Extent2D GetOptimalRenderSize(const TemporalUpscalerOptions &,
                                                             Extent2D outputSize) const

@@ -19,6 +19,11 @@ namespace PlutoGE::render
         void Shutdown();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
         [[nodiscard]] rhi::TemporalUpscalerSupport GetTemporalUpscalerSupport() const;
+        [[nodiscard]] const TemporalUpscalerStatus &GetTemporalUpscalerStatus() const noexcept
+        {
+            static const TemporalUpscalerStatus empty;
+            return m_sceneRenderer ? m_sceneRenderer->GetTemporalUpscalerStatus() : empty;
+        }
 
         [[nodiscard]] bool Resize(std::uint32_t width, std::uint32_t height);
         [[nodiscard]] bool RenderAndPresent(const glm::mat4 &viewProjection,

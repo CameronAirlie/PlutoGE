@@ -590,7 +590,12 @@ namespace PlutoGE::render
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&
                                        renderSize == outputSize;
         if (useTemporalUpscaler && !m_upscalerStatus.active)
-            m_upscalerStatus.reason = "Temporal upscaler evaluation did not complete";
+        {
+            m_upscalerStatus.reason =
+                m_device->GetTemporalUpscalerFailureReason(m_upscalerOptions.technology);
+            if (m_upscalerStatus.reason.empty())
+                m_upscalerStatus.reason = "Temporal upscaler evaluation did not complete";
+        }
         if (m_upscalerStatus.active)
         {
             m_previousUpscalerViewProjection = currentUnjitteredViewProjection;

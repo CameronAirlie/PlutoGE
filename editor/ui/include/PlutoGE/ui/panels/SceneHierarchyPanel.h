@@ -55,6 +55,7 @@ namespace PlutoGE::ui
         void SetPivotToMeshBounds(scene::Entity *entity, bool bottomCenter);
 
         std::uint32_t m_renamingEntityId = 0;
+        std::uint32_t m_pendingDeleteEntityId = 0;
         std::vector<std::uint32_t> m_selectedEntityIds;
         bool m_groupSelectionRequested = false;
         bool m_focusRenameInput = false;

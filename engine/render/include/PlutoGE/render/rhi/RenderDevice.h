@@ -35,6 +35,12 @@ namespace PlutoGE::render::rhi
         std::uint64_t uniformBytesUploaded = 0;
         float descriptorCpuMs = 0.0f;
         float uniformUploadCpuMs = 0.0f;
+        float presentFenceWaitMs = 0.0f;
+        float presentAcquireMs = 0.0f;
+        float presentRecordMs = 0.0f;
+        float presentSubmitMs = 0.0f;
+        float presentQueueMs = 0.0f;
+        float presentTotalMs = 0.0f;
         std::vector<GpuScope> gpuScopes;
         bool hasGpuResult = false;
     };

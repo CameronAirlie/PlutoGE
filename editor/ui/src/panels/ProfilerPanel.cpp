@@ -262,6 +262,16 @@ namespace PlutoGE::ui
             ImGui::TreePop();
         }
         ImGui::Text("Present / swap: %.2f ms", frameTimingStats.presentMs);
+        const auto &presentation = frameTimingStats.presentationTimingStats;
+        if (presentation.presentTotalMs > 0.0f)
+        {
+            ImGui::Text("  Presentation total: %.2f ms", presentation.presentTotalMs);
+            ImGui::Text("  Fence wait: %.2f ms, acquire image: %.2f ms",
+                        presentation.presentFenceWaitMs, presentation.presentAcquireMs);
+            ImGui::Text("  Record/copy/overlay: %.2f ms, submit: %.2f ms, queue present: %.2f ms",
+                        presentation.presentRecordMs, presentation.presentSubmitMs,
+                        presentation.presentQueueMs);
+        }
         ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
         ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, m_profiler->GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
         ImGui::Separator();

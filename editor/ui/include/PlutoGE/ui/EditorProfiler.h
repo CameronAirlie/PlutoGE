@@ -42,6 +42,7 @@ namespace PlutoGE::ui
         int gameViewportHeight = 0;
         std::uint64_t renderedViewportPixels = 0;
         render::rhi::RenderDeviceTimingStats rhiTimingStats;
+        render::rhi::RenderDeviceTimingStats presentationTimingStats;
         render::RhiSceneTimingStats rhiSceneTimingStats;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> componentTimings;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> animationTimings;

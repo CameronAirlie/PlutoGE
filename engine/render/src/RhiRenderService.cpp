@@ -19,6 +19,7 @@ namespace PlutoGE::render
         m_device = &device;
         m_swapchain = &swapchain;
         m_renderer = std::move(renderer);
+        m_hostFrameReady = false;
         return true;
     }
 
@@ -34,6 +35,7 @@ namespace PlutoGE::render
         m_device = nullptr;
         m_swapchain = nullptr;
         m_frameSequence = 0;
+        m_hostFrameReady = false;
     }
 
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
@@ -76,8 +78,11 @@ namespace PlutoGE::render
 
     bool RhiRenderService::Resize(std::uint32_t width, std::uint32_t height)
     {
-        return m_renderer && m_swapchain && m_swapchain->Resize(width, height) &&
-               m_renderer->Resize(m_swapchain->GetWidth(), m_swapchain->GetHeight());
+        if (!m_renderer || !m_swapchain || !m_swapchain->Resize(width, height) ||
+            !m_renderer->Resize(m_swapchain->GetWidth(), m_swapchain->GetHeight()))
+            return false;
+        m_hostFrameReady = false;
+        return true;
     }
 
     bool RhiRenderService::RenderAndPresent(const glm::mat4 &viewProjection,
@@ -90,6 +95,26 @@ namespace PlutoGE::render
             if (!m_renderer->Resize(m_swapchain->GetWidth(), m_swapchain->GetHeight()))
                 return false;
         m_renderer->Render(viewProjection, lighting, draws);
+        m_hostFrameReady = true;
+        return m_swapchain->Present(m_renderer->GetColorTexture());
+    }
+
+    bool RhiRenderService::Present()
+    {
+        if (!m_renderer || !m_swapchain)
+            return false;
+        if (m_renderer->GetWidth() != m_swapchain->GetWidth() ||
+            m_renderer->GetHeight() != m_swapchain->GetHeight())
+        {
+            if (!m_renderer->Resize(m_swapchain->GetWidth(), m_swapchain->GetHeight()))
+                return false;
+            m_hostFrameReady = false;
+        }
+        if (!m_hostFrameReady)
+        {
+            m_renderer->Render(glm::mat4(1.0f), BasicLighting{}, {});
+            m_hostFrameReady = true;
+        }
         return m_swapchain->Present(m_renderer->GetColorTexture());
     }
 

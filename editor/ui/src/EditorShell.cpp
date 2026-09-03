@@ -3981,9 +3981,7 @@ namespace PlutoGE::ui
             frameTimingStats.vSyncEnabled = renderer.IsVSyncEnabled();
             if (vulkanEditorHost)
             {
-                const render::BasicLighting hostLighting{};
-                static_cast<void>(m_engine.GetRhiRenderService().RenderAndPresent(
-                    glm::mat4(1.0f), hostLighting, std::span<const render::BasicDraw>{}));
+                static_cast<void>(m_engine.GetRhiRenderService().Present());
             }
             else
             {
@@ -3991,6 +3989,9 @@ namespace PlutoGE::ui
             }
             const auto presentEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
+            if (vulkanEditorHost && m_engine.GetRenderDevice())
+                frameTimingStats.presentationTimingStats =
+                    m_engine.GetRenderDevice()->GetTimingStats("Presentation");
 
             const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();

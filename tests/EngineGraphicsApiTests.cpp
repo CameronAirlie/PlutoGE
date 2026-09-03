@@ -32,6 +32,16 @@ int main()
         return 5;
     if (!engine.GetRhiRenderService().RenderAndPresent(glm::mat4(1.0f), render::BasicLighting{}, {}))
         return 6;
+    if (!engine.GetRhiRenderService().Present())
+        return 7;
+    const auto presentationTiming = engine.GetRenderDevice()->GetTimingStats("Presentation");
+    if (presentationTiming.presentTotalMs <= 0.0f ||
+        presentationTiming.presentFenceWaitMs < 0.0f ||
+        presentationTiming.presentAcquireMs < 0.0f ||
+        presentationTiming.presentRecordMs < 0.0f ||
+        presentationTiming.presentSubmitMs < 0.0f ||
+        presentationTiming.presentQueueMs < 0.0f)
+        return 8;
 
     render::MeshConfig meshConfig;
     meshConfig.data.vertices = {
@@ -45,13 +55,13 @@ int main()
     auto *texture = engine.GetTextureManager().LoadTextureFromMemory(
         "vulkan-cpu-texture", texturePixels.data(), 1, 1, 4, render::TextureColorSpace::SRGB);
     if (!texture || texture->GetTextureID() != 0 || texture->GetRgba8Pixels().size() != 4)
-        return 7;
+        return 9;
     render::Material material({.color = glm::vec4(0.8f, 0.2f, 0.1f, 1.0f), .albedoTexture = texture});
     render::RenderCommand command{.material = &material, .mesh = &mesh};
     const std::array commands{command};
     render::CameraData cameraData{.view = glm::mat4(1.0f), .projection = glm::mat4(1.0f)};
     if (!engine.GetRhiRenderService().RenderSceneAndPresent(cameraData, {}, commands))
-        return 8;
+        return 10;
     engine.Shutdown();
     return 0;
 }

@@ -230,6 +230,13 @@ namespace PlutoGE::ui
             }
         }
         report << "Present / swap: " << frameTimingStats.presentMs << " ms\n";
+        const auto &presentation = frameTimingStats.presentationTimingStats;
+        report << "Presentation total: " << presentation.presentTotalMs << " ms\n";
+        report << "Presentation fence wait: " << presentation.presentFenceWaitMs << " ms\n";
+        report << "Presentation acquire image: " << presentation.presentAcquireMs << " ms\n";
+        report << "Presentation record/copy/overlay: " << presentation.presentRecordMs << " ms\n";
+        report << "Presentation submit: " << presentation.presentSubmitMs << " ms\n";
+        report << "Presentation queue present: " << presentation.presentQueueMs << " ms\n";
         report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
         report << "Frame remainder: " << std::max(0.0f, GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";

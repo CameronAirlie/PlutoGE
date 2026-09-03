@@ -1813,20 +1813,34 @@ namespace PlutoGE::render::rhi::vulkan
             if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || !m_swapchain)
                 return false;
 
+            using Clock = std::chrono::steady_clock;
+            const auto elapsedMs = [](const auto start, const auto end)
+            {
+                return std::chrono::duration<float, std::milli>(end - start).count();
+            };
+            auto &timing = m_impl.timingStatsBySubmission["Presentation"];
+            timing = {};
+            const auto totalStart = Clock::now();
             auto &frame = m_frames[m_frameIndex];
+            const auto fenceStart = Clock::now();
             Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            timing.presentFenceWaitMs = elapsedMs(fenceStart, Clock::now());
             if (frame.submissionSerial != 0)
                 m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
             std::uint32_t imageIndex = 0;
+            const auto acquireStart = Clock::now();
             VkResult acquired = vkAcquireNextImageKHR(m_impl.device, m_swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &imageIndex);
+            timing.presentAcquireMs = elapsedMs(acquireStart, Clock::now());
             if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
             {
                 Recreate();
+                timing.presentTotalMs = elapsedMs(totalStart, Clock::now());
                 return false;
             }
             if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
                 Check(acquired, "vkAcquireNextImageKHR");
 
+            const auto recordStart = Clock::now();
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(presentation)");
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -1888,7 +1902,9 @@ namespace PlutoGE::render::rhi::vulkan
                                      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &destination);
             }
             Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer(presentation)");
+            timing.presentRecordMs = elapsedMs(recordStart, Clock::now());
 
+            const auto submitStart = Clock::now();
             const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.waitSemaphoreCount = 1;
@@ -1900,6 +1916,7 @@ namespace PlutoGE::render::rhi::vulkan
             submit.pSignalSemaphores = &frame.renderFinished;
             Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
+            timing.presentSubmitMs = elapsedMs(submitStart, Clock::now());
 
             VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             present.waitSemaphoreCount = 1;
@@ -1907,15 +1924,19 @@ namespace PlutoGE::render::rhi::vulkan
             present.swapchainCount = 1;
             present.pSwapchains = &m_swapchain;
             present.pImageIndices = &imageIndex;
+            const auto presentStart = Clock::now();
             const VkResult result = vkQueuePresentKHR(m_impl.presentQueue, &present);
+            timing.presentQueueMs = elapsedMs(presentStart, Clock::now());
             m_presented[imageIndex] = true;
             if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
             {
                 Recreate();
+                timing.presentTotalMs = elapsedMs(totalStart, Clock::now());
                 return true;
             }
             Check(result, "vkQueuePresentKHR");
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
+            timing.presentTotalMs = elapsedMs(totalStart, Clock::now());
             return true;
         }
 

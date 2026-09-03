@@ -24,6 +24,9 @@ namespace PlutoGE::render
         [[nodiscard]] bool RenderAndPresent(const glm::mat4 &viewProjection,
                                             const BasicLighting &lighting,
                                             std::span<const BasicDraw> draws);
+        // Presents the persistent host target without recording another scene.
+        // The target is initialized lazily and refreshed only after a resize.
+        [[nodiscard]] bool Present();
         [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
@@ -42,5 +45,6 @@ namespace PlutoGE::render
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
         std::uint64_t m_frameSequence = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;
+        bool m_hostFrameReady = false;
     };
 }

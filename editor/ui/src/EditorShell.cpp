@@ -2866,7 +2866,7 @@ namespace PlutoGE::ui
         assets::RuntimeUpscalerMode projectRuntimeUpscaler = assets::RuntimeUpscalerMode::None;
         float projectRuntimeRenderScale = 1.0f;
         float projectRuntimeUpscaleSharpness = 0.25f;
-        render::rhi::UpscalerQuality projectRuntimeDlssQuality = render::rhi::UpscalerQuality::Quality;
+        render::rhi::UpscalerQuality projectRuntimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         std::string projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
@@ -2900,7 +2900,7 @@ namespace PlutoGE::ui
             projectRuntimeUpscaler = manifest.runtimeUpscaler;
             projectRuntimeRenderScale = manifest.runtimeRenderScale;
             projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
-            projectRuntimeDlssQuality = manifest.runtimeDlssQuality;
+            projectRuntimeUpscalerQuality = manifest.runtimeUpscalerQuality;
             projectEditorFontSize = manifest.editorFontSize;
             projectEditorFont = manifest.editorFont;
         };
@@ -2915,6 +2915,13 @@ namespace PlutoGE::ui
                                                        : m_engine.GetConfig().graphicsApi;
             viewportPanel->SetGraphicsApi(viewportGraphicsApi);
             viewportPanel2->SetGraphicsApi(viewportGraphicsApi);
+            const auto viewportUpscaler = m_project
+                                               ? m_project->GetManifest().GetTemporalUpscalerOptions()
+                                               : render::rhi::TemporalUpscalerOptions{};
+            // Both hosted views should match the project's runtime image
+            // reconstruction path. Their renderers retain independent history.
+            viewportPanel->SetTemporalUpscalerOptions(viewportUpscaler);
+            viewportPanel2->SetTemporalUpscalerOptions(viewportUpscaler);
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
@@ -3716,10 +3723,11 @@ namespace PlutoGE::ui
                     }
                     const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial ? "Spatial"
                                                         : projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ? "DLSS"
-                                                                                                                       : "None";
-                    if (ImGui::BeginCombo("Runtime Upscaler", runtimeUpscalerLabel))
+                                                        : projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2 ? "FSR 2"
+                                                                                                                      : "None";
+                    if (ImGui::BeginCombo("Viewport / Runtime Upscaler", runtimeUpscalerLabel))
                     {
-                        constexpr std::array<const char *, 3> upscalerLabels = {"None", "Spatial", "DLSS"};
+                        constexpr std::array<const char *, 4> upscalerLabels = {"None", "Spatial", "DLSS", "FSR 2"};
                         for (int modeIndex = 0; modeIndex < static_cast<int>(upscalerLabels.size()); ++modeIndex)
                         {
                             const auto mode = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
@@ -3731,23 +3739,31 @@ namespace PlutoGE::ui
                         }
                         ImGui::EndCombo();
                     }
+                    ImGui::TextDisabled("Saved temporal settings apply to the Editor Viewport, Game Viewport, and runtime.");
+                    if ((projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
+                         projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2) &&
+                        projectGraphicsApi != render::rhi::GraphicsApi::Vulkan)
+                    {
+                        ImGui::TextWrapped("Temporal upscaling requires the Vulkan graphics API.");
+                    }
                     ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
                     ImGui::SliderFloat("Runtime Render Scale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
                     ImGui::SliderFloat("Runtime Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
                     ImGui::EndDisabled();
-                    if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss)
+                    if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
+                        projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2)
                     {
                         constexpr std::array<const char *, 5> qualityLabels = {
                             "Performance", "Balanced", "Quality", "Ultra Performance", "DLAA"};
                         const auto qualityIndex = static_cast<std::size_t>(
-                            std::clamp(static_cast<int>(projectRuntimeDlssQuality), 0, 4));
-                        if (ImGui::BeginCombo("DLSS Quality", qualityLabels[qualityIndex]))
+                            std::clamp(static_cast<int>(projectRuntimeUpscalerQuality), 0, 4));
+                        if (ImGui::BeginCombo("Temporal Upscaler Quality", qualityLabels[qualityIndex]))
                         {
                             for (std::size_t index = 0; index < qualityLabels.size(); ++index)
                             {
                                 const bool selected = qualityIndex == index;
                                 if (ImGui::Selectable(qualityLabels[index], selected))
-                                    projectRuntimeDlssQuality = static_cast<render::rhi::UpscalerQuality>(index);
+                                    projectRuntimeUpscalerQuality = static_cast<render::rhi::UpscalerQuality>(index);
                                 if (selected)
                                     ImGui::SetItemDefaultFocus();
                             }
@@ -3813,7 +3829,7 @@ namespace PlutoGE::ui
                         manifest.runtimeUpscaler = projectRuntimeUpscaler;
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
                         manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
-                        manifest.runtimeDlssQuality = projectRuntimeDlssQuality;
+                        manifest.runtimeUpscalerQuality = projectRuntimeUpscalerQuality;
                         manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
                         manifest.editorFont = projectEditorFont;
                         const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();

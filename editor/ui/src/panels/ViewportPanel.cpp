@@ -83,6 +83,17 @@ namespace PlutoGE::ui
             "LOD",
         };
 
+        const char *TemporalUpscalerLabel(render::rhi::TemporalUpscaler technology)
+        {
+            switch (technology)
+            {
+            case render::rhi::TemporalUpscaler::Fsr2: return "FSR 2";
+            case render::rhi::TemporalUpscaler::Dlss: return "DLSS";
+            case render::rhi::TemporalUpscaler::None: return "None";
+            }
+            return "Unknown";
+        }
+
         struct PickRay
         {
             glm::vec3 origin{0.0f};
@@ -1841,6 +1852,7 @@ namespace PlutoGE::ui
             return;
         }
         m_useRhiPreview = m_rhiRenderService->Initialize(m_config.graphicsApi, m_config.sharedRenderDevice);
+        m_rhiRenderService->SetTemporalUpscalerOptions(m_temporalUpscalerOptions);
         m_vulkanAvailable = m_rhiRenderService->IsVulkanAvailable();
         m_vulkanStatus = m_rhiRenderService->GetVulkanStatus();
         m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
@@ -1857,6 +1869,15 @@ namespace PlutoGE::ui
         m_activeRhiVulkan = false;
         m_rhiSceneCommandCount = 0;
         m_rhiDrawCount = 0;
+    }
+
+    void ViewportPanel::SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options)
+    {
+        if (m_temporalUpscalerOptions == options)
+            return;
+        m_temporalUpscalerOptions = options;
+        if (m_rhiRenderService)
+            m_rhiRenderService->SetTemporalUpscalerOptions(options);
     }
 
     void ViewportPanel::ReleaseRegisteredTexture()
@@ -1977,13 +1998,26 @@ namespace PlutoGE::ui
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
         if (m_useRhiPreview)
         {
-            const std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
-                                         " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
-                                         " | draws " + std::to_string(m_rhiDrawCount) +
-                                         (m_activeRhiVulkan ? " | compositor import" : "");
+            std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
+                                   " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
+                                   " | draws " + std::to_string(m_rhiDrawCount);
+            ImU32 rhiLabelColor = IM_COL32(120, 220, 255, 255);
+            if (m_rhiRenderService)
+            {
+                const auto &upscaler = m_rhiRenderService->GetTemporalUpscalerStatus();
+                if (upscaler.requested)
+                {
+                    rhiLabel += " | " + std::string(TemporalUpscalerLabel(upscaler.options.technology)) +
+                                (upscaler.active ? " active" : " fallback");
+                    rhiLabelColor = upscaler.active ? IM_COL32(110, 235, 150, 255)
+                                                    : IM_COL32(255, 180, 80, 255);
+                }
+            }
+            if (m_activeRhiVulkan)
+                rhiLabel += " | compositor import";
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
-                IM_COL32(120, 220, 255, 255), rhiLabel.c_str());
+                rhiLabelColor, rhiLabel.c_str());
         }
         m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
         m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
@@ -2219,6 +2253,20 @@ namespace PlutoGE::ui
                                     m_activeRhiVulkan ? " (editor compositor import)" : "");
                 ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
                 ImGui::TextDisabled("%s", m_vulkanStatus.c_str());
+                if (m_rhiRenderService)
+                {
+                    const auto &upscaler = m_rhiRenderService->GetTemporalUpscalerStatus();
+                    if (upscaler.requested)
+                    {
+                        ImGui::TextDisabled("%s: %s", TemporalUpscalerLabel(upscaler.options.technology),
+                                            upscaler.active ? "Active" : "Fallback");
+                        ImGui::TextDisabled("Internal: %u x %u -> Output: %u x %u",
+                                            upscaler.renderSize.width, upscaler.renderSize.height,
+                                            upscaler.outputSize.width, upscaler.outputSize.height);
+                        if (!upscaler.active && !upscaler.reason.empty())
+                            ImGui::TextWrapped("Reason: %s", upscaler.reason.c_str());
+                    }
+                }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("The project graphics backend is authoritative for scene geometry.");
                 ImGui::Separator();
@@ -2251,44 +2299,60 @@ namespace PlutoGE::ui
         if (ImGui::BeginPopup("QualityPopup"))
         {
             overlayPopupOpen = true;
-            if (ImGui::SmallButton("Performance"))
+            const auto upscaler = m_rhiRenderService
+                                      ? m_rhiRenderService->GetTemporalUpscalerStatus()
+                                      : render::TemporalUpscalerStatus{};
+            if (m_temporalUpscalerOptions.technology != render::rhi::TemporalUpscaler::None)
             {
-                m_renderScale = 0.75f;
-                m_resizeStableFrames = kResizeDebounceFrames;
+                ImGui::Text("Upscaler: %s (%s)",
+                            TemporalUpscalerLabel(m_temporalUpscalerOptions.technology),
+                            upscaler.active ? "Active" : "Fallback");
+                ImGui::TextDisabled("Internal: %u x %u", upscaler.renderSize.width, upscaler.renderSize.height);
+                ImGui::TextDisabled("Output: %u x %u", upscaler.outputSize.width, upscaler.outputSize.height);
+                if (!upscaler.active && !upscaler.reason.empty())
+                    ImGui::TextWrapped("Reason: %s", upscaler.reason.c_str());
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Balanced"))
+            else
             {
-                m_renderScale = 0.85f;
-                m_resizeStableFrames = kResizeDebounceFrames;
+                if (ImGui::SmallButton("Performance"))
+                {
+                    m_renderScale = 0.75f;
+                    m_resizeStableFrames = kResizeDebounceFrames;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Balanced"))
+                {
+                    m_renderScale = 0.85f;
+                    m_resizeStableFrames = kResizeDebounceFrames;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Native"))
+                {
+                    m_renderScale = 1.0f;
+                    m_resizeStableFrames = kResizeDebounceFrames;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Supersample"))
+                {
+                    m_renderScale = 1.5f;
+                    m_resizeStableFrames = kResizeDebounceFrames;
+                }
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
+                {
+                    m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
+                    m_resizeStableFrames = kResizeDebounceFrames;
+                }
+                const int targetWidth = std::max(1, static_cast<int>(std::lround(viewportSize.x * m_renderScale)));
+                const int targetHeight = std::max(1, static_cast<int>(std::lround(viewportSize.y * m_renderScale)));
+                ImGui::TextDisabled("Target: %d x %d", targetWidth, targetHeight);
+                const bool upscalingActive = m_renderScale < 0.999f;
+                ImGui::TextDisabled("Upscaler: Spatial (%s)", upscalingActive ? "Active" : "Bypassed");
+                ImGui::BeginDisabled(!upscalingActive);
+                ImGui::SetNextItemWidth(180.0f);
+                ImGui::SliderFloat("Sharpness", &m_upscaleSharpness, 0.0f, 1.0f, "%.2f");
+                ImGui::EndDisabled();
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Native"))
-            {
-                m_renderScale = 1.0f;
-                m_resizeStableFrames = kResizeDebounceFrames;
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Supersample"))
-            {
-                m_renderScale = 1.5f;
-                m_resizeStableFrames = kResizeDebounceFrames;
-            }
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
-            {
-                m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
-                m_resizeStableFrames = kResizeDebounceFrames;
-            }
-            const int targetWidth = std::max(1, static_cast<int>(std::lround(viewportSize.x * m_renderScale)));
-            const int targetHeight = std::max(1, static_cast<int>(std::lround(viewportSize.y * m_renderScale)));
-            ImGui::TextDisabled("Target: %d x %d", targetWidth, targetHeight);
-            const bool upscalingActive = m_renderScale < 0.999f;
-            ImGui::TextDisabled("Upscaler: Spatial (%s)", upscalingActive ? "Active" : "Bypassed");
-            ImGui::BeginDisabled(!upscalingActive);
-            ImGui::SetNextItemWidth(180.0f);
-            ImGui::SliderFloat("Sharpness", &m_upscaleSharpness, 0.0f, 1.0f, "%.2f");
-            ImGui::EndDisabled();
             ImGui::EndPopup();
         }
 
@@ -3922,6 +3986,8 @@ namespace PlutoGE::ui
 
     render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const
     {
+        if (m_temporalUpscalerOptions.technology != render::rhi::TemporalUpscaler::None)
+            return m_renderTarget;
         return std::abs(m_renderScale - 1.0f) < 0.001f || !m_scaledRenderTarget
                    ? m_renderTarget
                    : m_scaledRenderTarget;

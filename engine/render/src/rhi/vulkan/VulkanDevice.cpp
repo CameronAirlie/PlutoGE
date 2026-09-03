@@ -9,6 +9,11 @@
 #include <vk_mem_alloc.h>
 #include <glm/gtc/packing.hpp>
 
+#if PLUTO_HAS_FSR2
+#include <ffx_fsr2.h>
+#include <ffx_fsr2_vk.h>
+#endif
+
 #if PLUTO_HAS_STREAMLINE
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -269,8 +274,13 @@ namespace PlutoGE::render::rhi::vulkan
                 preferences.engine = sl::EngineType::eCustom;
                 preferences.engineVersion = "0.1.0";
                 preferences.renderAPI = sl::RenderAPI::eVulkan;
-                preferences.flags |= sl::PreferenceFlags::eUseManualHooking |
-                                     sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+                // Use only the SDK modules staged by this build. Preferences
+                // default to OTA downloads, which makes the runtime layout
+                // non-deterministic and can introduce modules that were not
+                // selected (for example the Vulkan Reflex dependency).
+                preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
+                                    sl::PreferenceFlags::eUseManualHooking |
+                                    sl::PreferenceFlags::eUseFrameBasedResourceTagging;
                 const auto result = m_init(preferences, sl::kSDKVersion);
                 if (result != sl::Result::eOk)
                 {
@@ -574,6 +584,172 @@ namespace PlutoGE::render::rhi::vulkan
         };
 #endif
 
+#if PLUTO_HAS_FSR2
+        class Fsr2Vulkan
+        {
+        public:
+            Fsr2Vulkan(VkPhysicalDevice physicalDevice, VkDevice device)
+                : m_physicalDevice(physicalDevice), m_device(device) {}
+
+            ~Fsr2Vulkan() { Shutdown(); }
+
+            void Shutdown()
+            {
+                if (m_contextCreated)
+                {
+                    vkDeviceWaitIdle(m_device);
+                    ffxFsr2ContextDestroy(&m_context);
+                    m_contextCreated = false;
+                }
+                m_scratch.clear();
+            }
+
+            [[nodiscard]] TemporalUpscalerSupport Support() const
+            {
+                return {!m_failed, m_failed ? m_reason : std::string{}};
+            }
+
+            [[nodiscard]] static Extent2D OptimalSize(const TemporalUpscalerOptions &options,
+                                                      Extent2D output)
+            {
+                float scale = 1.0f;
+                switch (options.quality)
+                {
+                case UpscalerQuality::Performance: scale = 0.5f; break;
+                case UpscalerQuality::Balanced: scale = 1.0f / 1.7f; break;
+                case UpscalerQuality::Quality: scale = 1.0f / 1.5f; break;
+                case UpscalerQuality::UltraPerformance: scale = 1.0f / 3.0f; break;
+                case UpscalerQuality::Dlaa: scale = 1.0f; break;
+                }
+                return {std::max(1u, static_cast<std::uint32_t>(std::lround(output.width * scale))),
+                        std::max(1u, static_cast<std::uint32_t>(std::lround(output.height * scale)))};
+            }
+
+            bool Evaluate(const TemporalUpscalerOptions &options, const TemporalUpscalerFrame &frame,
+                          VkCommandBuffer commandBuffer,
+                          const std::array<TextureResource *, 4> &textures)
+            {
+                if (!EnsureContext(options, frame) || !commandBuffer ||
+                    std::ranges::any_of(textures, [](auto *texture) { return !texture; }))
+                    return false;
+
+                FfxFsr2DispatchDescription dispatch{};
+                dispatch.commandList = ffxGetCommandListVK(commandBuffer);
+                dispatch.color = Resource(*textures[0], L"FSR2 input color");
+                dispatch.depth = Resource(*textures[1], L"FSR2 input depth");
+                dispatch.motionVectors = Resource(*textures[2], L"FSR2 motion vectors");
+                dispatch.output = Resource(*textures[3], L"FSR2 output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+                dispatch.exposure = EmptyResource(L"FSR2 exposure");
+                dispatch.reactive = EmptyResource(L"FSR2 reactive mask");
+                dispatch.transparencyAndComposition = EmptyResource(L"FSR2 composition mask");
+                dispatch.jitterOffset = {frame.jitterPixels[0], -frame.jitterPixels[1]};
+                // PlutoGE stores current-minus-previous motion in normalized UV
+                // units. FSR2 expects previous-minus-current with Vulkan's Y
+                // direction, expressed in render pixels.
+                dispatch.motionVectorScale = {
+                    -static_cast<float>(frame.renderSize.width) * frame.motionVectorScale[0],
+                    static_cast<float>(frame.renderSize.height) * frame.motionVectorScale[1]};
+                dispatch.renderSize = {frame.renderSize.width, frame.renderSize.height};
+                dispatch.enableSharpening = false;
+                dispatch.sharpness = 0.0f;
+                const auto now = std::chrono::steady_clock::now();
+                dispatch.frameTimeDelta = m_previousDispatch.time_since_epoch().count() == 0
+                                              ? 16.67f
+                                              : std::clamp(std::chrono::duration<float, std::milli>(
+                                                                      now - m_previousDispatch).count(),
+                                                           0.1f, 1000.0f);
+                m_previousDispatch = now;
+                dispatch.preExposure = std::max(frame.preExposure, 0.0001f);
+                dispatch.reset = frame.resetHistory;
+                dispatch.cameraNear = frame.depthInverted ? frame.cameraFar : frame.cameraNear;
+                dispatch.cameraFar = frame.depthInverted ? frame.cameraNear : frame.cameraFar;
+                dispatch.cameraFovAngleVertical = frame.cameraVerticalFovRadians;
+                dispatch.viewSpaceToMetersFactor = 1.0f;
+
+                if (ffxFsr2ContextDispatch(&m_context, &dispatch) == FFX_OK)
+                    return true;
+                Fail("AMD FSR2 dispatch failed; using the renderer fallback");
+                return false;
+            }
+
+        private:
+            bool EnsureContext(const TemporalUpscalerOptions &options,
+                               const TemporalUpscalerFrame &frame)
+            {
+                const std::uint32_t flags =
+                    (options.hdr ? FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE : 0u) |
+                    (options.autoExposure ? FFX_FSR2_ENABLE_AUTO_EXPOSURE : 0u) |
+                    (frame.depthInverted ? FFX_FSR2_ENABLE_DEPTH_INVERTED : 0u) |
+                    (frame.motionVectorsJittered ? FFX_FSR2_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION : 0u);
+                if (m_contextCreated && frame.renderSize == m_renderSize &&
+                    frame.outputSize == m_outputSize && flags == m_flags)
+                    return true;
+
+                Shutdown();
+                m_failed = false;
+                m_reason.clear();
+                m_renderSize = frame.renderSize;
+                m_outputSize = frame.outputSize;
+                m_flags = flags;
+
+                FfxFsr2ContextDescription description{};
+                description.flags = flags;
+                description.maxRenderSize = {frame.renderSize.width, frame.renderSize.height};
+                description.displaySize = {frame.outputSize.width, frame.outputSize.height};
+                description.device = ffxGetDeviceVK(m_device);
+                const std::size_t scratchSize = ffxFsr2GetScratchMemorySizeVK(m_physicalDevice);
+                if (scratchSize == 0)
+                {
+                    Fail("AMD FSR2 could not determine Vulkan backend memory requirements");
+                    return false;
+                }
+                m_scratch.resize(scratchSize);
+                if (ffxFsr2GetInterfaceVK(&description.callbacks, m_scratch.data(), m_scratch.size(),
+                                          m_physicalDevice, vkGetDeviceProcAddr) != FFX_OK ||
+                    ffxFsr2ContextCreate(&m_context, &description) != FFX_OK)
+                {
+                    Fail("AMD FSR2 context creation failed on the selected Vulkan adapter");
+                    return false;
+                }
+                m_contextCreated = true;
+                m_previousDispatch = {};
+                return true;
+            }
+
+            FfxResource Resource(const TextureResource &texture, const wchar_t *name,
+                                 FfxResourceStates state = FFX_RESOURCE_STATE_COMPUTE_READ)
+            {
+                return ffxGetTextureResourceVK(&m_context, texture.image, texture.view,
+                                               texture.descriptor.width, texture.descriptor.height,
+                                               ToVkFormat(texture.descriptor.format), name, state);
+            }
+
+            FfxResource EmptyResource(const wchar_t *name)
+            {
+                return ffxGetTextureResourceVK(&m_context, VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                               1, 1, VK_FORMAT_UNDEFINED, name);
+            }
+
+            void Fail(std::string reason)
+            {
+                m_failed = true;
+                m_reason = std::move(reason);
+            }
+
+            VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+            VkDevice m_device = VK_NULL_HANDLE;
+            FfxFsr2Context m_context{};
+            std::vector<std::byte> m_scratch;
+            Extent2D m_renderSize{};
+            Extent2D m_outputSize{};
+            std::uint32_t m_flags = 0;
+            std::chrono::steady_clock::time_point m_previousDispatch{};
+            bool m_contextCreated = false;
+            bool m_failed = false;
+            std::string m_reason;
+        };
+#endif
+
         VkImageAspectFlags Aspect(const TextureResource &texture)
         {
             return texture.descriptor.format == Format::D32Float ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -635,6 +811,11 @@ namespace PlutoGE::render::rhi::vulkan
         std::unique_ptr<VulkanCommandContext> context;
 #if PLUTO_HAS_STREAMLINE
         std::unique_ptr<StreamlineVulkan> streamline;
+#endif
+#if PLUTO_HAS_FSR2
+        // Each viewport needs independent reconstruction history. A shared
+        // device may render the editor and game views at different sizes.
+        std::unordered_map<std::uint64_t, std::unique_ptr<Fsr2Vulkan>> fsr2Contexts;
 #endif
 
         void BeginUniformFrame(std::size_t frameIndex)
@@ -1942,6 +2123,9 @@ namespace PlutoGE::render::rhi::vulkan
         deviceInfo.ppEnabledExtensionNames = enabledDeviceExtensions.data();
         Check(vkCreateDevice(m_impl->physicalDevice, &deviceInfo, nullptr, &m_impl->device), "vkCreateDevice");
         volkLoadDevice(m_impl->device);
+#if PLUTO_HAS_FSR2
+        m_impl->fsr2Contexts.clear();
+#endif
 #if PLUTO_HAS_STREAMLINE
         if (enableStreamlineForAdapter)
             m_impl->streamline->ConfigureDevice(m_impl->instance, m_impl->physicalDevice,
@@ -2003,6 +2187,9 @@ namespace PlutoGE::render::rhi::vulkan
 #if PLUTO_HAS_STREAMLINE
         if (m_impl->streamline)
             m_impl->streamline->Shutdown();
+#endif
+#if PLUTO_HAS_FSR2
+        m_impl->fsr2Contexts.clear();
 #endif
         m_impl->context.reset();
         for (auto &slot : m_impl->readbacks)
@@ -2501,8 +2688,17 @@ namespace PlutoGE::render::rhi::vulkan
     RenderDeviceTimingStats VulkanDevice::GetTimingStats() const { return m_impl->timingStats; }
     TemporalUpscalerSupport VulkanDevice::GetTemporalUpscalerSupport(TemporalUpscaler upscaler) const
     {
+        if (upscaler == TemporalUpscaler::Fsr2)
+        {
+#if PLUTO_HAS_FSR2
+            return m_impl->device ? TemporalUpscalerSupport{true, {}}
+                                  : TemporalUpscalerSupport{false, "AMD FSR2 was not initialized"};
+#else
+            return {false, "PlutoGE was built without AMD FSR2 (PLUTO_ENABLE_FSR2=OFF)"};
+#endif
+        }
         if (upscaler != TemporalUpscaler::Dlss)
-            return {false, "Only DLSS is implemented by the Vulkan temporal-upscaler adapter"};
+            return {false, "The requested Vulkan temporal upscaler is not implemented"};
 #if PLUTO_HAS_STREAMLINE
         return m_impl->streamline ? m_impl->streamline->Support()
                                   : TemporalUpscalerSupport{false, "Streamline was not initialized"};
@@ -2518,14 +2714,17 @@ namespace PlutoGE::render::rhi::vulkan
         if (options.technology == TemporalUpscaler::Dlss && m_impl->streamline)
             return m_impl->streamline->OptimalSize(options, outputSize);
 #endif
+#if PLUTO_HAS_FSR2
+        if (options.technology == TemporalUpscaler::Fsr2 && m_impl->device)
+            return Fsr2Vulkan::OptimalSize(options, outputSize);
+#endif
         return outputSize;
     }
 
     bool VulkanDevice::EvaluateTemporalUpscaler(const TemporalUpscalerOptions &options,
                                                 const TemporalUpscalerFrame &frame)
     {
-#if PLUTO_HAS_STREAMLINE
-        if (options.technology != TemporalUpscaler::Dlss || !m_impl->streamline || !m_impl->context)
+        if (!m_impl->context)
             return false;
         auto *color = m_impl->textures.Get(frame.color);
         auto *depth = m_impl->textures.Get(frame.depth);
@@ -2536,19 +2735,45 @@ namespace PlutoGE::render::rhi::vulkan
         const auto commandBuffer = m_impl->context->NativeCommandBuffer();
         if (!commandBuffer)
             return false;
+        m_impl->Transition(commandBuffer, *color, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        m_impl->Transition(commandBuffer, *depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        m_impl->Transition(commandBuffer, *motion, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         m_impl->Transition(commandBuffer, *output, VK_IMAGE_LAYOUT_GENERAL,
                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-        const bool result = m_impl->streamline->Evaluate(options, frame, commandBuffer,
-                                                         {color, depth, motion, output});
-        if (!result)
-            m_impl->streamline->RecordEvaluationFailure();
+        bool result = false;
+#if PLUTO_HAS_STREAMLINE
+        if (options.technology == TemporalUpscaler::Dlss && m_impl->streamline)
+        {
+            result = m_impl->streamline->Evaluate(options, frame, commandBuffer,
+                                                   {color, depth, motion, output});
+            if (!result)
+                m_impl->streamline->RecordEvaluationFailure();
+        }
+#endif
+#if PLUTO_HAS_FSR2
+        if (options.technology == TemporalUpscaler::Fsr2 && m_impl->device)
+        {
+            auto &context = m_impl->fsr2Contexts[frame.contextId];
+            if (!context)
+                context = std::make_unique<Fsr2Vulkan>(m_impl->physicalDevice, m_impl->device);
+            result = context->Evaluate(options, frame, commandBuffer,
+                                       {color, depth, motion, output});
+        }
+#endif
         m_impl->context->InvalidateAfterExternalCommands();
         return result;
+    }
+
+    void VulkanDevice::ReleaseTemporalUpscalerContext(std::uint64_t contextId)
+    {
+#if PLUTO_HAS_FSR2
+        m_impl->fsr2Contexts.erase(contextId);
 #else
-        (void)options;
-        (void)frame;
-        return false;
+        static_cast<void>(contextId);
 #endif
     }
     const std::string &VulkanDevice::GetDeviceName() const noexcept { return m_impl->deviceName; }

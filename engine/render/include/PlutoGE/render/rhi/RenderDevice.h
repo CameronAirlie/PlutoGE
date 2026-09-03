@@ -148,6 +148,7 @@ namespace PlutoGE::render::rhi
         {
             return false;
         }
+        virtual void ReleaseTemporalUpscalerContext(std::uint64_t) {}
         [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats() const { return {}; }
     };
 

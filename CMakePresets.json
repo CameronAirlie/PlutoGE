@@ -28,6 +28,16 @@
                 "CMAKE_C_COMPILER": "C:/w64devkit/bin/gcc.exe",
                 "CMAKE_CXX_COMPILER": "C:/w64devkit/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Debug",
+                "PLUTO_ENABLE_FSR2": "ON",
+                "PLUTO_ENABLE_STREAMLINE": "OFF"
+            }
+        },
+        {
+            "name": "gcc-nvidia",
+            "displayName": "GCC 14.2.0 with NVIDIA Streamline",
+            "description": "GCC Windows build with both FSR 2 and NVIDIA DLSS enabled",
+            "inherits": "gcc",
+            "cacheVariables": {
                 "PLUTO_ENABLE_STREAMLINE": "ON",
                 "PLUTO_STREAMLINE_SDK_ROOT": "C:/SDKs/Streamline-2.12.0",
                 "PLUTO_STREAMLINE_PROJECT_ID": "cb4d8370-925d-4b0a-b4bc-30bbde158074"
@@ -76,6 +86,11 @@
             "description": "",
             "displayName": "",
             "configurePreset": "gcc"
+        },
+        {
+            "name": "gcc-nvidia",
+            "displayName": "Build GCC with NVIDIA Streamline",
+            "configurePreset": "gcc-nvidia"
         },
         {
             "name": "all",

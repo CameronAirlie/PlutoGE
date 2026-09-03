@@ -185,6 +185,14 @@ target_include_directories(PlutoGERender PUBLIC
 target_compile_definitions(PlutoGERender PRIVATE
     PLUTO_RHI_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
+option(PLUTO_ENABLE_FSR2 "Enable AMD FidelityFX FSR2 for the Vulkan RHI" OFF)
+if (PLUTO_ENABLE_FSR2)
+    target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_FSR2=1)
+    target_link_libraries(PlutoGERender PRIVATE PlutoGE::fsr2)
+else()
+    target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_FSR2=0)
+endif()
+
 option(PLUTO_ENABLE_STREAMLINE "Enable NVIDIA Streamline/DLSS for the Vulkan RHI" OFF)
 set(PLUTO_STREAMLINE_SDK_ROOT "" CACHE PATH "Path to an extracted NVIDIA Streamline SDK release")
 set(PLUTO_STREAMLINE_PROJECT_ID "" CACHE STRING "NVIDIA Streamline project GUID")

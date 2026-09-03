@@ -7,7 +7,8 @@ WINDOW_TITLE	RocketLeg - Two Player Arena
 WINDOW_SIZE	1600	900
 VSYNC	1
 GRAPHICS_API	Vulkan
-RUNTIME_UPSCALER	None
+RUNTIME_UPSCALER	FSR2
+RUNTIME_UPSCALER_QUALITY	UltraPerformance
 RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	0.5
 EDITOR_FONT_SIZE	16
@@ -26,26 +27,19 @@ ASSET	engine://builtin/mesh/quad	0	Mesh
 ASSET	engine://builtin/mesh/sphere	0	Mesh
 ASSET	engine://builtin/shadergraph/default-lit	0	Shader Graph
 ASSET	engine://builtin/shadergraph/default-unlit	0	Shader Graph
-ASSET	project://Input/RocketLeg.plutoinput	3945	Input Mapping
-ASSET	project://Managed/PlutoGE.ScriptCore.deps.json	446	Unknown
-ASSET	project://Managed/PlutoGE.ScriptCore.dll	229376	Assembly
-ASSET	project://Managed/PlutoGE.ScriptCore.pdb	81452	Unknown
-ASSET	project://Managed/PlutoGE.ScriptCore.runtimeconfig.json	369	Unknown
-ASSET	project://Managed/RocketLeg.Scripts.deps.json	862	Unknown
-ASSET	project://Managed/RocketLeg.Scripts.dll	18432	Assembly
-ASSET	project://Managed/RocketLeg.Scripts.pdb	17428	Unknown
-ASSET	project://Materials/Arena.plutomaterial	213	Material
-ASSET	project://Materials/Ball.plutomaterial	208	Material
-ASSET	project://Materials/Blue.plutomaterial	210	Material
-ASSET	project://Materials/GoalBlue.plutomaterial	204	Material
-ASSET	project://Materials/GoalOrange.plutomaterial	205	Material
-ASSET	project://Materials/Orange.plutomaterial	211	Material
-ASSET	project://Materials/Wall.plutomaterial	213	Material
+ASSET	project://Input/RocketLeg.plutoinput	4085	Input Mapping
+ASSET	project://Materials/Arena.plutomaterial	223	Material
+ASSET	project://Materials/Ball.plutomaterial	218	Material
+ASSET	project://Materials/Blue.plutomaterial	220	Material
+ASSET	project://Materials/GoalBlue.plutomaterial	214	Material
+ASSET	project://Materials/GoalOrange.plutomaterial	215	Material
+ASSET	project://Materials/Orange.plutomaterial	221	Material
+ASSET	project://Materials/Wall.plutomaterial	223	Material
 ASSET	project://PostProcessing/main.plutopostprocess	5278	Post Process Preset
 ASSET	project://Scenes/Main.plutoscene	36056	Scene
-ASSET	project://Scripts/ArcadeCarController.cs	15038	Script
-ASSET	project://Scripts/RocketBall.cs	1849	Script
-ASSET	project://Scripts/RocketChaseCamera.cs	7706	Script
-ASSET	project://Scripts/RocketLegMatch.cs	6234	Script
-ASSET	project://UI/rocketleg-hud.rcss	1478	Unknown
-ASSET	project://UI/rocketleg-hud.rml	1134	RML Document
+ASSET	project://Scripts/ArcadeCarController.cs	15206	Script
+ASSET	project://Scripts/RocketBall.cs	1918	Script
+ASSET	project://Scripts/RocketChaseCamera.cs	7885	Script
+ASSET	project://Scripts/RocketLegMatch.cs	6427	Script
+ASSET	project://UI/rocketleg-hud.rcss	1562	Unknown
+ASSET	project://UI/rocketleg-hud.rml	1162	RML Document

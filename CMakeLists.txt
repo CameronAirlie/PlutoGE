@@ -26,9 +26,25 @@ add_subdirectory(third_party EXCLUDE_FROM_ALL)
 function(pluto_attach_streamline_runtime runtime_target)
     if (PLUTO_ENABLE_STREAMLINE AND PLUTO_STREAMLINE_RUNTIME_DLLS)
         add_custom_command(TARGET ${runtime_target} POST_BUILD
+            # NvLowLatencyVk is a Reflex dependency, not a DLSS Super
+            # Resolution dependency. Remove stale copies left by broader SDK
+            # staging rules because Streamline validates every module it finds.
+            COMMAND ${CMAKE_COMMAND} -E rm -f
+                    "$<TARGET_FILE_DIR:${runtime_target}>/NvLowLatencyVk.dll"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     ${PLUTO_STREAMLINE_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${runtime_target}>"
             COMMAND_EXPAND_LISTS VERBATIM)
+    else()
+        # A build directory can be reconfigured from a Streamline-enabled
+        # preset. Do not leave its modules in an FSR-only runtime layout.
+        add_custom_command(TARGET ${runtime_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E rm -f
+                    "$<TARGET_FILE_DIR:${runtime_target}>/sl.interposer.dll"
+                    "$<TARGET_FILE_DIR:${runtime_target}>/sl.common.dll"
+                    "$<TARGET_FILE_DIR:${runtime_target}>/sl.dlss.dll"
+                    "$<TARGET_FILE_DIR:${runtime_target}>/nvngx_dlss.dll"
+                    "$<TARGET_FILE_DIR:${runtime_target}>/NvLowLatencyVk.dll"
+            VERBATIM)
     endif()
 endfunction()
 

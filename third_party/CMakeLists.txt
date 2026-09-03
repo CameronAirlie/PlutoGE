@@ -48,6 +48,98 @@ target_link_libraries(PlutoGE_vulkan INTERFACE
     GPUOpen::VulkanMemoryAllocator
 )
 
+if (PLUTO_ENABLE_FSR2)
+    if (NOT WIN32)
+        message(FATAL_ERROR "PlutoGE's current FSR2 shader build pipeline supports Windows only")
+    endif()
+
+    FetchContent_Declare(
+        fidelityfx_fsr2
+        GIT_REPOSITORY https://github.com/GPUOpen-Effects/FidelityFX-FSR2.git
+        GIT_TAG        1680d1edd5c034f88ebbbb793d8b88f8842cf804
+        # PlutoGE consumes only the SDK API/backend sources, not AMD's sample.
+        SOURCE_SUBDIR  _plutoge_no_cmake_project
+    )
+    FetchContent_MakeAvailable(fidelityfx_fsr2)
+
+    set(_pluto_fsr2_api_dir "${fidelityfx_fsr2_SOURCE_DIR}/src/ffx-fsr2-api")
+    set(_pluto_fsr2_shader_dir "${_pluto_fsr2_api_dir}/shaders")
+    set(_pluto_fsr2_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/fsr2-shaders")
+    set(_pluto_fsr2_shader_compiler "${fidelityfx_fsr2_SOURCE_DIR}/tools/sc/FidelityFX_SC.exe")
+    file(MAKE_DIRECTORY "${_pluto_fsr2_generated_dir}")
+
+    set(_pluto_fsr2_shader_headers)
+    function(pluto_compile_fsr2_shader shader_name)
+        set(shader_source "${_pluto_fsr2_shader_dir}/${shader_name}.glsl")
+        set(shader_output "${_pluto_fsr2_generated_dir}/${shader_name}_permutations.h")
+        if (shader_name STREQUAL "ffx_fsr2_compute_luminance_pyramid_pass")
+            set(half_permutations 0)
+        else()
+            set(half_permutations "{0,1}")
+        endif()
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND "${_pluto_fsr2_shader_compiler}"
+                -reflection -deps=gcc -DFFX_GPU=1
+                -DFFX_FSR2_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0
+                -DFFX_FSR2_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0
+                -DFFX_FSR2_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1
+                -DFFX_FSR2_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0
+                -DFFX_FSR2_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2
+                -DFFX_FSR2_OPTION_REPROJECT_USE_LANCZOS_TYPE={0,1}
+                -DFFX_FSR2_OPTION_HDR_COLOR_INPUT={0,1}
+                -DFFX_FSR2_OPTION_LOW_RESOLUTION_MOTION_VECTORS={0,1}
+                -DFFX_FSR2_OPTION_JITTERED_MOTION_VECTORS={0,1}
+                -DFFX_FSR2_OPTION_INVERTED_DEPTH={0,1}
+                -DFFX_FSR2_OPTION_APPLY_SHARPENING={0,1}
+                "-DFFX_HALF=${half_permutations}"
+                -compiler=glslang -e main --target-env vulkan1.1 -S comp -Os -DFFX_GLSL=1
+                "-name=${shader_name}" "-I${_pluto_fsr2_shader_dir}"
+                "-output=${_pluto_fsr2_generated_dir}" "${shader_source}"
+            DEPENDS "${shader_source}"
+            COMMENT "Compiling AMD FSR2 shader permutations: ${shader_name}"
+            VERBATIM)
+        list(APPEND _pluto_fsr2_shader_headers "${shader_output}")
+        set(_pluto_fsr2_shader_headers "${_pluto_fsr2_shader_headers}" PARENT_SCOPE)
+    endfunction()
+
+    pluto_compile_fsr2_shader(ffx_fsr2_tcr_autogen_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_autogen_reactive_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_accumulate_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_compute_luminance_pyramid_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_depth_clip_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_lock_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_reconstruct_previous_depth_pass)
+    pluto_compile_fsr2_shader(ffx_fsr2_rcas_pass)
+
+    add_custom_target(PlutoGEFsr2Shaders DEPENDS ${_pluto_fsr2_shader_headers})
+    add_library(PlutoGE_fsr2 STATIC
+        "${_pluto_fsr2_api_dir}/ffx_assert.cpp"
+        "${_pluto_fsr2_api_dir}/ffx_fsr2.cpp"
+        "${_pluto_fsr2_api_dir}/vk/ffx_fsr2_vk.cpp"
+        "${_pluto_fsr2_api_dir}/vk/shaders/ffx_fsr2_shaders_vk.cpp")
+    add_library(PlutoGE::fsr2 ALIAS PlutoGE_fsr2)
+    add_dependencies(PlutoGE_fsr2 PlutoGEFsr2Shaders)
+    target_include_directories(PlutoGE_fsr2 PUBLIC
+        "${_pluto_fsr2_api_dir}"
+        "${_pluto_fsr2_api_dir}/vk"
+        "${_pluto_fsr2_generated_dir}")
+    target_link_libraries(PlutoGE_fsr2 PUBLIC volk Vulkan::Headers)
+    target_compile_definitions(PlutoGE_fsr2 PRIVATE VK_NO_PROTOTYPES)
+    set(_pluto_fsr2_compat_header "${CMAKE_CURRENT_SOURCE_DIR}/fsr2/PlutoFsr2Compat.h")
+    target_compile_options(PlutoGE_fsr2 PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/FI${_pluto_fsr2_compat_header}>"
+        "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-include;${_pluto_fsr2_compat_header}>")
+    set_target_properties(PlutoGE_fsr2 PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    install(FILES "${fidelityfx_fsr2_SOURCE_DIR}/LICENSE.txt"
+        DESTINATION Licenses/ThirdParty
+        RENAME FSR2-LICENSE.txt
+        COMPONENT Runtime)
+endif()
+
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git

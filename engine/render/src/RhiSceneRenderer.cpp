@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <numeric>
@@ -19,6 +20,8 @@ namespace PlutoGE::render
 {
     namespace
     {
+        std::atomic_uint64_t g_nextUpscalerContextId{1};
+
         float Halton(std::uint64_t index, std::uint32_t base)
         {
             float result = 0.0f;
@@ -150,11 +153,14 @@ namespace PlutoGE::render
             return false;
         m_device = &device;
         m_renderer = std::move(renderer);
+        m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
     void RhiSceneRenderer::Shutdown()
     {
+        if (m_device && m_upscalerContextId != 0)
+            m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
         m_meshes.clear();
         m_srgbTextures.clear();
         m_linearTextures.clear();
@@ -170,6 +176,8 @@ namespace PlutoGE::render
         m_previousRenderSize = {};
         m_previousOutputSize = {};
         m_upscalerHistoryValid = false;
+        m_upscalerStatus = {};
+        m_upscalerContextId = 0;
     }
 
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height,
@@ -190,13 +198,24 @@ namespace PlutoGE::render
         if (!m_renderer || !m_device || width == 0 || height == 0)
             return false;
         const rhi::Extent2D outputSize{width, height};
-        const bool useTemporalUpscaler = m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
-            m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology).supported;
+        const bool temporalUpscalerRequested = m_upscalerOptions.technology != rhi::TemporalUpscaler::None;
+        const auto upscalerSupport = temporalUpscalerRequested
+                                         ? m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology)
+                                         : rhi::TemporalUpscalerSupport{};
+        const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported;
         const rhi::Extent2D renderSize = useTemporalUpscaler
             ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
             : outputSize;
         if (renderSize.width == 0 || renderSize.height == 0)
             return false;
+        m_upscalerStatus = {
+            .options = m_upscalerOptions,
+            .renderSize = renderSize,
+            .outputSize = outputSize,
+            .requested = temporalUpscalerRequested,
+            .active = false,
+            .reason = useTemporalUpscaler ? std::string{} : upscalerSupport.reason,
+        };
         const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize;
         auto effectiveUpscaler = m_upscalerOptions;
         if (!useTemporalUpscaler)
@@ -525,6 +544,7 @@ namespace PlutoGE::render
             upscalerFrame.cameraVerticalFovRadians =
                 2.0f * std::atan(1.0f / std::max(std::abs(unjitteredProjection[1][1]), 0.0001f));
             upscalerFrame.cameraAspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            upscalerFrame.contextId = m_upscalerContextId;
             upscalerFrame.frameIndex = m_temporalFrameIndex;
             upscalerFrame.resetHistory = !m_upscalerHistoryValid || resolutionChanged;
         }
@@ -532,7 +552,10 @@ namespace PlutoGE::render
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
                            debugView, useTemporalUpscaler ? &upscalerFrame : nullptr);
-        if (useTemporalUpscaler)
+        m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
+        if (useTemporalUpscaler && !m_upscalerStatus.active)
+            m_upscalerStatus.reason = "Temporal upscaler evaluation did not complete";
+        if (m_upscalerStatus.active)
         {
             m_previousUpscalerViewProjection = currentUnjitteredViewProjection;
             m_previousRenderSize = renderSize;

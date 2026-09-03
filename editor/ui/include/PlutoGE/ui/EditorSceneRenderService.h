@@ -39,6 +39,7 @@ namespace PlutoGE::ui
 
         bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
+        void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
                     std::span<const render::RenderCommand> commands,
@@ -60,6 +61,11 @@ namespace PlutoGE::ui
         }
         [[nodiscard]] bool IsVulkanAvailable() const noexcept { return m_vulkanAvailable; }
         [[nodiscard]] const std::string &GetVulkanStatus() const noexcept { return m_vulkanStatus; }
+        [[nodiscard]] const render::TemporalUpscalerStatus &GetTemporalUpscalerStatus() const noexcept
+        {
+            static const render::TemporalUpscalerStatus empty;
+            return m_sceneRenderer ? m_sceneRenderer->GetTemporalUpscalerStatus() : empty;
+        }
 
     private:
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
@@ -69,6 +75,7 @@ namespace PlutoGE::ui
         bool m_isVulkan = false;
         bool m_vulkanAvailable = false;
         std::uint64_t m_frameSequence = 0;
+        render::rhi::TemporalUpscalerOptions m_upscalerOptions;
         std::string m_vulkanStatus = "Vulkan not probed";
     };
 }

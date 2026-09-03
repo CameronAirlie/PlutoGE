@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <unordered_map>
 
 namespace PlutoGE::render
@@ -29,6 +30,16 @@ namespace PlutoGE::render
         std::array<std::size_t, 4> recordedShadowDrawsByCascade{};
     };
 
+    struct TemporalUpscalerStatus
+    {
+        rhi::TemporalUpscalerOptions options;
+        rhi::Extent2D renderSize;
+        rhi::Extent2D outputSize;
+        bool requested = false;
+        bool active = false;
+        std::string reason;
+    };
+
     class Mesh;
     class Texture;
     class IPostProcessEffect;
@@ -46,7 +57,13 @@ namespace PlutoGE::render
         void Shutdown();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
+            if (m_upscalerOptions == options)
+                return;
+            if (m_device && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
+                m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
             m_upscalerOptions = options;
+            m_upscalerStatus = {};
+            ResetTemporalHistory();
         }
         void ResetTemporalHistory() noexcept { m_upscalerHistoryValid = false; }
         bool Render(std::uint32_t width, std::uint32_t height,
@@ -66,6 +83,10 @@ namespace PlutoGE::render
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneCommandCount; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_drawCount; }
         [[nodiscard]] const RhiSceneTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
+        [[nodiscard]] const TemporalUpscalerStatus &GetTemporalUpscalerStatus() const noexcept
+        {
+            return m_upscalerStatus;
+        }
 
     private:
         rhi::IRenderDevice *m_device = nullptr;
@@ -83,5 +104,7 @@ namespace PlutoGE::render
         rhi::Extent2D m_previousRenderSize;
         rhi::Extent2D m_previousOutputSize;
         bool m_upscalerHistoryValid = false;
+        TemporalUpscalerStatus m_upscalerStatus;
+        std::uint64_t m_upscalerContextId = 0;
     };
 }

@@ -47,17 +47,20 @@ int main()
     std::filesystem::create_directories(packageRoot);
     const auto projectPath = projectRoot / "ModelAssetPathTests.plutoproject";
     Project project(projectPath, ProjectManifest{.assetDirectory = "Assets"});
-    project.GetManifest().runtimeUpscaler = RuntimeUpscalerMode::Dlss;
-    project.GetManifest().runtimeDlssQuality = PlutoGE::render::rhi::UpscalerQuality::Balanced;
+    project.GetManifest().runtimeUpscaler = RuntimeUpscalerMode::Fsr2;
+    project.GetManifest().runtimeUpscalerQuality = PlutoGE::render::rhi::UpscalerQuality::Balanced;
     project.GetManifest().graphicsApi = PlutoGE::render::rhi::GraphicsApi::Vulkan;
     project.GetManifest().runtimeRenderScale = 0.75f;
     project.GetManifest().runtimeUpscaleSharpness = 0.4f;
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);
     assert(reloadedProject);
-    assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Dlss);
-    assert(reloadedProject->GetManifest().runtimeDlssQuality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
+    assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Fsr2);
+    assert(reloadedProject->GetManifest().runtimeUpscalerQuality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
     assert(reloadedProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan);
+    const auto temporalUpscaler = reloadedProject->GetManifest().GetTemporalUpscalerOptions();
+    assert(temporalUpscaler.technology == PlutoGE::render::rhi::TemporalUpscaler::Fsr2);
+    assert(temporalUpscaler.quality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
     assert(reloadedProject->GetManifest().runtimeRenderScale == 0.75f);
     assert(reloadedProject->GetManifest().runtimeUpscaleSharpness == 0.4f);
 

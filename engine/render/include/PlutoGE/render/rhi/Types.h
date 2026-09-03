@@ -84,7 +84,8 @@ namespace PlutoGE::render::rhi
     enum class TemporalUpscaler : std::uint8_t
     {
         None,
-        Dlss
+        Dlss,
+        Fsr2
     };
 
     enum class UpscalerQuality : std::uint8_t
@@ -115,6 +116,7 @@ namespace PlutoGE::render::rhi
         UpscalerQuality quality = UpscalerQuality::Quality;
         bool hdr = true;
         bool autoExposure = true;
+        auto operator<=>(const TemporalUpscalerOptions &) const = default;
     };
 
     template <typename Tag>
@@ -159,6 +161,8 @@ namespace PlutoGE::render::rhi
         float cameraVerticalFovRadians = 1.0f;
         float cameraAspectRatio = 1.0f;
         float preExposure = 1.0f;
+        // Separates temporal history for independent views sharing one device.
+        std::uint64_t contextId = 0;
         std::uint64_t frameIndex = 0;
         bool resetHistory = false;
         bool depthInverted = true;

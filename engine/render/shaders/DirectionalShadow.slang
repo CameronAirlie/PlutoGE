@@ -33,7 +33,8 @@ VertexOutput vertexMain(VertexInput input)
 }
 
 [shader("vertex")]
-VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_InstanceID)
+// RHI instanced draws always use firstInstance = 0; use the raw backend index.
+VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     VertexOutput output;
     output.position = mul(lightViewProjection, mul(instanceModels[instanceId], float4(input.position, 1.0)));

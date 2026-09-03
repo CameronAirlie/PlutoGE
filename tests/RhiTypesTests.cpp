@@ -78,7 +78,10 @@ int main()
     assert(pipeline.depthTest && pipeline.depthWrite);
     const auto fallbackSupport = device.GetTemporalUpscalerSupport(TemporalUpscaler::Dlss);
     assert(!fallbackSupport.supported && !fallbackSupport.reason.empty());
+    const auto fsrFallbackSupport = device.GetTemporalUpscalerSupport(TemporalUpscaler::Fsr2);
+    assert(!fsrFallbackSupport.supported && !fsrFallbackSupport.reason.empty());
     const Extent2D outputSize{1920, 1080};
     assert(device.GetOptimalRenderSize({.technology = TemporalUpscaler::Dlss}, outputSize) == outputSize);
+    assert(device.GetOptimalRenderSize({.technology = TemporalUpscaler::Fsr2}, outputSize) == outputSize);
     return 0;
 }

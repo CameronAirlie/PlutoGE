@@ -171,6 +171,7 @@ namespace PlutoGE::ui
             render::BasicRendererShaderPackage shaders = shaderArtifacts.LoadBasicRendererPackage();
             if (!renderer->Initialize(*m_device, shaders))
                 throw std::runtime_error("Failed to initialize the editor scene renderer");
+            renderer->SetTemporalUpscalerOptions(m_upscalerOptions);
             m_sceneRenderer = std::move(renderer);
             std::cout << "Editor scene RHI: " << m_vulkanStatus << "; active backend: "
                       << (m_isVulkan ? "Vulkan" : "OpenGL") << '\n';
@@ -195,6 +196,16 @@ namespace PlutoGE::ui
         m_viewportTexture = {};
         m_frameSequence = 0;
         m_isVulkan = false;
+    }
+
+    void EditorSceneRenderService::SetTemporalUpscalerOptions(
+        render::rhi::TemporalUpscalerOptions options) noexcept
+    {
+        if (m_upscalerOptions == options)
+            return;
+        m_upscalerOptions = options;
+        if (m_sceneRenderer)
+            m_sceneRenderer->SetTemporalUpscalerOptions(options);
     }
 
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,

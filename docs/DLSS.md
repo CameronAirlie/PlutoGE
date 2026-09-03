@@ -27,6 +27,11 @@ DLSS Super Resolution needs at least `sl.interposer.dll`, `sl.common.dll`,
 `sl.dlss.dll`, and `nvngx_dlss.dll`. Keep NVIDIA's accompanying license files
 with distributions.
 
+The Windows presets keep this opt-in: `gcc` is the FSR2-only configuration and
+`gcc-nvidia` enables Streamline as well. PlutoGE disables Streamline's OTA
+plug-in loading so only the signed modules selected and staged by the build are
+loaded.
+
 ## Project configuration
 
 Select **DLSS** under Project Settings > Runtime Upscaler and choose one of
@@ -35,7 +40,7 @@ stores these as:
 
 ```text
 RUNTIME_UPSCALER	DLSS
-RUNTIME_DLSS_QUALITY	Quality
+RUNTIME_UPSCALER_QUALITY	Quality
 ```
 
 DLSS currently applies to Vulkan runtime rendering only. At startup, support is

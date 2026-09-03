@@ -92,6 +92,8 @@ namespace PlutoGE::render
 
     void RhiRenderService::SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
     {
+        if (m_upscalerOptions == options)
+            return;
         m_upscalerOptions = options;
         if (m_renderer)
             m_renderer->SetTemporalUpscalerOptions(options);

@@ -15,6 +15,7 @@ struct VertexOutput
     float4 worldTangent : TEXCOORD2;
     float4 currentClip : TEXCOORD3;
     float4 previousClip : TEXCOORD4;
+    float objectDebug : TEXCOORD5;
 };
 
 struct FragmentOutput
@@ -246,6 +247,7 @@ VertexOutput vertexMain(VertexInput input)
     output.position = mul(viewProjection, worldPosition);
     output.currentClip = output.position;
     output.previousClip = mul(previousViewProjection, mul(previousModel, float4(input.position, 1.0)));
+    output.objectDebug = objectDebugParameters.x;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
@@ -254,7 +256,9 @@ VertexOutput vertexMain(VertexInput input)
 }
 
 [shader("vertex")]
-VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_InstanceID)
+// RHI instanced draws always use firstInstance = 0. The raw Vulkan/OpenGL
+// index avoids requiring SPIR-V's BaseInstance capability on affected drivers.
+VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     VertexOutput output;
     const InstanceObjectParameters instance = instances[instanceId];
@@ -268,6 +272,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_Instanc
     output.position = mul(viewProjection, worldPosition);
     output.currentClip = output.position;
     output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(input.position, 1.0)));
+    output.objectDebug = instance.debugParameters.x;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
@@ -435,7 +440,7 @@ FragmentOutput fragmentMain(VertexOutput input)
     // upscalers and avoids losing sub-pixel precision around an encoded 0.5.
     output.motion = float4((currentNdc - previousNdc) * 0.5, 0.0, 1.0);
     output.albedo = sampledColor;
-    output.debug = float4(saturate(objectDebugParameters.x), normalizedCascade,
+    output.debug = float4(saturate(input.objectDebug), normalizedCascade,
                           rawShadowVisibility, shadowVisibility);
     return output;
 }

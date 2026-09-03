@@ -332,6 +332,10 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t GetOutputHeight() const noexcept { return m_outputHeight; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
         [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
+        [[nodiscard]] bool WasTemporalUpscalerEvaluated() const noexcept
+        {
+            return m_temporalUpscalerEvaluatedLastFrame;
+        }
 
     private:
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
@@ -459,6 +463,7 @@ namespace PlutoGE::render
         std::uint32_t m_postProcessWidth = 0;
         std::uint32_t m_postProcessHeight = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;
+        bool m_temporalUpscalerEvaluatedLastFrame = false;
         std::uint64_t m_frameIndex = 0;
         glm::mat4 m_inverseViewProjection{1.0f};
         glm::mat4 m_postProcessView{1.0f};

@@ -78,6 +78,7 @@ namespace PlutoGE::ui
         void SetEditorCameraData(const render::CameraData &cameraData);
         void ClearEditorCameraData();
         void SetGraphicsApi(render::rhi::GraphicsApi graphicsApi);
+        void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options);
         void SetSharedRenderDevice(render::rhi::IRenderDevice *device) { m_config.sharedRenderDevice = device; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
@@ -92,6 +93,7 @@ namespace PlutoGE::ui
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;
         float m_upscaleSharpness = 0.25f;
+        render::rhi::TemporalUpscalerOptions m_temporalUpscalerOptions;
         bool m_showGrid = true;
         bool m_useRhiPreview = true;
         bool m_vulkanAvailable = false;

@@ -54,6 +54,7 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] ICommandContext &GetImmediateContext() override;
         bool EvaluateTemporalUpscaler(const TemporalUpscalerOptions &options,
                                       const TemporalUpscalerFrame &frame) override;
+        void ReleaseTemporalUpscalerContext(std::uint64_t contextId) override;
         [[nodiscard]] RenderDeviceTimingStats GetTimingStats() const override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.

@@ -900,6 +900,7 @@ namespace PlutoGE::render
                                const rhi::TemporalUpscalerFrame *upscalerFrame)
     {
         m_frameStats = {};
+        m_temporalUpscalerEvaluatedLastFrame = false;
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
@@ -1202,12 +1203,13 @@ namespace PlutoGE::render
         m_postProcessWidth = m_width;
         m_postProcessHeight = m_height;
         std::size_t targetIndex = 0;
-        const bool dlssRequested = m_upscalerOptions.technology == rhi::TemporalUpscaler::Dlss &&
-                                   upscalerFrame && m_temporalUpscalerOutput &&
-                                   m_outputWidth != 0 && m_outputHeight != 0;
-        bool upscalePending = dlssRequested;
-        bool dlssEvaluated = false;
-        const auto evaluateDlss = [&]()
+        const bool temporalUpscalerRequested =
+            m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
+            upscalerFrame && m_temporalUpscalerOutput &&
+            m_outputWidth != 0 && m_outputHeight != 0;
+        bool upscalePending = temporalUpscalerRequested;
+        bool temporalUpscalerEvaluated = false;
+        const auto evaluateTemporalUpscaler = [&]()
         {
             if (!upscalePending)
                 return;
@@ -1224,10 +1226,11 @@ namespace PlutoGE::render
                 m_outputColor = m_temporalUpscalerOutput.Get();
                 m_postProcessWidth = m_outputWidth;
                 m_postProcessHeight = m_outputHeight;
-                dlssEvaluated = true;
+                temporalUpscalerEvaluated = true;
+                m_temporalUpscalerEvaluatedLastFrame = true;
             }
         };
-        const bool hasTaa = !dlssRequested && std::ranges::any_of(postProcessEffects, [](const auto &effect)
+        const bool hasTaa = !temporalUpscalerRequested && std::ranges::any_of(postProcessEffects, [](const auto &effect)
                                                                   { return effect.type == BasicPostProcessEffectType::TAA; });
         const bool hasAutoExposure = std::ranges::any_of(postProcessEffects, [](const auto &effect)
                                                          { return effect.type == BasicPostProcessEffectType::AutoExposure; });
@@ -1242,8 +1245,8 @@ namespace PlutoGE::render
         for (const auto &effect : postProcessEffects)
         {
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
-                evaluateDlss();
-            if (dlssEvaluated && effect.type == BasicPostProcessEffectType::TAA)
+                evaluateTemporalUpscaler();
+            if (temporalUpscalerEvaluated && effect.type == BasicPostProcessEffectType::TAA)
                 continue;
             if (effect.type == BasicPostProcessEffectType::Bloom)
             {
@@ -1331,7 +1334,7 @@ namespace PlutoGE::render
                 m_taaHistoryValid = true;
             }
         }
-        evaluateDlss();
+        evaluateTemporalUpscaler();
         if (m_displayPipeline && m_displayTarget)
         {
             const BasicDebugViewParameters debugParameters{

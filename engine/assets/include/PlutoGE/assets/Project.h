@@ -73,6 +73,7 @@ namespace PlutoGE::assets
         None = 0,
         Spatial,
         Dlss,
+        Fsr2,
     };
 
     struct ProjectManifest
@@ -89,13 +90,15 @@ namespace PlutoGE::assets
         RuntimeUpscalerMode runtimeUpscaler = RuntimeUpscalerMode::None;
         float runtimeRenderScale = 1.0f;
         float runtimeUpscaleSharpness = 0.25f;
-        render::rhi::UpscalerQuality runtimeDlssQuality = render::rhi::UpscalerQuality::Quality;
+        render::rhi::UpscalerQuality runtimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
         float editorFontSize = 15.0f;
         std::string editorFont = "Martian Mono";
         ProjectEditorCameraSettings editorCamera;
         std::string editorCameraPostProcessPreset;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;
         std::vector<ProjectAssetEntry> assetEntries;
+
+        [[nodiscard]] render::rhi::TemporalUpscalerOptions GetTemporalUpscalerOptions() const noexcept;
     };
 
     class Project

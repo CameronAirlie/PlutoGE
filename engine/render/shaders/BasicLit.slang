@@ -47,6 +47,7 @@ cbuffer CameraParameters : register(b0, space0)
     float4 shadowFilterParameters;
     float4 shadowFilterEdgeParameters;
     column_major float4x4 view;
+    column_major float4x4 motionViewProjection;
     column_major float4x4 previousViewProjection;
     float4 physicalSkyParameters[6];
     float4 physicalSkySettings;
@@ -245,7 +246,7 @@ VertexOutput vertexMain(VertexInput input)
         localTangent = normalize(cross(tangentAxis, input.normal));
     }
     output.position = mul(viewProjection, worldPosition);
-    output.currentClip = output.position;
+    output.currentClip = mul(motionViewProjection, worldPosition);
     output.previousClip = mul(previousViewProjection, mul(previousModel, float4(input.position, 1.0)));
     output.objectDebug = objectDebugParameters.x;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
@@ -270,7 +271,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
         localTangent = normalize(cross(tangentAxis, input.normal));
     }
     output.position = mul(viewProjection, worldPosition);
-    output.currentClip = output.position;
+    output.currentClip = mul(motionViewProjection, worldPosition);
     output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(input.position, 1.0)));
     output.objectDebug = instance.debugParameters.x;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));

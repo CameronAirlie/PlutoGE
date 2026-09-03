@@ -573,14 +573,16 @@ namespace PlutoGE::render
             upscalerFrame.contextId = m_upscalerContextId;
             upscalerFrame.frameIndex = m_temporalFrameIndex;
             upscalerFrame.resetHistory = !m_upscalerHistoryValid || resolutionChanged;
-            // BasicRenderer compares this frame's jittered clip position with
-            // the preceding frame's jittered clip position.
-            upscalerFrame.motionVectorsJittered = true;
+            // BasicRenderer generates velocity from unjittered current and
+            // previous transforms, so SDK-side jitter cancellation must stay
+            // disabled.
+            upscalerFrame.motionVectorsJittered = false;
         }
         const auto setupEnd = std::chrono::steady_clock::now();
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
-                           debugView, useTemporalUpscaler ? &upscalerFrame : nullptr);
+                           debugView, useTemporalUpscaler ? &upscalerFrame : nullptr,
+                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         if (useTemporalUpscaler && !m_upscalerStatus.active)
             m_upscalerStatus.reason = "Temporal upscaler evaluation did not complete";

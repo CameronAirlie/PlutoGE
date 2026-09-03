@@ -54,11 +54,12 @@ namespace PlutoGE::render
             glm::vec4 shadowFilterParameters{0.0f};     // enabled, radius, render scale, depth scale
             glm::vec4 shadowFilterEdgeParameters{0.0f}; // minimum depth, normal threshold, normal softness
             glm::mat4 view{1.0f};
+            glm::mat4 motionViewProjection{1.0f};
             glm::mat4 previousViewProjection{1.0f};
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
         };
-        static_assert(sizeof(BasicFrameParameters) == 816);
+        static_assert(sizeof(BasicFrameParameters) == 880);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -690,6 +691,7 @@ namespace PlutoGE::render
         for (auto &target : m_exposureHistoryTargets)
             target.Reset();
         m_ssaoRawTarget.Reset();
+        m_ssaoCompositeTarget.Reset();
         for (auto &target : m_ssaoHistoryTargets)
             target.Reset();
         m_colorTarget.Reset();
@@ -752,7 +754,7 @@ namespace PlutoGE::render
         m_frameIndex = 0;
         m_previousModels.clear();
         m_hasPreviousFrame = false;
-        m_previousViewProjection = glm::mat4(1.0f);
+        m_previousMotionViewProjection = glm::mat4(1.0f);
         m_outputColor = {};
         m_postProcessBufferCursor = 0;
         m_taaHistoryIndex = 0;
@@ -860,6 +862,9 @@ namespace PlutoGE::render
         m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                                                       {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
                                                        "SSAO raw", true}));
+        m_ssaoCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+            {width, height, rhi::Format::R16G16B16A16Float,
+             rhi::TextureUsage::ColorAttachment, "SSAO composite", true}));
         for (std::size_t index = 0; index < m_ssaoHistoryTargets.size(); ++index)
             m_ssaoHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
                                                                       {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
@@ -923,7 +928,8 @@ namespace PlutoGE::render
                                std::span<const BasicPostProcessEffect> postProcessEffects,
                                std::span<const BasicDraw> shadowDraws,
                                PostProcessDebugView debugView,
-                               const rhi::TemporalUpscalerFrame *upscalerFrame)
+                               const rhi::TemporalUpscalerFrame *upscalerFrame,
+                               const glm::mat4 *motionViewProjection)
     {
         m_frameStats = {};
         m_temporalUpscalerEvaluatedLastFrame = false;
@@ -946,6 +952,9 @@ namespace PlutoGE::render
             inverseShadowResolutions[cascade] = glm::vec4(inverseResolution, inverseResolution, 0.0f, 0.0f);
         }
 
+        const glm::mat4 currentMotionViewProjection = motionViewProjection
+                                                          ? *motionViewProjection
+                                                          : viewProjection;
         const BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -970,7 +979,9 @@ namespace PlutoGE::render
                       std::clamp(lighting.shadowFilterNormalThreshold, -1.0f, 1.0f),
                       std::max(lighting.shadowFilterNormalSoftness, 0.001f), 0.0f),
             lighting.view,
-            m_hasPreviousFrame ? m_previousViewProjection : viewProjection,
+            currentMotionViewProjection,
+            m_hasPreviousFrame ? m_previousMotionViewProjection
+                               : currentMotionViewProjection,
             lighting.physicalSkyParameters,
             glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
                       std::max(lighting.physicalSkyExposure, 0.0f),
@@ -1118,7 +1129,7 @@ namespace PlutoGE::render
             {0.04f, 0.06f, 0.09f, 1.0f}, // Scene color.
             {0.5f, 0.5f, 1.0f, 1.0f},    // Neutral encoded normal.
             {0.0f, 1.0f, 0.0f, 1.0f},    // Non-metallic, fully rough material.
-            {0.5f, 0.5f, 0.0f, 1.0f},    // Encoded zero motion.
+            {0.0f, 0.0f, 0.0f, 1.0f},    // Signed, unbiased zero motion.
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
@@ -1391,7 +1402,7 @@ namespace PlutoGE::render
         }
         commands.EndGpuScope();
         ++m_frameIndex;
-        m_previousViewProjection = viewProjection;
+        m_previousMotionViewProjection = currentMotionViewProjection;
         m_previousModels.clear();
         for (const auto &draw : draws)
             if (draw.mesh && draw.mesh->IsValid())
@@ -1831,9 +1842,7 @@ namespace PlutoGE::render
         commands.Draw(3);
         commands.EndRendering();
 
-        rhi::Texture *destination = &m_postProcessTargets[0];
-        if (destination->Get() == source)
-            destination = &m_postProcessTargets[1];
+        auto *destination = &m_ssaoCompositeTarget;
         auto &compositeBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(compositeBuffer.Get(), 0, Bytes(block));
         rhi::RenderingInfo compositeInfo;

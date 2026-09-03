@@ -316,7 +316,8 @@ namespace PlutoGE::render
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},
                     std::span<const BasicDraw> shadowDraws = {},
                     PostProcessDebugView debugView = PostProcessDebugView::None,
-                    const rhi::TemporalUpscalerFrame *upscalerFrame = nullptr);
+                    const rhi::TemporalUpscalerFrame *upscalerFrame = nullptr,
+                    const glm::mat4 *motionViewProjection = nullptr);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -438,6 +439,7 @@ namespace PlutoGE::render
         glm::mat4 m_vctPreviousView{1.0f};
         rhi::Texture m_ssaoRawTarget;
         std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
+        rhi::Texture m_ssaoCompositeTarget;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
         std::size_t m_postProcessBufferCursor = 0;
         std::uint8_t m_taaHistoryIndex = 0;
@@ -467,7 +469,7 @@ namespace PlutoGE::render
         glm::mat4 m_postProcessView{1.0f};
         glm::mat4 m_postProcessProjection{1.0f};
         glm::vec4 m_postProcessCameraPosition{0.0f};
-        glm::mat4 m_previousViewProjection{1.0f};
+        glm::mat4 m_previousMotionViewProjection{1.0f};
         std::vector<glm::mat4> m_previousModels;
         bool m_hasPreviousFrame = false;
         rhi::TextureHandle m_outputColor;

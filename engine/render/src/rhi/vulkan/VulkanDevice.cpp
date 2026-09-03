@@ -624,8 +624,15 @@ namespace PlutoGE::render::rhi::vulkan
                 // Prevent tiny docked viewports from producing pathologically
                 // small temporal inputs while retaining the requested ratio at
                 // normal game resolutions.
-                constexpr float minimumRenderWidth = 320.0f;
-                constexpr float minimumRenderHeight = 180.0f;
+                // FSR2's relative quality ratios become counterproductive in a
+                // small editor dock: for example, a 688x407 Quality viewport
+                // would otherwise reconstruct from only 459x271. RCAS can
+                // restore local contrast, but not detail which was never
+                // rasterized. Preserve a 360p-class input for preview-sized
+                // outputs; larger game resolutions still use AMD's standard
+                // ratios unchanged.
+                constexpr float minimumRenderWidth = 640.0f;
+                constexpr float minimumRenderHeight = 360.0f;
                 const float minimumSafeFraction = std::min(
                     1.0f, std::max(minimumRenderWidth / static_cast<float>(std::max(output.width, 1u)),
                                    minimumRenderHeight / static_cast<float>(std::max(output.height, 1u))));

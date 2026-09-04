@@ -109,11 +109,13 @@ int main()
         !Near(exposurePacket->parameters[0].z, 3.5f))
         return 10;
 
-    TAAEffect taa({.historyWeight = 0.88f, .sharpening = 0.2f, .quality = 1});
+    TAAEffect taa({.historyWeight = 0.88f, .sharpening = 0.2f, .quality = 1,
+                   .jitterDebug = true});
     const auto taaPacket = AdaptPostProcessEffect(taa);
     if (!taaPacket || taaPacket->type != BasicPostProcessEffectType::TAA ||
         !Near(taaPacket->parameters[0].x, 0.88f) ||
         !Near(taaPacket->parameters[0].w, 0.2f) || taaPacket->quality != 1 ||
+        !Near(taaPacket->parameters[3].x, 1.0f) ||
         !IsRhiPostProcessEffectSupported("AutoExposure") ||
         !IsRhiPostProcessEffectSupported("TAA"))
         return 11;

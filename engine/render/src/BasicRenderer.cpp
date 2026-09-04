@@ -59,8 +59,9 @@ namespace PlutoGE::render
             glm::mat4 previousViewProjection{1.0f};
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
+            glm::vec4 temporalClipOffset{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 880);
+        static_assert(sizeof(BasicFrameParameters) == 896);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -966,6 +967,26 @@ namespace PlutoGE::render
         const glm::mat4 currentMotionViewProjection = motionViewProjection
                                                           ? *motionViewProjection
                                                           : viewProjection;
+        const auto taaEffect = std::ranges::find_if(postProcessEffects, [](const auto &effect)
+        {
+            return effect.type == BasicPostProcessEffectType::TAA;
+        });
+        glm::vec4 temporalClipOffset(0.0f);
+        if (upscalerFrame)
+        {
+            temporalClipOffset.x = 2.0f * upscalerFrame->jitterPixels[0] /
+                                   static_cast<float>(m_width);
+            temporalClipOffset.y = -2.0f * upscalerFrame->jitterPixels[1] /
+                                   static_cast<float>(m_height);
+        }
+        else if (taaEffect != postProcessEffects.end())
+        {
+            // RhiSceneRenderer stores current jitter in UV units here. Apply
+            // it directly to clip-space position; motionViewProjection remains
+            // unjittered, so history reprojection must not cancel it again.
+            temporalClipOffset.x = -2.0f * taaEffect->parameters[2].x;
+            temporalClipOffset.y = -2.0f * taaEffect->parameters[2].y;
+        }
         const BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -997,6 +1018,7 @@ namespace PlutoGE::render
             glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
                       std::max(lighting.physicalSkyExposure, 0.0f),
                       1.0f, 0.0f),
+            temporalClipOffset,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         if (shadowDraws.empty())
@@ -1340,7 +1362,9 @@ namespace PlutoGE::render
                 continue;
             auto effectParameters = effect.parameters;
             if (effect.type == BasicPostProcessEffectType::TAA)
+            {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
+            }
             const BasicPostProcessParameters parameters{
                 effect.exposure,
                 (std::max)(effect.gamma, 0.001f),

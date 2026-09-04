@@ -159,6 +159,7 @@ namespace PlutoGE::render
                                         config.normalRejectionThreshold,
                                         config.velocityRejectionScale,
                                         config.jitterEnabled ? config.jitterStrength : 0.0f};
+                result.parameters[3].x = config.jitterDebug ? 1.0f : 0.0f;
                 return result;
             });
         }

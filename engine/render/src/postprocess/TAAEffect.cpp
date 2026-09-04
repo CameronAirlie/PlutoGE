@@ -56,6 +56,7 @@ namespace PlutoGE::render
             PostProcessParameter{.name = "Velocity Rejection Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.velocityRejectionScale)},
             PostProcessParameter{.name = "Jitter Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.jitterStrength)},
             PostProcessParameter{.name = "Jitter Enabled", .type = PostProcessParameterType::Bool, .value = m_config.jitterEnabled ? "true" : "false"},
+            PostProcessParameter{.name = "Jitter Debug", .type = PostProcessParameterType::Bool, .value = m_config.jitterDebug ? "true" : "false"},
         };
     }
 
@@ -105,6 +106,11 @@ namespace PlutoGE::render
                 m_config.jitterEnabled = ParseBoolParameter(parameter.value);
                 ResetHistory();
             }
+            else if (parameter.name == "Jitter Debug")
+            {
+                m_config.jitterDebug = ParseBoolParameter(parameter.value);
+                ResetHistory();
+            }
         }
     }
 
@@ -140,6 +146,7 @@ namespace PlutoGE::render
             uniform sampler2D uSceneMotionTexture;
             uniform sampler2D uHistoryTexture;
             uniform int uHasHistory;
+            uniform int uJitterDebug;
             uniform int uQuality;
             uniform float uHistoryWeight;
             uniform float uStationaryHistoryWeight;
@@ -246,6 +253,14 @@ namespace PlutoGE::render
             void main()
             {
                 vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
+                if (uJitterDebug != 0)
+                {
+                    vec3 raw = texture(uSceneTexture, UV).rgb;
+                    if (UV.x < 0.012 || UV.y < 0.018)
+                        raw = mix(raw, vec3(1.0, 0.0, 1.0), 0.8);
+                    FragColor = vec4(raw, texture(uSceneDepthTexture, UV).r);
+                    return;
+                }
                 vec2 currentUv = clamp(UV - uCurrentJitterUv, vec2(0.0), vec2(1.0));
                 vec3 current = texture(uSceneTexture, currentUv).rgb;
 
@@ -431,6 +446,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uHistoryTexture", 6);
 
         m_shader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
+        m_shader->SetUniform("uJitterDebug", m_config.jitterDebug ? 1 : 0);
         m_shader->SetUniform("uQuality", std::clamp(m_config.quality, 0, 1));
         m_shader->SetUniform("uHistoryWeight", std::clamp(m_config.historyWeight, 0.0f, 0.99f));
         m_shader->SetUniform("uStationaryHistoryWeight", std::clamp(m_config.stationaryHistoryWeight, 0.0f, 0.99f));
@@ -484,6 +500,13 @@ namespace PlutoGE::render
         if (!m_config.jitterEnabled || width <= 0 || height <= 0)
         {
             return glm::vec2(0.0f);
+        }
+
+        if (m_config.jitterDebug)
+        {
+            const float direction = (frameSequence & 1u) == 0u ? -1.0f : 1.0f;
+            return glm::vec2(direction * 8.0f / static_cast<float>(width),
+                             -direction * 8.0f / static_cast<float>(height));
         }
 
         const std::uint64_t sampleIndex = frameSequence % kJitterSampleCount + 1;

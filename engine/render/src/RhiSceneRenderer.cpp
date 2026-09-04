@@ -369,6 +369,12 @@ namespace PlutoGE::render
             depthRangeConversion[3][2] = 0.5f;
             projection = depthRangeConversion * projection;
         }
+        // Keep the camera projection itself immutable. Temporal jitter is a
+        // translation in homogeneous clip space, not an intrinsic change to
+        // the perspective projection. Retaining this matrix also avoids
+        // reconstructing the unjittered form with projection-layout-specific
+        // element edits below.
+        const glm::mat4 unjitteredProjection = projection;
         BasicLighting effectiveLighting = lighting;
         // The physical-sky pass is also the source of the directional
         // environment seen by opaque materials. Keeping this transfer here
@@ -504,30 +510,29 @@ namespace PlutoGE::render
             const std::uint64_t jitterPhaseCount = static_cast<std::uint64_t>(
                 std::max(1l, std::lround(8.0f * upscaleRatio * upscaleRatio)));
             const std::uint64_t sample = m_temporalFrameIndex++ % jitterPhaseCount + 1u;
+            const bool jitterDebug = taa != basicEffects.end() && taa->parameters[3].x > 0.5f;
             const float strength = taa != basicEffects.end()
                                        ? std::clamp(taa->parameters[1].w, 0.0f, 2.0f)
                                        : 1.0f;
-            jitterPixels = glm::vec2(Halton(sample, 2u) - 0.5f,
-                                     Halton(sample, 3u) - 0.5f) * strength;
+            if (jitterDebug)
+            {
+                const float direction = (m_temporalFrameIndex & 1u) == 0u ? -1.0f : 1.0f;
+                jitterPixels = glm::vec2(direction * 4.0f, -direction * 4.0f);
+            }
+            else
+            {
+                jitterPixels = glm::vec2(Halton(sample, 2u) - 0.5f,
+                                         Halton(sample, 3u) - 0.5f) * strength;
+            }
             const glm::vec2 jitterNdc = jitterPixels *
                                         glm::vec2(2.0f / static_cast<float>(width),
                                                   2.0f / static_cast<float>(height));
             if (taa != basicEffects.end())
                 taa->parameters[2] = {jitterNdc * 0.5f, m_previousTemporalJitterNdc * 0.5f};
-            if (useTemporalUpscaler)
-            {
-                // Match FidelityFX's screen-pixel convention. With GLM's
-                // perspective layout and Vulkan's negative-height viewport,
-                // these signs move the raster sample by (+x, +y) pixels.
-                projection[2][0] -= jitterNdc.x;
-                projection[2][1] += jitterNdc.y;
-            }
-            else
-            {
-                // Preserve the existing native TAA convention.
-                projection[2][0] += jitterNdc.x;
-                projection[2][1] += jitterNdc.y;
-            }
+            // BasicRenderer applies this offset directly to SV_Position. The
+            // camera matrix remains unjittered for stable motion vectors and
+            // SDK metadata; the former matrix-edit path did not affect the
+            // rasterized geometry on the active Vulkan shader path.
             m_previousTemporalJitterNdc = jitterNdc;
         }
         else
@@ -535,12 +540,6 @@ namespace PlutoGE::render
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
-        glm::mat4 unjitteredProjection = projection;
-        const float jitterProjectionX = width != 0
-                                            ? jitterPixels.x * 2.0f / static_cast<float>(width)
-                                            : 0.0f;
-        unjitteredProjection[2][0] += useTemporalUpscaler ? jitterProjectionX : -jitterProjectionX;
-        unjitteredProjection[2][1] -= height != 0 ? jitterPixels.y * 2.0f / static_cast<float>(height) : 0.0f;
         const glm::mat4 currentUnjitteredViewProjection = unjitteredProjection * cameraData.view;
         rhi::TemporalUpscalerFrame upscalerFrame{};
         if (useTemporalUpscaler)
@@ -599,16 +598,18 @@ namespace PlutoGE::render
         if (m_upscalerStatus.active)
         {
             m_previousUpscalerViewProjection = currentUnjitteredViewProjection;
-            m_previousRenderSize = renderSize;
-            m_previousOutputSize = outputSize;
             m_upscalerHistoryValid = true;
         }
         else
         {
             m_upscalerHistoryValid = false;
-            m_previousRenderSize = {};
-            m_previousOutputSize = {};
         }
+        // Resolution tracking also owns the native TAA jitter lifecycle. Do
+        // not clear it merely because an external temporal upscaler is absent:
+        // doing so marks every native-TAA frame as a resize and restarts the
+        // Halton sequence at sample one forever.
+        m_previousRenderSize = renderSize;
+        m_previousOutputSize = outputSize;
         const auto &frameStats = m_renderer->GetFrameStats();
         const auto &rendererTiming = m_renderer->GetTimingStats();
         m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;

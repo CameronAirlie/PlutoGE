@@ -51,6 +51,7 @@ cbuffer CameraParameters : register(b0, space0)
     column_major float4x4 previousViewProjection;
     float4 physicalSkyParameters[6];
     float4 physicalSkySettings;
+    float4 temporalClipOffset;
 };
 
 [[vk::binding(0, 2)]]
@@ -275,6 +276,7 @@ VertexOutput vertexMain(VertexInput input)
         localTangent = normalize(cross(tangentAxis, input.normal));
     }
     output.position = mul(viewProjection, worldPosition);
+    output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     output.previousClip = mul(previousViewProjection, mul(previousModel, float4(input.position, 1.0)));
     output.objectDebug = objectDebugParameters.x;
@@ -300,6 +302,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
         localTangent = normalize(cross(tangentAxis, input.normal));
     }
     output.position = mul(viewProjection, worldPosition);
+    output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(input.position, 1.0)));
     output.objectDebug = instance.debugParameters.x;

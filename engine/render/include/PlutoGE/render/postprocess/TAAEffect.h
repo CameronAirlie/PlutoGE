@@ -26,6 +26,7 @@ namespace PlutoGE::render
         float jitterStrength = 1.0f;
         int quality = 0;
         bool jitterEnabled = true;
+        bool jitterDebug = false;
     };
 
     class TAAEffect : public ShaderPostProcessEffect

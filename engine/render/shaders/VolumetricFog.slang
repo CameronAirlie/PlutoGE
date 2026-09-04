@@ -156,13 +156,23 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float stepLength = marchDistance / (float)stepCount;
     const float jitter = interleavedGradientNoise(input.position.xy, pass.time * 60.0);
     const float3 lightDirection = normalize(-fogDirectionalDirectionIntensity.xyz);
-    const float phase = henyeyGreenstein(dot(rayDirection, lightDirection));
+    // Express phase relative to isotropic scattering. The effect's existing
+    // Directional Contribution values were authored as an artistic multiplier,
+    // not as radiometric power divided by 4 PI. Leaving the normalized phase
+    // in place made the ambient term dominate and flattened shafts to grey.
+    const float phase = henyeyGreenstein(dot(rayDirection, lightDirection)) * FOUR_PI;
     const float scattering = max(pass.parameters[1].w, 0.0);
     const float3 fogColor = max(pass.parameters[0].rgb, 0.0);
     const bool hasDirectionalLight = fogDirectionalDirectionIntensity.w > 0.0 &&
                                      any(fogDirectionalColor.rgb > 0.0) &&
                                      pass.parameters[2].z > 0.0;
-    const float3 ambientLighting = fogColor * max(pass.parameters[2].y, 0.0) * scattering;
+    // Scene ambient intensity is the appropriate scale for the otherwise
+    // colourless fallback environment. Retain a small floor for physical-sky
+    // scenes, whose surface ambient is evaluated procedurally and is therefore
+    // deliberately zero in BasicLighting.
+    const float ambientIntensity = max(fogCameraPositionAmbient.w, 0.12);
+    const float3 ambientLighting = fogColor * max(pass.parameters[2].y, 0.0) *
+                                   scattering * ambientIntensity;
     const float3 directionalLighting = hasDirectionalLight
         ? fogColor * max(fogDirectionalColor.rgb, 0.0) *
               fogDirectionalDirectionIntensity.w * phase * pass.parameters[2].z * scattering

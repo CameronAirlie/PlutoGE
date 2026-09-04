@@ -239,6 +239,7 @@ namespace PlutoGE::render
                                         settings.maxDistance, settings.scattering};
                 result.parameters[2] = {settings.anisotropy, settings.ambientContribution,
                                         settings.directionalContribution, settings.maxOpacity};
+                result.parameters[3].x = static_cast<float>(settings.shadowStepStride);
                 return result;
             });
         }

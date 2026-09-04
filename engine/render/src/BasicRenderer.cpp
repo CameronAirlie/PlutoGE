@@ -423,6 +423,20 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::Material, 4);
                 addInput(BasicPostProcessInput::Motion, 5);
                 addInput(BasicPostProcessInput::History, 6);
+                if (type == BasicPostProcessEffectType::VolumetricFog)
+                {
+                    // Fog is the only post-process that consumes scene lighting.
+                    // Reuse the frame buffer and shadow cascades from opaque
+                    // lighting so both paths share one authoritative light state.
+                    postDescriptor.resourceBindings.push_back(
+                        {7, 0, 7, rhi::ResourceBindingType::UniformBuffer,
+                         rhi::ShaderStageMask::Fragment});
+                    for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+                        postDescriptor.resourceBindings.push_back(
+                            {8 + cascade, 0, 8 + cascade,
+                             rhi::ResourceBindingType::SampledTexture,
+                             rhi::ShaderStageMask::Fragment});
+                }
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
@@ -1412,6 +1426,17 @@ namespace PlutoGE::render
             if (HasInput(inputs, BasicPostProcessInput::History))
                 commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
                                      m_screenSampler.Get());
+            if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+            {
+                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
+                const auto fallbackShadow = m_shadowDepthTargets[0].Get();
+                for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+                    commands.BindTexture(8 + cascade,
+                                         m_shadowDepthTargets[cascade]
+                                             ? m_shadowDepthTargets[cascade].Get()
+                                             : fallbackShadow,
+                                         m_shadowSampler.Get());
+            }
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = destination->Get();

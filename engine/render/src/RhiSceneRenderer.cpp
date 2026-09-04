@@ -376,6 +376,12 @@ namespace PlutoGE::render
         // element edits below.
         const glm::mat4 unjitteredProjection = projection;
         BasicLighting effectiveLighting = lighting;
+        // Camera-relative lighting consumers (surface cascade selection,
+        // volumetric fog, and voxel injection) must use the camera passed to
+        // this render call. Do not rely on every frontend duplicating it into
+        // BasicLighting correctly.
+        effectiveLighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+        effectiveLighting.view = cameraData.view;
         // The physical-sky pass is also the source of the directional
         // environment seen by opaque materials. Keeping this transfer here
         // makes every RHI caller (editor, runtime, and tests) use one contract.

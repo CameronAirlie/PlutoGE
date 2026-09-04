@@ -264,6 +264,20 @@ int main()
                       << occludedPixels << " occluded pixels)\n";
             return 8;
         }
+        auto fog = BasicPostProcessEffect{BasicPostProcessEffectType::VolumetricFog};
+        fog.quality = 16;
+        fog.parameters[0] = {0.8f, 0.85f, 0.9f, 0.02f};
+        fog.parameters[1] = {0.05f, 0.0f, 40.0f, 0.65f};
+        fog.parameters[2] = {0.2f, 1.0f, 6.0f, 0.92f};
+        fog.parameters[3].x = 2.0f;
+        auto fogLighting = neutralLighting;
+        fogLighting.directionalIntensity = 2.0f;
+        renderer.Render(projection * view, fogLighting, draws, std::span(&fog, 1));
+        if (device.ReadTextureRgba8(renderer.GetColorTexture()).size() != 96u * 64u * 4u)
+        {
+            std::cerr << "Vulkan volumetric fog returned an invalid image\n";
+            return 17;
+        }
         auto vctgi = BasicPostProcessEffect{BasicPostProcessEffectType::VCTGI};
         vctgi.quality = 3;
         vctgi.parameters[0] = {16.0f, 1.0f, 0.5f, 32.0f};

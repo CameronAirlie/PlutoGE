@@ -139,6 +139,7 @@ int main()
         ssgiPacket->type != BasicPostProcessEffectType::SSGI ||
         ssrPacket->type != BasicPostProcessEffectType::SSR ||
         fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
+        !Near(fogPacket->parameters[3].x, 2.0f) ||
         compositePacket->type != BasicPostProcessEffectType::SceneComposite)
         return 12;
 

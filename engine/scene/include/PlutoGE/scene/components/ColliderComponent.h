@@ -61,6 +61,10 @@ namespace PlutoGE::scene
         glm::vec3 GetScaledSize(const glm::vec3 &objectScale) const;
         float GetScaledRadius(const glm::vec3 &objectScale) const;
         float GetScaledHeight(const glm::vec3 &objectScale) const;
+        // Bullet sweeps a sphere centred on the rigidbody centre of mass.
+        // Keep it inside the collider to avoid contacts above the actual body.
+        float GetCcdSweptSphereRadius(const glm::vec3 &objectScale,
+                                      const glm::vec3 &localCenterOfMass = glm::vec3(0.0f)) const;
 
         const ColliderComponentConfig &GetConfig() const { return m_config; }
 

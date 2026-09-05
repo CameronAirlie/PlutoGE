@@ -81,7 +81,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -136,6 +136,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     endfunction()
 
     pluto_add_slang_graphics_shader(BasicLit "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
+    pluto_add_slang_graphics_shader(GlassSceneCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLitInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadowInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" instancedVertexMain fragmentMain)
@@ -165,6 +167,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(BloomDownsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain downsampleMain)
     pluto_add_slang_graphics_shader(BloomUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain upsampleMain)
     pluto_add_slang_graphics_shader(BloomComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain compositeMain)
+    pluto_add_slang_compute_shader(VCTProbeUpdate "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeUpdate.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTResolve.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTDirectionalMip "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTDirectionalMip.slang" computeMain rgba16f)
     pluto_add_slang_geometry_shader(VCTVoxelize "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTVoxelize.slang" vertexMain geometryMain fragmentMain)

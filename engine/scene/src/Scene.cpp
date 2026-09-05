@@ -1678,7 +1678,7 @@ namespace PlutoGE::scene
             if (dynamic)
             {
                 body->setCcdMotionThreshold(0.0001f);
-                body->setCcdSweptSphereRadius(std::max(0.05f, collider->GetScaledRadius(worldScale)));
+                body->setCcdSweptSphereRadius(collider->GetCcdSweptSphereRadius(worldScale, rigidbody->GetCenterOfMass()));
                 body->setSleepingThresholds(0.1f, 0.1f);
                 // Dynamic bodies must be allowed to sleep. Disabling
                 // deactivation globally keeps resting spring-driven bodies awake

@@ -94,6 +94,9 @@ cbuffer MaterialParameters : register(b0, space1)
     uint materialPadding;
     float4 subsurfaceColorStrength;
     float4 subsurfaceRadiusPadding;
+    float4 glassParameters; // surface type, transmission, IOR, thickness
+    float4 attenuationColorDistance;
+    float4 glassViewport; // inverse dimensions, Vulkan Y orientation
 };
 
 [[vk::binding(1, 1)]]
@@ -112,6 +115,27 @@ Sampler2D directionalShadowTexture1 : register(t6, space1);
 Sampler2D directionalShadowTexture2 : register(t7, space1);
 [[vk::binding(8, 1)]]
 Sampler2D directionalShadowTexture3 : register(t8, space1);
+
+#ifdef PLUTO_GLASS
+[[vk::binding(9, 1)]]
+Sampler2D glassSceneColor : register(t9, space1);
+[[vk::binding(10, 1)]]
+Sampler2D glassSceneDepth : register(t10, space1);
+
+// Reject opaque foreground samples with the same reversed-Z depth convention
+// as the depth attachment. Every frosted-glass tap also receives this test.
+float3 sampleGlassBackground(float2 uv, float2 originalUv, float surfaceDepth)
+{
+    const float2 margin = glassViewport.xy * 0.5;
+    const float2 edge = min(uv, 1.0 - uv);
+    const float fade = saturate(min(edge.x, edge.y) * 40.0);
+    uv = clamp(lerp(originalUv, uv, fade), margin, 1.0 - margin);
+    if (glassSceneDepth.SampleLevel(uv, 0.0).r > surfaceDepth + 0.00001)
+        uv = originalUv;
+    return glassSceneColor.SampleLevel(uv, 0.0).rgb;
+}
+
+#endif
 
 static const float PI = 3.14159265359;
 
@@ -313,13 +337,13 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     return output;
 }
 
-[shader("fragment")]
-FragmentOutput fragmentMain(VertexOutput input)
+FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 {
     const float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
     if (alphaMode == 1 && sampledColor.a < alphaCutoff)
         discard;
 
+    const bool glass = transparentPass && glassParameters.x > 0.5;
     float3 normal = normalize(input.worldNormal);
     if (hasNormalTexture != 0)
     {
@@ -330,13 +354,15 @@ FragmentOutput fragmentMain(VertexOutput input)
         const float3 bitangent = normalize(cross(normal, tangent)) * input.worldTangent.w;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
     }
+    if (transparentPass && dot(normal, cameraPositionAmbient.xyz - input.worldPosition) < 0.0)
+        normal = -normal;
     float sampledMetallic = 1.0;
     if (hasMetallicTexture != 0)
         sampledMetallic = metallicTexture.Sample(input.uv * uvScale)[metallicChannel];
     float sampledRoughness = 1.0;
     if (hasRoughnessTexture != 0)
         sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
-    const float materialMetallic = saturate(metallic * sampledMetallic);
+    const float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     const float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
@@ -345,7 +371,8 @@ FragmentOutput fragmentMain(VertexOutput input)
     const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
     const float ndoth = saturate(dot(normal, halfDirection));
     const float hdotv = saturate(dot(halfDirection, viewDirection));
-    const float3 f0 = lerp(float3(0.04), sampledColor.rgb, materialMetallic);
+    const float dielectricF0 = pow((glassParameters.z - 1.0) / (glassParameters.z + 1.0), 2.0);
+    const float3 f0 = glass ? float3(dielectricF0) : lerp(float3(0.04), sampledColor.rgb, materialMetallic);
     const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - hdotv, 5.0);
     const float alpha = materialRoughness * materialRoughness;
     const float alphaSquared = alpha * alpha;
@@ -470,6 +497,49 @@ FragmentOutput fragmentMain(VertexOutput input)
     FragmentOutput output;
     output.color = float4(ambient + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
                           sampledColor.a);
+#ifdef PLUTO_GLASS
+    if (glass)
+    {
+        const float transmission = saturate(glassParameters.y);
+        const float thickness = max(glassParameters.w, 0.0);
+        const float3 refracted = refract(-viewDirection, normal, 1.0 / glassParameters.z);
+        const float pathLength = thickness / max(abs(dot(refracted, normal)), 0.1);
+        // Parallel-sided slab: project the lateral ray displacement. Thickness
+        // and camera distance set distortion, avoiding arbitrary UV offsets.
+        const float3 displacement = refracted * pathLength + viewDirection *
+                                    (thickness / max(ndotv, 0.1));
+        float4 refractedClip = mul(viewProjection, float4(input.worldPosition + displacement, 1.0));
+        refractedClip.xy += temporalClipOffset.xy * refractedClip.w;
+        float2 refractedUv = refractedClip.xy / max(refractedClip.w, 0.0001) * 0.5 + 0.5;
+        if (glassViewport.z > 0.5) refractedUv.y = 1.0 - refractedUv.y;
+        const float2 sceneUv = input.position.xy * glassViewport.xy;
+        if (refractedClip.w <= 0.0) refractedUv = sceneUv;
+        refractedUv = lerp(sceneUv, refractedUv, transmission);
+        const float blurRadius = materialRoughness * materialRoughness * 12.0;
+        float3 background = sampleGlassBackground(refractedUv, sceneUv, input.position.z) * 4.0;
+        const float2 offsets[8] = {float2(1,0),float2(-1,0),float2(0,1),float2(0,-1),
+                                   float2(.707,.707),float2(-.707,.707),float2(.707,-.707),float2(-.707,-.707)};
+        for (int tap = 0; tap < 8; ++tap)
+            background += sampleGlassBackground(refractedUv + offsets[tap] * glassViewport.xy * blurRadius,
+                                                sceneUv, input.position.z);
+        background /= 12.0;
+        const float3 absorption = exp(log(clamp(attenuationColorDistance.rgb, 0.0001, 1.0)) *
+                                       pathLength / max(attenuationColorDistance.w, 0.0001));
+        const float3 viewFresnel = f0 + (1.0 - f0) * pow(1.0 - ndotv, 5.0);
+        const float3 reflectionDirection = normalize(lerp(reflect(-viewDirection, normal), normal,
+                                                          materialRoughness * materialRoughness));
+        const float3 environment = physicalSkySettings.x > 0.5
+            ? samplePhysicalSkyEnvironment(reflectionDirection) * physicalSkySettings.z
+            : float3(cameraPositionAmbient.w);
+        const float3 transmitted = background * absorption * saturate(sampledColor.rgb);
+        const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
+            directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
+        const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *
+                                      ndotl * shadowVisibility;
+        output.color = float4((1.0 - viewFresnel) * lerp(surfaceDiffuse, transmitted, transmission) +
+                               viewFresnel * environment + directSpecular + emission, saturate(sampledColor.a));
+    }
+#endif
     output.normal = float4(normal * 0.5 + 0.5, 1.0);
     output.material = float4(materialMetallic, materialRoughness, length(emission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
@@ -482,4 +552,18 @@ FragmentOutput fragmentMain(VertexOutput input)
     output.debug = float4(saturate(input.objectDebug), normalizedCascade,
                           rawShadowVisibility, shadowVisibility);
     return output;
+}
+
+[shader("fragment")]
+FragmentOutput fragmentMain(VertexOutput input)
+{
+    return shadeSurface(input, false);
+}
+
+[shader("fragment")]
+float4 transparentMain(VertexOutput input) : SV_Target0
+{
+    const float4 color = shadeSurface(input, true).color;
+    // RHI blending uses ONE / ONE_MINUS_SRC_ALPHA (premultiplied coverage).
+    return float4(color.rgb * saturate(color.a), saturate(color.a));
 }

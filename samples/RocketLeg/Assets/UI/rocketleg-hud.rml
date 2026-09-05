@@ -16,12 +16,21 @@
         <div id="match-status">KICKOFF!</div>
 
         <div id="controls">
-            <div><span class="blue-team">P1</span> WASD drive / air control &nbsp; Q/E roll &nbsp; Shift boost &nbsp; Space jump</div>
-            <div><span class="orange-team">P2</span> Arrows drive / air control &nbsp; ,/. roll &nbsp; Right Shift boost &nbsp; Enter jump</div>
-            <div>Pad: LT/RT reverse/drive &nbsp; Left stick steer/pitch &nbsp; LB free roll &nbsp; A jump &nbsp; B boost &nbsp; X roll right</div>
+            <div><span class="blue-team">P1</span> WASD drive / air control &nbsp; Q/E roll &nbsp; Shift boost &nbsp; Ctrl slide &nbsp; Space jump</div>
+            <div><span class="orange-team">P2</span> Arrows drive / air control &nbsp; ,/. roll &nbsp; Right Shift boost &nbsp; Right Ctrl slide &nbsp; Enter jump</div>
+            <div>Pad: LT/RT drive &nbsp; Left stick steer/flip &nbsp; LB slide / air roll &nbsp; A jump &nbsp; B boost &nbsp; X roll</div>
+            <div>Jump twice: neutral = double jump, direction = flip &nbsp; 1.5s window &nbsp; 3 wheels reset</div>
             <div class="camera-help">C ball cam &nbsp; Tab switch car &nbsp; R restart</div>
         </div>
 
+        <div id="boost-gauge">
+            <div id="boost-player">BLUE / P1</div>
+            <div id="boost-value">100</div>
+            <div id="boost-label">BOOST</div>
+            <div id="boost-track"><div id="boost-fill"></div></div>
+            <div id="flip-status">FLIP READY</div>
+            <div id="boost-help">Collect gold pads</div>
+        </div>
         <div id="game-title">ROCKETLEG</div>
     </div>
 </body>

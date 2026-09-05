@@ -1,3 +1,4 @@
+#include "GlassRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/Resource.h"
@@ -120,6 +121,9 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.vertex.glsl = ReadText("BasicLit.vertex.glsl");
         shaders.instancedVertex.glsl = ReadText("BasicLitInstanced.vertex.glsl");
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
+        shaders.transparentFragment.glsl = ReadText("Glass.fragment.glsl");
+        shaders.glassSceneCopy.vertex.glsl = ReadText("GlassSceneCopy.vertex.glsl");
+        shaders.glassSceneCopy.fragment.glsl = ReadText("GlassSceneCopy.fragment.glsl");
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
         shaders.shadowInstancedVertex.glsl = ReadText("DirectionalShadowInstanced.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
@@ -147,6 +151,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         shaders.vctCompute[0].glsl = ReadText("VCTResolve.compute.glsl");
         shaders.vctCompute[1].glsl = ReadText("VCTDirectionalMip.compute.glsl");
+        shaders.vctCompute[2].glsl = ReadText("VCTProbeUpdate.compute.glsl");
         shaders.vctVoxelization.vertexShader.glsl = ReadText("VCTVoxelize.vertex.glsl");
         shaders.vctVoxelization.geometryShader.glsl = ReadText("VCTVoxelize.geometry.glsl");
         shaders.vctVoxelization.fragmentShader.glsl = ReadText("VCTVoxelize.fragment.glsl");
@@ -166,6 +171,14 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             std::cerr << "BasicRenderer initialization failed: " << error.what() << '\n';
             return 6;
         }
+
+        CheckGlassRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+        {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
 
         constexpr std::array<render::BasicVertex, 8> cubeVertices = {{
             {{{-0.5f, -0.5f, -0.5f}}, {{-0.577f, -0.577f, -0.577f}}, {{0.0f, 0.0f}}},
@@ -349,8 +362,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         vctgi.parameters[1] = {0.1f, 0.9f, 0.05f, 0.8f};
         vctgi.parameters[2] = {32.0f, 1.0f, 1.0f, 1.0f};
         vctgi.parameters[3].w = 256.0f;
+        vctgi.parameters[4] = {1.0f, 48.0f, 256.0f, 0.0f};
         try
         {
+            for (int frame = 0; frame < 72; ++frame)
             basicRenderer.Render(projection * view, render::BasicLighting{}, draws,
                                  std::span(&vctgi, 1));
         }

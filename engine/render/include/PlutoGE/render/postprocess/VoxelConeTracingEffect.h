@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
@@ -39,6 +40,9 @@ namespace PlutoGE::render
             float historyNormalThreshold = 0.9f;
             bool injectLocalLights = false;
             bool indirectOnly = false;
+            bool worldCache = true;
+            float cacheSize = 432.0f;
+            int cacheUpdates = 64;
         };
 
         ~VoxelConeTracingEffect() override;
@@ -140,6 +144,13 @@ namespace PlutoGE::render
         void ReleaseVolume();
         void ResetHistory();
 
+        Shader *m_probeUpdateShader = nullptr;
+        unsigned int m_probeRadiance = 0, m_probeVisibility = 0, m_probeParameters = 0;
+        glm::vec4 m_cacheOriginSize{0.0f};
+        VctProbeSchedule m_probeSchedule;
+        bool m_worldCache = true;
+        float m_cacheSize = 432.0f;
+        int m_cacheUpdates = 64;
         Shader *m_voxelizationShader = nullptr;
         Shader *m_voxelResolveShader = nullptr;
         Shader *m_directionalMipShader = nullptr;

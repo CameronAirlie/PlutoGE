@@ -33,8 +33,11 @@ namespace PlutoGE::render
             std::uint32_t padding = 0;
             glm::vec4 subsurfaceColorStrength{1.0f, 0.35f, 0.2f, 0.0f};
             glm::vec4 subsurfaceRadiusPadding{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec4 glassParameters{0.0f, 0.0f, 1.45f, 0.01f};
+            glm::vec4 attenuationColorDistance{1.0f};
+            glm::vec4 glassViewport{0.0f};
         };
-        static_assert(sizeof(BasicMaterialParameters) == 112);
+        static_assert(sizeof(BasicMaterialParameters) == 160);
 
         struct alignas(16) BasicFrameParameters
         {
@@ -148,6 +151,7 @@ namespace PlutoGE::render
             glm::vec4 traceSettings{};
             glm::uvec4 traceCounts{};
             std::uint32_t flipY = 0, debugView = 0, indirectOnly = 0, zeroToOneDepth = 0;
+            glm::vec4 cacheOriginSize{0.0f}, cacheSettings{0.0f};
         };
         struct alignas(16) VctTemporalParameters
         {
@@ -162,7 +166,7 @@ namespace PlutoGE::render
         static_assert(sizeof(VctMaterialParameters) == 64);
         static_assert(sizeof(VctResolveParameters) == 16);
         static_assert(sizeof(VctMipParameters) == 32);
-        static_assert(sizeof(VctTraceParameters) == 224);
+        static_assert(sizeof(VctTraceParameters) == 256);
         static_assert(sizeof(VctTemporalParameters) == 240);
         static_assert(sizeof(VctMetadataParameters) == 144);
 
@@ -186,7 +190,7 @@ namespace PlutoGE::render
             HashVctValue(hash, lighting.directionalIntensity);
             for (const auto &draw : draws)
             {
-                if (!draw.contributesToGi || !draw.mesh || !draw.mesh->IsValid())
+                if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid())
                     continue;
                 HashVctValue(hash, draw.mesh);
                 HashVctValue(hash, draw.model);
@@ -347,6 +351,35 @@ namespace PlutoGE::render
             instancedDescriptor.debugName = "BasicRenderer instanced opaque pipeline";
             m_instancedPipeline = rhi::GraphicsPipeline(
                 device, device.CreateGraphicsPipeline(instancedDescriptor));
+            if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
+            {
+                auto transparentDescriptor = descriptor;
+                transparentDescriptor.fragmentShader = shaders.transparentFragment;
+                transparentDescriptor.colorFormats = {rhi::Format::R16G16B16A16Float};
+                transparentDescriptor.depthWrite = false;
+                transparentDescriptor.blend.enabled = true;
+                transparentDescriptor.resourceBindings.push_back(
+                    {17, 1, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                transparentDescriptor.resourceBindings.push_back(
+                    {18, 1, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                transparentDescriptor.cullMode = rhi::CullMode::Back;
+                transparentDescriptor.debugName = "RHI glass and translucency";
+                m_transparentPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
+                transparentDescriptor.cullMode = rhi::CullMode::None;
+                m_transparentTwoSidedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
+                rhi::GraphicsPipelineDescriptor copy;
+                copy.vertexShader = shaders.glassSceneCopy.vertex;
+                copy.fragmentShader = shaders.glassSceneCopy.fragment;
+                copy.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R32Float};
+                copy.depthFormat = rhi::Format::Undefined;
+                copy.depthTest = copy.depthWrite = false;
+                copy.cullMode = rhi::CullMode::None;
+                copy.resourceBindings = {
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                copy.debugName = "Glass scene snapshot";
+                m_glassSceneCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
+            }
             rhi::GraphicsPipelineDescriptor shadowDescriptor;
             shadowDescriptor.vertexShader = shaders.shadowVertex;
             shadowDescriptor.fragmentShader = shaders.shadowFragment;
@@ -583,6 +616,19 @@ namespace PlutoGE::render
                 compute.debugName = "VCT directional mip generation";
                 m_vctDirectionalMipPipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
             }
+            if (!shaders.vctCompute[2].glsl.empty() || !shaders.vctCompute[2].spirv.empty())
+            {
+                rhi::ComputePipelineDescriptor compute;
+                compute.computeShader = shaders.vctCompute[2];
+                compute.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Compute},
+                    {1, 0, 1, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                for (std::uint32_t slot = 7; slot <= 12; ++slot)
+                    compute.resourceBindings.push_back({slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Compute});
+                compute.debugName = "VCT persistent probe update";
+                m_vctProbePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
+            }
             if ((!shaders.vctVoxelization.vertexShader.glsl.empty() ||
                  !shaders.vctVoxelization.vertexShader.spirv.empty()) &&
                 (!shaders.vctVoxelization.geometryShader.glsl.empty() ||
@@ -645,7 +691,7 @@ namespace PlutoGE::render
                 if (index == 0)
                 {
                     addTexture(1); addTexture(2); addTexture(3); addTexture(4); addTexture(5);
-                    for (std::uint32_t slot = 7; slot <= 12; ++slot) addTexture(slot);
+                    for (std::uint32_t slot = 7; slot <= 14; ++slot) addTexture(slot);
                 }
                 else if (index == 1)
                 {
@@ -748,6 +794,7 @@ namespace PlutoGE::render
             pipeline.Reset();
         for (auto &pipeline : m_ssaoPipelines)
             pipeline.Reset();
+        m_vctProbePipeline.Reset();
         m_vctResolvePipeline.Reset();
         m_vctDirectionalMipPipeline.Reset();
         m_vctVoxelizationPipeline.Reset();
@@ -758,6 +805,10 @@ namespace PlutoGE::render
         m_shadowPipeline.Reset();
         m_shadowInstancedPipeline.Reset();
         m_displayPipeline.Reset();
+        m_transparentPipeline.Reset();
+        m_transparentTwoSidedPipeline.Reset();
+        m_glassSceneCopyPipeline.Reset();
+        m_glassDepthCopy.Reset();
         m_pipeline.Reset();
         m_instancedPipeline.Reset();
         m_device = nullptr;
@@ -833,7 +884,11 @@ namespace PlutoGE::render
             outputHeight == m_outputHeight && m_colorTarget && m_depthTarget &&
             static_cast<bool>(m_temporalUpscalerOutput) == needsTemporalOutput)
             return true;
-        ResetVctResources();
+        // Viewport changes discard screen history, not stationary world illumination.
+        m_vctTraceTarget.Reset();
+        for (auto &texture : m_vctHistoryTargets) texture.Reset();
+        for (auto &texture : m_vctMetadataTargets) texture.Reset();
+        m_vctHistoryValid = false;
 
         rhi::Texture newColor(*m_device, m_device->CreateTexture(
                                              {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "BasicRenderer HDR color", true}));
@@ -848,6 +903,7 @@ namespace PlutoGE::render
         rhi::Texture newDepth(*m_device, m_device->CreateTexture(
                                              {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                               "BasicRenderer depth", true}));
+        m_glassDepthCopy.Reset();
         m_colorTarget = std::move(newColor);
         m_displayTarget = std::move(newDisplay);
         m_normalTarget = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -1052,7 +1108,7 @@ namespace PlutoGE::render
                 for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
                 {
                     const auto &draw = shadowDraws[drawIndex];
-                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow ||
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2 ||
                         !shadowFrustum.Intersects(draw))
                         continue;
                     indices.push_back(drawIndex);
@@ -1187,12 +1243,13 @@ namespace PlutoGE::render
         commands.BeginRendering(renderingInfo);
         std::size_t drawIndex = 0;
         std::size_t instanceBufferCursor = 0;
-        for (const auto &draw : draws)
+        const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
-                continue;
-            const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
-            commands.BindPipeline(instanced ? m_instancedPipeline.Get() : m_pipeline.Get());
+                return;
+            const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
+            commands.BindPipeline(transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
+                                  (instanced ? m_instancedPipeline.Get() : m_pipeline.Get()));
             commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             while (!instanced && drawIndex >= m_objectBuffers.size())
             {
@@ -1204,7 +1261,7 @@ namespace PlutoGE::render
                 auto &objectBuffer = m_objectBuffers[drawIndex];
                 const BasicObjectParameters objectParameters{
                     draw.model,
-                    m_hasPreviousFrame && drawIndex < m_previousModels.size() ? m_previousModels[drawIndex] : draw.model,
+                    m_hasPreviousFrame && historyIndex < m_previousModels.size() ? m_previousModels[historyIndex] : draw.model,
                     glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
                 m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
             }
@@ -1224,7 +1281,13 @@ namespace PlutoGE::render
                 draw.flipNormalY ? 1u : 0u, 0u,
                 glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
                           std::clamp(draw.subsurface, 0.0f, 1.0f)),
-                glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f)};
+                glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
+                glm::vec4(float(draw.surfaceType), std::clamp(draw.transmission, 0.0f, 1.0f),
+                          std::clamp(draw.ior, 1.0f, 3.0f), std::max(draw.thickness, 0.0f)),
+                glm::vec4(glm::clamp(draw.attenuationColor, glm::vec3(0.0001f), glm::vec3(1.0f)),
+                          std::max(draw.attenuationDistance, 0.0001f)),
+                glm::vec4(1.0f / m_width, 1.0f / m_height,
+                          m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
             auto &materialBuffer = m_materialBuffers[drawIndex - 1];
             m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
             commands.BindUniformBuffer(8, materialBuffer.Get());
@@ -1280,7 +1343,44 @@ namespace PlutoGE::render
                     ++m_frameStats.geometryInstances;
                 }
             }
+        };
+        std::size_t historyIndex = 0;
+        std::vector<BasicDraw> transparentDraws;
+        for (const auto &draw : draws)
+        {
+            if (!draw.mesh || !draw.mesh->IsValid())
+                continue;
+            if (draw.surfaceType == 1 || draw.alphaMode == 2)
+            {
+                // Expand instances so each pane is sorted individually.
+                if (draw.instanceModels && !draw.instanceModels->empty())
+                {
+                    for (const auto &model : *draw.instanceModels)
+                    {
+                        auto pane = draw;
+                        pane.model = model;
+                        pane.shadowBoundsRadius = -1.0f;
+                        pane.instanceModels.reset();
+                        transparentDraws.push_back(std::move(pane));
+                    }
+                }
+                else
+                    transparentDraws.push_back(draw);
+            }
+            else
+                recordDraw(draw, false, historyIndex);
+            ++historyIndex;
         }
+        std::stable_sort(transparentDraws.begin(), transparentDraws.end(), [&](const auto &a, const auto &b)
+        {
+            const auto depth = [&](const auto &draw)
+            {
+                const glm::vec3 center = draw.shadowBoundsRadius >= 0.0f
+                    ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
+                return -(lighting.view * glm::vec4(center, 1.0f)).z;
+            };
+            return depth(a) > depth(b);
+        });
         commands.EndRendering();
         commands.EndGpuScope();
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
@@ -1293,6 +1393,46 @@ namespace PlutoGE::render
         m_postProcessWidth = m_width;
         m_postProcessHeight = m_height;
         std::size_t targetIndex = 0;
+        bool transparencyPending = !transparentDraws.empty();
+        const auto renderTransparency = [&]()
+        {
+            if (!transparencyPending)
+                return;
+            transparencyPending = false;
+            if (!m_transparentPipeline || !m_glassSceneCopyPipeline)
+                throw std::runtime_error("Transparent RHI materials require the Glass shader artifacts");
+            if (!m_glassDepthCopy)
+                m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                     "Glass opaque depth snapshot", true}));
+            for (const auto &pane : transparentDraws)
+            {
+                // Each layer sees previously composited panes. A distinct color
+                // snapshot keeps Vulkan descriptors stable through submission.
+                auto &snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height);
+                rhi::RenderingInfo copyInfo;
+                copyInfo.colorAttachments = {snapshot.Get(), m_glassDepthCopy.Get()};
+                copyInfo.width = m_width;
+                copyInfo.height = m_height;
+                commands.BeginRendering(copyInfo);
+                commands.BindPipeline(m_glassSceneCopyPipeline.Get());
+                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+                rhi::RenderingInfo transparentInfo;
+                transparentInfo.colorAttachments = {m_outputColor};
+                transparentInfo.depthAttachment = m_depthTarget.Get();
+                transparentInfo.width = m_width;
+                transparentInfo.height = m_height;
+                transparentInfo.clearColor = transparentInfo.clearDepth = false;
+                commands.BeginRendering(transparentInfo);
+                commands.BindTexture(17, snapshot.Get(), m_screenSampler.Get());
+                commands.BindTexture(18, m_glassDepthCopy.Get(), m_shadowSampler.Get());
+                recordDraw(pane, true, m_previousModels.size());
+                commands.EndRendering();
+            }
+        };
         const bool temporalUpscalerRequested =
             m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
             upscalerFrame && m_temporalUpscalerOutput &&
@@ -1343,6 +1483,8 @@ namespace PlutoGE::render
             m_ssaoHistoryValid = false;
         for (const auto &effect : postProcessEffects)
         {
+            if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
+                renderTransparency();
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
                 evaluateTemporalUpscaler();
             if (temporalUpscalerEvaluated && effect.type == BasicPostProcessEffectType::TAA)
@@ -1446,6 +1588,7 @@ namespace PlutoGE::render
                 m_taaHistoryValid = true;
             }
         }
+        renderTransparency();
         evaluateTemporalUpscaler();
         if (m_displayPipeline && m_displayTarget)
         {
@@ -1606,6 +1749,9 @@ namespace PlutoGE::render
             cascade = {};
         }
         for (auto &texture : m_vctRadianceAtlases) texture.Reset();
+        m_vctProbeRadiance.Reset(); m_vctProbeVisibility.Reset();
+        m_vctCacheOriginSize = glm::vec4(0.0f); m_vctCacheConfiguration = glm::vec4(0.0f);
+        m_vctProbeSchedule.Reset(); m_vctNextCascade = 0; m_vctHistoryOwner = nullptr;
         m_vctTraceTarget.Reset();
         for (auto &texture : m_vctHistoryTargets) texture.Reset();
         for (auto &texture : m_vctMetadataTargets) texture.Reset();
@@ -1625,11 +1771,14 @@ namespace PlutoGE::render
             std::ranges::any_of(m_vctPostProcessPipelines, [](const auto &pipeline) { return !pipeline; }))
             return source;
         const auto resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
-        const auto cascadeCount = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        const bool useCache = effect.parameters[4].x > 0.5f && bool(m_vctProbePipeline);
+        const auto cascadeCount = useCache ? 1u : static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        const glm::vec4 cacheConfiguration(useCache ? 1.0f : 0.0f, effect.parameters[4].y, effect.parameters[0].x, effect.parameters[2].y);
         if (resolution != m_vctResolution || cascadeCount != m_vctCascadeCount ||
-            !m_vctTraceTarget)
+            cacheConfiguration != m_vctCacheConfiguration || effect.historyOwner != m_vctHistoryOwner)
         {
             ResetVctResources();
+            m_vctCacheConfiguration = cacheConfiguration; m_vctHistoryOwner = effect.historyOwner;
             m_vctResolution = resolution;
             m_vctCascadeCount = cascadeCount;
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
@@ -1646,6 +1795,14 @@ namespace PlutoGE::render
                      .format = rhi::Format::R16G16B16A16Float, .usage = rhi::TextureUsage::Sampled,
                      .debugName = "VCT directional radiance atlas", .sampled = true,
                      .depth = resolution * cascadeCount, .storage = true, .mipLevels = mipLevels}));
+            for (auto *texture : {&m_vctProbeRadiance, &m_vctProbeVisibility})
+                *texture = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {.width = 16, .height = 16, .format = rhi::Format::R16G16B16A16Float,
+                     .usage = rhi::TextureUsage::Sampled, .debugName = "VCT stationary probes",
+                     .sampled = true, .depth = 96, .storage = true}));
+        }
+        if (!m_vctTraceTarget)
+        {
             m_vctTraceTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                 {m_width, m_height, rhi::Format::R16G16B16A16Float,
                  rhi::TextureUsage::ColorAttachment, "VCT cone trace", true}));
@@ -1661,6 +1818,12 @@ namespace PlutoGE::render
         }
         m_vctBufferCursor = 0;
         const float baseSize = std::max(effect.parameters[0].x, 4.0f);
+        if (useCache && m_vctCacheOriginSize.w == 0.0f)
+        {
+            const float size = std::max(std::clamp(effect.parameters[4].y, 16.0f, 4096.0f), baseSize * std::pow(3.0f, std::clamp(effect.parameters[2].y, 1.0f, 3.0f) - 1.0f));
+            const float snap = size / 16.0f;
+            m_vctCacheOriginSize = glm::vec4(glm::floor(lighting.cameraPosition / snap) * snap - glm::vec3(size * 0.5f), size);
+        }
         const auto contentSignature = VctContentSignature(draws, lighting);
         const auto updateInterval = static_cast<std::uint64_t>(
             std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
@@ -1668,9 +1831,10 @@ namespace PlutoGE::render
         for (std::uint32_t index = 0; index < cascadeCount; ++index)
         {
             auto &cascade = m_vctCascades[index];
-            const float size = baseSize * std::pow(2.0f, static_cast<float>(index));
+            const bool stationary = useCache && index + 1 == cascadeCount;
+            const float size = stationary ? m_vctCacheOriginSize.w : baseSize * std::pow(3.0f, static_cast<float>(index));
             const float snap = size / static_cast<float>(resolution) * 8.0f;
-            const glm::vec3 desired = glm::floor((lighting.cameraPosition - glm::vec3(size * 0.5f)) / snap) * snap;
+            const glm::vec3 desired = stationary ? glm::vec3(m_vctCacheOriginSize) : glm::floor((lighting.cameraPosition - glm::vec3(size * 0.5f)) / snap) * snap;
             const bool intervalElapsed = !cascade.valid ||
                 m_frameIndex - cascade.lastUpdateFrame >= updateInterval;
             const bool requiresRefresh = !cascade.valid || cascade.size != size ||
@@ -1685,7 +1849,12 @@ namespace PlutoGE::render
                 cascade.rebuilding = true;
                 for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
             }
-            if (cascade.rebuilding && rebuildIndex == cascadeCount) rebuildIndex = index;
+        }
+        // Round-robin publication prevents a moving near field starving the cache source.
+        for (std::uint32_t offset = 0; offset < cascadeCount; ++offset)
+        {
+            const auto index = (m_vctNextCascade + offset) % cascadeCount;
+            if (m_vctCascades[index].rebuilding) { rebuildIndex = index; break; }
         }
         if (rebuildIndex < cascadeCount)
         {
@@ -1736,7 +1905,7 @@ namespace PlutoGE::render
                 const auto &draw = draws[cascade.nextDraw++];
                 const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
                                                      cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
-                if (!draw.contributesToGi || !draw.mesh || !draw.mesh->IsValid() ||
+                if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
                     glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
                         draw.shadowBoundsRadius * draw.shadowBoundsRadius)
                     continue;
@@ -1809,12 +1978,33 @@ namespace PlutoGE::render
                 cascade.size = cascade.pendingSize;
                 cascade.lastUpdateFrame = m_frameIndex;
                 cascade.rebuilding = false; cascade.valid = true;
-                m_vctHistoryValid = false;
+                m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
+                if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
             }
         }
         std::uint32_t availableCascades = 0;
         while (availableCascades < cascadeCount && m_vctCascades[availableCascades].valid) ++availableCascades;
-        if (availableCascades == 0) return source;
+        if (availableCascades == 0 || (useCache && availableCascades < cascadeCount)) return source;
+        if (useCache && availableCascades == cascadeCount)
+        {
+            const auto dispatch = [&](std::uint32_t first, std::uint32_t count, bool clear)
+            {
+                VctProbeParameters params{m_vctCacheOriginSize,
+                    glm::uvec4(cascadeCount - 1, cascadeCount, resolution, std::uint32_t(std::log2(resolution))),
+                    glm::uvec4(first, count, clear ? 1u : 0u, 0u)};
+                auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
+                commands.BindPipeline(m_vctProbePipeline.Get()); commands.BindUniformBuffer(0, buffer.Get());
+                commands.BindStorageImage(1, m_vctProbeRadiance.Get());
+                commands.BindStorageImage(2, m_vctProbeVisibility.Get());
+                for (std::uint32_t direction = 0; direction < 6; ++direction)
+                    commands.BindTexture(7 + direction, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+                commands.Dispatch((count + 63) / 64, 1, 1); commands.ShaderMemoryBarrier();
+            };
+            if (m_vctProbeSchedule.clear) { dispatch(0, 4096, true); m_vctProbeSchedule.clear = false; }
+            const auto budget = m_vctProbeSchedule.Budget(int(effect.parameters[4].z));
+            if (budget) { dispatch(m_vctProbeSchedule.cursor, budget, false); m_vctProbeSchedule.Advance(budget); }
+        }
         VctTraceParameters trace;
         trace.inverseViewProjection = m_inverseViewProjection; trace.view = m_postProcessView;
         for (std::size_t index = 0; index < 3; ++index)
@@ -1823,6 +2013,8 @@ namespace PlutoGE::render
             trace.cascadeOriginSize[index] = glm::vec4(m_vctCascades[sourceIndex].origin,
                                                        m_vctCascades[sourceIndex].size);
         }
+        trace.cacheOriginSize = m_vctCacheOriginSize;
+        trace.cacheSettings = {useCache ? 1.0f : 0.0f, m_vctProbeSchedule.blend, 0.0f, 0.0f};
         trace.traceSettings = {effect.parameters[0].y, effect.parameters[0].z,
                                effect.parameters[0].w, effect.parameters[1].x};
         trace.traceCounts = {availableCascades, cascadeCount, effect.quality,
@@ -1843,6 +2035,8 @@ namespace PlutoGE::render
         commands.BindTexture(5, m_albedoTarget.Get(), m_screenSampler.Get());
         for (std::size_t direction = 0; direction < 6; ++direction)
             commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+        commands.BindTexture(13, m_vctProbeRadiance.Get(), m_vctVolumeSampler.Get());
+        commands.BindTexture(14, m_vctProbeVisibility.Get(), m_vctVolumeSampler.Get());
         commands.Draw(3); commands.EndRendering();
         const auto next = static_cast<std::uint8_t>(1u - m_vctHistoryIndex);
         VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,

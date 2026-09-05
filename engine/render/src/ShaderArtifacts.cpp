@@ -40,6 +40,9 @@ namespace PlutoGE::render
             .vertex = Load("BasicLit", "vertex"),
             .instancedVertex = Load("BasicLitInstanced", "vertex"),
             .fragment = Load("BasicLit", "fragment"),
+            .transparentFragment = Load("Glass", "fragment"),
+            .glassSceneCopy = {.vertex = Load("GlassSceneCopy", "vertex"),
+                               .fragment = Load("GlassSceneCopy", "fragment")},
             .shadowVertex = Load("DirectionalShadow", "vertex"),
             .shadowInstancedVertex = Load("DirectionalShadowInstanced", "vertex"),
             .shadowFragment = Load("DirectionalShadow", "fragment"),
@@ -82,6 +85,7 @@ namespace PlutoGE::render
                                    .fragment = Load(ssaoModules[index], "fragment")};
         result.vctCompute[0] = Load("VCTResolve", "compute");
         result.vctCompute[1] = Load("VCTDirectionalMip", "compute");
+        result.vctCompute[2] = Load("VCTProbeUpdate", "compute");
         result.vctVoxelization.vertexShader = Load("VCTVoxelize", "vertex");
         result.vctVoxelization.geometryShader = Load("VCTVoxelize", "geometry");
         result.vctVoxelization.fragmentShader = Load("VCTVoxelize", "fragment");

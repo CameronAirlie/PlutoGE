@@ -684,6 +684,7 @@ namespace PlutoGE::ui
         if (m_surfaceType == render::MaterialSurfaceType::Glass)
         {
             ImGui::SeparatorText("Glass");
+            ImGui::TextWrapped("Transmission controls light through the glass. Base color alpha controls surface coverage; use 1 for a solid pane.");
             if (ImGui::SliderFloat("Transmission", &m_transmission, 0.0f, 1.0f, "%.2f"))
             {
                 m_dirty = true;
@@ -692,10 +693,12 @@ namespace PlutoGE::ui
             {
                 m_dirty = true;
             }
+            ImGui::SetItemTooltip("1.0 disables refraction and normal-incidence reflection. Window glass is typically around 1.5.");
             if (ImGui::DragFloat("Thickness", &m_thickness, 0.001f, 0.0f, 100.0f, "%.3f"))
             {
                 m_dirty = true;
             }
+            ImGui::SetItemTooltip("Thickness in scene units controls refraction and tint absorption. Roughness adds a frosted appearance.");
             float attenuationColor[3] = {m_attenuationColor.r, m_attenuationColor.g, m_attenuationColor.b};
             if (ImGui::ColorEdit3("Attenuation Color", attenuationColor))
             {

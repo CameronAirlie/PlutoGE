@@ -17,6 +17,8 @@ string(REGEX REPLACE "binding[ \t]*=[ \t]*5,[ \t]*set[ \t]*=[ \t]*1" "binding = 
 string(REGEX REPLACE "binding[ \t]*=[ \t]*6,[ \t]*set[ \t]*=[ \t]*1" "binding = 14" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*7,[ \t]*set[ \t]*=[ \t]*1" "binding = 15" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*8,[ \t]*set[ \t]*=[ \t]*1" "binding = 16" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*9,[ \t]*set[ \t]*=[ \t]*1" "binding = 17" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*10,[ \t]*set[ \t]*=[ \t]*1" "binding = 18" shader_source "${shader_source}")
 string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_source}")
 # Slang uses the SPIR-V/Vulkan builtin spelling for SV_VertexID when emitting
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.

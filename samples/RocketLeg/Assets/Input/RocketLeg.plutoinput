@@ -45,6 +45,13 @@
       ]
     },
     {
+      "Name": "P1Powerslide",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "LeftBumper", "Gamepad": 0 },
+        { "Kind": "Key", "Key": "LeftControl" }
+      ]
+    },
+    {
       "Name": "P1Boost",
       "Bindings": [
         { "Kind": "GamepadButton", "Button": "B", "Gamepad": 0 },
@@ -100,6 +107,13 @@
       "Name": "P2FreeAirRoll",
       "Bindings": [
         { "Kind": "GamepadButton", "Button": "LeftBumper", "Gamepad": 1 }
+      ]
+    },
+    {
+      "Name": "P2Powerslide",
+      "Bindings": [
+        { "Kind": "GamepadButton", "Button": "LeftBumper", "Gamepad": 1 },
+        { "Kind": "Key", "Key": "RightControl" }
       ]
     },
     {

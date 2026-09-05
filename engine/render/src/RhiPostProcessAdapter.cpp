@@ -261,6 +261,7 @@ namespace PlutoGE::render
             {
                 const auto settings = typed.GetSettings();
                 BasicPostProcessEffect result{BasicPostProcessEffectType::VCTGI};
+                result.historyOwner = &typed;
                 result.quality = static_cast<std::uint32_t>(settings.coneCount);
                 result.parameters[0] = {settings.volumeSize, settings.intensity, settings.aperture, settings.maxDistance};
                 result.parameters[1] = {settings.normalBias, settings.temporalBlend,
@@ -269,6 +270,7 @@ namespace PlutoGE::render
                                         static_cast<float>(settings.cascadeCount),
                                         static_cast<float>(settings.traceResolutionDivisor),
                                         static_cast<float>(settings.updateInterval)};
+                result.parameters[4] = {settings.worldCache ? 1.0f : 0.0f, settings.cacheSize, float(settings.cacheUpdates), 0.0f};
                 result.parameters[3] = {static_cast<float>(settings.debugView),
                                         static_cast<float>(settings.voxelizationLodBias),
                                         settings.indirectOnly ? 1.0f : 0.0f,

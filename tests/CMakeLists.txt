@@ -40,7 +40,13 @@ target_link_libraries(PlutoGEVulkanBootstrapTests PRIVATE PlutoGE::Render)
 add_test(NAME PlutoGEVulkanBootstrapTests COMMAND PlutoGEVulkanBootstrapTests)
 
 add_executable(PlutoGEVulkanRhiTests VulkanRhiTests.cpp)
-target_link_libraries(PlutoGEVulkanRhiTests PRIVATE PlutoGE::Render)
+# MinGW needs to rescan the render/import cycle for the stb image implementation.
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEVulkanRhiTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGEVulkanRhiTests PRIVATE PlutoGE::Render)
+endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
@@ -178,3 +184,11 @@ if (TARGET OpenAL)
             $<TARGET_FILE_DIR:PlutoGEPostProcessInitializationTests>/$<TARGET_FILE_NAME:OpenAL>
     )
 endif()
+
+# Collider sizing is independent of the renderer/engine initialization.
+add_executable(PlutoGEColliderCcdTests
+    ColliderCcdTests.cpp
+    ../engine/scene/src/components/ColliderComponent.cpp)
+target_include_directories(PlutoGEColliderCcdTests PRIVATE ../engine/scene/include)
+target_link_libraries(PlutoGEColliderCcdTests PRIVATE glm::glm)
+add_test(NAME PlutoGEColliderCcdTests COMMAND PlutoGEColliderCcdTests)

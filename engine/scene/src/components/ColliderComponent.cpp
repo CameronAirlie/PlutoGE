@@ -81,6 +81,38 @@ namespace PlutoGE::scene
         return m_config.height * std::abs(objectScale.y);
     }
 
+    float ColliderComponent::GetCcdSweptSphereRadius(const glm::vec3 &objectScale,
+                                                    const glm::vec3 &localCenterOfMass) const
+    {
+        const glm::vec3 offset = (m_config.center - localCenterOfMass) * objectScale;
+        float radius = 0.0f;
+        switch (m_config.shape)
+        {
+        case ColliderShape::Box:
+        {
+            const glm::vec3 clearance = GetScaledSize(objectScale) * 0.5f - glm::abs(offset);
+            radius = std::min({clearance.x, clearance.y, clearance.z});
+            break;
+        }
+        case ColliderShape::Sphere:
+            radius = GetScaledRadius(objectScale) - glm::length(offset);
+            break;
+        case ColliderShape::Capsule:
+        {
+            const float capsuleRadius = GetScaledRadius(objectScale);
+            const float halfSegment = std::max(0.0f, GetScaledHeight(objectScale) * 0.5f - capsuleRadius);
+            const glm::vec3 fromSegment(offset.x, std::max(0.0f, std::abs(offset.y) - halfSegment), offset.z);
+            radius = capsuleRadius - glm::length(fromSegment);
+            break;
+        }
+        default:
+            break;
+        }
+        // A centre of mass outside the shape cannot contain a sweep sphere.
+        // Do not impose a minimum that makes thin/small bodies artificially fat.
+        return std::max(0.0f, radius) * 0.8f;
+    }
+
     std::vector<Property> ColliderComponent::Serialize() const
     {
         return {

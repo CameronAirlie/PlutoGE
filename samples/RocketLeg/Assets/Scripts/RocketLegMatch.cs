@@ -11,14 +11,14 @@ public sealed class RocketLegMatch : ScriptBehaviour
     [SerializedField] private GameObject? blueCar;
     [SerializedField] private GameObject? orangeCar;
     [SerializedField] private string documentPath = "UI/rocketleg-hud.rml";
-    [SerializedField] private float goalLine = 22.5f;
-    [SerializedField] private float goalHalfWidth = 6.0f;
+    [SerializedField] private float goalLine = 41.0f;
+    [SerializedField] private float goalHalfWidth = 8.0f;
     [SerializedField] private float kickoffDelay = 1.5f;
     [SerializedField] private int winningScore = 5;
     [SerializedField, InputMappingAsset] private string inputMappingAsset = "project://Input/RocketLeg.plutoinput";
 
-    private readonly Vector3 _blueSpawn = new(-12.0f, 0.75f, 0.0f);
-    private readonly Vector3 _orangeSpawn = new(12.0f, 0.75f, 0.0f);
+    private readonly Vector3 _blueSpawn = new(-22.0f, 0.75f, 0.0f);
+    private readonly Vector3 _orangeSpawn = new(22.0f, 0.75f, 0.0f);
     private readonly Vector3 _blueRotation = new(0.0f, -90.0f, 0.0f);
     private readonly Vector3 _orangeRotation = new(0.0f, 90.0f, 0.0f);
     private RocketBall? _ballScript;
@@ -29,6 +29,8 @@ public sealed class RocketLegMatch : ScriptBehaviour
     private RmlElement? _blueScoreLabel;
     private RmlElement? _orangeScoreLabel;
     private RmlElement? _statusLabel;
+    private RocketChaseCamera? _camera;
+    private GameObject[] _boostPads = Array.Empty<GameObject>();
     private bool _hudReady;
     private string _status = "KICKOFF!";
     private int _blueScore;
@@ -54,6 +56,8 @@ public sealed class RocketLegMatch : ScriptBehaviour
         _ballScript = ball?.GetComponent<RocketBall>();
         _blueController = blueCar?.GetComponent<ArcadeCarController>();
         _orangeController = orangeCar?.GetComponent<ArcadeCarController>();
+        _camera = GameObject.Find("Chase Camera")?.GetComponent<RocketChaseCamera>();
+        _boostPads = GameObject.FindByTag("boost-pad");
         _hudDocument = new RmlDocument(documentPath);
         _blueScoreLabel = _hudDocument.Element("blue-score");
         _orangeScoreLabel = _hudDocument.Element("orange-score");
@@ -86,6 +90,8 @@ public sealed class RocketLegMatch : ScriptBehaviour
             PublishStatus();
         }
 
+        UpdateBoostHud();
+
         if (_inputActions?.WasPressed("RestartMatch") == true)
         {
             ResetMatch();
@@ -116,7 +122,7 @@ public sealed class RocketLegMatch : ScriptBehaviour
 
         if (ball is null) return;
         var position = ball.WorldPosition;
-        if (MathF.Abs(position.Z) > goalHalfWidth || position.Y > 7.0f) return;
+        if (MathF.Abs(position.Z) > goalHalfWidth || position.Y > 8.0f) return;
 
         if (position.X > goalLine)
         {
@@ -152,6 +158,7 @@ public sealed class RocketLegMatch : ScriptBehaviour
         _ballScript?.ResetBall();
         _blueController?.ResetCar(_blueSpawn, _blueRotation);
         _orangeController?.ResetCar(_orangeSpawn, _orangeRotation);
+        foreach (var pad in _boostPads) pad.GetComponent<BoostPad>()?.ResetPad();
         _kickoffTimer = kickoffDelay;
         SetStatus(message);
     }
@@ -171,6 +178,24 @@ public sealed class RocketLegMatch : ScriptBehaviour
         _ballScript?.SetFrozen(frozen);
         _blueController?.SetFrozen(frozen);
         _orangeController?.SetFrozen(frozen);
+    }
+
+    private void UpdateBoostHud()
+    {
+        if (!_hudReady || _hudDocument is null) return;
+        var orange = _camera?.FollowedCar?.EntityId == orangeCar?.EntityId;
+        var car = orange ? _orangeController : _blueController;
+        if (car is null) return;
+        _hudDocument.Element("boost-value").Markup = MathF.Ceiling(car.BoostFraction * 100.0f).ToString("0");
+        _hudDocument.Element("boost-player").Markup = orange ? "ORANGE / P2" : "BLUE / P1";
+        _hudDocument.Element("boost-fill").SetStyle("width", (car.BoostFraction * 100.0f).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%");
+        _hudDocument.Element("flip-status").Markup = car.IsPowersliding ? "POWERSLIDE" : car.IsFlipping ? "FLIPPING" :
+            !car.FlipAvailable ? "NO FLIP" : car.ResetWheelContacts >= 3 ? "FLIP READY" :
+            "FLIP " + car.FlipTimeRemaining.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "s";
+        var gauge = _hudDocument.Element("boost-gauge");
+        gauge.SetClass("empty", car.BoostAmount <= 0.0f);
+        gauge.SetClass("boosting", car.IsBoosting);
+        gauge.SetClass("orange", orange);
     }
 
     private void UpdateHud()

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/RenderDebugView.h"
 
 #include "PlutoGE/render/rhi/Resource.h"
@@ -160,6 +161,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode instancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
+        BasicPostProcessShaderPackage glassSceneCopy;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -170,7 +173,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
-        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 2> vctCompute;
+        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 3> vctCompute;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
     };
@@ -208,6 +211,13 @@ namespace PlutoGE::render
         float subsurface = 0.0f;
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};
         float subsurfaceRadius = 1.0f;
+        std::uint32_t surfaceType = 0;
+        float transmission = 0.0f;
+        float ior = 1.45f;
+        float thickness = 0.01f;
+        glm::vec3 attenuationColor{1.0f};
+        float attenuationDistance = 1.0f;
+        bool twoSided = false;
         float alphaCutoff = 0.5f;
         std::uint32_t alphaMode = 0;
         std::uint32_t metallicChannel = 0;
@@ -274,6 +284,7 @@ namespace PlutoGE::render
         // This keeps the GPU ABI stable while new single-input passes are added.
         std::array<glm::vec4, 6> parameters{};
         glm::mat4 worldToLocal{1.0f};
+        const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
     };
 
     struct BasicRendererFrameStats
@@ -371,6 +382,10 @@ namespace PlutoGE::render
         void EnsureShadowTargets(const BasicLighting &lighting);
 
         rhi::IRenderDevice *m_device = nullptr;
+        rhi::GraphicsPipeline m_transparentPipeline;
+        rhi::GraphicsPipeline m_transparentTwoSidedPipeline;
+        rhi::GraphicsPipeline m_glassSceneCopyPipeline;
+        rhi::Texture m_glassDepthCopy;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_instancedPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
@@ -420,6 +435,12 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
         std::array<rhi::Texture, 2> m_exposureHistoryTargets;
         std::array<rhi::GraphicsPipeline, 3> m_ssaoPipelines;
+        rhi::GraphicsPipeline m_vctProbePipeline;
+        rhi::Texture m_vctProbeRadiance, m_vctProbeVisibility;
+        glm::vec4 m_vctCacheOriginSize{0.0f}, m_vctCacheConfiguration{0.0f};
+        VctProbeSchedule m_vctProbeSchedule;
+        std::uint32_t m_vctNextCascade = 0;
+        const void *m_vctHistoryOwner = nullptr;
         rhi::GraphicsPipeline m_vctResolvePipeline;
         rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
         rhi::GraphicsPipeline m_vctVoxelizationPipeline;

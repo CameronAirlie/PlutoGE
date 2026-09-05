@@ -7,15 +7,15 @@ WINDOW_TITLE	RocketLeg - Two Player Arena
 WINDOW_SIZE	1600	900
 VSYNC	1
 GRAPHICS_API	Vulkan
-RUNTIME_UPSCALER	FSR2
+RUNTIME_UPSCALER	DLSS
 RUNTIME_UPSCALER_QUALITY	Quality
 RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
 EDITOR_FONT_SIZE	16.1
 EDITOR_FONT	Martian Mono
-EDITOR_CAMERA_POSITION	-12.2993	7.28607	-10.088
+EDITOR_CAMERA_POSITION	-6.54063	6.27091	17.458
 EDITOR_CAMERA_SPEED	12
-EDITOR_CAMERA_ROTATION	-116.279	0.479958
+EDITOR_CAMERA_ROTATION	29.1586	-15.8401
 EDITOR_CAMERA_LENS	70	0.1	500
 EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/main.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
@@ -27,19 +27,34 @@ ASSET	engine://builtin/mesh/quad	0	Mesh
 ASSET	engine://builtin/mesh/sphere	0	Mesh
 ASSET	engine://builtin/shadergraph/default-lit	0	Shader Graph
 ASSET	engine://builtin/shadergraph/default-unlit	0	Shader Graph
-ASSET	project://Input/RocketLeg.plutoinput	4085	Input Mapping
-ASSET	project://Materials/Arena.plutomaterial	223	Material
-ASSET	project://Materials/Ball.plutomaterial	218	Material
-ASSET	project://Materials/Blue.plutomaterial	220	Material
-ASSET	project://Materials/GoalBlue.plutomaterial	214	Material
-ASSET	project://Materials/GoalOrange.plutomaterial	215	Material
-ASSET	project://Materials/Orange.plutomaterial	221	Material
-ASSET	project://Materials/Wall.plutomaterial	223	Material
+ASSET	project://Input/RocketLeg.plutoinput	4488	Input Mapping
+ASSET	project://Managed/PlutoGE.ScriptCore.deps.json	446	Unknown
+ASSET	project://Managed/PlutoGE.ScriptCore.dll	231424	Assembly
+ASSET	project://Managed/PlutoGE.ScriptCore.pdb	82156	Unknown
+ASSET	project://Managed/PlutoGE.ScriptCore.runtimeconfig.json	369	Unknown
+ASSET	project://Managed/RocketLeg.Scripts.deps.json	862	Unknown
+ASSET	project://Managed/RocketLeg.Scripts.dll	26112	Assembly
+ASSET	project://Managed/RocketLeg.Scripts.pdb	18844	Unknown
+ASSET	project://Materials/Arena.plutomaterial	519	Material
+ASSET	project://Materials/Ball.plutomaterial	515	Material
+ASSET	project://Materials/Blue.plutomaterial	210	Material
+ASSET	project://Materials/BoostPad.plutomaterial	187	Material
+ASSET	project://Materials/GoalBlue.plutomaterial	204	Material
+ASSET	project://Materials/GoalOrange.plutomaterial	205	Material
+ASSET	project://Materials/Orange.plutomaterial	211	Material
+ASSET	project://Materials/StadiumGlass.plutomaterial	534	Material
+ASSET	project://Materials/Tyre.plutomaterial	183	Material
+ASSET	project://Materials/Wall.plutomaterial	521	Material
+ASSET	project://Models/.plutoge-cache/meshes/13939623376548672384.pmesh	406917	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/5322404488168526833.pmesh	380797	Unknown
+ASSET	project://Models/ArenaBanks.glb	161496	Model
+ASSET	project://Models/ArenaShell.glb	174224	Model
 ASSET	project://PostProcessing/main.plutopostprocess	5278	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	36056	Scene
-ASSET	project://Scripts/ArcadeCarController.cs	15206	Script
-ASSET	project://Scripts/RocketBall.cs	1918	Script
-ASSET	project://Scripts/RocketChaseCamera.cs	7885	Script
-ASSET	project://Scripts/RocketLegMatch.cs	6427	Script
-ASSET	project://UI/rocketleg-hud.rcss	1562	Unknown
-ASSET	project://UI/rocketleg-hud.rml	1162	RML Document
+ASSET	project://Scenes/Main.plutoscene	48429	Scene
+ASSET	project://Scripts/ArcadeCarController.cs	28243	Script
+ASSET	project://Scripts/BoostPad.cs	1899	Script
+ASSET	project://Scripts/RocketBall.cs	1849	Script
+ASSET	project://Scripts/RocketChaseCamera.cs	7933	Script
+ASSET	project://Scripts/RocketLegMatch.cs	7987	Script
+ASSET	project://UI/rocketleg-hud.rcss	2467	Unknown
+ASSET	project://UI/rocketleg-hud.rml	1684	RML Document

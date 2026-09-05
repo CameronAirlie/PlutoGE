@@ -299,7 +299,7 @@ namespace PlutoGE::render
                     const auto &material = command.material->GetConfig();
                     if (shadowOnly)
                     {
-                        if (!material.castsShadow)
+                        if (!material.castsShadow || material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend)
                             continue;
                     }
                     else
@@ -312,6 +312,16 @@ namespace PlutoGE::render
                         draw.subsurface = material.subsurface;
                         draw.subsurfaceColor = material.subsurfaceColor;
                         draw.subsurfaceRadius = material.subsurfaceRadius;
+                        draw.surfaceType = static_cast<std::uint32_t>(material.surfaceType);
+                        draw.transmission = material.transmission;
+                        draw.ior = material.ior;
+                        draw.thickness = material.thickness;
+                        draw.attenuationColor = material.attenuationColor;
+                        draw.attenuationDistance = material.attenuationDistance;
+                        draw.twoSided = material.twoSided;
+                        const bool transparent = material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
+                        draw.contributesToGi = draw.contributesToGi && !transparent;
+                        draw.castsShadow = draw.castsShadow && !transparent;
                         draw.alphaCutoff = material.alphaCutoff;
                         draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
                         draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);

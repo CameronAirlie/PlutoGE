@@ -1,3 +1,4 @@
+#include "GlassRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 
@@ -33,6 +34,9 @@ int main()
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
+        shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
+        shaders.glassSceneCopy.vertex.spirv = ReadSpirv("GlassSceneCopy.vertex.spv");
+        shaders.glassSceneCopy.fragment.spirv = ReadSpirv("GlassSceneCopy.fragment.spv");
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
         shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
@@ -67,6 +71,7 @@ int main()
         }
         shaders.vctCompute[0].spirv = ReadSpirv("VCTResolve.compute.spv");
         shaders.vctCompute[1].spirv = ReadSpirv("VCTDirectionalMip.compute.spv");
+        shaders.vctCompute[2].spirv = ReadSpirv("VCTProbeUpdate.compute.spv");
         shaders.vctVoxelization.vertexShader.spirv = ReadSpirv("VCTVoxelize.vertex.spv");
         shaders.vctVoxelization.geometryShader.spirv = ReadSpirv("VCTVoxelize.geometry.spv");
         shaders.vctVoxelization.fragmentShader.spirv = ReadSpirv("VCTVoxelize.fragment.spv");
@@ -79,6 +84,11 @@ int main()
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
+
+        CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
+        {
+            return device.ReadTextureRgba8(texture);
+        });
 
         // The Vulkan editor host owns its presentation renderer and creates
         // independent off-screen renderers for its viewports on the same device.
@@ -284,7 +294,9 @@ int main()
         vctgi.parameters[1] = {0.1f, 0.9f, 0.05f, 0.8f};
         vctgi.parameters[2] = {32.0f, 1.0f, 1.0f, 1.0f};
         vctgi.parameters[3].w = 256.0f;
-        renderer.Render(projection * view, neutralLighting, draws, std::span(&vctgi, 1));
+        vctgi.parameters[4] = {1.0f, 48.0f, 256.0f, 0.0f};
+        for (int frame = 0; frame < 72; ++frame)
+            renderer.Render(projection * view, neutralLighting, draws, std::span(&vctgi, 1));
         if (device.ReadTextureRgba8(renderer.GetColorTexture()).size() != 96u * 64u * 4u)
         {
             std::cerr << "Vulkan VCTGI returned an invalid image\n";

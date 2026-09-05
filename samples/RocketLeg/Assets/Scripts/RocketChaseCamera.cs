@@ -22,6 +22,7 @@ public sealed class RocketChaseCamera : ScriptBehaviour
     [SerializedField] private bool startInBallCam = true;
     [SerializedField, InputMappingAsset] private string inputMappingAsset = "project://Input/RocketLeg.plutoinput";
 
+    public GameObject? FollowedCar => _target;
     private GameObject? _target;
     private Vector3 _smoothedPosition;
     private Vector3 _smoothedRotation;

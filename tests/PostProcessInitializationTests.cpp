@@ -8,8 +8,11 @@
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 
 #include <glad/glad.h>
+#include "VctProbeCacheChecks.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include <iostream>
+#include <sstream>
 
 int main()
 {
@@ -144,6 +147,19 @@ int main()
         }
     }
 
+    {
+        PlutoGE::render::VoxelConeTracingEffect effect;
+        std::ostringstream diagnostics;
+        auto *previous = std::cerr.rdbuf(diagnostics.rdbuf());
+        effect.EnsureInitialized();
+        std::cerr.rdbuf(previous);
+        if (!diagnostics.str().empty()) std::cerr << diagnostics.str();
+        if (!diagnostics.str().empty() || !effect.IsInitialized() || glGetError() != GL_NO_ERROR || !CheckVctProbeCache() || !CheckVctStationaryLighting())
+        {
+            std::cerr << "VCT cache initialization or GPU validation failed.\n";
+            return 1;
+        }
+    }
     window.Close();
     return 0;
 }

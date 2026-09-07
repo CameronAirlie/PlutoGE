@@ -91,6 +91,8 @@ namespace PlutoGE::ui
         void ReleaseRegisteredTexture();
 
         ViewportPanelConfig m_config;
+        render::CameraData m_gameDebugCamera{};
+        bool m_hasGameDebugCamera = false;
         float m_renderScale = 1.0f;
         float m_upscaleSharpness = 0.25f;
         render::rhi::TemporalUpscalerOptions m_temporalUpscalerOptions;

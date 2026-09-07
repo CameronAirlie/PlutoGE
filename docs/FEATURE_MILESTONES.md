@@ -31,7 +31,7 @@ that a milestone is complete.
 | M04 | Find asset references | Small–medium | Implemented; automated checks passed |
 | M05 | Autosave and recovery | Small–medium | Implemented; automated checks passed |
 | M06 | Project validation panel | Medium | Implemented; automated checks passed |
-| M07 | Gameplay debug drawing | Medium | Planned |
+| M07 | Gameplay debug drawing | Medium | Implemented for editor views; automated checks passed |
 | M08 | Camera rigs | Medium | Planned |
 | M09 | Surface response assets | Medium | Planned |
 | M10 | Prefab variants | Medium–large | Planned |
@@ -194,13 +194,30 @@ for format coverage and the limits of literal reference scanning.
   malformed records, cyclic hierarchies, current-scene substitution and read-only
   behavior. Final GCC/Windows editor build and all eight focused suites passed
   (6.77 seconds); `git diff --check` passed. Interactive UI/export and Linux checks
-  remain pending. M07 gameplay debug drawing is next; M07–M14 remain planned.
+  remain pending. At that point M07–M14 remained planned.
+- 2026-09-07: Implemented M07 C# line, wire-sphere and label submissions, with a
+  value-owned, mutex-protected bounded store, simulation-time expiry, pause
+  behavior, category visibility, and transition/reload cleanup. Scene and Game
+  view overlays reuse clipped world-space helpers and the OpenGL/Vulkan ImGui
+  compositor. Standalone-player visualization is not included in this editor
+  milestone. Native tests cover lifetime, filtering, bounds, invalid data, reset,
+  and concurrent snapshots; managed smoke tests exercise ABI registration, packet
+  layout, callback dispatch, and UTF-8 boundaries. All ten focused tests passed
+  (9.57 seconds); `git diff --check` passed. Interactive backend checks remain pending.
+  M08 camera rigs is next; M08–M14 remain planned.
+- M07 build note: direct GNU ld links exhausted memory, including with
+  `--no-keep-memory`, `--reduce-memory-overheads`, and `--strip-debug`. The editor
+  linked successfully using temporary copies of the current archives stripped
+  with `objcopy --strip-debug` under `out/m07-stripped`; original build archives
+  remain intact. The subsequent normal editor target check passed. This executable
+  omits debug symbols. The three linker flags remain in the local GCC CMake cache;
+  no repository build defaults were changed.
 
 Reproduce the focused checks from the repository root:
 
 ```powershell
-cmake --build out/build/gcc --target PlutoGEEditor PlutoGEProjectValidationTests PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
-ctest --test-dir out/build/gcc -R '^PlutoGE(ProjectValidation|SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
+cmake --build out/build/gcc --target PlutoGEEditor PlutoGEDebugDrawTests PlutoGEProjectValidationTests PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
+ctest --test-dir out/build/gcc -R '^PlutoGE(DebugDraw|DebugDrawManaged|ProjectValidation|SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
 ```
 
 The build uses one compile job because the first parallel GCC build exhausted

@@ -215,3 +215,62 @@ diagnostic. The checks do not prove runtime correctness, validate every componen
 property, inspect mesh collision geometry, or resolve computed script references.
 Legacy external/relative scene paths outside explicit asset-reference syntax are
 not checked. A clean report means these available checks found no issues.
+
+## Gameplay debug drawing
+
+Use `PlutoGE.ScriptCore.DebugDraw` during Play to submit world-space lines, wire
+spheres, and labels. They appear in both editor Scene and Game views. Open
+**Edit > Gameplay Debug Drawing...** to toggle all overlays, filter named
+categories, inspect native rejection counts, or clear the drawings/categories.
+The Game view needs an active scene camera.
+
+```csharp
+using System.Numerics;
+using PlutoGE.ScriptCore;
+
+public sealed class DebugDrawingExample : ScriptBehaviour
+{
+    public override void OnCreate()
+    {
+        DebugDraw.Label(Vector3.UnitY, "Spawn point", Vector4.One, 2, "Spawns");
+    }
+
+    public override void OnUpdate(float deltaTime)
+    {
+        if (deltaTime <= 0) return;
+        DebugDraw.Line(Vector3.Zero, Vector3.UnitY * 2,
+                       new Vector4(0, 1, 0, 1), category: "Physics");
+        DebugDraw.Sphere(Vector3.Zero, 0.5f,
+                         new Vector4(1, 0.5f, 0, 1), category: "Physics");
+    }
+}
+```
+
+Colors are RGBA and clamp to [0,1]. Duration zero lasts through the current editor
+frame. Positive durations use simulation seconds and age once after the editor
+frame, independent of how many viewports are visible. Time scale zero freezes
+both timed and one-frame drawings. Avoid submitting repeatedly while paused.
+Hidden drawings still expire when simulation advances. A command submitted by a
+background thread after viewport rendering may miss that frame; submit frame-only
+drawings from gameplay callbacks. Closed viewports do not defer expiry.
+
+The store accepts at most 4096 commands and 64 named categories. Categories stay
+registered until cleared, even after their commands expire. Category names are
+limited to 64 UTF-8 bytes and labels to 256; embedded nulls are rejected. Durations
+must be finite and between zero and 3600 seconds, sphere radii in (0, 1000000],
+and position coordinates within ±1000000000. Submission returns `false` when
+invalid, full, unregistered, or outside Play. Native rejections increment the
+counter; managed text-length checks reject before crossing the bridge.
+
+Play start/stop, scene replacement, and script shutdown/reload clear commands and
+category state. Global overlay visibility persists within the editor process.
+`DebugDraw.Clear()` also clears commands/categories. The storage copies command
+data under a mutex; no scene pointers or managed string pointers are retained.
+
+Rendering reuses clipped world-space drawing helpers and the existing ImGui
+compositor for OpenGL and Vulkan. Spheres are three wire circles; labels are
+screen-facing text. Overlays draw through geometry and do not perform depth tests.
+This milestone supplies editor gameplay visualization, not a standalone-player
+debug overlay or persistent scene data. Standalone native hosts can consume the
+same command store through a future renderer. Rebuild the scripting SDK and game
+scripts together to pick up the new managed/native registration entry point.

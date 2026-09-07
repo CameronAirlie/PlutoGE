@@ -1,4 +1,5 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/render/DebugDraw.h"
 
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
@@ -280,6 +281,7 @@ namespace PlutoGE::scripting
         m_lastError.clear();
         m_runtime.reset();
         m_initialized = false;
+        render::DebugDraw::Get().Clear();
     }
 
     void ScriptEngine::SetRuntime(std::unique_ptr<IScriptRuntime> runtime)

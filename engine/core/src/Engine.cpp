@@ -1,4 +1,5 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/DebugDraw.h"
 
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -610,6 +611,7 @@ namespace PlutoGE::core
 
             if (m_scene)
             {
+                render::DebugDraw::Get().Advance(deltaTime * m_scene->GetTimeScale());
                 m_scene->Update(deltaTime);
             }
         }
@@ -630,6 +632,7 @@ namespace PlutoGE::core
         // Scene updates may already have submitted commands containing pointers
         // into the outgoing scene. Never carry those across a scene transition.
         m_renderer.ClearRenderCommands();
+        render::DebugDraw::Get().Clear();
         m_scene = scene;
 
         if (m_isRuntimeRunning && m_scene)
@@ -682,6 +685,7 @@ namespace PlutoGE::core
             return;
         }
 
+        render::DebugDraw::Get().Clear();
         m_isRuntimeRunning = true;
         if (m_scene)
         {
@@ -701,6 +705,7 @@ namespace PlutoGE::core
             m_scene->StopRuntime();
         }
 
+        render::DebugDraw::Get().Clear();
         m_isRuntimeRunning = false;
         m_pendingSceneLoadRequest.reset();
         m_pendingApplicationQuitRequest = false;

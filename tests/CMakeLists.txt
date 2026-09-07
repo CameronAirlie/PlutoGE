@@ -192,6 +192,16 @@ if (TARGET OpenAL)
 endif()
 
 # Editor data tests run without initializing a window or graphics device.
+add_executable(PlutoGEDebugDrawTests DebugDrawTests.cpp ../engine/render/src/DebugDraw.cpp)
+target_include_directories(PlutoGEDebugDrawTests PRIVATE ../engine/render/include)
+target_link_libraries(PlutoGEDebugDrawTests PRIVATE glm::glm)
+add_test(NAME PlutoGEDebugDrawTests COMMAND PlutoGEDebugDrawTests)
+find_program(PLUTOGE_TEST_DOTNET dotnet)
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEDebugDrawManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.DebugDrawSmokeTests/PlutoGE.DebugDrawSmokeTests.csproj
+        --configuration Release)
+endif()
 add_executable(PlutoGEProjectValidationTests ProjectValidationTests.cpp
     ../engine/assets/src/ProjectValidation.cpp ../engine/assets/src/AssetReferences.cpp)
 target_include_directories(PlutoGEProjectValidationTests PRIVATE ../engine/assets/include)

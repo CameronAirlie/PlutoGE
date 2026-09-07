@@ -27,6 +27,8 @@
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
+#include "PlutoGE/ui/DebugDrawUI.h"
+#include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -3643,6 +3645,7 @@ namespace PlutoGE::ui
                         m_showSceneRecovery = true;
                     if (ImGui::MenuItem("Project Validation...", nullptr, false, m_project != nullptr))
                         m_showProjectValidation = true;
+                    if (ImGui::MenuItem("Gameplay Debug Drawing...")) OpenDebugDrawControls();
                     if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
                                         GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
                         m_showGroundPlacement = true;
@@ -4106,7 +4109,10 @@ namespace PlutoGE::ui
             UpdateSceneRecovery();
             RenderSceneRecovery();
             RenderProjectValidation([&](const std::string &reference) { contentBrowserPanel->RevealAsset(reference); });
+            RenderDebugDrawControls();
             m_panelManager.EndPanelUpdate();
+            if (m_scene && m_engine.IsRuntimeRunning() && !m_activeBakeTask)
+                render::DebugDraw::Get().Advance(deltaSeconds * m_scene->GetTimeScale());
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 

@@ -12,6 +12,44 @@ namespace PlutoGE.ScriptCore.Native;
 internal static unsafe class ScriptBridge
 {
     [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeDebugDrawRequest
+    {
+        public int Kind;
+        public NativeVector3 Start, End;
+        public float R, G, B, A, Radius, Duration;
+    }
+    private static delegate* unmanaged[Cdecl]<NativeDebugDrawRequest*, byte*, byte*, int> _submitDebugDraw;
+    private static delegate* unmanaged[Cdecl]<void> _clearDebugDraw;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterDebugDrawApi")]
+    public static int RegisterDebugDrawApi(
+        delegate* unmanaged[Cdecl]<NativeDebugDrawRequest*, byte*, byte*, int> submit,
+        delegate* unmanaged[Cdecl]<void> clear)
+    {
+        if (submit == null || clear == null || sizeof(NativeDebugDrawRequest) != 52) return 0;
+        _submitDebugDraw = submit;
+        _clearDebugDraw = clear;
+        return 1;
+    }
+
+    internal static bool SubmitDebugDraw(int kind, Vector3 start, Vector3 end, Vector4 color, float radius,
+                                         float duration, string category, string text)
+    {
+        if (_submitDebugDraw == null || category.Contains('\0') || text.Contains('\0') ||
+            Encoding.UTF8.GetByteCount(category) > 64 || Encoding.UTF8.GetByteCount(text) > 256) return false;
+        var request = new NativeDebugDrawRequest {
+            Kind = kind, Start = NativeVector3.FromManaged(start), End = NativeVector3.FromManaged(end),
+            R = color.X, G = color.Y, B = color.Z, A = color.W, Radius = radius, Duration = duration
+        };
+        byte[] categoryBytes = Encoding.UTF8.GetBytes(category + '\0');
+        byte[] textBytes = Encoding.UTF8.GetBytes(text + '\0');
+        fixed (byte* categoryPtr = categoryBytes)
+        fixed (byte* textPtr = textBytes)
+            return _submitDebugDraw(&request, categoryPtr, textPtr) != 0;
+    }
+    internal static void ClearDebugDrawing() { if (_clearDebugDraw != null) _clearDebugDraw(); }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct NativeVector3
     {
         public float X;

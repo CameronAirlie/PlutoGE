@@ -1,5 +1,6 @@
 add_library(PlutoGERender
     src/Renderer.cpp
+    src/DebugDraw.cpp
     src/BasicRenderer.cpp
     src/RhiRenderService.cpp
     src/RhiSceneRenderer.cpp

@@ -3,6 +3,7 @@
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/render/SpatialUpscaler.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
@@ -576,6 +577,33 @@ namespace PlutoGE::ui
                 DrawWorldLine(drawList, previousPoint, point, cameraData, viewportMin, viewportSize, color, 1.0f);
                 previousPoint = point;
             }
+        }
+
+        void DrawGameplayDebug(const render::CameraData &camera, const ImVec2 &minimum, const ImVec2 &size)
+        {
+            auto *list = ImGui::GetWindowDrawList();
+            list->PushClipRect(minimum, ImVec2(minimum.x + size.x, minimum.y + size.y), true);
+            for (const auto &command : render::DebugDraw::Get().Snapshot())
+            {
+                const auto color = ImGui::ColorConvertFloat4ToU32(ImVec4(command.color.x, command.color.y, command.color.z, command.color.w));
+                if (command.primitive == render::DebugPrimitive::Line)
+                    DrawWorldLine(list, command.start, command.end, camera, minimum, size, color);
+                else if (command.primitive == render::DebugPrimitive::Sphere)
+                {
+                    const glm::vec3 x(command.radius, 0, 0), y(0, command.radius, 0), z(0, 0, command.radius);
+                    DrawWorldCircle(list, command.start, x, y, camera, minimum, size, color);
+                    DrawWorldCircle(list, command.start, x, z, camera, minimum, size, color);
+                    DrawWorldCircle(list, command.start, y, z, camera, minimum, size, color);
+                }
+                else
+                {
+                    const float depth = -(camera.view * glm::vec4(command.start, 1)).z;
+                    if (depth < camera.nearPlane || depth > camera.farPlane) continue;
+                    const auto point = ProjectWorldPoint(command.start, camera, minimum, size);
+                    if (point.visible) list->AddText(point.screen, color, command.text.c_str());
+                }
+            }
+            list->PopClipRect();
         }
 
         void DrawWorldArc(ImDrawList *drawList,
@@ -1996,6 +2024,10 @@ namespace PlutoGE::ui
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
+        if (m_config.editorViewport && m_hasEditorCameraData)
+            DrawGameplayDebug(m_editorCameraData, viewportMin, imageSize);
+        else if (!m_config.editorViewport && m_hasGameDebugCamera)
+            DrawGameplayDebug(m_gameDebugCamera, viewportMin, imageSize);
         if (m_useRhiPreview)
         {
             std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
@@ -3938,6 +3970,8 @@ namespace PlutoGE::ui
         }
 
         const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+        m_gameDebugCamera = cameraData;
+        m_hasGameDebugCamera = true;
         if ((m_useRhiPreview || requiresRhiViewport) && m_rhiRenderService)
         {
             renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
@@ -4025,6 +4059,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::ClearFrame()
     {
+        m_hasGameDebugCamera = false;
         if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan ||
             !m_renderTarget || !m_renderTarget->IsInitialized())
             return;

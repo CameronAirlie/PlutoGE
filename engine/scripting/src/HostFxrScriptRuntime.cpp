@@ -3,6 +3,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
+#include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/scene/Entity.h"
@@ -123,6 +124,7 @@ namespace PlutoGE::scripting
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
 
         struct HostFxrLocation
         {
@@ -3031,6 +3033,38 @@ namespace PlutoGE::scripting
             return decal ? decal->GetID() : 0;
         }
 
+        struct NativeDebugDrawRequest
+        {
+            int32_t kind;
+            NativeVector3 start, end;
+            float r, g, b, a, radius, duration;
+        };
+        static_assert(sizeof(NativeDebugDrawRequest) == 52);
+        int SubmitDebugDraw(const NativeDebugDrawRequest *request, const char *category, const char *label)
+        {
+            if (!request || !core::Engine::GetInstance().IsRuntimeRunning()) return 0;
+            try
+            {
+                const auto bounded = [](const char *value, std::size_t limit) {
+                    std::string text;
+                    if (value) for (std::size_t i = 0; i <= limit && value[i]; ++i) text.push_back(value[i]);
+                    return text;
+                };
+                render::DebugDrawCommand command;
+                command.primitive = static_cast<render::DebugPrimitive>(request->kind);
+                command.start = {request->start.x, request->start.y, request->start.z};
+                command.end = {request->end.x, request->end.y, request->end.z};
+                command.color = {request->r, request->g, request->b, request->a};
+                command.radius = request->radius;
+                command.duration = request->duration;
+                command.category = bounded(category, 64);
+                command.text = bounded(label, 256);
+                return render::DebugDraw::Get().Add(std::move(command)) ? 1 : 0;
+            }
+            catch (...) { return 0; }
+        }
+        void ClearDebugDraw() { render::DebugDraw::Get().Clear(); }
+
         void LogScriptMessage(int32_t severity, const char *message)
         {
             if (!message)
@@ -3110,6 +3144,7 @@ namespace PlutoGE::scripting
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
+        register_debug_draw_api_fn registerDebugDrawApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
         std::filesystem::path bridgeAssemblyPath;
@@ -3212,6 +3247,7 @@ namespace PlutoGE::scripting
             impl.registerPhysicsApi = nullptr;
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
+            impl.registerDebugDrawApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
             impl.bridgeSourceRuntimeConfigPath.clear();
             CleanupBridgeShadowCopy(impl);
@@ -3554,7 +3590,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
-                LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi);
+                LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi);
 
             if (!requiredExportsLoaded)
             {
@@ -4188,6 +4225,14 @@ namespace PlutoGE::scripting
             setManagedBridgeFailure("RegisterDebugApi");
             return false;
         }
+
+        if (!m_impl->registerDebugDrawApi || m_impl->registerDebugDrawApi(
+                reinterpret_cast<void *>(&SubmitDebugDraw), reinterpret_cast<void *>(&ClearDebugDraw)) == 0)
+        {
+            setManagedBridgeFailure("RegisterDebugDrawApi");
+            return false;
+        }
+        render::DebugDraw::Get().Clear();
 
         const std::string assemblyPathUtf8 = shadowAssemblyPath.string();
         const std::string sourceAssemblyPathUtf8 = std::filesystem::absolute(assemblyPath).string();

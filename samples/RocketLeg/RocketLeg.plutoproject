@@ -8,14 +8,14 @@ WINDOW_SIZE	1600	900
 VSYNC	1
 GRAPHICS_API	Vulkan
 RUNTIME_UPSCALER	FSR2
-RUNTIME_UPSCALER_QUALITY	Balanced
+RUNTIME_UPSCALER_QUALITY	Quality
 RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
 EDITOR_FONT_SIZE	16.1
 EDITOR_FONT	Martian Mono
-EDITOR_CAMERA_POSITION	-19.0332	3.95479	7.12256
+EDITOR_CAMERA_POSITION	-26.3477	23.5101	39.8784
 EDITOR_CAMERA_SPEED	12
-EDITOR_CAMERA_ROTATION	15.1186	-8.52011
+EDITOR_CAMERA_ROTATION	-27.8414	-18.4801
 EDITOR_CAMERA_LENS	70	0.1	500
 EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/main.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
@@ -45,12 +45,13 @@ ASSET	project://Materials/Orange.plutomaterial	221	Material
 ASSET	project://Materials/StadiumGlass.plutomaterial	534	Material
 ASSET	project://Materials/Tyre.plutomaterial	183	Material
 ASSET	project://Materials/Wall.plutomaterial	521	Material
+ASSET	project://Materials/glass Copy.plutosurface	138	Surface Response
 ASSET	project://Models/.plutoge-cache/meshes/2430424986271609557.pmesh	380808	Unknown
 ASSET	project://Models/.plutoge-cache/meshes/7220158127216076340.pmesh	406928	Unknown
 ASSET	project://Models/ArenaBanks.glb	161496	Model
 ASSET	project://Models/ArenaShell.glb	174224	Model
 ASSET	project://PostProcessing/main.plutopostprocess	5278	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	48429	Scene
+ASSET	project://Scenes/Main.plutoscene	49110	Scene
 ASSET	project://Scripts/ArcadeCarController.cs	28243	Script
 ASSET	project://Scripts/BoostPad.cs	1960	Script
 ASSET	project://Scripts/RocketBall.cs	1918	Script

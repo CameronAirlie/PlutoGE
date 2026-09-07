@@ -1,3 +1,4 @@
+PLUTORECOVERY1 1788791924468705 47906 11051028221292741787 "C:\\Users\\Cameron.Airlie\\dev\\PlutoGE\\samples\\RocketLeg\\Assets\\Scenes\\Main.plutoscene"
 SCENE	1
 ENTITY	1	0	1	Arena Floor	0.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	70.000000,0.500000,42.000000
 TAGS	1	1	ground
@@ -33,7 +34,7 @@ PROPERTY	Size	3	1.000000,1.000000,1.000000	0
 PROPERTY	Radius	0	0.500000	0
 PROPERTY	Height	0	2.000000	0
 PROPERTY	Is Trigger	4	false	0
-PROPERTY	Surface Asset	2	project://Materials/glass Copy.plutosurface	0
+PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
 COMPONENT	2	MeshComponent	1

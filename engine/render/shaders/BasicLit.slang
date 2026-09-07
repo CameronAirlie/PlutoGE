@@ -97,6 +97,7 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 glassParameters; // surface type, transmission, IOR, thickness
     float4 attenuationColorDistance;
     float4 glassViewport; // inverse dimensions, Vulkan Y orientation
+    float4 glassFog[4];
 };
 
 [[vk::binding(1, 1)]]
@@ -142,7 +143,7 @@ static const float PI = 3.14159265359;
 // Evaluate the physical sky as a direction-addressed environment. This is the
 // shader-side equivalent of sampling a generated sky cubemap and avoids a
 // frame of latency when atmospheric settings or the sun direction change.
-float3 samplePhysicalSkyEnvironment(float3 direction)
+float3 samplePhysicalSkyEnvironment(float3 direction, float sunVisibility = 1.0)
 {
     direction = normalize(direction);
     const float3 sunDirection = normalize(physicalSkyParameters[0].xyz);
@@ -178,7 +179,7 @@ float3 samplePhysicalSkyEnvironment(float3 direction)
                  sunTransmittance * sunColor * sunIntensity * day;
     sky += lerp(float3(0.002, 0.003, 0.009), float3(0.012, 0.022, 0.06),
                 pow(saturate(direction.y), 0.35)) * nightIntensity * 24.0 * night;
-    sky += sunColor * sunIntensity *
+    sky += sunColor * sunIntensity * sunVisibility *
            (smoothstep(cos(sunRadius * 1.35), cos(sunRadius), cosine) +
             pow(max(cosine, 0.0), 512.0) * day * 0.08) * sunTransmittance;
     const float3 moonDirection = -sunDirection;
@@ -288,6 +289,59 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBia
                                 shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias);
 }
 
+// Exact unpolarized air/dielectric Fresnel, including index-matched glass.
+float dielectricFresnel(float cosine, float ior)
+{
+    if (ior <= 1.000001) return 0.0;
+    cosine = saturate(cosine);
+    const float transmittedCosine = sqrt(max(1.0 - (1.0 - cosine * cosine) / (ior * ior), 0.0));
+    const float rs = (cosine - ior * transmittedCosine) / max(cosine + ior * transmittedCosine, 0.000001);
+    const float rp = (ior * cosine - transmittedCosine) / max(ior * cosine + transmittedCosine, 0.000001);
+    return 0.5 * (rs * rs + rp * rp);
+}
+
+#ifdef PLUTO_GLASS
+// Integrate only camera-to-pane fog. The scene snapshot already contains
+// background fog, so transmission must preserve its existing in-scattering.
+float4 glassAtmosphere(float3 worldPosition)
+{
+    if (glassFog[0].w <= 0.0) return float4(0, 0, 0, 1);
+    const float3 ray = worldPosition - cameraPositionAmbient.xyz;
+    const float distance = length(ray);
+    const float3 direction = ray / max(distance, 0.0001);
+    const int steps = clamp((int)glassFog[3].x, 1, 64);
+    const float stepLength = min(distance, max(glassFog[1].z, 0.001)) / steps;
+    const float g = clamp(glassFog[2].x, -0.85, 0.85);
+    const float cosine = dot(direction, normalize(-directionalDirectionIntensity.xyz));
+    const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5);
+    const float3 ambientLight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
+        max(glassFog[2].y, 0.0) * max(cameraPositionAmbient.w, 0.12);
+    const float3 sunlight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
+        max(glassFog[2].z, 0.0) * max(directionalColor.rgb, 0.0) * max(directionalDirectionIntensity.w, 0.0) * phase;
+    float transmittance = 1.0;
+    float3 radiance = 0.0;
+    for (int i = 0; i < steps; ++i)
+    {
+        const float3 position = cameraPositionAmbient.xyz + direction * ((i + 0.5) * stepLength);
+        const float density = max(glassFog[0].w, 0.0) * exp(clamp(-max(glassFog[1].x, 0.0) * (position.y - glassFog[1].y), -8.0, 8.0));
+        float visibility = 1.0;
+        if (shadowsEnabled != 0 && any(sunlight > 0.0))
+        {
+            const float depth = -mul(view, float4(position, 1)).z;
+            const int count = clamp((int)shadowCascadeParameters.x, 1, 4);
+            int cascade = 0;
+            while (cascade + 1 < count && depth > shadowCascadeSplits[cascade]) ++cascade;
+            visibility = depth > shadowCascadeSplits[count - 1] ? 0.0 : evaluateShadowCascadeTap(cascade, position, 0.0015);
+        }
+        const float segment = exp(-density * stepLength);
+        radiance += transmittance * (1.0 - segment) * (ambientLight + sunlight * visibility);
+        transmittance *= segment;
+    }
+    const float opacity = min(1.0 - transmittance, saturate(glassFog[2].w));
+    return float4(radiance * opacity / max(1.0 - transmittance, 0.0001), 1.0 - opacity);
+}
+#endif
+
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
 {
@@ -373,7 +427,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     const float hdotv = saturate(dot(halfDirection, viewDirection));
     const float dielectricF0 = pow((glassParameters.z - 1.0) / (glassParameters.z + 1.0), 2.0);
     const float3 f0 = glass ? float3(dielectricF0) : lerp(float3(0.04), sampledColor.rgb, materialMetallic);
-    const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - hdotv, 5.0);
+    const float3 fresnel = glass ? float3(dielectricFresnel(hdotv, glassParameters.z)) :
+        f0 + (1.0 - f0) * pow(1.0 - hdotv, 5.0);
     const float alpha = materialRoughness * materialRoughness;
     const float alphaSquared = alpha * alpha;
     const float distributionDenominator = ndoth * ndoth * (alphaSquared - 1.0) + 1.0;
@@ -525,19 +580,27 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         background /= 12.0;
         const float3 absorption = exp(log(clamp(attenuationColorDistance.rgb, 0.0001, 1.0)) *
                                        pathLength / max(attenuationColorDistance.w, 0.0001));
-        const float3 viewFresnel = f0 + (1.0 - f0) * pow(1.0 - ndotv, 5.0);
+        const float3 viewFresnel = float3(dielectricFresnel(ndotv, glassParameters.z));
         const float3 reflectionDirection = normalize(lerp(reflect(-viewDirection, normal), normal,
                                                           materialRoughness * materialRoughness));
         const float3 environment = physicalSkySettings.x > 0.5
-            ? samplePhysicalSkyEnvironment(reflectionDirection) * physicalSkySettings.z
+            ? samplePhysicalSkyEnvironment(reflectionDirection, 0.0) * physicalSkySettings.z
             : float3(cameraPositionAmbient.w);
-        const float3 transmitted = background * absorption * saturate(sampledColor.rgb);
         const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
             directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
         const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *
                                       ndotl * shadowVisibility;
-        output.color = float4((1.0 - viewFresnel) * lerp(surfaceDiffuse, transmitted, transmission) +
-                               viewFresnel * environment + directSpecular + emission, saturate(sampledColor.a));
+        const float3 transmissionWeight = (1.0 - viewFresnel) * transmission * absorption * saturate(sampledColor.rgb);
+        const float3 surface = (1.0 - viewFresnel) * (1.0 - transmission) * surfaceDiffuse +
+                               viewFresnel * environment + directSpecular + emission;
+        const float4 fog = glassAtmosphere(input.worldPosition);
+        output.color = float4(transmissionWeight * background + fog.a * surface +
+                               (1.0 - transmissionWeight) * fog.rgb, saturate(sampledColor.a));
+    }
+    else if (transparentPass)
+    {
+        const float4 fog = glassAtmosphere(input.worldPosition);
+        output.color.rgb = output.color.rgb * fog.a + fog.rgb;
     }
 #endif
     output.normal = float4(normal * 0.5 + 0.5, 1.0);

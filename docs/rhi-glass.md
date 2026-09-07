@@ -42,7 +42,15 @@ are excluded from opaque shadow maps and GI voxelization.
 Refraction uses screen-space scene color, rejects opaque foreground samples and
 fades distortion near screen edges. It cannot retrieve offscreen or hidden
 geometry. Reflections use the RHI physical sky environment (ambient fallback)
-and the renderer's directional light; local reflection captures, glass SSR,
+and the renderer's shadow-tested directional light. The sun disc is excluded
+from glass environment reflections to avoid counting unshadowed sunlight twice.
+Glass uses exact dielectric Fresnel (including zero reflection at IOR 1).
+Camera-to-pane height fog attenuates surface reflection and emission, preserving
+in-scattering already present in the transmitted scene. This uses a bounded
+per-fragment march at the fog effect's quality; the first fog effect supplies
+transparent fog settings. Refraction of fog and local environment occlusion
+remain approximations;
+ local reflection captures, glass SSR,
 colored shadows, caustics and ray-traced refraction are not implemented.
 Transparent geometry retains the opaque velocity/depth for temporal processing
 and depth of field, so moving panes can ghost. Center sorting cannot correctly

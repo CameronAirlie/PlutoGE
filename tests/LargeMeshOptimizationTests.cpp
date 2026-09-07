@@ -180,6 +180,34 @@ int main()
             previousIndexCount = lod.indexCount;
         }
     }
+    // Alternating cook settings must preserve both disk cache variants.
+    const auto plainSource = importer.ImportMeshSourceAsset(gridGltfPath.string());
+    std::vector<std::pair<std::filesystem::path, std::filesystem::file_time_type>> cacheStamps;
+    for (const auto &entry : std::filesystem::directory_iterator(lodTestDirectory / ".plutoge-cache" / "meshes"))
+    {
+        if (entry.path().extension() == ".pmesh")
+            cacheStamps.emplace_back(entry.path(), entry.last_write_time());
+    }
+    assert(cacheStamps.size() >= 2);
+    const auto cachedSource = importer.ImportMeshSourceAsset(gridGltfPath.string(), options);
+    assert(cachedSource.meshData.indices == generatedAsset.meshData.indices);
+    for (const auto &[path, stamp] : cacheStamps)
+        assert(std::filesystem::last_write_time(path) == stamp);
+
+    // Repeated LOD requests and alternating settings reuse the same live meshes.
+    const auto lodMesh = importer.GenerateMeshLods(gridGltfPath.string(), options);
+    const auto plainMesh = importer.ImportMeshAsset(gridGltfPath.string());
+    assert(lodMesh.mesh != nullptr);
+    assert(plainMesh.mesh != nullptr);
+    assert(lodMesh.mesh != plainMesh.mesh);
+    assert(importer.GenerateMeshLods(gridGltfPath.string(), options).mesh == lodMesh.mesh);
+    assert(importer.ImportMeshAsset(gridGltfPath.string()).mesh == plainMesh.mesh);
+
+    // Source edits still invalidate the corresponding memory and disk entries.
+    std::ofstream changedSource(gridGltfPath, std::ios::app);
+    changedSource << ' ';
+    changedSource.close();
+    assert(importer.GenerateMeshLods(gridGltfPath.string(), options).mesh != lodMesh.mesh);
     std::filesystem::remove_all(lodTestDirectory);
     return 0;
 }

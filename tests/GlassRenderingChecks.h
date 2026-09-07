@@ -98,6 +98,38 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const auto mappedGlass = render(clearDraws, effects);
     for (int c=0;c<3;++c)
         require(std::abs(mappedGlass[c]-mappedReference[c]) <= 3, "Glass composited after tone mapping");
+    BasicPostProcessEffect fogEffect{BasicPostProcessEffectType::VolumetricFog};
+    fogEffect.quality = 32;
+    fogEffect.parameters[0] = {0,0,0,2};
+    fogEffect.parameters[1] = {0,0,100,1};
+    fogEffect.parameters[2] = {0,0,0,1};
+    const std::array fogEffects{fogEffect};
+    const auto fogReference = render(std::span(&background,1), fogEffects);
+    const auto fogGlass = render(clearDraws, fogEffects);
+    for (int c=0;c<3;++c)
+        require(std::abs(fogGlass[c]-fogReference[c]) <= 3, "Clear glass applied background fog twice");
+    auto glowingPane = pane;
+    glowingPane.transmission = 0;
+    glowingPane.emission = {.8f,.8f,.8f};
+    std::array glowingDraws{glowingPane, background};
+    const auto unfoggedSurface = render(glowingDraws);
+    const auto foggedSurface = render(glowingDraws, fogEffects);
+    require(foggedSurface[0] + 40 < unfoggedSurface[0], "Glass surface emission bypassed fog");
+    auto reflectivePane = pane;
+    reflectivePane.model[3].z = .9f;
+    reflectivePane.ior = 1.5f;
+    reflectivePane.transmission = 0;
+    reflectivePane.baseColor = {0,0,0,1};
+    reflectivePane.roughness = .4f;
+    std::array shadowDraws{reflectivePane, background};
+    lighting.directionalDirection = {0,0,-1};
+    lighting.directionalIntensity = 1;
+    const auto litReflection = render(shadowDraws);
+    lighting.shadowsEnabled = true;
+    const auto shadowedReflection = render(shadowDraws);
+    require(shadowedReflection[0] + 10 < litReflection[0], "Glass direct reflection ignored shadow visibility");
+    lighting.shadowsEnabled = false;
+    lighting.directionalIntensity = 0;
     auto blended = pane;
     blended.surfaceType = 0;
     blended.alphaMode = 2;

@@ -303,12 +303,12 @@ namespace PlutoGE::assetimport
             return hash;
         }
 
-        std::filesystem::path BuildCookedMeshCachePath(const std::string &filePath)
+        std::filesystem::path BuildCookedMeshCachePath(const std::string &filePath, const MeshCookOptions &cookOptions)
         {
             const std::string normalizedPath = NormalizePath(filePath);
             const auto sourcePath = std::filesystem::path(normalizedPath);
             const auto hash = HashCacheKey(normalizedPath);
-            return sourcePath.parent_path() / ".plutoge-cache" / "meshes" / (std::to_string(hash) + ".pmesh");
+            return sourcePath.parent_path() / ".plutoge-cache" / "meshes" / (std::to_string(hash) + "-" + std::to_string(cookOptions.ToFlags()) + ".pmesh");
         }
 
         template <typename T>
@@ -798,7 +798,17 @@ namespace PlutoGE::assetimport
 
             try
             {
-                std::ifstream input(BuildCookedMeshCachePath(filePath), std::ios::binary);
+                std::ifstream input(BuildCookedMeshCachePath(filePath, cookOptions), std::ios::binary);
+                if (!input.is_open())
+                {
+                    // Keep existing cooked assets usable after upgrading. New writes
+                    // use separate files for each set of optimization settings.
+                    const auto normalizedPath = NormalizePath(filePath);
+                    const auto legacyPath = std::filesystem::path(normalizedPath).parent_path() /
+                        ".plutoge-cache" / "meshes" / (std::to_string(HashCacheKey(normalizedPath)) + ".pmesh");
+                    input.clear();
+                    input.open(legacyPath, std::ios::binary);
+                }
                 if (!input.is_open())
                 {
                     return std::nullopt;
@@ -849,7 +859,7 @@ namespace PlutoGE::assetimport
 
             try
             {
-                const auto cachePath = BuildCookedMeshCachePath(filePath);
+                const auto cachePath = BuildCookedMeshCachePath(filePath, cookOptions);
                 std::filesystem::create_directories(cachePath.parent_path());
                 std::ofstream output(cachePath, std::ios::binary | std::ios::trunc);
                 if (!output.is_open())
@@ -4861,12 +4871,9 @@ namespace PlutoGE::assetimport
 
     ImportedMeshAsset MeshImporter::GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options)
     {
-        const auto normalizedPath = NormalizePath(filePath);
         MeshImportOptions requested = options;
         requested.generateLods = true;
-        MeshCookOptions cookOptions = ResolveMeshCookOptions(requested);
-        cookOptions.generateLods = true;
-        return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, cookOptions), requested);
+        return ImportMeshAsset(filePath, requested);
     }
 
     ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options)
@@ -4874,7 +4881,9 @@ namespace PlutoGE::assetimport
         // LRU cache for meshes
         constexpr size_t kMaxMeshCacheSize = 32;
         const auto normalizedPath = NormalizePath(filePath);
-        const auto cachedMesh = m_meshCache.find(normalizedPath);
+        const auto cookOptions = ResolveMeshCookOptions(options);
+        const auto cacheKey = normalizedPath + "|" + std::to_string(cookOptions.ToFlags());
+        const auto cachedMesh = m_meshCache.find(cacheKey);
         if (cachedMesh != m_meshCache.end())
         {
             auto retiredNode = m_meshCache.extract(cachedMesh);
@@ -4914,8 +4923,8 @@ namespace PlutoGE::assetimport
             cachedImportedMeshAsset.sourceFileSize = sourceStamp->fileSize;
             cachedImportedMeshAsset.sourceWriteTime = sourceStamp->writeTime;
         }
-        cachedImportedMeshAsset.importFlags = options.ToFlags();
-        auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));
+        cachedImportedMeshAsset.importFlags = cookOptions.ToFlags();
+        auto [iterator, inserted] = m_meshCache.emplace(cacheKey, std::move(cachedImportedMeshAsset));
         return iterator->second.ToImportedMeshAsset();
     }
 
@@ -4927,14 +4936,16 @@ namespace PlutoGE::assetimport
     ImportedMeshAsset MeshImporter::ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto cachedMesh = m_meshCache.find(normalizedPath);
+        const auto cookOptions = ResolveMeshCookOptions(options);
+        const auto cacheKey = normalizedPath + "|" + std::to_string(cookOptions.ToFlags());
+        const auto cachedMesh = m_meshCache.find(cacheKey);
         if (cachedMesh != m_meshCache.end())
         {
             const auto sourceStamp = ReadMeshSourceStamp(normalizedPath);
             if (sourceStamp &&
                 cachedMesh->second.sourceFileSize == sourceStamp->fileSize &&
                 cachedMesh->second.sourceWriteTime == sourceStamp->writeTime &&
-                cachedMesh->second.importFlags == options.ToFlags())
+                cachedMesh->second.importFlags == cookOptions.ToFlags())
             {
                 return cachedMesh->second.ToImportedMeshAsset();
             }

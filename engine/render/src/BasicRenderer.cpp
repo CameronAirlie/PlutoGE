@@ -36,8 +36,9 @@ namespace PlutoGE::render
             glm::vec4 glassParameters{0.0f, 0.0f, 1.45f, 0.01f};
             glm::vec4 attenuationColorDistance{1.0f};
             glm::vec4 glassViewport{0.0f};
+            std::array<glm::vec4, 4> glassFog{};
         };
-        static_assert(sizeof(BasicMaterialParameters) == 160);
+        static_assert(sizeof(BasicMaterialParameters) == 224);
 
         struct alignas(16) BasicFrameParameters
         {
@@ -1271,7 +1272,7 @@ namespace PlutoGE::render
                 m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                                                               {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
             }
-            const BasicMaterialParameters materialParameters{
+            BasicMaterialParameters materialParameters{
                 draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
                 draw.emission, draw.alphaCutoff, draw.alphaMode,
                 draw.normalTexture ? 1u : 0u,
@@ -1288,6 +1289,14 @@ namespace PlutoGE::render
                           std::max(draw.attenuationDistance, 0.0001f)),
                 glm::vec4(1.0f / m_width, 1.0f / m_height,
                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
+            if (transparent)
+                for (const auto &effect : postProcessEffects)
+                    if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                    {
+                        std::copy_n(effect.parameters.begin(), 3, materialParameters.glassFog.begin());
+                        materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
+                        break;
+                    }
             auto &materialBuffer = m_materialBuffers[drawIndex - 1];
             m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
             commands.BindUniformBuffer(8, materialBuffer.Get());

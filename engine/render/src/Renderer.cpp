@@ -634,62 +634,6 @@ namespace PlutoGE::render
         m_profiledRenderCount = 0;
     }
 
-    void Renderer::UpdateShadowMaps(std::vector<scene::Light *> lights)
-    {
-        if (!m_isInitialized || !m_shadowPass)
-            return;
-
-        if (!m_config.window || !m_config.window->EnsureOpenGLContextCurrent())
-        {
-            return;
-        }
-
-        Shader::ResetStateCache();
-        Graphics::ResetStateCache();
-
-        if (!m_config.window)
-        {
-            return;
-        }
-
-        const auto extents = m_config.window->GetExtents();
-        auto *frameResources = GetOrCreateFrameResources(nullptr, extents.width, extents.height);
-        if (!frameResources)
-        {
-            return;
-        }
-
-        EnsureRenderCommandsSorted();
-        FinalizeShadowCommandSummary();
-
-        RenderContext ctx{
-            .renderer = this,
-            .cameraData = {},
-            .previousCameraData = {},
-            .hasCameraData = false,
-            .hasPreviousCameraData = false,
-            .cameraComponent = nullptr,
-            .postProcessEffects = nullptr,
-            .renderTarget = nullptr,
-            .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
-            .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
-            .renderCommands = &m_renderCommands,
-            .lights = &lights,
-            .gBuffer = &frameResources->gBuffer,
-            .lightPropagationVolumePass = m_lightPropagationVolumePass,
-            .postProcessDebugView = m_postProcessDebugView,
-            .frameSequence = m_frameSequence,
-            .oceanSurfaceDepthRenderTarget = frameResources->oceanSurfaceDepthRenderTarget.get(),
-            .oceanSceneColorCopyRenderTarget = frameResources->oceanSceneColorCopyRenderTarget.get(),
-            .shadowCasterCommandIndices = &m_shadowCasterCommandIndices,
-            .shadowCasterFingerprint = m_shadowCasterFingerprint,
-            .shadowCastersMoved = m_shadowCastersMoved,
-            .allShadowCastersStatic = m_allShadowCastersStatic,
-        };
-
-        ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
-    }
-
     bool Renderer::CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights, const scene::Scene *scene)
     {
         if (!m_isInitialized || !targetCubemap || targetCubemap->GetType() != GL_TEXTURE_CUBE_MAP || resolution <= 0)
@@ -866,8 +810,6 @@ namespace PlutoGE::render
         {
             activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
         }
-        frameResources->lastRenderedCameraData = activeCameraData;
-        frameResources->hasLastRenderedCameraData = true;
         frameResources->lastUnjitteredCameraData = cameraData;
         frameResources->hasLastUnjitteredCameraData = true;
         const auto resourceSetupEnd = profileNow();
@@ -1023,18 +965,6 @@ namespace PlutoGE::render
             m_cpuFrameStats.renderFrameFinalizationMs += elapsedMs(finalizationStart, renderFrameEnd);
             m_cpuFrameStats.renderFrameTotalMs += elapsedMs(renderFrameStart, renderFrameEnd);
         }
-    }
-
-    bool Renderer::GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const
-    {
-        const auto iterator = m_frameResources.find(renderTarget);
-        if (iterator == m_frameResources.end() || !iterator->second || !iterator->second->hasLastRenderedCameraData)
-        {
-            return false;
-        }
-
-        cameraData = iterator->second->lastRenderedCameraData;
-        return true;
     }
 
     bool Renderer::GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const

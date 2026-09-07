@@ -52,7 +52,13 @@ target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
 
 add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)
-target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
+        PlutoGE::Platform)
+else()
+    target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+endif()
 target_compile_definitions(PlutoGEVulkanPresentationTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanPresentationTests COMMAND PlutoGEVulkanPresentationTests)

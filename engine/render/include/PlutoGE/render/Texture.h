@@ -1,7 +1,5 @@
 #pragma once
 
-#include "PlutoGE/render/Graphics.h"
-
 #include <glad/glad.h>
 #include <array>
 #include <cstdint>
@@ -64,19 +62,5 @@ namespace PlutoGE::render
         std::vector<unsigned char> m_rgba8Pixels;
         std::array<GLuint, 6> m_depthFramebuffers{};
 
-    protected:
-        friend class Graphics;
-
-        static Texture *CreateRenderTexture(int width, int height)
-        {
-            TextureConfig config;
-            Texture *texture = new Texture(config);
-            glGenTextures(1, &texture->m_textureID);
-            Graphics::BindTexture(GL_TEXTURE_2D, texture->m_textureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            return texture;
-        }
     };
 }

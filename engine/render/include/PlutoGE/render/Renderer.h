@@ -221,7 +221,6 @@ namespace PlutoGE::render
         // Resets frame-local CPU counters without resolving legacy OpenGL GPU
         // queries. Vulkan editor hosts use this before scene submission.
         void BeginCpuProfilingFrame();
-        void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         bool CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights = {}, const scene::Scene *scene = nullptr);
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr, bool renderEditorGrid = false, bool interactivePreview = false);
@@ -258,7 +257,6 @@ namespace PlutoGE::render
         // Updates LOD selection and camera visibility without executing the
         // legacy OpenGL pass graph. RHI backends use this shared scene-prep path.
         void PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight);
-        [[nodiscard]] bool GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
         [[nodiscard]] bool GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
 
         void BeginLightingStageTiming(std::size_t stageIndex);
@@ -303,11 +301,9 @@ namespace PlutoGE::render
             GBuffer gBuffer;
             CameraData previousCameraData;
             CameraData previousShadowCameraData;
-            CameraData lastRenderedCameraData;
             CameraData lastUnjitteredCameraData;
             bool hasPreviousCameraData = false;
             bool hasPreviousShadowCameraData = false;
-            bool hasLastRenderedCameraData = false;
             bool hasLastUnjitteredCameraData = false;
         };
 

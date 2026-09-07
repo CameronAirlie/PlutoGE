@@ -1,11 +1,5 @@
 #include "PlutoGE/render/Graphics.h"
-#include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Shader.h"
-#include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTarget.h"
-#include "PlutoGE/render/GBuffer.h"
 
 #include <glad/glad.h>
 #include <array>

@@ -451,55 +451,6 @@ namespace PlutoGE::render
             return mesh;
         }
 
-        struct QuadVertex
-        {
-            float position[3];
-            float uv[2];
-        };
-
-        static Mesh *QuadUV()
-        {
-            // Fullscreen quad with only position and UV attributes
-            std::vector<QuadVertex> vertices = {
-                {{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-                {{1.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-                {{-1.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
-                {{1.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-            };
-            std::vector<unsigned int> indices = {
-                0, 1, 2,
-                2, 1, 3};
-
-            GLuint VAO, VBO, EBO;
-            glGenVertexArrays(1, &VAO);
-            glGenBuffers(1, &VBO);
-            glGenBuffers(1, &EBO);
-
-            glBindVertexArray(VAO);
-            glBindBuffer(GL_ARRAY_BUFFER, VBO);
-            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(QuadVertex), vertices.data(), GL_STATIC_DRAW);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-
-            // Position attribute (location = 0)
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, position));
-            // UV attribute (location = 1)
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, uv));
-
-            glBindVertexArray(0);
-
-            // Create a Mesh object with dummy MeshData (not used for rendering)
-            MeshConfig config;
-            Mesh *mesh = new Mesh(config);
-            mesh->m_VAO = VAO;
-            mesh->m_VBO = VBO;
-            mesh->m_EBO = EBO;
-            mesh->m_config.data.indices = indices;
-            return mesh;
-        }
-
         void Bind() const
         {
             glBindVertexArray(m_VAO);
@@ -515,12 +466,6 @@ namespace PlutoGE::render
         void DrawBound() const
         {
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(GetIndexCount()), GL_UNSIGNED_INT, nullptr);
-        }
-
-        void DrawInstanced(std::size_t instanceCount) const
-        {
-            Bind();
-            DrawInstancedBound(instanceCount);
         }
 
         void DrawInstancedBound(std::size_t instanceCount) const
@@ -542,12 +487,6 @@ namespace PlutoGE::render
         {
             Bind();
             DrawSubmeshBound(submeshIndex, lodIndex);
-        }
-
-        void DrawSubmeshInstanced(size_t submeshIndex, std::size_t instanceCount, size_t lodIndex = 0) const
-        {
-            Bind();
-            DrawSubmeshInstancedBound(submeshIndex, instanceCount, lodIndex);
         }
 
         void DrawSubmeshBound(size_t submeshIndex, size_t lodIndex = 0) const
@@ -664,27 +603,6 @@ namespace PlutoGE::render
             }
 
             return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex, m_config.data.indices.size());
-        }
-        size_t SelectSubmeshLod(size_t submeshIndex, float cameraDistance) const
-        {
-            if (submeshIndex >= m_config.submeshes.size())
-            {
-                return 0;
-            }
-
-            const auto &submesh = m_config.submeshes[submeshIndex];
-            size_t selectedLod = 0;
-            const float radius = std::max(submesh.bounds.radius, 0.001f);
-            const float distanceFactor = cameraDistance / radius;
-            for (size_t lodIndex = 0; lodIndex < submesh.lods.size(); ++lodIndex)
-            {
-                if (distanceFactor >= submesh.lods[lodIndex].minDistanceFactor)
-                {
-                    selectedLod = lodIndex;
-                }
-            }
-
-            return selectedLod;
         }
         size_t SelectSubmeshLodByProjectedRadius(size_t submeshIndex, float projectedRadiusPixels) const
         {
@@ -879,8 +797,6 @@ namespace PlutoGE::render
         }
 
         GLuint GetVAO() const { return m_VAO; }
-        GLuint GetVBO() const { return m_VBO; }
-        GLuint GetEBO() const { return m_EBO; }
 
         // protected:
         //     friend class Graphics;

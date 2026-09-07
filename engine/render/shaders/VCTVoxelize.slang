@@ -131,12 +131,33 @@ void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<Geomet
     const uint axis = faceNormal.y > faceNormal.x
                           ? (faceNormal.z > faceNormal.y ? 2 : 1)
                           : (faceNormal.z > faceNormal.x ? 2 : 0);
+    float2 projected[3];
+    for (uint index = 0; index < 3; ++index)
+        projected[index] = projectAxis((vertices[index].worldPosition - voxel.volumeOrigin) /
+                                      voxel.volumeSize * 2.0 - 1.0, axis);
+    const float2 edge0 = projected[1] - projected[0], edge1 = projected[2] - projected[0];
+    const float orientation = edge0.x * edge1.y - edge0.y * edge1.x >= 0.0 ? 1.0 : -1.0;
     for (uint index = 0; index < 3; ++index)
     {
         GeometryOutput output;
-        const float3 normalized = (vertices[index].worldPosition - voxel.volumeOrigin) /
-                                  voxel.volumeSize * 2.0 - 1.0;
-        output.position = float4(projectAxis(normalized, axis), 0.0, 1.0);
+        float2 rasterPosition = projected[index];
+        if (any(material.emission > 0.0))
+        {
+            // Expand only the raster footprint of emitters by half a voxel's
+            // diagonal. Original world/UV attributes keep the deposited light
+            // on the emitting triangle. Ordinary occluders are not inflated.
+            const float2 incoming = projected[index] - projected[(index + 2) % 3];
+            const float2 outgoing = projected[(index + 1) % 3] - projected[index];
+            const float2 n0 = orientation * float2(incoming.y, -incoming.x) / max(length(incoming), 1e-7);
+            const float2 n1 = orientation * float2(outgoing.y, -outgoing.x) / max(length(outgoing), 1e-7);
+            const float2 bisector = n0 + n1;
+            if (length(bisector) > 1e-6)
+            {
+                const float2 miter = normalize(bisector);
+                rasterPosition += miter * (1.41421356 / float(voxel.resolution)) / max(dot(miter, n1), 0.25);
+            }
+        }
+        output.position = float4(rasterPosition, 0.0, 1.0);
         output.worldPosition = vertices[index].worldPosition;
         output.worldNormal = vertices[index].worldNormal;
         output.uv = vertices[index].uv;

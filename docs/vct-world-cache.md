@@ -20,6 +20,8 @@ A cache lookup estimates the remaining distant contribution at that point along 
 
 Receiver albedo, metallic response and GI intensity are applied once after averaging the cones. There is no camera-distance mask that switches a receiver wholesale between cached and uncached GI. The finite outer volume still limits coverage. Broad directional probes remain an approximation of distant diffuse lighting, especially around thin walls and small emitters.
 
+Emissive rigid submeshes use their source LOD for GI, independently of the camera's visible LOD. The Slang voxelizer expands their raster footprint by half a voxel diagonal so sub-voxel triangles do not disappear between raster sample centers. Deposited world positions and UVs remain on the original triangle; non-emissive occluders keep their ordinary footprint. This improves source coverage without increasing the voxel grid resolution.
+
 ## Lifetime
 
 A new cache is cleared and visits all 4096 probes before fading in. At the default update budget, the first sweep takes 64 rendered frames after the stationary source is published, followed by about 50 frames of fade-in. Updates are interleaved spatially.
@@ -39,3 +41,5 @@ OpenGL GPU checks exercise the actual probe compute shader, its clear/update bud
 A Vulkan image regression rasterizes and voxelizes a red emissive ceiling over a diffuse floor using the reported 128/3/48/432 configuration, 64 updates, six cones and an 81-unit trace limit. It compares local bounce lighting with the cache disabled, warming up and populated. Replacing the corrected tracing shader with the old full-receiver cache implementation fails this comparison. These controlled checks do not establish visual parity for every scene or eliminate coarse far-field approximation errors.
 
 The same regression turns the camera 180 degrees, removes the emitter from visible draws and requires identical GI on the first frame looking back. A separate initialization comparison moves the presentation shadow map completely away from the scene and requires the same GI as initialization with full presentation-shadow coverage. Both exercise Vulkan with progressive update budgets.
+
+A Vulkan voxel-radiance check renders a 0.02-unit emissive submesh at seven alignments within a 0.375-unit voxel. Every alignment must inject radiance; the original unexpanded rasterizer fails this check.

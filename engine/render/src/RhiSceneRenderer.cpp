@@ -278,7 +278,11 @@ namespace PlutoGE::render
                 std::uint32_t indexCount = 0;
                 if (command.submeshIndex < command.mesh->GetSubmeshCount())
                 {
-                    const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
+                    // Small emissive submeshes must not disappear from the GI
+                    // source when the camera selects simplified geometry.
+                    const bool emissiveGi = giOnly && command.material &&
+                        glm::any(glm::greaterThan(command.material->GetConfig().emission, glm::vec3(0.0f)));
+                    const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, emissiveGi ? 0u : command.lodIndex);
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
                 }

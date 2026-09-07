@@ -138,3 +138,50 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     if (openEnergy < std::max(100.0, blockedEnergy * 1.5))
         throw std::runtime_error("World shadow map suppressed unoccluded directional GI");
 }
+
+// A tiny emissive submesh of a larger mesh must deposit radiance regardless of
+// whether its triangle happens to cover the center of a voxelization pixel.
+template <class ReadPixels>
+void CheckVctSmallEmitters(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    constexpr std::array<BasicVertex,6> vertices = {{
+        {{{10,10,.5f}},{{0,0,1}},{{0,0}}},
+        {{{11,10,.5f}},{{0,0,1}},{{1,0}}},
+        {{{10,11,.5f}},{{0,0,1}},{{0,1}}},
+        {{{0,0,.5f}},{{0,0,1}},{{0,0}}},
+        {{{.02f,0,.5f}},{{0,0,1}},{{1,0}}},
+        {{{0,.02f,.5f}},{{0,0,1}},{{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t,6> indices{0,1,2,3,4,5};
+    auto mesh = renderer.CreateMesh({vertices,indices});
+    BasicDraw emitter;
+    emitter.mesh = &mesh; emitter.firstIndex = 3; emitter.indexCount = 3;
+    emitter.emission = {4,1,0}; emitter.castsShadow = false;
+    BasicLighting lighting;
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    BasicPostProcessEffect effect{BasicPostProcessEffectType::VCTGI};
+    effect.historyOwner = &effect; effect.quality = 6;
+    effect.parameters[0] = {48,1,.55f,81};
+    effect.parameters[1] = {.35f,0,.25f,.9f};
+    effect.parameters[2] = {128,1,1,1};
+    effect.parameters[3] = {1,0,1,256}; // Read the actual injected voxel radiance.
+    int minimumRed = 255;
+    for (const float phase : {.01f,.06f,.12f,.18f,.24f,.30f,.35f})
+    {
+        emitter.model = glm::translate(glm::mat4(1),glm::vec3(phase,phase,0));
+        const float center = phase + .02f/3.0f;
+        lighting.cameraPosition = {center,center,2};
+        glm::mat4 projection(1);
+        projection[0][0] = projection[1][1] = 40;
+        projection[3][0] = projection[3][1] = -center*40;
+        for (int frame=0;frame<4;++frame)
+            renderer.Render(projection,lighting,std::span(&emitter,1),std::span(&effect,1));
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        const auto at = (renderer.GetHeight()/2*renderer.GetWidth()+renderer.GetWidth()/2)*4;
+        minimumRed = std::min(minimumRed,int(pixels.at(at)));
+        if (int(pixels.at(at)) < 16)
+            throw std::runtime_error("An emissive submesh disappeared between voxel centers");
+    }
+    std::cout << "VCT small emissive submeshes: all 7 alignments injected light, minimum red=" << minimumRed << '\n';
+}

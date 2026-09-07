@@ -26,6 +26,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -1488,6 +1489,7 @@ namespace PlutoGE::ui
 
     void EditorShell::MarkSceneDirty()
     {
+        m_untrackedSceneEdit = true;
         if (!m_sceneDirty)
         {
             m_sceneDirty = true;
@@ -1506,6 +1508,9 @@ namespace PlutoGE::ui
 
     void EditorShell::MarkSceneClean()
     {
+        EndSceneEdit();
+        FlushUntrackedSceneEdit();
+        CaptureSceneState(m_savedSceneState);
         if (m_sceneDirty)
         {
             m_sceneDirty = false;
@@ -1538,7 +1543,9 @@ namespace PlutoGE::ui
 
     bool EditorShell::RestoreSceneState(const std::string &state, std::string *errorMessage, bool markDirty)
     {
-        auto restoredScene = scene::SceneSerializer::LoadFromString(state, errorMessage);
+        std::string snapshotError;
+        auto restoredScene = LoadSceneSnapshot(state, snapshotError);
+        if (errorMessage) *errorMessage = snapshotError;
         if (!restoredScene)
         {
             return false;
@@ -1546,7 +1553,9 @@ namespace PlutoGE::ui
 
         const std::string previousPath = m_scene ? m_scene->GetFilePath() : std::string{};
         restoredScene->SetFilePath(previousPath);
-        SetScene(std::move(restoredScene));
+        const auto selectedId = m_selectedEntity ? m_selectedEntity->GetID() : 0;
+        SetScene(std::move(restoredScene), false);
+        SetSelectedEntity(m_scene->FindEntityByID(selectedId));
         if (markDirty)
         {
             MarkSceneDirty();
@@ -1562,6 +1571,8 @@ namespace PlutoGE::ui
         }
 
         std::string errorMessage;
+        EndSceneEdit();
+        FlushUntrackedSceneEdit();
         if (!CaptureSceneState(m_runtimeSceneSnapshot, &errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Failed to snapshot scene before Play." : errorMessage;
@@ -1569,7 +1580,6 @@ namespace PlutoGE::ui
             return false;
         }
 
-        EndSceneEdit();
         m_playModeBaseline = PlayModeChanges::Capture(*m_scene);
         m_playModeChanges.clear();
         m_runtimeSceneReplaced = false;
@@ -1668,6 +1678,13 @@ namespace PlutoGE::ui
             return;
         }
 
+        if (m_sceneEditInProgress)
+        {
+            edit(); // The surrounding gesture owns the snapshot.
+            MarkSceneDirty();
+            return;
+        }
+        FlushUntrackedSceneEdit();
         std::string beforeState;
         std::string errorMessage;
         const bool capturedBefore = CaptureSceneState(beforeState, &errorMessage);
@@ -1683,12 +1700,34 @@ namespace PlutoGE::ui
         std::string afterState;
         if (!CaptureSceneState(afterState, &errorMessage) || beforeState == afterState)
         {
+            if (!errorMessage.empty()) { MarkSceneDirty(); Log(ConsoleSeverity::Error, errorMessage); }
             return;
         }
 
         PushSceneHistoryEntry(SceneHistoryEntry{.label = std::move(label), .beforeState = std::move(beforeState), .afterState = std::move(afterState)});
         m_redoStack.clear();
         MarkSceneDirty();
+        SynchronizeHistoryState();
+    }
+
+    void EditorShell::SynchronizeHistoryState()
+    {
+        if (CaptureSceneState(m_observedSceneState)) m_untrackedSceneEdit = false;
+    }
+
+    void EditorShell::FlushUntrackedSceneEdit()
+    {
+        if (!m_untrackedSceneEdit || m_sceneEditInProgress || m_engine.IsRuntimeRunning() || !m_scene) return;
+        std::string state;
+        std::string error;
+        if (!CaptureSceneState(state, &error)) { Log(ConsoleSeverity::Error, error); return; }
+        if (!m_observedSceneState.empty() && state != m_observedSceneState)
+        {
+            PushSceneHistoryEntry(SceneHistoryEntry{.label = "Inspector / Scene Edit", .beforeState = m_observedSceneState, .afterState = state});
+            m_redoStack.clear();
+        }
+        m_observedSceneState = std::move(state);
+        m_untrackedSceneEdit = false;
     }
 
     void EditorShell::PushSceneHistoryEntry(SceneHistoryEntry entry)
@@ -1731,6 +1770,7 @@ namespace PlutoGE::ui
                                                 .retainedBytes = retainedBytes});
         m_redoStack.clear();
         MarkSceneDirty();
+        SynchronizeHistoryState();
     }
 
     bool EditorShell::BeginSceneEdit(std::string label)
@@ -1740,6 +1780,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        FlushUntrackedSceneEdit();
         std::string errorMessage;
         if (!CaptureSceneState(m_sceneEditBeforeState, &errorMessage))
         {
@@ -1776,12 +1817,14 @@ namespace PlutoGE::ui
 
         if (beforeState == afterState)
         {
+            SynchronizeHistoryState();
             return false;
         }
 
         PushSceneHistoryEntry(SceneHistoryEntry{.label = label.empty() ? "Scene Edit" : label, .beforeState = beforeState, .afterState = std::move(afterState)});
         m_redoStack.clear();
         MarkSceneDirty();
+        SynchronizeHistoryState();
         return true;
     }
 
@@ -1794,45 +1837,57 @@ namespace PlutoGE::ui
 
     bool EditorShell::Undo()
     {
+        if (m_engine.IsRuntimeRunning() || m_activeBakeTask) return false;
+        EndSceneEdit();
+        FlushUntrackedSceneEdit();
         if (m_undoStack.empty())
         {
             return false;
         }
 
-        auto entry = std::move(m_undoStack.back());
-        m_undoStack.pop_back();
+        const auto label = m_undoStack.back().label;
         std::string errorMessage;
-        const bool restored = entry.undo ? entry.undo() : RestoreSceneState(entry.beforeState, &errorMessage);
+        const bool restored = TransferSceneHistory(m_undoStack, m_redoStack, [&](const auto &entry) {
+            return entry.undo ? entry.undo() : RestoreSceneState(entry.beforeState, &errorMessage);
+        });
         if (!restored)
         {
             Log(ConsoleSeverity::Error, errorMessage.empty() ? "Undo failed." : errorMessage);
             return false;
         }
 
-        Log(ConsoleSeverity::Info, "Undo: " + entry.label);
-        m_redoStack.push_back(std::move(entry));
+        SynchronizeHistoryState();
+        m_sceneDirty = m_scene->GetFilePath().empty() || m_savedSceneState.empty() || m_observedSceneState != m_savedSceneState;
+        UpdateWindowTitle();
+        Log(ConsoleSeverity::Info, "Undo: " + label);
         return true;
     }
 
     bool EditorShell::Redo()
     {
+        if (m_engine.IsRuntimeRunning() || m_activeBakeTask) return false;
+        EndSceneEdit();
+        FlushUntrackedSceneEdit();
         if (m_redoStack.empty())
         {
             return false;
         }
 
-        auto entry = std::move(m_redoStack.back());
-        m_redoStack.pop_back();
+        const auto label = m_redoStack.back().label;
         std::string errorMessage;
-        const bool restored = entry.redo ? entry.redo() : RestoreSceneState(entry.afterState, &errorMessage);
+        const bool restored = TransferSceneHistory(m_redoStack, m_undoStack, [&](const auto &entry) {
+            return entry.redo ? entry.redo() : RestoreSceneState(entry.afterState, &errorMessage);
+        });
         if (!restored)
         {
             Log(ConsoleSeverity::Error, errorMessage.empty() ? "Redo failed." : errorMessage);
             return false;
         }
 
-        Log(ConsoleSeverity::Info, "Redo: " + entry.label);
-        m_undoStack.push_back(std::move(entry));
+        SynchronizeHistoryState();
+        m_sceneDirty = m_scene->GetFilePath().empty() || m_savedSceneState.empty() || m_observedSceneState != m_savedSceneState;
+        UpdateWindowTitle();
+        Log(ConsoleSeverity::Info, "Redo: " + label);
         return true;
     }
 
@@ -1980,7 +2035,7 @@ namespace PlutoGE::ui
         {
             SetSelectedEntity(nullptr);
         }
-        if (command && ImGui::IsKeyPressed(ImGuiKey_Z))
+        if (command && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z))
         {
             Undo();
         }
@@ -2069,8 +2124,10 @@ namespace PlutoGE::ui
         return m_selectedEntity;
     }
 
-    void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene)
+    void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs)
     {
+        CancelSceneEdit();
+        if (updatePrefabs) m_recoveredSceneNeedsSaveAs = false;
         if (m_engine.IsRuntimeRunning())
             m_runtimeSceneReplaced = true;
         if (m_activeBakeTask)
@@ -2092,13 +2149,14 @@ namespace PlutoGE::ui
         auto previousScene = std::move(m_scene);
         m_scene = std::move(scene);
         std::string prefabErrorMessage;
-        const int updatedPrefabCount = scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage);
+        const int updatedPrefabCount = updatePrefabs ? scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage) : 0;
         if (updatedPrefabCount > 0)
         {
             Log(ConsoleSeverity::Info, "Updated " + std::to_string(updatedPrefabCount) + " prefab instance(s).");
         }
         m_engine.SetScene(m_scene.get());
         ResetSelection();
+        SynchronizeHistoryState();
     }
 
     std::filesystem::path EditorShell::GetDefaultProjectScenePath() const
@@ -2160,6 +2218,7 @@ namespace PlutoGE::ui
         }
 
         m_scene->SetFilePath(normalizedScenePath.string());
+        m_recoveredSceneNeedsSaveAs = false;
         m_statusMessage = "Saved scene: " + normalizedScenePath.filename().string();
         MarkSceneClean();
         Log(ConsoleSeverity::Info, m_statusMessage);
@@ -2178,7 +2237,14 @@ namespace PlutoGE::ui
             SetScene(CreateEmptyScene());
         }
 
-        const auto projectScenePath = GetDefaultProjectScenePath();
+        auto projectScenePath = GetDefaultProjectScenePath();
+        if (m_recoveredSceneNeedsSaveAs)
+        {
+            const auto chosen = ShowSaveFileDialog(kSceneFileFilter,
+                (m_project->GetAssetDirectoryPath() / "Recovered.plutoscene").string(), "plutoscene");
+            if (chosen.empty()) return false;
+            projectScenePath = chosen;
+        }
         if (projectScenePath.empty())
         {
             m_statusMessage = "Project scene path could not be determined.";
@@ -2400,6 +2466,8 @@ namespace PlutoGE::ui
             }
         }
 
+        MarkSceneClean();
+        MarkProjectClean();
         UpdateWindowTitle();
         AddRecentProject(m_project->GetManifestPath());
         return true;
@@ -2500,8 +2568,6 @@ namespace PlutoGE::ui
         }
 
         m_statusMessage = "Saved project: " + m_project->GetManifestPath().filename().string();
-        m_undoStack.clear();
-        m_redoStack.clear();
         MarkSceneClean();
         MarkProjectClean();
         Log(ConsoleSeverity::Info, m_statusMessage);
@@ -3565,6 +3631,8 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("Edit"))
                 {
+                    if (ImGui::MenuItem("Autosave and Recovery...", nullptr, false, m_project != nullptr))
+                        m_showSceneRecovery = true;
                     if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
                                         GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
                         m_showGroundPlacement = true;
@@ -4023,6 +4091,10 @@ namespace PlutoGE::ui
 
             window.SetScriptInputEnabled(shouldEnableRuntimeInput());
 
+            if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+                FlushUntrackedSceneEdit();
+            UpdateSceneRecovery();
+            RenderSceneRecovery();
             m_panelManager.EndPanelUpdate();
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();

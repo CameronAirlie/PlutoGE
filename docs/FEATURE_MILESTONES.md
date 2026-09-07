@@ -28,8 +28,8 @@ that a milestone is complete.
 | M01 | Keep selected play-mode changes | Small | Implemented; automated checks passed |
 | M02 | Named viewport bookmarks | Small | Implemented; automated checks passed |
 | M03 | Drop selection onto ground | Small | Implemented; automated checks passed |
-| M04 | Find asset references | Small–medium | Planned |
-| M05 | Autosave and recovery | Small–medium | Planned |
+| M04 | Find asset references | Small–medium | Implemented; automated checks passed |
+| M05 | Autosave and recovery | Small–medium | Implemented; automated checks passed |
 | M06 | Project validation panel | Medium | Planned |
 | M07 | Gameplay debug drawing | Medium | Planned |
 | M08 | Camera rigs | Medium | Planned |
@@ -69,11 +69,12 @@ that a milestone is complete.
 - Cover scenes, prefabs, materials, and other registered serialized asset types.
 - Report scan errors; invalidate cached results after edits/imports/moves/deletes.
 
-Implementation starting point: `AssetDatabase::Scan` already discovers outgoing
-dependencies for cooking. Extract/reuse that logic for a read-only incoming-reference
-query; the existing scan also hashes files and writes metadata, and its current
-token scanner skips files over 16 MiB and splits references at spaces. Address
-those limitations with format-aware tests before exposing results as authoritative.
+Implemented with a shared read-only extractor and incremental index, separate
+from metadata generation. A cancellable background search lists owners and scan
+issues, supports navigation, and refreshes after saved file changes. Native
+format tests cover spaces, relative material paths, binary strings, and files
+larger than 16 MiB. See [Editor workflows](EDITOR_WORKFLOWS.md#find-asset-references)
+for format coverage and the limits of literal reference scanning.
 
 ### M05 — Autosave and recovery
 
@@ -159,13 +160,35 @@ those limitations with format-aware tests before exposing results as authoritati
   suite passed on GCC/Windows.
 - 2026-09-07: Final combined build succeeded for the editor and all three new test
   targets. All three CTest suites passed (21.19 seconds); `git diff --check` passed.
-  M04 is next; M04–M14 have not been implemented in this delivery.
+  At that point M04–M14 remained planned.
+- 2026-09-07: Implemented M04 read-only extraction, incremental background lookup,
+  content-browser navigation, error reporting, and shared cooker dependencies.
+  Editor and both new test targets built on GCC/Windows. All five focused suites
+  passed (5.41 seconds), covering the new scanner/cooker and M01–M03 regressions.
+  `git diff --check` passed. At that point M05–M14 remained planned.
+- Follow-up found during M04: cooking into an existing destination failed with
+  `File exists` on GCC/Windows despite `overwrite_existing`. Fresh-destination
+  cooking passes; repeated export overwrite behavior needs separate investigation.
+- 2026-09-07: Implemented M05 project-isolated rotating scene backups, configurable
+  interval/retention, atomic publication, checksums, and recovery into an unsaved
+  scene. Save Project also requests a path for recovered scenes. Runtime/bake/edit
+  guards protect authoring backups. Storage tests cover settings, rotation,
+  interrupted writes, corruption, missing files, and project isolation.
+- 2026-09-07: Extended undo/redo to dirty-marked serialized inspector and scene
+  edits, grouped by interaction. Fixed Ctrl+Shift+Z double execution, failed
+  restores losing entries, project saves clearing history, stale savepoints after
+  project loads, and prefab refresh overwriting restored snapshots. Added strict
+  snapshot loading and selection restoration by ID. History tests cover failed
+  transfers, malformed snapshots, component/name/transform roundtrips, and commands.
+  Final GCC/Windows editor build passed; all seven focused suites passed (29.76
+  seconds). `git diff --check` passed. Interactive checks remain pending.
+  M06 project validation is next; M06–M14 remain planned.
 
 Reproduce the focused checks from the repository root:
 
 ```powershell
-cmake --build out/build/gcc --target PlutoGEEditor PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
-ctest --test-dir out/build/gcc -R '^PlutoGE(PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
+cmake --build out/build/gcc --target PlutoGEEditor PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
+ctest --test-dir out/build/gcc -R '^PlutoGE(SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
 ```
 
 The build uses one compile job because the first parallel GCC build exhausted

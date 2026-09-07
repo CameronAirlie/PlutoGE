@@ -80,3 +80,93 @@ unchanged. Random yaw is bounded by the configured angle on either side of the
 current orientation. The seed gives reproducible planning from the same original
 transform and advances after each successful drop. Repeated drops with scale
 variation therefore compound scale; undo before retrying if that is unwanted.
+
+## Find asset references
+
+Right-click an asset in the Content Browser and choose **Find References...**.
+The Asset References window groups incoming references by owning file, showing
+the first text line (or **Binary**) and the number of occurrences. **Show in
+Browser** reveals the owner; **Open** also opens its existing asset editor when
+one is available. Imported model manifests navigate to their source model.
+
+Results describe saved files under the current project's Assets directory. Save
+scene and asset edits before searching. A cancellable background worker checks
+for additions, edits, moves, and deletions approximately once per second after
+each scan. Unchanged files reuse cached results. **Rescan all** bypasses file size
+and modification-time checks, including for external tools that preserve both.
+Closing the search or changing projects cancels its worker. Searching does not
+write metadata, reimport assets, or modify scenes.
+
+Extraction covers native scene, prefab, material, mesh, animation, graph,
+particle, post-process, scriptable-object, input, and model-manifest formats.
+It preserves spaces and punctuation in references, resolves asset-relative
+material textures, and streams binary reference strings even beyond 16 MiB.
+Quoted literal references in C#, RML, RCSS, and glTF are also searchable; RML
+`src`/`href` and glTF `uri` paths resolve relative to their owner.
+
+This is a saved-reference search, not a complete dependency validator. It does
+not evaluate computed script paths, CSS URL syntax, external files, or references
+from other projects. Binary matches recognize length-prefixed reference strings;
+text matches recognize serialized fields and literals. Malformed structures are
+not fully validated. Read failures, interrupted file changes, truncated reference
+strings, and text records over 1 MiB appear under **Scan issues**, with an explicit
+incomplete-results message. A result count of zero is not proof an asset is unused.
+
+The cooker shares this extraction logic. Pruned cooking refuses to proceed when
+a reachable asset has scan errors, to avoid silently dropping dependencies;
+include-all cooking remains available.
+
+## Autosave and recovery
+
+Open **Edit > Autosave and Recovery...** to configure autosave or recover a backup.
+Autosave defaults to every 120 seconds with ten backups retained per project.
+The interval supports 10–3600 seconds and retention supports 1–50 backups. Changes
+apply for the current session; **Save Settings** persists them. **Back Up Now**
+also backs up a clean scene. Unchanged scene/source pairs skip duplicate backups.
+
+Backups live in `.plutoge-editor/<manifest-filename>.recovery` beside the project
+manifest. They include untitled scenes and remain available after normal exits.
+The recovery window opens when an opened project has backups or storage issues;
+it does not infer whether the previous session crashed. Retention is shared across
+the project's scenes, so save important recovered work into a regular scene file.
+
+Select a dated backup and choose **Recover as Unsaved Scene**. The editor checks
+its length, checksum, scene header, and deserialization result before replacing
+the current scene, using the normal unsaved-changes prompt. Recovery starts a new
+history and keeps the backup. Saving a recovered scene, including through Save
+Project, requires choosing a path. Original scene files are never overwritten by
+autosave or the recovery action.
+
+Autosave runs only with an open project, a dirty authoring scene, and no active
+play session, bake, or editing gesture. It waits for the gesture to finish. Scene
+capture and file publication run on the editor thread, so very large scenes can
+briefly pause the editor. Individual scene payloads are limited to 256 MiB.
+Backups use a temporary file followed by atomic publication. Interrupted temporary
+files are ignored; missing, truncated, or corrupt backups report errors. Rotation
+runs only after a new backup is published. Malformed-header files are retained for
+manual investigation. Malformed settings disable autosave until settings are saved.
+Backups cover serialized scenes, not unsaved external material/texture/script files.
+
+## Undo and redo coverage
+
+**Ctrl+Z** undoes; **Ctrl+Y** or **Ctrl+Shift+Z** redoes. Scene history includes
+existing explicit actions and now collects serialized changes that mark the scene
+dirty but previously bypassed history: inspector names, transforms, component
+properties/enabled states, scene environment settings, and other serialized scene
+edits. A continuous drag or text edit forms one entry when interaction ends.
+Explicit gizmo, canvas, ground-placement, structure, and foliage commands keep
+their existing gesture labels and command boundaries.
+
+Undo/redo completes a pending gesture first. A new edit clears the redo branch;
+failed snapshot/command application retains the entry for retry. Snapshot restores
+preserve selection by entity ID when that entity exists and avoid refreshing
+prefabs over the restored state. History is retained across scene/project saves;
+returning to the saved serialized state clears the scene's dirty indicator. Opening
+another scene resets history, and play-mode history stays separate from authoring.
+
+Coverage follows scene serialization. Asset-file writes, texture-paint pixels,
+project settings, editor camera changes, and generated bake files are not restored
+by scene snapshots. Existing dedicated foliage commands handle instance data.
+History retains up to 80 entries with a 256 MiB snapshot/command budget, retaining
+at least the newest entry; baseline/savepoint snapshots add memory outside that
+budget. Undo/redo is unavailable during play or baking.

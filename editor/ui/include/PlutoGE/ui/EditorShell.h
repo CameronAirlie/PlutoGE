@@ -11,6 +11,9 @@
 #include "PlutoGE/ui/PlayModeChanges.h"
 #include "PlutoGE/ui/ViewportBookmarks.h"
 #include "PlutoGE/ui/GroundPlacement.h"
+#include "PlutoGE/ui/SceneHistory.h"
+#include "PlutoGE/ui/SceneRecovery.h"
+#include <chrono>
 
 #include <algorithm>
 #include <array>
@@ -247,8 +250,8 @@ namespace PlutoGE::ui
         void MarkProjectDirty();
         [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
         [[nodiscard]] bool IsProjectDirty() const { return m_projectDirty; }
-        [[nodiscard]] bool CanUndo() const { return !m_undoStack.empty(); }
-        [[nodiscard]] bool CanRedo() const { return !m_redoStack.empty(); }
+        [[nodiscard]] bool CanUndo() const { return !m_engine.IsRuntimeRunning() && (!m_undoStack.empty() || m_untrackedSceneEdit); }
+        [[nodiscard]] bool CanRedo() const { return !m_engine.IsRuntimeRunning() && !m_redoStack.empty(); }
         void ExecuteSceneEdit(std::string label, const std::function<void()> &edit);
         void PushSceneEditCommand(std::string label,
                                   std::function<bool()> undo,
@@ -266,16 +269,6 @@ namespace PlutoGE::ui
         bool HasCopiedEntity() const { return m_entityClipboardScene != nullptr && m_entityClipboardRootId != 0; }
 
     private:
-        struct SceneHistoryEntry
-        {
-            std::string label;
-            std::string beforeState;
-            std::string afterState;
-            std::function<bool()> undo;
-            std::function<bool()> redo;
-            std::size_t retainedBytes = 0;
-        };
-
         EditorShell();
         ~EditorShell();
 
@@ -290,7 +283,7 @@ namespace PlutoGE::ui
         bool SaveProjectManifest(std::string *errorMessage = nullptr);
         void UpdateWindowTitle();
         void ResetSelection();
-        void SetScene(std::unique_ptr<scene::Scene> scene);
+        void SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs = true);
         std::filesystem::path GetDefaultProjectScenePath() const;
         std::filesystem::path GetDefaultExportExecutablePath() const;
         bool SaveSceneToPath(const std::filesystem::path &scenePath);
@@ -302,6 +295,11 @@ namespace PlutoGE::ui
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;
         void PushSceneHistoryEntry(SceneHistoryEntry entry);
+        void FlushUntrackedSceneEdit();
+        void SynchronizeHistoryState();
+        void UpdateSceneRecovery();
+        void RenderSceneRecovery();
+        void SaveRecoveryBackup();
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime();
         bool StopEditorRuntime(bool reviewChanges = false);
@@ -336,6 +334,18 @@ namespace PlutoGE::ui
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
         std::string m_statusMessage;
         bool m_sceneDirty = false;
+        bool m_untrackedSceneEdit = false;
+        std::string m_observedSceneState;
+        std::string m_savedSceneState;
+        std::filesystem::path m_recoveryDirectory;
+        RecoverySettings m_recoverySettings;
+        bool m_showSceneRecovery = false;
+        bool m_recoveredSceneNeedsSaveAs = false;
+        std::string m_recoveryError;
+        std::vector<RecoveryBackup> m_recoveryBackups;
+        std::vector<std::string> m_recoveryScanErrors;
+        std::string m_lastRecoveryState;
+        std::chrono::steady_clock::time_point m_nextRecovery;
         bool m_projectDirty = false;
         std::vector<SceneHistoryEntry> m_undoStack;
         std::vector<SceneHistoryEntry> m_redoStack;

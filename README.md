@@ -34,6 +34,9 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Play-in-editor with configurable simulation speed
 - Selectively keep serialized play-mode changes as one undoable edit
 - Named viewport bookmarks with project-local persistence
+- Content-browser asset reference lookup with background refresh and owner navigation
+- Rotating scene recovery backups with per-project autosave settings
+- Grouped undo/redo for serialized inspector and scene-setting edits
 - Undoable ground placement with surface alignment and seeded yaw/scale variation
 - Dedicated material, mesh, particle-system, shader-graph, animation-clip, and animation-graph editors
 - Scene baking with fast, balanced, final, and custom quality settings

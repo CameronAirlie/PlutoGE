@@ -1,5 +1,6 @@
 add_library(PlutoGEAssets
     src/AssetDatabase.cpp
+    src/AssetReferences.cpp
     src/ModelAsset.cpp
     src/AssetManager.cpp
     src/ParticleSystemAsset.cpp

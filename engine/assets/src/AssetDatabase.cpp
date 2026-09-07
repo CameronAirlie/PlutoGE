@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/AssetDatabase.h"
+#include "PlutoGE/assets/AssetReferences.h"
 
 #include <algorithm>
 #include <array>
@@ -61,26 +62,13 @@ namespace PlutoGE::assets
             return output.good();
         }
 
-        std::vector<std::string> DiscoverDependencies(const std::filesystem::path &path)
+        std::vector<std::string> DiscoverDependencies(const std::filesystem::path &path, const std::filesystem::path &assetRoot, std::vector<std::string> &errors)
         {
-            if (std::filesystem::file_size(path) > 16 * 1024 * 1024) return {};
-            std::ifstream input(path, std::ios::binary);
-            std::string data((std::istreambuf_iterator<char>(input)), {});
+            const auto scan = ScanAssetReferences(path, {}, assetRoot);
+            errors = scan.errors;
             std::set<std::string> unique;
-            constexpr std::string_view prefix = "project://";
-            std::size_t position = 0;
-            while ((position = data.find(prefix, position)) != std::string::npos)
-            {
-                auto end = position + prefix.size();
-                while (end < data.size())
-                {
-                    const unsigned char value = static_cast<unsigned char>(data[end]);
-                    if (value <= 32 || value == '\"' || value == '\'' || value == '\\' || value == ',' || value == ';') break;
-                    ++end;
-                }
-                unique.emplace(data.substr(position, end - position));
-                position = end;
-            }
+            for (const auto &occurrence : scan.occurrences)
+                if (Project::IsProjectAssetReference(occurrence.reference)) unique.insert(occurrence.reference);
             return {unique.begin(), unique.end()};
         }
 
@@ -144,7 +132,7 @@ namespace PlutoGE::assets
                 record.id = GenerateId();
                 if (!WriteMetadata(metadataPath, record)) return false;
             }
-            record.dependencies = DiscoverDependencies(path);
+            record.dependencies = DiscoverDependencies(path, project.GetAssetDirectoryPath(), record.dependencyScanErrors);
             m_byId[record.id] = m_records.size();
             m_byReference[record.reference] = m_records.size();
             m_records.push_back(std::move(record));
@@ -183,7 +171,14 @@ namespace PlutoGE::assets
                 pending.pop_back();
                 if (reference.empty() || !reachable.insert(reference).second) continue;
                 if (const auto *record = database.FindByReference(reference))
+                {
+                    if (!record->dependencyScanErrors.empty())
+                    {
+                        SetError(errorMessage, "Cannot determine dependencies for " + reference + ": " + record->dependencyScanErrors.front());
+                        return false;
+                    }
                     pending.insert(pending.end(), record->dependencies.begin(), record->dependencies.end());
+                }
             }
         }
         std::error_code error;

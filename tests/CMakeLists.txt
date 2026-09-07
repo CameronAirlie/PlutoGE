@@ -192,6 +192,45 @@ if (TARGET OpenAL)
 endif()
 
 # Editor data tests run without initializing a window or graphics device.
+add_executable(PlutoGESceneRecoveryTests SceneRecoveryTests.cpp ../editor/ui/src/SceneRecovery.cpp)
+target_include_directories(PlutoGESceneRecoveryTests PRIVATE ../editor/ui/include)
+add_test(NAME PlutoGESceneRecoveryTests COMMAND PlutoGESceneRecoveryTests)
+add_executable(PlutoGESceneHistoryTests SceneHistoryTests.cpp)
+target_include_directories(PlutoGESceneHistoryTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESceneHistoryTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGESceneHistoryTests PRIVATE PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Import PlutoGE::Scripting)
+endif()
+add_test(NAME PlutoGESceneHistoryTests COMMAND PlutoGESceneHistoryTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGESceneHistoryTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneHistoryTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+
+add_executable(PlutoGEAssetReferenceCookingTests AssetReferenceCookingTests.cpp)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEAssetReferenceCookingTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGEAssetReferenceCookingTests PRIVATE
+        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Import PlutoGE::Scripting)
+endif()
+add_test(NAME PlutoGEAssetReferenceCookingTests COMMAND PlutoGEAssetReferenceCookingTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEAssetReferenceCookingTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEAssetReferenceCookingTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+
+add_executable(PlutoGEAssetReferencesTests
+    AssetReferencesTests.cpp
+    ../engine/assets/src/AssetReferences.cpp)
+target_include_directories(PlutoGEAssetReferencesTests PRIVATE ../engine/assets/include)
+add_test(NAME PlutoGEAssetReferencesTests COMMAND PlutoGEAssetReferencesTests)
+
 add_executable(PlutoGEViewportBookmarksTests
     ViewportBookmarksTests.cpp
     ../editor/ui/src/ViewportBookmarks.cpp)

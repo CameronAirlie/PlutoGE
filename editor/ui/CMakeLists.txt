@@ -1,11 +1,14 @@
 add_library(PlutoGEEditorUI
     src/EditorShell.cpp
+    src/SceneRecovery.cpp
+    src/SceneRecoveryUI.cpp
     src/PlayModeChanges.cpp
     src/PlayModeChangesUI.cpp
     src/ViewportBookmarks.cpp
     src/ViewportBookmarksUI.cpp
     src/GroundPlacement.cpp
     src/GroundPlacementUI.cpp
+    src/AssetReferenceSearchPanel.cpp
     src/EditorProfiler.cpp
     src/EditorCompositor.cpp
     src/EditorSceneRenderService.cpp

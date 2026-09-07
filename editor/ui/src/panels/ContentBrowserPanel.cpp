@@ -16,6 +16,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/AssetReferenceSearchPanel.h"
 
 #include <algorithm>
 #include <array>
@@ -2050,8 +2051,37 @@ void main() {
         auto *project = editorShell.GetProject();
         if (!project)
         {
+            if (m_referenceSearch) m_referenceSearch->Close();
             ImGui::TextDisabled("No project loaded.");
             return;
+        }
+
+        if (m_referenceSearch)
+        {
+            const auto reveal = [&](std::string reference) {
+                const auto path = project->ResolveAssetReference(reference);
+                if (path.extension() == ".plutomodel")
+                {
+                    assets::ModelAsset model;
+                    if (assets::LoadModelAsset(path.string(), model) && !model.sourceReference.empty())
+                        reference = model.sourceReference;
+                }
+                project->RefreshAssetRegistry();
+                m_filterBuffer.fill(0);
+                m_openModelReference.clear();
+                m_selectedFolder = project->ResolveAssetReference(reference).parent_path()
+                    .lexically_relative(project->GetAssetDirectoryPath()).generic_string();
+                if (m_selectedFolder == ".") m_selectedFolder.clear();
+                const auto &entries = project->GetManifest().assetEntries;
+                const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) { return entry.reference == reference; });
+                m_selectedAssetIndex = found == entries.end() ? -1 : static_cast<int>(found - entries.begin());
+                m_assetCacheDirty = true;
+                return reference;
+            };
+            m_referenceSearch->Render(project->GetAssetDirectoryPath(), reveal, [&](const std::string &reference) {
+                const auto owner = reveal(reference);
+                OpenAsset(editorShell, *project, assets::ProjectAssetEntry{owner, 0, assets::Project::GetAssetTypeForReference(owner)});
+            });
         }
 
         const auto renderAddMenu = [&]()
@@ -3026,6 +3056,12 @@ void main() {
             }
             if (ImGui::BeginPopupContextItem("AssetContext"))
             {
+                if (ImGui::MenuItem("Find References..."))
+                {
+                    if (!m_referenceSearch) m_referenceSearch = std::make_unique<AssetReferenceSearchPanel>();
+                    m_referenceSearch->Open(project->GetAssetDirectoryPath(), asset.reference);
+                }
+                ImGui::Separator();
                 const bool editable = assets::Project::IsProjectAssetReference(asset.reference);
                 const auto assetPath = project->ResolveAssetReference(asset.reference);
                 if (ImGui::MenuItem("Rename", nullptr, false, editable))

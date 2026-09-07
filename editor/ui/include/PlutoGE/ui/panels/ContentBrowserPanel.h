@@ -32,6 +32,7 @@ namespace PlutoGE::ui
                                           const render::MaterialConfig &config,
                                           std::uint64_t revision);
     class AssetThumbnailCache;
+    class AssetReferenceSearchPanel;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
     bool InstantiateMeshAssetIntoScene(std::string reference,
                                        scene::Entity *parent = nullptr,
@@ -47,6 +48,7 @@ namespace PlutoGE::ui
         void Render() override;
 
     private:
+        std::unique_ptr<AssetReferenceSearchPanel> m_referenceSearch;
         enum class PendingMenuAction
         {
             None,

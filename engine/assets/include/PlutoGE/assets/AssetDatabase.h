@@ -20,6 +20,7 @@ namespace PlutoGE::assets
         std::uint64_t contentHash = 0;
         std::uint32_t importerVersion = 1;
         std::vector<std::string> dependencies;
+        std::vector<std::string> dependencyScanErrors;
     };
 
     class AssetDatabase

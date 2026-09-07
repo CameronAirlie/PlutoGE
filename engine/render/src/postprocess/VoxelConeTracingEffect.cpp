@@ -498,19 +498,18 @@ uniform usampler3D uVoxelSampleCount0,uVoxelSampleCount1,uVoxelSampleCount2;
 uniform sampler3D uVoxel0,uVoxel1,uVoxel2,uVoxel3,uVoxel4,uVoxel5;
 uniform vec3 uCascadeOrigin[3];uniform float uCascadeSize[3],uIntensity,uAperture,uMaxDistance,uNormalBias,uMaxMip;uniform int uCascadeCount,uAtlasCascadeCount,uConeCount,uDebugView;uniform mat4 uView;
 bool containsCascade(int c,vec3 p,out vec3 tc){tc=(p-uCascadeOrigin[c])/uCascadeSize[c];return all(greaterThanEqual(tc,vec3(0)))&&all(lessThan(tc,vec3(1)));}
-int firstLightingCascade(){return uWorldCache!=0?max(uCascadeCount-1,0):0;}
-int findCascade(vec3 p,out vec3 tc){for(int c=firstLightingCascade();c<3;c++){if(c>=uCascadeCount)break;if(containsCascade(c,p,tc))return c;}tc=vec3(0);return -1;}
+int findCascade(vec3 p,out vec3 tc){for(int c=0;c<3;c++){if(c>=uCascadeCount)break;if(containsCascade(c,p,tc))return c;}tc=vec3(0);return -1;}
 vec3 atlasCoord(int c,vec3 tc,float lod){int clampMip=int(clamp(ceil(lod),0.0,uMaxMip));ivec3 atlasSize=textureSize(uVoxel0,clampMip);float localDepth=max(float(atlasSize.z)/float(uAtlasCascadeCount),1.0);vec3 halfTexel=vec3(.5/vec2(atlasSize.xy),.5/localDepth);vec3 local=clamp(tc,halfTexel,vec3(1)-halfTexel);return vec3(local.xy,(float(c)+local.z)/float(uAtlasCascadeCount));}
 vec4 sampleVolume(int i,vec3 tc,float lod){if(i==0)return textureLod(uVoxel0,tc,lod);if(i==1)return textureLod(uVoxel1,tc,lod);if(i==2)return textureLod(uVoxel2,tc,lod);if(i==3)return textureLod(uVoxel3,tc,lod);if(i==4)return textureLod(uVoxel4,tc,lod);return textureLod(uVoxel5,tc,lod);}
 vec4 sampleCascadeDirectional(int c,vec3 tc,vec3 d,float lod){vec3 atc=atlasCoord(c,tc,lod),w=abs(d);w/=max(w.x+w.y+w.z,.0001);vec4 sx=sampleVolume(d.x>=0?0:1,atc,lod),sy=sampleVolume(d.y>=0?2:3,atc,lod),sz=sampleVolume(d.z>=0?4:5,atc,lod);return sx*w.x+sy*w.y+sz*w.z;}
 // Blend in world units, including the cone footprint, before a cascade ends.
 float cascadeWeight(int c,vec3 tc,float diameter){vec3 edge=min(tc,vec3(1)-tc)*uCascadeSize[c];float band=min(uCascadeSize[c]*.5,max(uCascadeSize[c]*.15,diameter));return smoothstep(0.0,band,min(min(edge.x,edge.y),edge.z));}
-float voxelSizeAt(vec3 p){float resolution=float(textureSize(uVoxel0,0).x);float size=uCascadeSize[max(uCascadeCount-1,0)]/resolution;for(int c=2;c>=firstLightingCascade();c--){if(c>=uCascadeCount)continue;vec3 tc;if(containsCascade(c,p,tc))size=mix(size,uCascadeSize[c]/resolution,cascadeWeight(c,tc,0.0));}return size;}
+float voxelSizeAt(vec3 p){float resolution=float(textureSize(uVoxel0,0).x);float size=uCascadeSize[max(uCascadeCount-1,0)]/resolution;for(int c=2;c>=0;c--){if(c>=uCascadeCount)continue;vec3 tc;if(containsCascade(c,p,tc))size=mix(size,uCascadeSize[c]/resolution,cascadeWeight(c,tc,0.0));}return size;}
 float coverageAt(vec3 p){int c=max(uCascadeCount-1,0);vec3 tc;if(!containsCascade(c,p,tc))return 0.0;return cascadeWeight(c,tc,0.0);}
 vec4 sampleWorld(vec3 p,vec3 d,float diameter,out float voxelSize){
  float resolution=float(textureSize(uVoxel0,0).x);voxelSize=uCascadeSize[max(uCascadeCount-1,0)]/resolution;
  vec4 result=vec4(0);float remaining=1.0;
- for(int c=firstLightingCascade();c<3;c++){
+ for(int c=0;c<3;c++){
   if(c>=uCascadeCount||remaining<=0.0)break;vec3 tc;if(!containsCascade(c,p,tc))continue;
   float localVoxel=uCascadeSize[c]/resolution;float weight=remaining*cascadeWeight(c,tc,diameter);
   float lod=clamp(log2(max(diameter,localVoxel)/localVoxel),0.0,uMaxMip);
@@ -522,18 +521,27 @@ vec4 sampleWorld(vec3 p,vec3 d,float diameter,out float voxelSize){
 float rayBoxExit(vec3 o,vec3 d){int outer=max(uCascadeCount-1,0);vec3 boxMin=uCascadeOrigin[outer],boxMax=boxMin+vec3(uCascadeSize[outer]);vec3 safeD=vec3(abs(d.x)<.00001?(d.x<0?-.00001:.00001):d.x,abs(d.y)<.00001?(d.y<0?-.00001:.00001):d.y,abs(d.z)<.00001?(d.z<0?-.00001:.00001):d.z);vec3 t0=(boxMin-o)/safeD,t1=(boxMax-o)/safeD;vec3 farT=max(t0,t1);return max(min(min(farT.x,farT.y),farT.z),0.0);}
 uint sampleCount(int c,ivec3 coord){if(c==0)return texelFetch(uVoxelSampleCount0,coord,0).r;if(c==1)return texelFetch(uVoxelSampleCount1,coord,0).r;return texelFetch(uVoxelSampleCount2,coord,0).r;}
 const float PI=3.14159265;vec3 cone(vec3 o,vec3 n,vec3 d){float startVoxel=voxelSizeAt(o);o+=n*startVoxel*mix(.35,.75,clamp(uNormalBias,0,1));float firstSample=startVoxel;float traceLimit=min(uMaxDistance,max(rayBoxExit(o,d)-firstSample,0.0));float dist=firstSample;vec4 sum=vec4(0);
- for(int i=0;i<48&&dist<traceLimit&&sum.a<.98;i++){float dia=max(startVoxel,2.0*uAperture*dist),sampleVoxelSize;vec4 s=sampleWorld(o+d*dist,d,dia,sampleVoxelSize);sum.rgb+=(1-sum.a)*s.rgb;sum.a+=(1-sum.a)*s.a;dist+=max(sampleVoxelSize,dia*.5);}return sum.rgb;}
-void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz,surfaceTc;float normalLengthSquared=dot(rawNormal,rawNormal);int surfaceCascade=findCascade(p,surfaceTc);if(!(normalLengthSquared>=.1&&normalLengthSquared<=1e6)||(surfaceCascade<0&&uCacheBlend<=0.0)){FragColor=vec4(0);return;}vec3 n=rawNormal*inversesqrt(normalLengthSquared);float viewDepth=max(-(uView*vec4(p,1)).z,0.0);
+ for(int i=0;i<48&&dist<traceLimit&&sum.a<.98;i++){
+  float dia=max(startVoxel,2.0*uAperture*dist),sampleVoxelSize;vec3 samplePosition=o+d*dist;
+  float probeSpacing=uCacheOriginSize.w/16.0;
+  if(uWorldCache!=0&&uCacheBlend>0.0&&dia>probeSpacing){
+   // Cache only the distant remainder, after local radiance and occlusion.
+   vec4 cached=cachedIrradiance(samplePosition,d,uCacheOriginSize);
+   float weight=cached.a*uCacheBlend*smoothstep(probeSpacing,probeSpacing*2.0,dia);
+   sum.rgb+=(1-sum.a)*cached.rgb*weight;sum.a+=(1-sum.a)*weight;if(sum.a>=.98)break;
+  }
+  vec4 s=sampleWorld(samplePosition,d,dia,sampleVoxelSize);sum.rgb+=(1-sum.a)*s.rgb;sum.a+=(1-sum.a)*s.a;dist+=max(sampleVoxelSize,dia*.5);
+ }return sum.rgb;}
+void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz,surfaceTc;float normalLengthSquared=dot(rawNormal,rawNormal);int surfaceCascade=findCascade(p,surfaceTc);if(!(normalLengthSquared>=.1&&normalLengthSquared<=1e6)||surfaceCascade<0){FragColor=vec4(0);return;}vec3 n=rawNormal*inversesqrt(normalLengthSquared);float viewDepth=max(-(uView*vec4(p,1)).z,0.0);
  if(uDebugView==1&&surfaceCascade>=0){vec4 voxel=sampleCascadeDirectional(surfaceCascade,surfaceTc,n,0);FragColor=vec4(voxel.rgb/(vec3(1)+voxel.rgb),viewDepth);return;}
  if(uDebugView==2&&surfaceCascade>=0){float opacity=sampleCascadeDirectional(surfaceCascade,surfaceTc,n,0).a;FragColor=vec4(vec3(opacity),viewDepth);return;}
  if(uDebugView==3&&surfaceCascade>=0){ivec3 countSize=textureSize(uVoxelSampleCount0,0);ivec3 countCoord=clamp(ivec3(surfaceTc*vec3(countSize)),ivec3(0),countSize-ivec3(1));uint count=sampleCount(surfaceCascade,countCoord);float level=clamp(log2(float(count)+1.0)/20.0,0.0,1.0);vec3 countColor=count>=1048575u?vec3(1,0,0):vec3(level);FragColor=vec4(countColor,viewDepth);return;}
  if(uDebugView==4){vec3 cascadeColor=surfaceCascade==0?vec3(0,.8,0):surfaceCascade==1?vec3(0,.35,1):vec3(1,.55,0);FragColor=vec4(cascadeColor,viewDepth);return;}
- vec3 up=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),t=normalize(cross(up,n)),b=cross(n,t);vec4 cached=uCacheBlend>0.0?cachedIrradiance(p,n,uCacheOriginSize):vec4(0);
- float cacheWeight=cached.a*uCacheBlend;vec3 total=cacheWeight<.999?cone(p,n,n):vec3(0);
- for(int i=1;i<6;i++){if(i>=uConeCount||cacheWeight>=.999)break;float a=6.2831853*float(i-1)/max(float(uConeCount-1),1);vec3 d=normalize(n*.55+(t*cos(a)+b*sin(a))*.835);total+=cone(p,n,d);}
+ vec3 up=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),t=normalize(cross(up,n)),b=cross(n,t);vec3 total=cone(p,n,n);
+ for(int i=1;i<6;i++){if(i>=uConeCount)break;float a=6.2831853*float(i-1)/max(float(uConeCount-1),1);vec3 d=normalize(n*.55+(t*cos(a)+b*sin(a))*.835);total+=cone(p,n,d);}
  // Cone directions approximate cosine-weighted hemisphere sampling, so their
  // mean already contains the receiver's 1/PI Lambertian normalization.
- FragColor=vec4(mix(total*coverageAt(p)/max(float(uConeCount),1.0),cached.rgb,cacheWeight)*uIntensity,viewDepth);})";
+ FragColor=vec4(total*coverageAt(p)*uIntensity/max(float(uConeCount),1.0),viewDepth);})";
         const auto probeFunctions = trace.fragmentSource.find("bool containsCascade");
         trace.fragmentSource.insert(probeFunctions, kVctProbeSampling);
         m_coneTraceShader = Shader::Create(trace);
@@ -701,10 +709,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
 
     void VoxelConeTracingEffect::EnsureResources(int width, int height)
     {
-        // World-cache shading has one authoritative stationary source. Building
-        // unused camera-following volumes would only consume the update budget.
-        const std::size_t desiredCascadeCount = m_worldCache && m_probeUpdateShader ? 1u :
+        // The stationary source supplements local tracing; it must not replace
+        // the detailed volumes with cache-sized voxels.
+        const std::size_t localCascadeCount =
             std::min<std::size_t>(m_requestedCascadeCount, m_resolution >= 128 ? 2u : 3u);
+        const std::size_t desiredCascadeCount = m_worldCache && m_probeUpdateShader ?
+            std::min<std::size_t>(localCascadeCount + 1, kCascadeCount) : localCascadeCount;
         if (m_allocatedResolution != m_resolution || m_allocatedCascadeCount != desiredCascadeCount)
         {
             ReleaseVolume();

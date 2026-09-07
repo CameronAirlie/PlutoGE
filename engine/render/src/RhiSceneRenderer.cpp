@@ -164,6 +164,7 @@ namespace PlutoGE::render
         m_meshes.clear();
         m_srgbTextures.clear();
         m_linearTextures.clear();
+        m_normalTextures.clear();
         if (m_renderer)
             m_renderer->Shutdown();
         m_renderer.reset();
@@ -234,7 +235,7 @@ namespace PlutoGE::render
         draws.reserve(commands.size());
         const auto uploadTexture = [&](const Texture *source, rhi::Format format,
                                        auto &cache,
-                                       const char *debugName) -> rhi::TextureHandle
+                                       const char *debugName, bool normalMap = false) -> rhi::TextureHandle
         {
             if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0 || !texturePixelReader)
                 return {};
@@ -246,7 +247,7 @@ namespace PlutoGE::render
                 return {};
             rhi::Texture uploaded(*m_device, m_device->CreateTexture(
                                                  {static_cast<std::uint32_t>(source->GetWidth()), static_cast<std::uint32_t>(source->GetHeight()),
-                                                  format, rhi::TextureUsage::Sampled, debugName},
+                                                  format, rhi::TextureUsage::Sampled, debugName, false, 1, false, 0, normalMap},
                                                  pixels));
             return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get()
                             : rhi::TextureHandle{};
@@ -254,7 +255,7 @@ namespace PlutoGE::render
 
         const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
                                      std::vector<BasicDraw> &destination,
-                                     bool shadowOnly)
+                                     bool shadowOnly, bool giOnly = false)
         {
             for (const auto &command : sourceCommands)
             {
@@ -330,11 +331,11 @@ namespace PlutoGE::render
                         draw.castsShadow = draw.castsShadow && material.castsShadow;
                         draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
                                                               m_srgbTextures, "Scene albedo");
-                        draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
-                                                           m_linearTextures, "Scene normal");
+                        if (!giOnly) draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
+                                                           m_normalTextures, "Scene normal", true);
                         draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
                                                              m_linearTextures, "Scene metallic");
-                        draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
+                        if (!giOnly) draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
                                                               m_linearTextures, "Scene roughness");
                     }
                 }
@@ -596,10 +597,19 @@ namespace PlutoGE::render
         }
         const auto setupEnd = std::chrono::steady_clock::now();
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
+        std::vector<BasicDraw> giDraws;
+        if (std::ranges::any_of(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::VCTGI; }))
+        {
+            // shadowCommands is the frontend's unculled scene list. GI needs
+            // its materials and non-shadow-casting surfaces as well.
+            const auto sceneCommands = shadowCommands.empty() ? commands : shadowCommands;
+            giDraws.reserve(sceneCommands.size());
+            appendDraws(sceneCommands, giDraws, false, true);
+        }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
                            debugView, useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr,
-                           submit);
+                           submit, giDraws);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&

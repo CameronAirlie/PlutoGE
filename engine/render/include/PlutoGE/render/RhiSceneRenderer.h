@@ -118,6 +118,7 @@ namespace PlutoGE::render
         std::unordered_map<const Mesh *, BasicMesh> m_meshes;
         std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
         std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
+        std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;
         std::size_t m_sceneCommandCount = 0;
         std::size_t m_drawCount = 0;
         RhiSceneTimingStats m_timingStats;

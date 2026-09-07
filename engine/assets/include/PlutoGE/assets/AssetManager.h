@@ -9,6 +9,7 @@
 #include "PlutoGE/render/ShaderGraph.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <unordered_map>
 #include <utility>
 #include <string>
@@ -102,6 +103,14 @@ namespace PlutoGE::assets
         void ClearProjectContext();
 
     private:
+        struct ModelResolutionCache
+        {
+            std::filesystem::file_time_type modified;
+            std::uintmax_t size = 0;
+            std::unordered_map<std::uint64_t, std::string> objects;
+        };
+        mutable std::unordered_map<std::string, std::string> m_stableIdReferenceCache;
+        mutable std::unordered_map<std::string, ModelResolutionCache> m_modelResolutionCache;
         std::string m_assetDirectory = "assets/"; // Base directory for assets
         std::string m_projectRootDirectory;
         std::string m_projectAssetDirectory = "Assets";

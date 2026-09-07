@@ -62,6 +62,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <psapi.h>
 #endif
 
 namespace PlutoGE::ui
@@ -2883,6 +2884,18 @@ namespace PlutoGE::ui
         auto &renderer = m_engine.GetRenderer();
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
+#ifdef _WIN32
+        const auto threadCpuTicks = []() -> std::uint64_t
+        {
+            FILETIME creation{}, exit{}, kernel{}, user{};
+            if (!GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user)) return 0;
+            return (std::uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+                   (std::uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+        };
+        PROCESS_MEMORY_COUNTERS_EX processMemory{};
+        auto lastMemorySample = std::chrono::steady_clock::time_point{};
+        auto lastStallLog = lastMemorySample;
+#endif
 
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Editor Viewport";
@@ -3046,6 +3059,11 @@ namespace PlutoGE::ui
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
+#ifdef _WIN32
+            const auto threadCpuStart = threadCpuTicks();
+            ULONG64 threadCyclesStart = 0;
+            QueryThreadCycleTime(GetCurrentThread(), &threadCyclesStart);
+#endif
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
             if (vulkanEditorHost)
                 renderer.BeginCpuProfilingFrame();
@@ -4149,6 +4167,31 @@ namespace PlutoGE::ui
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
 
             const auto frameEndTime = std::chrono::high_resolution_clock::now();
+#ifdef _WIN32
+            const auto diagnosticTime = std::chrono::steady_clock::now();
+            ULONG64 threadCyclesEnd = 0;
+            QueryThreadCycleTime(GetCurrentThread(), &threadCyclesEnd);
+            frameTimingStats.mainThreadCpuMs = float(threadCpuTicks() - threadCpuStart) / 10000.0f;
+            frameTimingStats.mainThreadMillionCycles = double(threadCyclesEnd - threadCyclesStart) / 1000000.0;
+            frameTimingStats.debuggerAttached = IsDebuggerPresent() != FALSE;
+            if (diagnosticTime - lastMemorySample >= std::chrono::seconds(1))
+            {
+                GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&processMemory), sizeof(processMemory));
+                lastMemorySample = diagnosticTime;
+            }
+            frameTimingStats.processPrivateMiB = double(processMemory.PrivateUsage) / (1024.0 * 1024.0);
+            frameTimingStats.processWorkingSetMiB = double(processMemory.WorkingSetSize) / (1024.0 * 1024.0);
+            frameTimingStats.processPageFaults = processMemory.PageFaultCount;
+            const auto elapsedFrameMs = std::chrono::duration<double, std::milli>(frameEndTime - currentTime).count();
+            if (elapsedFrameMs >= 100.0 && diagnosticTime - lastStallLog >= std::chrono::seconds(1))
+            {
+                std::clog << "Editor stall: wall=" << elapsedFrameMs << "ms thread_cpu=" << frameTimingStats.mainThreadCpuMs
+                          << "ms cycles=" << frameTimingStats.mainThreadMillionCycles << "M private=" << frameTimingStats.processPrivateMiB
+                          << "MiB resident=" << frameTimingStats.processWorkingSetMiB << "MiB faults=" << frameTimingStats.processPageFaults
+                          << " debugger=" << frameTimingStats.debuggerAttached << '\n' << std::flush;
+                lastStallLog = diagnosticTime;
+            }
+#endif
             m_profiler.SetLatestFrameTimingStats(frameTimingStats);
             m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
 

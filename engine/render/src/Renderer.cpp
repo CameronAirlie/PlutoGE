@@ -848,6 +848,11 @@ namespace PlutoGE::render
             if (commandIndex >= m_renderCommands.size())
                 continue;
             const auto &command = m_renderCommands[commandIndex];
+            if (!command.instanceModels)
+            {
+                m_visibleRenderCommands.push_back(command);
+                continue;
+            }
             if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
             {
                 m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
@@ -1264,6 +1269,11 @@ namespace PlutoGE::render
             return true;
         }
 
+        // Shadow casters must be retained regardless of camera visibility.
+        // Avoid testing every camera plane only to accept them afterward.
+        if (command.castsShadow && command.material && command.material->GetConfig().castsShadow)
+            return true;
+
         for (const auto &frustum : m_submissionFrustums)
         {
             bool visible = true;
@@ -1287,9 +1297,7 @@ namespace PlutoGE::render
         // light's shadow frustum and cast onto visible geometry. The shadow
         // pass performs its own light-space culling, while RenderFrame builds
         // a separately camera-culled list for the geometry passes.
-        return command.castsShadow &&
-               command.material &&
-               command.material->GetConfig().castsShadow;
+        return false;
     }
 
     bool Renderer::CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b)
@@ -1602,6 +1610,11 @@ namespace PlutoGE::render
             if (commandIndex >= m_renderCommands.size())
                 continue;
             const auto &command = m_renderCommands[commandIndex];
+            if (!command.instanceModels)
+            {
+                m_visibleRenderCommands.push_back(command);
+                continue;
+            }
             if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
             {
                 m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());

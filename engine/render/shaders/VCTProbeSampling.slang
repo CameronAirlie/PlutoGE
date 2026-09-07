@@ -20,9 +20,13 @@ float4 cachedIrradiance(float3 position, float3 normal, float4 originSize)
         float distance = length(probeToPoint);
         float3 direction = probeToPoint / max(distance, 0.00001);
         float3 absolute = abs(direction);
-        int axis = absolute.x > absolute.y ? (absolute.x > absolute.z ? 0 : 2) : (absolute.y > absolute.z ? 1 : 2);
-        int face = axis * 2 + (direction[axis] < 0.0 ? 1 : 0);
-        float2 moments = probeVisibility.SampleLevel(probeAtlasCoordinate(cell, face), 0.0).rg;
+        // Interpolate the ambient-cube moments continuously. Selecting only the
+        // dominant face creates visibility planes wherever two axes exchange rank.
+        float3 momentWeight = absolute / max(dot(absolute, float3(1.0)), 0.00001);
+        float2 moments =
+            probeVisibility.SampleLevel(probeAtlasCoordinate(cell, direction.x >= 0.0 ? 0 : 1), 0.0).rg * momentWeight.x +
+            probeVisibility.SampleLevel(probeAtlasCoordinate(cell, direction.y >= 0.0 ? 2 : 3), 0.0).rg * momentWeight.y +
+            probeVisibility.SampleLevel(probeAtlasCoordinate(cell, direction.z >= 0.0 ? 4 : 5), 0.0).rg * momentWeight.z;
         float variance = max(moments.y - moments.x * moments.x, 0.000001);
         float delta = max(distance - moments.x - 0.005, 0.0);
         float visibility = variance / (variance + delta * delta);

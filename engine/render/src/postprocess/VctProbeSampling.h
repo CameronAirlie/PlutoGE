@@ -23,9 +23,12 @@ vec4 cachedIrradiance(vec3 position, vec3 normal, vec4 originSize)
         float distance = length(probeToPoint);
         vec3 direction = probeToPoint / max(distance, 0.00001);
         vec3 absolute = abs(direction);
-        int axis = absolute.x > absolute.y ? (absolute.x > absolute.z ? 0 : 2) : (absolute.y > absolute.z ? 1 : 2);
-        int face = axis * 2 + (direction[axis] < 0.0 ? 1 : 0);
-        vec2 moments = textureLod(uProbeVisibility, probeAtlasCoordinate(cell, face), 0.0).rg;
+        // Match the continuous ambient-cube visibility lookup in Slang.
+        vec3 momentWeight = absolute / max(dot(absolute, vec3(1.0)), 0.00001);
+        vec2 moments =
+            textureLod(uProbeVisibility, probeAtlasCoordinate(cell, direction.x >= 0.0 ? 0 : 1), 0.0).rg * momentWeight.x +
+            textureLod(uProbeVisibility, probeAtlasCoordinate(cell, direction.y >= 0.0 ? 2 : 3), 0.0).rg * momentWeight.y +
+            textureLod(uProbeVisibility, probeAtlasCoordinate(cell, direction.z >= 0.0 ? 4 : 5), 0.0).rg * momentWeight.z;
         float variance = max(moments.y - moments.x * moments.x, 0.000001);
         float delta = max(distance - moments.x - 0.005, 0.0);
         float visibility = variance / (variance + delta * delta);

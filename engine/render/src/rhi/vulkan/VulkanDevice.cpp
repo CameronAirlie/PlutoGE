@@ -1,5 +1,6 @@
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "../HandleRegistry.h"
+#include "../NormalMipmaps.h"
 
 #include <volk.h>
 #include <GLFW/glfw3.h>
@@ -465,7 +466,10 @@ namespace PlutoGE::render::rhi::vulkan
                 CopyMatrix(frame.previousClipToClip, constants.prevClipToClip);
                 constants.clipToLensClip = IdentityMatrix();
                 constants.jitterOffset = {frame.jitterPixels[0], frame.jitterPixels[1]};
-                constants.mvecScale = {frame.motionVectorScale[0], frame.motionVectorScale[1]};
+                // BasicLit stores current-minus-previous motion in Y-up UV
+                // units. DLSS needs previous-minus-current in Y-down texture
+                // space, just like FSR2, but normalized rather than in pixels.
+                constants.mvecScale = {-frame.motionVectorScale[0], frame.motionVectorScale[1]};
                 constants.cameraPinholeOffset = {0.0f, 0.0f};
                 constants.cameraPos = MakeFloat3(frame.cameraPosition);
                 constants.cameraUp = MakeFloat3(frame.cameraUp);
@@ -883,6 +887,7 @@ namespace PlutoGE::render::rhi::vulkan
         };
         std::array<UniformArena, 3> uniformArenas;
         VkDeviceSize uniformAlignment = 256;
+        float maxSamplerAnisotropy = 1.0f;
         static constexpr VkDeviceSize UniformArenaSize = 32ull * 1024ull * 1024ull;
         std::string deviceName;
         float timestampPeriodNs = 1.0f;
@@ -1806,7 +1811,6 @@ namespace PlutoGE::render::rhi::vulkan
                 Check(vkAllocateCommandBuffers(m_impl.device, &allocation, &frame.commandBuffer), "vkAllocateCommandBuffers(presentation)");
                 VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
                 Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.imageAvailable), "vkCreateSemaphore(image available)");
-                Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &frame.renderFinished), "vkCreateSemaphore(render finished)");
                 VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
                 fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(presentation)");
@@ -1822,8 +1826,6 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 if (frame.fence)
                     vkDestroyFence(m_impl.device, frame.fence, nullptr);
-                if (frame.renderFinished)
-                    vkDestroySemaphore(m_impl.device, frame.renderFinished, nullptr);
                 if (frame.imageAvailable)
                     vkDestroySemaphore(m_impl.device, frame.imageAvailable, nullptr);
                 if (frame.commandPool)
@@ -1910,6 +1912,12 @@ namespace PlutoGE::render::rhi::vulkan
             if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
                 Check(acquired, "vkAcquireNextImageKHR");
 
+            // A submission fence does not guarantee that presentation has
+            // consumed its wait semaphore. Reuse only the semaphore belonging
+            // to the acquired image; the acquire wait below orders that reuse
+            // after the previous presentation of this same image.
+            const VkSemaphore renderFinished = m_renderFinished[imageIndex];
+
             const auto recordStart = Clock::now();
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(presentation)");
@@ -1983,14 +1991,14 @@ namespace PlutoGE::render::rhi::vulkan
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
             submit.signalSemaphoreCount = 1;
-            submit.pSignalSemaphores = &frame.renderFinished;
+            submit.pSignalSemaphores = &renderFinished;
             Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             timing.presentSubmitMs = elapsedMs(submitStart, Clock::now());
 
             VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             present.waitSemaphoreCount = 1;
-            present.pWaitSemaphores = &frame.renderFinished;
+            present.pWaitSemaphores = &renderFinished;
             present.swapchainCount = 1;
             present.pSwapchains = &m_swapchain;
             present.pImageIndices = &imageIndex;
@@ -2013,6 +2021,9 @@ namespace PlutoGE::render::rhi::vulkan
     private:
         void DestroySwapchain()
         {
+            for (const VkSemaphore semaphore : m_renderFinished)
+                vkDestroySemaphore(m_impl.device, semaphore, nullptr);
+            m_renderFinished.clear();
             for (const VkImageView imageView : m_imageViews)
                 vkDestroyImageView(m_impl.device, imageView, nullptr);
             m_imageViews.clear();
@@ -2112,8 +2123,9 @@ namespace PlutoGE::render::rhi::vulkan
             info.oldSwapchain = m_swapchain;
             VkSwapchainKHR replacement = VK_NULL_HANDLE;
             Check(vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement), "vkCreateSwapchainKHR");
-            if (m_swapchain)
-                vkDestroySwapchainKHR(m_impl.device, m_swapchain, nullptr);
+            // Retire all image-owned resources, including views. Merely
+            // replacing their vector entries leaked views on every recreation.
+            DestroySwapchain();
             m_swapchain = replacement;
             std::uint32_t actualImageCount = 0;
             Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, nullptr), "vkGetSwapchainImagesKHR");
@@ -2121,8 +2133,11 @@ namespace PlutoGE::render::rhi::vulkan
             Check(vkGetSwapchainImagesKHR(m_impl.device, m_swapchain, &actualImageCount, m_images.data()), "vkGetSwapchainImagesKHR");
             m_nativeFormat = selected.format;
             m_imageViews.resize(actualImageCount);
+            m_renderFinished.resize(actualImageCount, VK_NULL_HANDLE);
             for (std::uint32_t index = 0; index < actualImageCount; ++index)
             {
+                VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+                Check(vkCreateSemaphore(m_impl.device, &semaphore, nullptr, &m_renderFinished[index]), "vkCreateSemaphore(present image)");
                 VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
                 view.image = m_images[index];
                 view.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -2140,7 +2155,6 @@ namespace PlutoGE::render::rhi::vulkan
             VkCommandPool commandPool = VK_NULL_HANDLE;
             VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
             VkSemaphore imageAvailable = VK_NULL_HANDLE;
-            VkSemaphore renderFinished = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
             std::uint64_t submissionSerial = 0;
         };
@@ -2148,6 +2162,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::size_t m_frameIndex = 0;
         std::vector<VkImage> m_images;
         std::vector<VkImageView> m_imageViews;
+        std::vector<VkSemaphore> m_renderFinished;
         VkFormat m_nativeFormat = VK_FORMAT_UNDEFINED;
         OverlayRecorder m_overlayRecorder;
         OverlayRecorder m_overlayPreparation;
@@ -2301,6 +2316,10 @@ namespace PlutoGE::render::rhi::vulkan
         VkPhysicalDeviceFeatures2 supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         supported.pNext = &supported12;
         vkGetPhysicalDeviceFeatures2(m_impl->physicalDevice, &supported);
+        VkPhysicalDeviceFeatures enabledFeatures{};
+        enabledFeatures.samplerAnisotropy = supported.features.samplerAnisotropy;
+        m_impl->maxSamplerAnisotropy = enabledFeatures.samplerAnisotropy
+            ? properties.limits.maxSamplerAnisotropy : 1.0f;
 #if PLUTO_HAS_STREAMLINE
         sl::getMergedSupportedVkPhysicalDeviceVulkanFeatures(
             reinterpret_cast<VkBaseOutStructure *>(&requested12), nullptr,
@@ -2316,6 +2335,7 @@ namespace PlutoGE::render::rhi::vulkan
         requested12.pNext = &requested13;
         VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         deviceInfo.pNext = &requested12;
+        deviceInfo.pEnabledFeatures = &enabledFeatures;
         deviceInfo.queueCreateInfoCount = queueCount;
         deviceInfo.pQueueCreateInfos = queues.data();
         deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(enabledDeviceExtensions.size());
@@ -2473,6 +2493,8 @@ namespace PlutoGE::render::rhi::vulkan
 
     TextureHandle VulkanDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.normalMap && (descriptor.depth != 1 || descriptor.format != Format::R8G8B8A8Unorm))
+            throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (!descriptor.width || !descriptor.height || !descriptor.depth)
             throw std::invalid_argument("Invalid Vulkan texture dimensions");
         TextureResource resource;
@@ -2523,6 +2545,9 @@ namespace PlutoGE::render::rhi::vulkan
         if (!data.empty())
         {
             std::vector<std::byte> mipData(data.begin(), data.end());
+            const auto normalMips = descriptor.normalMap
+                ? BuildNormalMipmaps(data, descriptor.width, descriptor.height, stored->mipLevels)
+                : std::vector<std::byte>{};
             std::vector<VkBufferImageCopy> copies;
             copies.reserve(stored->mipLevels);
             std::uint32_t mipWidth = descriptor.width;
@@ -2536,29 +2561,36 @@ namespace PlutoGE::render::rhi::vulkan
                 const std::size_t sourceOffset = levelOffset;
                 levelOffset = mipData.size();
                 mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * 4);
-                for (std::uint32_t y = 0; y < nextHeight; ++y)
+                if (descriptor.normalMap)
+                    std::copy_n(normalMips.begin() + levelOffset,
+                                static_cast<std::size_t>(nextWidth) * nextHeight * 4,
+                                mipData.begin() + levelOffset);
+                else
                 {
-                    for (std::uint32_t x = 0; x < nextWidth; ++x)
+                    for (std::uint32_t y = 0; y < nextHeight; ++y)
                     {
-                        for (std::uint32_t channel = 0; channel < 4; ++channel)
+                        for (std::uint32_t x = 0; x < nextWidth; ++x)
                         {
-                            unsigned int sum = 0;
-                            float linearSum = 0.0f;
-                            for (std::uint32_t oy = 0; oy < 2; ++oy)
-                                for (std::uint32_t ox = 0; ox < 2; ++ox)
-                                {
-                                    const auto sx = (std::min)(mipWidth - 1, x * 2 + ox);
-                                    const auto sy = (std::min)(mipHeight - 1, y * 2 + oy);
-                                    const auto sample = std::to_integer<std::uint8_t>(
-                                        mipData[sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * 4 + channel]);
-                                    sum += sample;
-                                    if (descriptor.format == Format::R8G8B8A8Srgb && channel < 3)
-                                        linearSum += SrgbToLinear(sample);
-                                }
-                            mipData[levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * 4 + channel] =
-                                descriptor.format == Format::R8G8B8A8Srgb && channel < 3
-                                    ? LinearToSrgb(linearSum * 0.25f)
-                                    : static_cast<std::byte>(sum / 4);
+                            for (std::uint32_t channel = 0; channel < 4; ++channel)
+                            {
+                                unsigned int sum = 0;
+                                float linearSum = 0.0f;
+                                for (std::uint32_t oy = 0; oy < 2; ++oy)
+                                    for (std::uint32_t ox = 0; ox < 2; ++ox)
+                                    {
+                                        const auto sx = (std::min)(mipWidth - 1, x * 2 + ox);
+                                        const auto sy = (std::min)(mipHeight - 1, y * 2 + oy);
+                                        const auto sample = std::to_integer<std::uint8_t>(
+                                            mipData[sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * 4 + channel]);
+                                        sum += sample;
+                                        if (descriptor.format == Format::R8G8B8A8Srgb && channel < 3)
+                                            linearSum += SrgbToLinear(sample);
+                                    }
+                                mipData[levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * 4 + channel] =
+                                    descriptor.format == Format::R8G8B8A8Srgb && channel < 3
+                                        ? LinearToSrgb(linearSum * 0.25f)
+                                        : static_cast<std::byte>(sum / 4);
+                            }
                         }
                     }
                 }
@@ -2583,6 +2615,10 @@ namespace PlutoGE::render::rhi::vulkan
         info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         info.mipLodBias = descriptor.mipLodBias;
         info.maxLod = VK_LOD_CLAMP_NONE;
+        info.maxAnisotropy = descriptor.linearFiltering && descriptor.mipFiltering
+            ? std::clamp(descriptor.maxAnisotropy, 1.0f, m_impl->maxSamplerAnisotropy)
+            : 1.0f;
+        info.anisotropyEnable = info.maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
         SamplerResource resource;
         Check(vkCreateSampler(m_impl->device, &info, nullptr, &resource.sampler), "vkCreateSampler");
         return m_impl->samplers.Insert(resource);

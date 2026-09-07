@@ -340,7 +340,9 @@ namespace PlutoGE::render
                     const rhi::TemporalUpscalerFrame *upscalerFrame = nullptr,
                     const glm::mat4 *motionViewProjection = nullptr,
                     // Allows a caller to append overlays before one final submit.
-                    bool submit = true);
+                    bool submit = true,
+                    // Full scene with GI materials, independent of camera visibility.
+                    std::span<const BasicDraw> giDraws = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -403,6 +405,7 @@ namespace PlutoGE::render
         // loop without introducing per-frame allocations.
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
         std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
+        std::vector<std::uint64_t> m_shadowDrawSignatures;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;
@@ -456,11 +459,17 @@ namespace PlutoGE::render
             std::uint64_t contentSignature = 0;
             std::uint64_t pendingSignature = 0;
             std::uint64_t lastUpdateFrame = 0;
+            std::vector<BasicDraw> pendingDraws;
+            BasicLighting pendingLighting;
+            glm::mat4 pendingShadowMatrix{1.0f};
+            std::size_t nextShadowDraw = 0;
+            bool shadowReady = false;
             bool valid = false;
             bool rebuilding = false;
         };
         std::array<VctCascade, 3> m_vctCascades;
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
+        rhi::Texture m_vctShadowDepth, m_vctShadowColor;
         rhi::Texture m_vctTraceTarget;
         std::array<rhi::Texture, 2> m_vctHistoryTargets;
         std::array<rhi::Texture, 2> m_vctMetadataTargets;
@@ -488,6 +497,7 @@ namespace PlutoGE::render
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
         std::array<std::uint32_t, 4> m_shadowResolutions{};
         std::array<std::uint64_t, 4> m_shadowContentSignatures{};
+        std::array<std::uint64_t, 4> m_shadowInputSignatures{};
         std::array<bool, 4> m_shadowCacheValid{};
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;

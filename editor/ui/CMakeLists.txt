@@ -33,6 +33,9 @@ add_library(PlutoGEEditorUI
     src/PanelManager.cpp
 )
 add_library(PlutoGE::EditorUI ALIAS PlutoGEEditorUI)
+if (WIN32)
+    target_link_libraries(PlutoGEEditorUI PRIVATE psapi)
+endif()
 
 target_include_directories(PlutoGEEditorUI PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

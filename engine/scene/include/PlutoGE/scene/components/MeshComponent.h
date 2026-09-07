@@ -250,6 +250,9 @@ namespace PlutoGE::scene
         bool m_renderCommandCacheDirty = true;
         bool m_hasCachedRenderCommandModel = false;
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
+        std::uint64_t m_cachedOwnerTransformRevision = 0;
+        glm::vec3 m_cachedMeshPositionOffset{0.0f};
+        glm::vec3 m_cachedMeshRotationOffset{0.0f};
         std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
         std::string m_modelAssetId;

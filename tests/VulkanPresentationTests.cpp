@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string_view>
 
 namespace
 {
@@ -20,7 +21,7 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
     using namespace PlutoGE;
     platform::Window window;
@@ -68,8 +69,14 @@ int main()
             if (!renderer.Initialize(device, shaders) ||
                 !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))
                 return 3;
-            for (int frame = 0; frame < 4; ++frame)
+            // Exercise many uncapped frame-slot/image-index reuse cycles,
+            // including resource recreation while presentation is active.
+            const int frameCount = argc > 1 && std::string_view(argv[1]) == "--stress" ? 60000 : 1000;
+            for (int frame = 0; frame < frameCount; ++frame)
             {
+                if (frame != 0 && frame % 100 == 0 && !swapchain->Resize(64, 64))
+                    return 5;
+                window.PollEvents();
                 renderer.Render(glm::mat4(1.0f), {});
                 if (!swapchain->Present(renderer.GetColorTexture()))
                     return 4;
@@ -79,6 +86,7 @@ int main()
             renderer.Render(glm::mat4(1.0f), {});
             if (!swapchain->Present(renderer.GetColorTexture()))
                 return 6;
+            std::cout << "Presented " << frameCount << " uncapped frames with swapchain recreation\n";
         }
         window.Close();
     }

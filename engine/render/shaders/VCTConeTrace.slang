@@ -40,14 +40,9 @@ bool cascadeCoordinate(uint cascade, float3 worldPosition, out float3 coordinate
                  pass.cascadeOriginSize[cascade].w;
     return all(coordinate >= 0.0) && all(coordinate < 1.0);
 }
-uint firstLightingCascade()
-{
-    // Cached GI must not fall back to a camera-dependent lighting estimate.
-    return pass.cacheSettings.x > 0.0 ? min(pass.traceCounts.x, 3u) - 1u : 0u;
-}
 int findCascade(float3 position, out float3 coordinate)
 {
-    for (uint cascade = firstLightingCascade(); cascade < min(pass.traceCounts.x, 3); ++cascade)
+    for (uint cascade = 0; cascade < min(pass.traceCounts.x, 3); ++cascade)
         if (cascadeCoordinate(cascade, position, coordinate)) return int(cascade);
     coordinate = 0.0;
     return -1;
@@ -87,7 +82,7 @@ float voxelSizeAt(float3 position)
     voxelPositiveX.GetDimensions(0, width, height, depth, levels);
     const uint count = clamp(pass.traceCounts.x, 1, 3);
     float size = pass.cascadeOriginSize[count - 1].w / float(width);
-    for (int cascade = int(count) - 1; cascade >= int(firstLightingCascade()); --cascade)
+    for (int cascade = int(count) - 1; cascade >= 0; --cascade)
     {
         float3 coordinate;
         if (cascadeCoordinate(uint(cascade), position, coordinate))
@@ -112,7 +107,7 @@ float4 sampleWorld(float3 position, float3 direction, float diameter, out float 
     voxelSize = outerVoxel;
     float4 result = 0.0;
     float remaining = 1.0;
-    for (uint cascade = firstLightingCascade(); cascade < count && remaining > 0.0; ++cascade)
+    for (uint cascade = 0; cascade < count && remaining > 0.0; ++cascade)
     {
         float3 coordinate;
         if (!cascadeCoordinate(cascade, position, coordinate)) continue;
@@ -136,8 +131,22 @@ float3 traceCone(float3 origin, float3 normal, float3 direction)
     for (uint step = 0; step < 48 && distance < pass.traceSettings.z && total.a < 0.98; ++step)
     {
         const float diameter = max(startVoxel, 2.0 * pass.traceSettings.y * distance);
+        const float3 samplePosition = origin + direction * distance;
+        const float probeSpacing = pass.cacheOriginSize.w / 16.0;
+        if (pass.cacheSettings.x > 0.0 && pass.cacheSettings.y > 0.0 && diameter > probeSpacing)
+        {
+            // A coarse probe is only suitable once the cone footprint spans
+            // its spacing. Reserve a fraction of the remaining path for this
+            // estimate, retaining all radiance/occlusion already traced locally.
+            const float4 cached = cachedIrradiance(samplePosition, direction, pass.cacheOriginSize);
+            const float weight = cached.a * pass.cacheSettings.y *
+                smoothstep(probeSpacing, probeSpacing * 2.0, diameter);
+            total.rgb += (1.0 - total.a) * cached.rgb * weight;
+            total.a += (1.0 - total.a) * weight;
+            if (total.a >= 0.98) break;
+        }
         float sampledVoxelSize;
-        const float4 sample = sampleWorld(origin + direction * distance, direction, diameter, sampledVoxelSize);
+        const float4 sample = sampleWorld(samplePosition, direction, diameter, sampledVoxelSize);
         total.rgb += (1.0 - total.a) * sample.rgb;
         total.a += (1.0 - total.a) * sample.a;
         distance += max(sampledVoxelSize, diameter * 0.5);
@@ -156,7 +165,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
     float3 coordinate;
     const int cascade = findCascade(position, coordinate);
-    if (cascade < 0 && pass.cacheSettings.x == 0.0) return pass.indirectOnly != 0 ? 0.0 : scene;
+    if (cascade < 0) return pass.indirectOnly != 0 ? 0.0 : scene;
     if (pass.debugView == 1 && cascade >= 0)
     {
         const float4 voxel = directionalSample(uint(cascade), coordinate, normal, 0.0);
@@ -167,11 +176,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 up = abs(normal.y) < 0.99 ? float3(0,1,0) : float3(1,0,0);
     const float3 tangent = normalize(cross(up, normal));
     const float3 bitangent = cross(normal, tangent);
-    float4 cached = pass.cacheSettings.y > 0.0 ? cachedIrradiance(position, normal, pass.cacheOriginSize) : float4(0.0);
-    float cacheWeight = cached.a * pass.cacheSettings.y;
-    float3 indirect = cacheWeight < 0.999 ? traceCone(position, normal, normal) : float3(0.0);
+    float3 indirect = traceCone(position, normal, normal);
     const uint coneCount = clamp(pass.traceCounts.z, 1, 6);
-    for (uint cone = 1; cone < coneCount && cacheWeight < 0.999; ++cone)
+    for (uint cone = 1; cone < coneCount; ++cone)
     {
         const float angle = 6.2831853 * float(cone - 1) / float(max(coneCount - 1, 1));
         const float3 direction = normalize(normal * 0.55 +
@@ -183,7 +190,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // already the irradiance term required by a Lambertian receiver. Voxel
     // radiance also contains the source surface's 1 / PI BRDF. Dividing here by
     // PI again would remove roughly two thirds of the energy from every bounce.
-    indirect = lerp(indirect * coverageAt(position) / float(coneCount), cached.rgb, cacheWeight) * pass.traceSettings.x;
+    indirect *= coverageAt(position) * pass.traceSettings.x / float(coneCount);
     const float3 receiverAlbedo = albedoTexture.Sample(uv).rgb;
     const float receiverMetallic = saturate(materialTexture.Sample(uv).r);
     indirect *= receiverAlbedo * (1.0 - receiverMetallic);

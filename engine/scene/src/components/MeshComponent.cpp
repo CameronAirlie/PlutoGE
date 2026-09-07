@@ -1305,7 +1305,6 @@ namespace PlutoGE::scene
         if (m_mesh && m_visible)
         {
             auto entity = GetOwner();
-            const glm::mat4 modelMatrix = entity->GetWorldTransform() * GetMeshOffsetTransform();
 
             AnimationComponent *animationComponent = (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes)
                                                          ? FindAnimationComponent(entity)
@@ -1331,6 +1330,22 @@ namespace PlutoGE::scene
                                                 (!m_hasAnimatedNodeSubmeshes || !animationComponent || animationComponent->GetClipCount() == 0);
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
+            const auto *offsetSource = FindMeshOffsetSource();
+            const auto transformRevision = entity->GetTransformRevision();
+            // Entity revisions include ancestor movement and reparenting. Mesh
+            // offsets may be inherited separately, so check their values too.
+            if (canCacheRenderCommands && !m_renderCommandCacheDirty && m_hasCachedRenderCommandModel &&
+                m_cachedOwnerTransformRevision == transformRevision &&
+                m_cachedMeshPositionOffset == offsetSource->m_meshPositionOffset &&
+                m_cachedMeshRotationOffset == offsetSource->m_meshRotationOffset)
+            {
+                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, true);
+                return;
+            }
+            const glm::mat4 modelMatrix = entity->GetWorldTransform() * GetMeshOffsetTransform();
+            m_cachedOwnerTransformRevision = transformRevision;
+            m_cachedMeshPositionOffset = offsetSource->m_meshPositionOffset;
+            m_cachedMeshRotationOffset = offsetSource->m_meshRotationOffset;
             if (canCacheRenderCommands &&
                 !m_renderCommandCacheDirty &&
                 m_hasCachedRenderCommandModel &&

@@ -42,6 +42,13 @@ namespace PlutoGE::assets
     {
         if (assetId.empty() || m_projectRootDirectory.empty())
             return fallbackReference;
+        if (const auto cached = m_stableIdReferenceCache.find(assetId); cached != m_stableIdReferenceCache.end())
+        {
+            // Validate the sidecar so renames and replaced identities still resolve.
+            if (GetStableAssetId(cached->second) == assetId)
+                return cached->second;
+            m_stableIdReferenceCache.erase(cached);
+        }
         const auto assetRoot = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory;
         std::error_code error;
         for (std::filesystem::recursive_directory_iterator iterator(assetRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
@@ -62,7 +69,11 @@ namespace PlutoGE::assets
                     assetPath.replace_extension();
                     const auto relative = std::filesystem::relative(assetPath, assetRoot, error);
                     if (!error)
-                        return std::string(Project::kProjectAssetScheme) + relative.generic_string();
+                    {
+                        auto reference = std::string(Project::kProjectAssetScheme) + relative.generic_string();
+                        m_stableIdReferenceCache[assetId] = reference;
+                        return reference;
+                    }
                     break;
                 }
             }
@@ -86,15 +97,37 @@ namespace PlutoGE::assets
             manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
                            sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
         }
+        const auto cacheKey = manifestPath.generic_string();
+        const auto modified = std::filesystem::last_write_time(manifestPath, manifestError);
+        if (manifestError)
+        {
+            m_modelResolutionCache.erase(cacheKey);
+            return {};
+        }
+        const auto size = std::filesystem::file_size(manifestPath, manifestError);
+        if (manifestError)
+            return {};
+        if (const auto cached = m_modelResolutionCache.find(cacheKey);
+            cached != m_modelResolutionCache.end() && cached->second.modified == modified && cached->second.size == size)
+        {
+            const auto object = cached->second.objects.find(localId);
+            return object == cached->second.objects.end() ? std::string{} : object->second;
+        }
         ModelAsset model;
         if (!LoadModelAsset(manifestPath.string(), model))
+        {
+            m_modelResolutionCache.erase(cacheKey);
             return {};
+        }
+        ModelResolutionCache cache{modified, size, {}};
+        cache.objects.reserve(model.objects.size());
         for (const auto &object : model.objects)
         {
-            if (object.localId == localId)
-                return object.reference;
+            cache.objects.try_emplace(object.localId, object.reference);
         }
-        return {};
+        const auto &objects = m_modelResolutionCache.insert_or_assign(cacheKey, std::move(cache)).first->second.objects;
+        const auto object = objects.find(localId);
+        return object == objects.end() ? std::string{} : object->second;
     }
 
     namespace
@@ -3041,6 +3074,8 @@ namespace PlutoGE::assets
 
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)
     {
+        m_stableIdReferenceCache.clear();
+        m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
         m_projectRootDirectory = NormalizePath(projectRootDirectory);
         m_projectAssetDirectory = projectAssetDirectory.empty() ? "Assets" : projectAssetDirectory;
@@ -3048,6 +3083,8 @@ namespace PlutoGE::assets
 
     void AssetManager::ClearProjectContext()
     {
+        m_stableIdReferenceCache.clear();
+        m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
         m_projectRootDirectory.clear();
         m_projectAssetDirectory = "Assets";

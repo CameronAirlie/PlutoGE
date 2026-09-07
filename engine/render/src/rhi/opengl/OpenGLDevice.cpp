@@ -1,5 +1,6 @@
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "../HandleRegistry.h"
+#include "../NormalMipmaps.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -534,6 +535,8 @@ namespace PlutoGE::render::rhi::opengl
 
     TextureHandle OpenGLDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.normalMap && (descriptor.depth != 1 || descriptor.format != Format::R8G8B8A8Unorm))
+            throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (descriptor.width == 0 || descriptor.height == 0 || descriptor.depth == 0)
             throw std::invalid_argument("RHI texture dimensions must be non-zero");
         const auto format = ToTextureFormat(descriptor.format);
@@ -561,7 +564,22 @@ namespace PlutoGE::render::rhi::opengl
             else
                 glTexSubImage2D(target, 0, 0, 0, static_cast<GLsizei>(descriptor.width),
                                 static_cast<GLsizei>(descriptor.height), format.format, format.type, data.data());
-            if (mipCount > 1)
+            if (mipCount > 1 && descriptor.normalMap)
+            {
+                const auto mips = BuildNormalMipmaps(data, descriptor.width, descriptor.height, mipCount);
+                std::size_t offset = std::size_t(descriptor.width) * descriptor.height * 4;
+                auto width = descriptor.width;
+                auto height = descriptor.height;
+                for (std::uint32_t level = 1; level < mipCount; ++level)
+                {
+                    width = std::max(1u, width / 2);
+                    height = std::max(1u, height / 2);
+                    glTexSubImage2D(target, level, 0, 0, width, height,
+                                    format.format, format.type, mips.data() + offset);
+                    offset += std::size_t(width) * height * 4;
+                }
+            }
+            else if (mipCount > 1)
                 glGenerateMipmap(target);
         }
         glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -583,6 +601,15 @@ namespace PlutoGE::render::rhi::opengl
         glSamplerParameteri(name, GL_TEXTURE_WRAP_S, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glSamplerParameteri(name, GL_TEXTURE_WRAP_T, descriptor.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glSamplerParameterf(name, GL_TEXTURE_LOD_BIAS, descriptor.mipLodBias);
+        if (descriptor.linearFiltering && descriptor.mipFiltering && descriptor.maxAnisotropy > 1.0f &&
+            (GLAD_GL_VERSION_4_6 || glfwExtensionSupported("GL_ARB_texture_filter_anisotropic") ||
+             glfwExtensionSupported("GL_EXT_texture_filter_anisotropic")))
+        {
+            GLfloat supportedAnisotropy = 1.0f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &supportedAnisotropy);
+            glSamplerParameterf(name, GL_TEXTURE_MAX_ANISOTROPY,
+                                std::clamp(descriptor.maxAnisotropy, 1.0f, supportedAnisotropy));
+        }
         LabelObject(GL_SAMPLER, name, descriptor.debugName);
         return m_impl->samplers.Insert(SamplerResource{name});
     }

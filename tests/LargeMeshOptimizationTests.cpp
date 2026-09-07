@@ -1,10 +1,12 @@
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -25,9 +27,71 @@
         }                                                                                \
     } while (false)
 
-int main()
+int main(int argc, char **argv)
 {
     using namespace PlutoGE;
+
+    // Optional read-only benchmark against an existing project and model identity.
+    if (argc == 4)
+    {
+        assets::AssetManager manager;
+        manager.SetProjectContext(argv[1]);
+        const auto localId = std::stoull(argv[3]);
+        for (const bool cold : {true, false})
+        {
+            const auto start = std::chrono::steady_clock::now();
+            for (int i = 0; i < 1532; ++i)
+            {
+                if (cold) manager.SetProjectContext(argv[1]);
+                assert(!manager.ResolveModelObject(argv[2], localId).empty());
+            }
+            std::cout << (cold ? "Uncached" : "Cached") << " model resolution (1532 objects): "
+                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                      << " seconds" << std::endl;
+        }
+        return 0;
+    }
+
+    const auto resolutionRoot = std::filesystem::temp_directory_path() / "plutoge_model_resolution_test";
+    const auto resolutionAssets = resolutionRoot / "Assets";
+    std::filesystem::create_directories(resolutionAssets);
+    std::ofstream(resolutionAssets / "Model.fbx.plutometa") << "ID\tmodel-id\n";
+    assets::ModelAsset resolutionModel;
+    resolutionModel.objects.push_back({.localId = 42, .reference = "project://first.plutomesh"});
+    const auto manifest = resolutionAssets / "Model.plutomodel";
+    assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
+    assets::AssetManager resolver;
+    resolver.SetProjectContext(resolutionRoot.string());
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
+    assert(resolver.ResolveModelObject("model-id", 99).empty());
+    const auto previousStamp = std::filesystem::last_write_time(manifest);
+    resolutionModel.objects[0].reference = "project://changed.plutomesh";
+    assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
+    std::filesystem::last_write_time(manifest, previousStamp + std::chrono::seconds(2));
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+    std::filesystem::rename(resolutionAssets / "Model.fbx.plutometa", resolutionAssets / "Renamed.fbx.plutometa");
+    std::filesystem::rename(manifest, resolutionAssets / "Renamed.plutomodel");
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+    resolver.ClearProjectContext();
+    assert(resolver.ResolveModelObject("model-id", 42).empty());
+    resolver.SetProjectContext(resolutionRoot.string());
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+    const auto renamedManifest = resolutionAssets / "Renamed.plutomodel";
+    const auto legacyManifest = resolutionAssets / "Imported" / "Renamed" / "Renamed.plutomodel";
+    std::filesystem::create_directories(legacyManifest.parent_path());
+    std::filesystem::rename(renamedManifest, legacyManifest);
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+    resolutionModel.objects[0].reference = "project://canonical.plutomesh";
+    assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
+    std::ofstream(renamedManifest, std::ios::trunc) << "invalid manifest";
+    assert(resolver.ResolveModelObject("model-id", 42).empty());
+    assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
+    assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
+    assert(resolver.ResolveStableAssetId("missing-id", "fallback-a") == "fallback-a");
+    assert(resolver.ResolveStableAssetId("missing-id", "fallback-b") == "fallback-b");
+    std::filesystem::remove_all(resolutionRoot);
 
     scene::RectTransformComponent childRect;
     childRect.SetAnchorPreset(scene::UIAnchorPreset::MiddleCenter);

@@ -1,4 +1,5 @@
 #include "GlassRenderingChecks.h"
+#include "VctWorldCacheRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 
@@ -6,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -24,7 +26,7 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
     using namespace PlutoGE::render;
     try
@@ -84,6 +86,15 @@ int main()
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
+
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")
+        {
+            CheckVctWorldCacheRendering(renderer, [&](rhi::TextureHandle texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
 
         CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
         {
@@ -162,6 +173,25 @@ int main()
         neutralLighting.ambientIntensity = 1.0f;
         neutralLighting.directionalIntensity = 0.0f;
         neutralLighting.shadowsEnabled = true;
+        if (argc > 1 && std::string_view(argv[1]) == "--benchmark")
+        {
+            std::vector<BasicDraw> manyDraws(1532, BasicDraw{.mesh = &cube});
+            double geometryMs = 0.0, shadowMs = 0.0;
+            for (int frame = 0; frame < 120; ++frame)
+            {
+                renderer.Render(projection * view, neutralLighting, manyDraws);
+                if (frame >= 20)
+                {
+                    geometryMs += renderer.GetTimingStats().geometryRecordingMs;
+                    shadowMs += renderer.GetTimingStats().shadowRecordingMs;
+                }
+            }
+            const auto stats = device.GetTimingStats();
+            std::cout << "1532 shared-material draws: geometry CPU " << geometryMs / 100.0
+                      << " ms, shadow CPU " << shadowMs / 100.0 << " ms, uniform bytes "
+                      << stats.uniformBytesUploaded << ", descriptor binds " << stats.descriptorBindCalls << "\n";
+            return 0;
+        }
         renderer.Render(projection * view, neutralLighting, draws);
         const auto &frameStats = renderer.GetFrameStats();
         if (frameStats.geometryDraws != draws.size() || frameStats.geometryInstances != 3 ||
@@ -186,6 +216,31 @@ int main()
             std::cerr << "BasicRenderer did not reuse unchanged directional shadow cascades\n";
             return 14;
         }
+        auto movedDraws = draws;
+        movedDraws[1].model[3][0] += 0.125f;
+        renderer.Render(projection * view, neutralLighting, movedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount)
+        {
+            std::cerr << "Moving a shadow caster did not invalidate cached cascades\n";
+            return 16;
+        }
+        auto movedInstances = std::make_shared<std::vector<glm::mat4>>(*cubeInstances);
+        movedDraws[0].instanceModels = movedInstances;
+        renderer.Render(projection * view, neutralLighting, movedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != 0)
+        {
+            std::cerr << "Equivalent instance transforms invalidated cached shadows\n";
+            return 18;
+        }
+        // Mutate the same allocation: pointer identity is not a content version.
+        (*movedInstances)[0][3][0] += 0.125f;
+        renderer.Render(projection * view, neutralLighting, movedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount)
+        {
+            std::cerr << "Moving a shadow instance did not invalidate cached cascades\n";
+            return 17;
+        }
+        renderer.Render(projection * view, neutralLighting, draws);
         auto movedShadowLighting = neutralLighting;
         movedShadowLighting.shadowMatrices[0][3][0] += 0.25f;
         renderer.Render(projection * view, movedShadowLighting, draws);
@@ -332,6 +387,60 @@ int main()
         {
             std::cerr << "Vulkan post-process chain returned an invalid image\n";
             return 6;
+        }
+
+        // Input-cache hits must notice changes to bounds and caster eligibility,
+        // even when neither transforms nor cascade matrices have changed.
+        std::array boundedDraws{BasicDraw{.mesh = &cube, .shadowBoundsRadius = 0.1f}};
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != 0) return 21;
+        boundedDraws[0].shadowBoundsCenter = glm::vec3(100.0f);
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount) return 22;
+        boundedDraws[0].shadowBoundsCenter = glm::vec3(0.0f);
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount) return 23;
+        boundedDraws[0].castsShadow = false;
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount) return 24;
+        boundedDraws[0].castsShadow = true;
+        renderer.Render(projection * view, neutralLighting, boundedDraws);
+        if (renderer.GetFrameStats().shadowCascadeUpdates != neutralLighting.shadowCascadeCount) return 25;
+
+        // Shared submesh uniforms must reduce uploads without changing pixels.
+        // Different UV scales are an equivalent reference for untextured draws
+        // but force separate material allocations.
+        auto sharedLighting = neutralLighting;
+        sharedLighting.shadowsEnabled = false;
+        std::vector<BasicDraw> sharedDraws(32, BasicDraw{.mesh = &cube});
+        renderer.Render(projection * view, sharedLighting, sharedDraws);
+        const auto sharedUploadBytes = device.GetTimingStats().uniformBytesUploaded;
+        const auto sharedPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        auto separateMaterials = sharedDraws;
+        for (std::size_t index = 0; index < separateMaterials.size(); ++index)
+            separateMaterials[index].uvScale = glm::vec2(float(index + 1));
+        renderer.Render(projection * view, sharedLighting, separateMaterials);
+        const auto separateUploadBytes = device.GetTimingStats().uniformBytesUploaded;
+        if (sharedUploadBytes >= separateUploadBytes ||
+            renderer.GetFrameStats().geometryDraws != sharedDraws.size() ||
+            device.ReadTextureRgba8(renderer.GetColorTexture()) != sharedPixels)
+        {
+            std::cerr << "Shared material uniforms did not preserve rendering and reduce uploads\n";
+            return 19;
+        }
+        // Reuse must not overwrite earlier draws or retain last frame's values.
+        std::array coloredDraws{
+            BasicDraw{.mesh = &cube, .model = (*cubeInstances)[0], .baseColor = {1, 0, 0, 1}},
+            BasicDraw{.mesh = &cube, .model = (*cubeInstances)[1], .baseColor = {0, 0, 1, 1}}};
+        renderer.Render(projection * view, sharedLighting, coloredDraws);
+        const auto coloredPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        std::swap(coloredDraws[0], coloredDraws[1]);
+        renderer.Render(projection * view, sharedLighting, coloredDraws);
+        if (device.ReadTextureRgba8(renderer.GetColorTexture()) != coloredPixels || coloredPixels == sharedPixels)
+        {
+            std::cerr << "Per-draw material or transform data changed with draw order\n";
+            return 20;
         }
 
         // Exercise the editor's persistent readback allocation across a

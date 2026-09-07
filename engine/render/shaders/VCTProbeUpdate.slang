@@ -76,7 +76,10 @@ void computeMain(uint3 id : SV_DispatchThreadID)
                 transmission *= 1.0 - saturate(sample.a);
                 distance += max(voxel, diameter * 0.5);
             }
-            mean += transmission * distance; square += transmission * distance * distance;
+            // Escaping the field (or exhausting the step budget) is not a hit.
+            // Using the last step here invents an occluder at the volume edge.
+            const float missDistance = 1.7320508; // Maximum distance inside the unit cube.
+            mean += transmission * missDistance; square += transmission * missDistance * missDistance;
             first += mean / 5.0; second += square / 5.0;
         }
         uint3 at = cell + uint3(0, 0, face * 16);

@@ -125,6 +125,15 @@ namespace PlutoGE::ui
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
         report << "VSync: " << (frameTimingStats.vSyncEnabled ? "On" : "Off") << "\n";
+        if (frameTimingStats.mainThreadCpuMs >= 0.0f)
+        {
+            report << "Main thread CPU execution: " << frameTimingStats.mainThreadCpuMs << " ms (OS accounting)\n";
+            report << "Main thread cycles: " << frameTimingStats.mainThreadMillionCycles << " million\n";
+            report << "Process memory: " << frameTimingStats.processPrivateMiB << " MiB private, "
+                   << frameTimingStats.processWorkingSetMiB << " MiB resident\n";
+            report << "Process page faults: " << frameTimingStats.processPageFaults << " cumulative (includes soft faults)\n";
+            report << "Debugger attached: " << (frameTimingStats.debuggerAttached ? "Yes" : "No") << "\n";
+        }
         report << "Profiling begin: " << frameTimingStats.profilingBeginMs << " ms\n";
         report << "Editor setup: " << frameTimingStats.editorSetupMs << " ms\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";

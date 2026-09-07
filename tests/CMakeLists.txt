@@ -1,4 +1,8 @@
 add_executable(PlutoGERhiTypesTests RhiTypesTests.cpp)
+add_executable(PlutoGENormalMipmapsTests NormalMipmapsTests.cpp)
+target_include_directories(PlutoGENormalMipmapsTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+target_compile_features(PlutoGENormalMipmapsTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGENormalMipmapsTests COMMAND PlutoGENormalMipmapsTests)
 target_link_libraries(PlutoGERhiTypesTests PRIVATE PlutoGE::Render)
 target_include_directories(PlutoGERhiTypesTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGERhiTypesTests COMMAND PlutoGERhiTypesTests)
@@ -50,6 +54,7 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEVctWorldCacheRenderingTests COMMAND PlutoGEVulkanRhiTests --vct-world-cache)
 
 add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)

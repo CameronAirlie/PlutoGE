@@ -6,10 +6,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <ranges>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace PlutoGE::render
 {
@@ -175,9 +177,10 @@ namespace PlutoGE::render
         void HashVctValue(std::uint64_t &hash, const T &value)
         {
             static_assert(std::is_trivially_copyable_v<T>);
-            for (const auto byte : std::as_bytes(std::span(&value, 1)))
+            const auto *bytes = reinterpret_cast<const unsigned char *>(&value);
+            for (std::size_t index = 0; index < sizeof(T); ++index)
             {
-                hash ^= std::to_integer<std::uint8_t>(byte);
+                hash ^= bytes[index];
                 hash *= 1099511628211ull;
             }
         }
@@ -189,12 +192,17 @@ namespace PlutoGE::render
             HashVctValue(hash, lighting.directionalDirection);
             HashVctValue(hash, lighting.directionalColor);
             HashVctValue(hash, lighting.directionalIntensity);
+            HashVctValue(hash, lighting.shadowsEnabled);
+            HashVctValue(hash, lighting.shadowCasterDistance);
             for (const auto &draw : draws)
             {
                 if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid())
                     continue;
                 HashVctValue(hash, draw.mesh);
                 HashVctValue(hash, draw.model);
+                if (draw.instanceModels)
+                    for (const auto &model : *draw.instanceModels) HashVctValue(hash, model);
+                HashVctValue(hash, draw.castsShadow);
                 HashVctValue(hash, draw.firstIndex);
                 HashVctValue(hash, draw.indexCount);
                 HashVctValue(hash, draw.baseColor);
@@ -203,10 +211,8 @@ namespace PlutoGE::render
                 HashVctValue(hash, draw.alphaCutoff);
                 HashVctValue(hash, draw.emission);
                 HashVctValue(hash, draw.alphaMode);
-                const bool hasBaseColorTexture = static_cast<bool>(draw.baseColorTexture);
-                HashVctValue(hash, hasBaseColorTexture);
-                const bool hasMetallicTexture = static_cast<bool>(draw.metallicTexture);
-                HashVctValue(hash, hasMetallicTexture);
+                HashVctValue(hash, draw.baseColorTexture);
+                HashVctValue(hash, draw.metallicTexture);
                 HashVctValue(hash, draw.metallicChannel);
             }
             return hash;
@@ -214,7 +220,7 @@ namespace PlutoGE::render
 
         std::uint64_t ShadowContentSignature(const glm::mat4 &shadowMatrix,
                                              std::uint32_t resolution,
-                                             std::span<const BasicDraw> draws,
+                                             std::span<const std::uint64_t> drawSignatures,
                                              std::span<const std::size_t> visibleDrawIndices)
         {
             std::uint64_t hash = 14695981039346656037ull;
@@ -223,17 +229,23 @@ namespace PlutoGE::render
             HashVctValue(hash, visibleDrawIndices.size());
             for (const auto drawIndex : visibleDrawIndices)
             {
-                const auto &draw = draws[drawIndex];
-                HashVctValue(hash, draw.mesh);
-                HashVctValue(hash, draw.model);
-                HashVctValue(hash, draw.firstIndex);
-                HashVctValue(hash, draw.indexCount);
-                if (draw.instanceModels && !draw.instanceModels->empty())
-                {
-                    HashVctValue(hash, draw.instanceModels->size());
-                    for (const auto &model : *draw.instanceModels)
-                        HashVctValue(hash, model);
-                }
+                HashVctValue(hash, drawSignatures[drawIndex]);
+            }
+            return hash;
+        }
+
+        std::uint64_t ShadowDrawSignature(const BasicDraw &draw)
+        {
+            std::uint64_t hash = 14695981039346656037ull;
+            HashVctValue(hash, draw.mesh);
+            HashVctValue(hash, draw.model);
+            HashVctValue(hash, draw.firstIndex);
+            HashVctValue(hash, draw.indexCount);
+            if (draw.instanceModels && !draw.instanceModels->empty())
+            {
+                HashVctValue(hash, draw.instanceModels->size());
+                for (const auto &model : *draw.instanceModels)
+                    HashVctValue(hash, model);
             }
             return hash;
         }
@@ -725,7 +737,7 @@ namespace PlutoGE::render
             m_fallbackNormalTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral normal"}, Bytes(std::span(neutralNormal))));
             m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler(
-                                                        {true, true, "BasicRenderer material sampler", true}));
+                                                        {true, true, "BasicRenderer material sampler", true, 0.0f, 16.0f}));
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -877,7 +889,8 @@ namespace PlutoGE::render
                  .repeat = true,
                  .debugName = "BasicRenderer material sampler",
                  .mipFiltering = true,
-                 .mipLodBias = materialMipLodBias}));
+                 .mipLodBias = materialMipLodBias,
+                 .maxAnisotropy = 16.0f}));
             m_fallbackSampler = std::move(materialSampler);
             m_materialMipLodBias = materialMipLodBias;
         }
@@ -1003,7 +1016,8 @@ namespace PlutoGE::render
                                PostProcessDebugView debugView,
                                const rhi::TemporalUpscalerFrame *upscalerFrame,
                                const glm::mat4 *motionViewProjection,
-                               bool submit)
+                               bool submit,
+                               std::span<const BasicDraw> giDraws)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -1099,9 +1113,35 @@ namespace PlutoGE::render
         {
             const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
             m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
+            // Validate scene inputs once before repeating any per-cascade
+            // visibility work. Include bounds and eligibility so previously
+            // invisible casters can enter a cached cascade correctly.
+            m_shadowDrawSignatures.resize(shadowDraws.size());
+            std::uint64_t sceneSignature = 14695981039346656037ull;
+            HashVctValue(sceneSignature, shadowDraws.size());
+            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+            {
+                const auto &draw = shadowDraws[index];
+                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
+                    continue;
+                m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
+                HashVctValue(sceneSignature, index);
+                HashVctValue(sceneSignature, m_shadowDrawSignatures[index]);
+                HashVctValue(sceneSignature, draw.shadowBoundsCenter);
+                HashVctValue(sceneSignature, draw.shadowBoundsRadius);
+            }
             std::array<bool, 4> cascadeNeedsUpdate{};
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
             {
+                auto inputSignature = sceneSignature;
+                HashVctValue(inputSignature, lighting.shadowMatrices[cascade]);
+                HashVctValue(inputSignature, m_shadowResolutions[cascade]);
+                if (m_shadowCacheValid[cascade] && m_shadowInputSignatures[cascade] == inputSignature)
+                {
+                    ++m_frameStats.shadowCascadeCacheHits;
+                    continue;
+                }
+                m_shadowInputSignatures[cascade] = inputSignature;
                 const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
                 auto &indices = m_shadowCascadeDrawIndices[cascade];
                 indices.clear();
@@ -1115,7 +1155,7 @@ namespace PlutoGE::render
                     indices.push_back(drawIndex);
                 }
                 const auto signature = ShadowContentSignature(
-                    lighting.shadowMatrices[cascade], m_shadowResolutions[cascade], shadowDraws, indices);
+                    lighting.shadowMatrices[cascade], m_shadowResolutions[cascade], m_shadowDrawSignatures, indices);
                 cascadeNeedsUpdate[cascade] = !m_shadowCacheValid[cascade] ||
                                               m_shadowContentSignatures[cascade] != signature;
                 if (cascadeNeedsUpdate[cascade])
@@ -1132,12 +1172,13 @@ namespace PlutoGE::render
             }
             for (std::uint32_t cascade = cascadeCount; cascade < m_shadowCascadeDrawIndices.size(); ++cascade)
                 m_shadowCascadeDrawIndices[cascade].clear();
-            while (m_shadowObjectBuffers.size() < shadowDraws.size())
+            const std::size_t shadowUploadCount = m_frameStats.shadowCascadeUpdates ? shadowDraws.size() : 0;
+            while (m_shadowObjectBuffers.size() < shadowUploadCount)
                 m_shadowObjectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                                                                   {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
-            std::vector<std::size_t> shadowInstanceBufferStarts(shadowDraws.size());
+            std::vector<std::size_t> shadowInstanceBufferStarts(shadowUploadCount);
             std::size_t shadowInstanceBufferCursor = 0;
-            for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
+            for (std::size_t drawIndex = 0; drawIndex < shadowUploadCount; ++drawIndex)
             {
                 const auto &draw = shadowDraws[drawIndex];
                 if (m_shadowVisibleInAnyCascade[drawIndex] != 0u)
@@ -1242,8 +1283,13 @@ namespace PlutoGE::render
         const auto geometryRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Geometry");
         commands.BeginRendering(renderingInfo);
-        std::size_t drawIndex = 0;
+        std::size_t objectBufferCursor = 0;
+        BasicObjectParameters previousObjectParameters{};
         std::size_t instanceBufferCursor = 0;
+        std::size_t materialBufferCursor = 0;
+        BasicMaterialParameters previousMaterialParameters{};
+        bool geometryResourcesBound = false;
+        std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
@@ -1251,26 +1297,26 @@ namespace PlutoGE::render
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
             commands.BindPipeline(transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
                                   (instanced ? m_instancedPipeline.Get() : m_pipeline.Get()));
-            commands.BindUniformBuffer(0, m_cameraBuffer.Get());
-            while (!instanced && drawIndex >= m_objectBuffers.size())
-            {
-                m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                                                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
-            }
+            if (transparent || !geometryResourcesBound)
+                commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             if (!instanced)
             {
-                auto &objectBuffer = m_objectBuffers[drawIndex];
                 const BasicObjectParameters objectParameters{
                     draw.model,
                     m_hasPreviousFrame && historyIndex < m_previousModels.size() ? m_previousModels[historyIndex] : draw.model,
                     glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
-                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(objectParameters));
-            }
-            ++drawIndex;
-            if (m_materialBuffers.size() < drawIndex)
-            {
-                m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                                                              {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
+                // Submeshes of one object share transforms and often LOD data.
+                // Compare previous transforms too: motion vectors must retain
+                // each draw's history even when current transforms match.
+                if (objectBufferCursor == 0 ||
+                    std::memcmp(&previousObjectParameters, &objectParameters, sizeof(objectParameters)) != 0)
+                {
+                    if (objectBufferCursor == m_objectBuffers.size())
+                        m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
+                    m_device->UpdateBuffer(m_objectBuffers[objectBufferCursor++].Get(), 0, Bytes(objectParameters));
+                    previousObjectParameters = objectParameters;
+                }
             }
             BasicMaterialParameters materialParameters{
                 draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
@@ -1297,17 +1343,37 @@ namespace PlutoGE::render
                         materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
                         break;
                     }
-            auto &materialBuffer = m_materialBuffers[drawIndex - 1];
-            m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
+            // Sorted submeshes commonly share a material. Keep its uniform
+            // allocation and dynamic offset stable until the values change.
+            // The cache is frame-local, so edits and viewport changes take
+            // effect immediately and in-flight buffers remain immutable.
+            if (materialBufferCursor == 0 ||
+                std::memcmp(&previousMaterialParameters, &materialParameters, sizeof(materialParameters)) != 0)
+            {
+                if (materialBufferCursor == m_materialBuffers.size())
+                    m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                        {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
+                m_device->UpdateBuffer(m_materialBuffers[materialBufferCursor++].Get(), 0, Bytes(materialParameters));
+                previousMaterialParameters = materialParameters;
+            }
+            auto &materialBuffer = m_materialBuffers[materialBufferCursor - 1];
             commands.BindUniformBuffer(8, materialBuffer.Get());
-            commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-            commands.BindTexture(13, m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
-            commands.BindTexture(14, m_shadowDepthTargets[1] ? m_shadowDepthTargets[1].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
-            commands.BindTexture(15, m_shadowDepthTargets[2] ? m_shadowDepthTargets[2].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
-            commands.BindTexture(16, m_shadowDepthTargets[3] ? m_shadowDepthTargets[3].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
+            const std::array materialTextures{
+                draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),
+                draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),
+                draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get()};
+            for (std::uint32_t index = 0; index < materialTextures.size(); ++index)
+                if (transparent || !geometryResourcesBound || previousMaterialTextures[index] != materialTextures[index])
+                    commands.BindTexture(9 + index, materialTextures[index], m_fallbackSampler.Get());
+            // Transparency is interleaved with post-processing, which changes
+            // bindings. Only opaque geometry has uninterrupted resource state.
+            if (transparent || !geometryResourcesBound)
+                for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
+                    commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
+                        ? m_shadowDepthTargets[cascade].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
+            previousMaterialTextures = materialTextures;
+            geometryResourcesBound = true;
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount
@@ -1346,7 +1412,7 @@ namespace PlutoGE::render
                 }
                 else
                 {
-                    commands.BindUniformBuffer(16, m_objectBuffers[drawIndex - 1].Get());
+                    commands.BindUniformBuffer(16, m_objectBuffers[objectBufferCursor - 1].Get());
                     commands.DrawIndexed(drawCount, draw.firstIndex);
                     ++m_frameStats.geometryDraws;
                     ++m_frameStats.geometryInstances;
@@ -1516,7 +1582,7 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::VCTGI)
             {
                 m_outputColor = RenderVctgi(m_outputColor, effect, lighting,
-                                            shadowDraws.empty() ? draws : shadowDraws, commands);
+                                            giDraws.empty() ? draws : giDraws, commands);
                 continue;
             }
             const auto effectIndex = static_cast<std::size_t>(effect.type);
@@ -1758,6 +1824,7 @@ namespace PlutoGE::render
             cascade = {};
         }
         for (auto &texture : m_vctRadianceAtlases) texture.Reset();
+        m_vctShadowDepth.Reset(); m_vctShadowColor.Reset();
         m_vctProbeRadiance.Reset(); m_vctProbeVisibility.Reset();
         m_vctCacheOriginSize = glm::vec4(0.0f); m_vctCacheConfiguration = glm::vec4(0.0f);
         m_vctProbeSchedule.Reset(); m_vctNextCascade = 0; m_vctHistoryOwner = nullptr;
@@ -1781,7 +1848,10 @@ namespace PlutoGE::render
             return source;
         const auto resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
         const bool useCache = effect.parameters[4].x > 0.5f && bool(m_vctProbePipeline);
-        const auto cascadeCount = useCache ? 1u : static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        // Keep local voxel detail when enabling the cache. Reserve the last
+        // slot for its stationary source, adding a slot when capacity permits.
+        const auto requestedCascades = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        const auto cascadeCount = std::min(requestedCascades + (useCache ? 1u : 0u), 3u);
         const glm::vec4 cacheConfiguration(useCache ? 1.0f : 0.0f, effect.parameters[4].y, effect.parameters[0].x, effect.parameters[2].y);
         if (resolution != m_vctResolution || cascadeCount != m_vctCascadeCount ||
             cacheConfiguration != m_vctCacheConfiguration || effect.historyOwner != m_vctHistoryOwner)
@@ -1855,6 +1925,23 @@ namespace PlutoGE::render
                 cascade.pendingSize = size;
                 cascade.nextDraw = 0;
                 cascade.pendingSignature = contentSignature;
+                cascade.pendingDraws.clear();
+                for (const auto &draw : draws)
+                {
+                    if (draw.instanceModels && !draw.instanceModels->empty())
+                        for (const auto &model : *draw.instanceModels)
+                        {
+                            auto instance = draw; instance.model = model;
+                            instance.instanceModels.reset();
+                            // A batch bound is not an individual instance bound.
+                            instance.shadowBoundsRadius = -1.0f;
+                            cascade.pendingDraws.push_back(std::move(instance));
+                        }
+                    else cascade.pendingDraws.push_back(draw);
+                }
+                cascade.pendingLighting = lighting;
+                cascade.nextShadowDraw = 0;
+                cascade.shadowReady = !lighting.shadowsEnabled;
                 cascade.rebuilding = true;
                 for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
             }
@@ -1865,38 +1952,80 @@ namespace PlutoGE::render
             const auto index = (m_vctNextCascade + offset) % cascadeCount;
             if (m_vctCascades[index].rebuilding) { rebuildIndex = index; break; }
         }
-        if (rebuildIndex < cascadeCount)
+        // The injection shadow is fitted to the voxel volume, never the view
+        // frustum. One staging map is retained until this cascade is published.
+        constexpr std::uint32_t giShadowResolution = 1024;
+        if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
+        {
+            auto &cascade = m_vctCascades[rebuildIndex];
+            if (!m_vctShadowDepth)
+            {
+                m_vctShadowDepth = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {giShadowResolution, giShadowResolution, rhi::Format::D32Float,
+                     rhi::TextureUsage::DepthStencilAttachment, "VCT world shadow depth", true}));
+                m_vctShadowColor = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {giShadowResolution, giShadowResolution, rhi::Format::R32Float,
+                     rhi::TextureUsage::ColorAttachment, "VCT world shadow color", true}));
+            }
+            if (cascade.nextShadowDraw == 0)
+            {
+                const float radius = cascade.pendingSize * 0.8660254f;
+                const float casterReach = std::max(cascade.pendingLighting.shadowCasterDistance, radius * 2.0f);
+                const glm::vec3 center = cascade.pendingOrigin + glm::vec3(cascade.pendingSize * 0.5f);
+                const glm::vec3 direction = glm::normalize(cascade.pendingLighting.directionalDirection);
+                const glm::vec3 up = std::abs(direction.y) < 0.99f ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
+                cascade.pendingShadowMatrix = glm::orthoRH_ZO(-radius, radius, -radius, radius,
+                    0.01f, radius * 2.0f + casterReach) *
+                    glm::lookAtRH(center - direction * (radius + casterReach), center, up);
+            }
+            auto &cameraBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+            m_device->UpdateBuffer(cameraBuffer.Get(), 0, Bytes(cascade.pendingShadowMatrix));
+            rhi::RenderingInfo shadow;
+            shadow.colorAttachments = {m_vctShadowColor.Get()}; shadow.depthAttachment = m_vctShadowDepth.Get();
+            shadow.width = shadow.height = giShadowResolution;
+            shadow.clearColor = shadow.clearDepth = cascade.nextShadowDraw == 0;
+            shadow.clearColorValue[0] = shadow.clearDepthValue = 1.0f;
+            commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
+            commands.BindUniformBuffer(0, cameraBuffer.Get());
+            const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
+            const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+            std::size_t submitted = 0;
+            while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget)
+            {
+                const auto &draw = cascade.pendingDraws[cascade.nextShadowDraw++];
+                if (!draw.castsShadow || !draw.mesh || !draw.mesh->IsValid() || draw.surfaceType == 1 || draw.alphaMode == 2 ||
+                    !shadowFrustum.Intersects(draw)) continue;
+                auto &objectBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
+                commands.BindUniformBuffer(16, objectBuffer.Get());
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get()); commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
+                const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
+                if (count) { commands.DrawIndexed(count, draw.firstIndex); ++submitted; }
+            }
+            commands.EndRendering();
+            cascade.shadowReady = cascade.nextShadowDraw == cascade.pendingDraws.size();
+        }
+        if (rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].shadowReady)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
             VctVoxelParameters voxel;
             voxel.volumeOrigin = cascade.pendingOrigin;
             voxel.volumeSize = cascade.pendingSize;
             voxel.resolution = resolution;
-            voxel.hasDirectionalLight = lighting.directionalIntensity > 0.0f ? 1u : 0u;
-            voxel.lightDirectionIntensity = glm::vec4(
-                glm::normalize(lighting.directionalDirection), lighting.directionalIntensity);
-            voxel.lightColor = glm::vec4(lighting.directionalColor, 1.0f);
-            voxel.shadowMatrices = lighting.shadowMatrices;
-            voxel.view = lighting.view;
-            voxel.shadowCascadeSplits = lighting.shadowCascadeSplits;
-            voxel.shadowsEnabled = lighting.shadowsEnabled ? 1u : 0u;
-            voxel.shadowFlipY = lighting.shadowFlipY ? 1u : 0u;
-            voxel.shadowDepthScale = lighting.shadowDepthScale;
-            voxel.shadowDepthBias = lighting.shadowDepthBias;
-            const auto shadowCascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
-            for (std::uint32_t shadowCascade = 0; shadowCascade < shadowCascadeCount; ++shadowCascade)
-            {
-                const float scale = std::pow(
-                    std::clamp(lighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
-                    static_cast<float>(shadowCascade));
-                const float cascadeResolution = std::max(
-                    1.0f, std::round(static_cast<float>(lighting.shadowResolution) * scale));
-                voxel.shadowInverseResolutions[shadowCascade] = glm::vec4(1.0f / cascadeResolution);
-            }
-            voxel.shadowCascadeParameters = glm::vec4(
-                static_cast<float>(shadowCascadeCount),
-                std::max(lighting.shadowCascadeBlendDistance, 0.0f),
-                std::max(lighting.shadowSoftness, 0.0f), 0.0f);
+            const auto &injectionLight = cascade.pendingLighting;
+            voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
+            voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
+            voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
+            voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
+            voxel.view = glm::mat4(1.0f);
+            voxel.shadowCascadeSplits = glm::vec4(1e10f);
+            voxel.shadowsEnabled = injectionLight.shadowsEnabled ? 1u : 0u;
+            voxel.shadowFlipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+            voxel.shadowDepthScale = m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f;
+            voxel.shadowDepthBias = m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f;
+            voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / giShadowResolution));
+            voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
             auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
             m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
             rhi::RenderingInfo raster;
@@ -1909,14 +2038,15 @@ namespace PlutoGE::render
                 commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
             const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
             std::size_t submitted = 0;
-            while (cascade.nextDraw < draws.size() && submitted < budget)
+            while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget)
             {
-                const auto &draw = draws[cascade.nextDraw++];
+                const auto &draw = cascade.pendingDraws[cascade.nextDraw++];
                 const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
                                                      cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
                 if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
-                    glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
-                        draw.shadowBoundsRadius * draw.shadowBoundsRadius)
+                    (draw.shadowBoundsRadius >= 0.0f &&
+                     glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
+                        draw.shadowBoundsRadius * draw.shadowBoundsRadius))
                     continue;
                 const auto objectBufferIndex = m_vctBufferCursor++;
                 auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
@@ -1937,8 +2067,7 @@ namespace PlutoGE::render
                 const auto fallbackShadow = m_fallbackDataTexture.Get();
                 for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
                     commands.BindTexture(10 + shadowCascade,
-                        m_shadowDepthTargets[shadowCascade]
-                            ? m_shadowDepthTargets[shadowCascade].Get() : fallbackShadow,
+                        m_vctShadowDepth ? m_vctShadowDepth.Get() : fallbackShadow,
                         m_shadowSampler.Get());
                 commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                 commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
@@ -1949,7 +2078,7 @@ namespace PlutoGE::render
             }
             commands.EndRendering();
             commands.ShaderMemoryBarrier();
-            if (cascade.nextDraw >= draws.size())
+            if (cascade.nextDraw >= cascade.pendingDraws.size())
             {
                 const VctResolveParameters resolve{
                     resolution, static_cast<std::uint32_t>(rebuildIndex) * resolution, {}};
@@ -1987,6 +2116,8 @@ namespace PlutoGE::render
                 cascade.size = cascade.pendingSize;
                 cascade.lastUpdateFrame = m_frameIndex;
                 cascade.rebuilding = false; cascade.valid = true;
+                cascade.pendingDraws.clear();
+                m_vctHistoryValid = false;
                 m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
                 if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
             }

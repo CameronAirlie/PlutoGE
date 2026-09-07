@@ -57,6 +57,13 @@ stage before output-resolution post-processing and replaces the built-in TAA
 only after a successful evaluation. Resolution changes explicitly reset
 temporal history.
 
+The motion buffer stores `(currentNdc - previousNdc) * 0.5` with Y pointing
+up. The Vulkan DLSS adapter applies a `{-1, +1}` scale to obtain
+previous-minus-current motion in Y-down texture coordinates. Passing the
+buffer unchanged reverses horizontal history reprojection and causes trails
+during motion. FSR2 uses the same sign conversion, multiplied by render size
+because its API expects pixel units.
+
 ## Future features
 
 The device-owned Streamline lifetime, feature-requirement negotiation, frame

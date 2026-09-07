@@ -226,6 +226,8 @@ namespace PlutoGE::render::rhi
         bool storage = false;
         // Zero requests the full chain for sampled textures; one disables mips.
         std::uint32_t mipLevels = 0;
+        // Linear RGBA8 tangent normals on repeating material textures.
+        bool normalMap = false;
     };
 
     struct GraphicsPipelineDescriptor
@@ -279,5 +281,7 @@ namespace PlutoGE::render::rhi
         std::string debugName;
         bool mipFiltering = false;
         float mipLodBias = 0.0f;
+        // Requested filtering ratio; backends clamp to supported limits.
+        float maxAnisotropy = 1.0f;
     };
 }

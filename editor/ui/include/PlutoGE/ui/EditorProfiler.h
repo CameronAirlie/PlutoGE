@@ -15,6 +15,12 @@ namespace PlutoGE::ui
 {
     struct EditorFrameTimingStats
     {
+        float mainThreadCpuMs = -1.0f;
+        double mainThreadMillionCycles = 0.0;
+        double processPrivateMiB = 0.0;
+        double processWorkingSetMiB = 0.0;
+        std::uint32_t processPageFaults = 0;
+        bool debuggerAttached = false;
         float profilingBeginMs = 0.0f;
         float editorSetupMs = 0.0f;
         float sceneUpdateMs = 0.0f;

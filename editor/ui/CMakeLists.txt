@@ -2,6 +2,7 @@ add_library(PlutoGEEditorUI
     src/EditorShell.cpp
     src/SceneRecovery.cpp
     src/SceneRecoveryUI.cpp
+    src/ProjectValidationUI.cpp
     src/PlayModeChanges.cpp
     src/PlayModeChangesUI.cpp
     src/ViewportBookmarks.cpp

@@ -170,3 +170,48 @@ by scene snapshots. Existing dedicated foliage commands handle instance data.
 History retains up to 80 entries with a 256 MiB snapshot/command budget, retaining
 at least the newest entry; baseline/savepoint snapshots add memory outside that
 budget. Undo/redo is unavailable during play or baking.
+
+## Project validation
+
+Open **Edit > Project Validation...**, then choose **Validate Project**. The panel
+checks saved assets under the project's Assets directory and the current scene's
+serialized state, including unsaved edits. The current scene replaces its saved
+version for that run. Results show severity, a stable diagnostic code, owning
+asset, entity ID, and line where available. **Show warnings** filters warnings.
+
+**Show Asset** reveals the owner in the Content Browser. **Select Entity** selects
+it in the current scene or opens the owning scene/prefab through the normal
+unsaved-changes prompt. Results are snapshots: rerun after edits, scene switches,
+imports, or script builds. Navigation from a changed untitled scene requires a
+fresh validation so IDs cannot point into an unrelated untitled scene.
+
+The initial checks cover:
+
+- Missing startup scene references, configured script assemblies, and explicit
+  project/engine asset references. Built-in assets are recognized without files.
+  Non-scene dependencies use the M04 extractor, including relative material paths.
+- Missing script classes when the current assembly's class catalogue is available.
+  Empty script assignments and unavailable catalogues are warnings. Build/reload
+  scripts before relying on class diagnostics; script source code is not compiled
+  by an on-demand validation run.
+- Scenes without an enabled camera on an active parent hierarchy. This is a
+  warning because gameplay can create cameras dynamically; prefabs are exempt.
+- Invalid collider shape, center, dimensions, capsule proportions, zero/non-finite
+  hierarchy scale, or missing enabled terrain/mesh source components.
+- Invalid scene headers, malformed records, missing component owners, duplicate
+  entity IDs, missing parents, cycles, and incomplete scans.
+
+**Build Project** and **Build and Run Project** validate saved project data after
+saving and building scripts, before rebuilding/copying the runtime. Errors stop
+export and open the panel. Warnings permit export. All saved assets are checked,
+including unused assets. Fix errors and build again; there is no stale-result
+bypass. Other callers of the low-level export API must invoke validation themselves.
+
+Validation is read-only and does not instantiate scenes, start scripts, write
+metadata, or repair files. It runs synchronously on demand, so large projects can
+pause the editor during the scan. Scene files are limited to 256 MiB and individual
+scene records to 1 MiB; exceeding either produces an export-blocking incomplete-scan
+diagnostic. The checks do not prove runtime correctness, validate every component
+property, inspect mesh collision geometry, or resolve computed script references.
+Legacy external/relative scene paths outside explicit asset-reference syntax are
+not checked. A clean report means these available checks found no issues.

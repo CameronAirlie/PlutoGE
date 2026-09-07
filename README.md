@@ -36,6 +36,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Named viewport bookmarks with project-local persistence
 - Content-browser asset reference lookup with background refresh and owner navigation
 - Rotating scene recovery backups with per-project autosave settings
+- Project validation with entity/asset navigation and export-blocking errors
 - Grouped undo/redo for serialized inspector and scene-setting edits
 - Undoable ground placement with surface alignment and seeded yaw/scale variation
 - Dedicated material, mesh, particle-system, shader-graph, animation-clip, and animation-graph editors

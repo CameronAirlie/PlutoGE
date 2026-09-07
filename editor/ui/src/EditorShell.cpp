@@ -2611,6 +2611,14 @@ namespace PlutoGE::ui
             }
         }
 
+        if (!RunProjectValidation(false))
+        {
+            m_showProjectValidation = true;
+            m_statusMessage = "Export stopped: resolve errors in Project Validation and build again.";
+            Log(ConsoleSeverity::Error, m_statusMessage);
+            return false;
+        }
+
         const auto runtimeExecutablePath = assets::FindRuntimeExecutable(GetProcessDirectory());
         if (runtimeExecutablePath.empty())
         {
@@ -3633,6 +3641,8 @@ namespace PlutoGE::ui
                 {
                     if (ImGui::MenuItem("Autosave and Recovery...", nullptr, false, m_project != nullptr))
                         m_showSceneRecovery = true;
+                    if (ImGui::MenuItem("Project Validation...", nullptr, false, m_project != nullptr))
+                        m_showProjectValidation = true;
                     if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
                                         GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
                         m_showGroundPlacement = true;
@@ -4095,6 +4105,7 @@ namespace PlutoGE::ui
                 FlushUntrackedSceneEdit();
             UpdateSceneRecovery();
             RenderSceneRecovery();
+            RenderProjectValidation([&](const std::string &reference) { contentBrowserPanel->RevealAsset(reference); });
             m_panelManager.EndPanelUpdate();
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();

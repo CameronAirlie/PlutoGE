@@ -30,7 +30,7 @@ that a milestone is complete.
 | M03 | Drop selection onto ground | Small | Implemented; automated checks passed |
 | M04 | Find asset references | Small–medium | Implemented; automated checks passed |
 | M05 | Autosave and recovery | Small–medium | Implemented; automated checks passed |
-| M06 | Project validation panel | Medium | Planned |
+| M06 | Project validation panel | Medium | Implemented; automated checks passed |
 | M07 | Gameplay debug drawing | Medium | Planned |
 | M08 | Camera rigs | Medium | Planned |
 | M09 | Surface response assets | Medium | Planned |
@@ -182,13 +182,25 @@ for format coverage and the limits of literal reference scanning.
   transfers, malformed snapshots, component/name/transform roundtrips, and commands.
   Final GCC/Windows editor build passed; all seven focused suites passed (29.76
   seconds). `git diff --check` passed. Interactive checks remain pending.
-  M06 project validation is next; M06–M14 remain planned.
+  At that point M06–M14 remained planned.
+- 2026-09-07: Implemented M06 reusable read-only validation in Assets, with stable
+  diagnostic codes, severities, owner references, entity IDs, and source lines.
+  Added an editor panel with warning filtering and entity/content-browser
+  navigation; shared asset reveal logic with M04. Saved-data validation now gates
+  editor export after script builds. On-demand checks substitute the current
+  serialized scene for its saved copy without loading scenes or running scripts.
+  Regression checks cover asset/script references, unavailable class catalogues,
+  active camera hierarchies, invalid colliders including float overflow/underflow,
+  malformed records, cyclic hierarchies, current-scene substitution and read-only
+  behavior. Final GCC/Windows editor build and all eight focused suites passed
+  (6.77 seconds); `git diff --check` passed. Interactive UI/export and Linux checks
+  remain pending. M07 gameplay debug drawing is next; M07–M14 remain planned.
 
 Reproduce the focused checks from the repository root:
 
 ```powershell
-cmake --build out/build/gcc --target PlutoGEEditor PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
-ctest --test-dir out/build/gcc -R '^PlutoGE(SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
+cmake --build out/build/gcc --target PlutoGEEditor PlutoGEProjectValidationTests PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
+ctest --test-dir out/build/gcc -R '^PlutoGE(ProjectValidation|SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
 ```
 
 The build uses one compile job because the first parallel GCC build exhausted

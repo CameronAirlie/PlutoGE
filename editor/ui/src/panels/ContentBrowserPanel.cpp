@@ -2045,6 +2045,30 @@ void main() {
             std::move(placementMeshReference), parent, meshObject->reference);
     }
 
+    std::string ContentBrowserPanel::RevealAsset(std::string reference)
+    {
+        auto *project = EditorShell::GetInstance().GetProject();
+        if (!project) return reference;
+        const auto path = project->ResolveAssetReference(reference);
+        if (path.extension() == ".plutomodel")
+        {
+            assets::ModelAsset model;
+            if (assets::LoadModelAsset(path.string(), model) && !model.sourceReference.empty()) reference = model.sourceReference;
+        }
+        project->RefreshAssetRegistry();
+        m_filterBuffer.fill(0);
+        m_openModelReference.clear();
+        m_selectedFolder = project->ResolveAssetReference(reference).parent_path()
+            .lexically_relative(project->GetAssetDirectoryPath()).generic_string();
+        if (m_selectedFolder == ".") m_selectedFolder.clear();
+        const auto &entries = project->GetManifest().assetEntries;
+        const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) { return entry.reference == reference; });
+        m_selectedAssetIndex = found == entries.end() ? -1 : static_cast<int>(found - entries.begin());
+        m_assetCacheDirty = true;
+        SetOpen(true);
+        return reference;
+    }
+
     void ContentBrowserPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
@@ -2058,26 +2082,7 @@ void main() {
 
         if (m_referenceSearch)
         {
-            const auto reveal = [&](std::string reference) {
-                const auto path = project->ResolveAssetReference(reference);
-                if (path.extension() == ".plutomodel")
-                {
-                    assets::ModelAsset model;
-                    if (assets::LoadModelAsset(path.string(), model) && !model.sourceReference.empty())
-                        reference = model.sourceReference;
-                }
-                project->RefreshAssetRegistry();
-                m_filterBuffer.fill(0);
-                m_openModelReference.clear();
-                m_selectedFolder = project->ResolveAssetReference(reference).parent_path()
-                    .lexically_relative(project->GetAssetDirectoryPath()).generic_string();
-                if (m_selectedFolder == ".") m_selectedFolder.clear();
-                const auto &entries = project->GetManifest().assetEntries;
-                const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) { return entry.reference == reference; });
-                m_selectedAssetIndex = found == entries.end() ? -1 : static_cast<int>(found - entries.begin());
-                m_assetCacheDirty = true;
-                return reference;
-            };
+            const auto reveal = [&](std::string reference) { return RevealAsset(std::move(reference)); };
             m_referenceSearch->Render(project->GetAssetDirectoryPath(), reveal, [&](const std::string &reference) {
                 const auto owner = reveal(reference);
                 OpenAsset(editorShell, *project, assets::ProjectAssetEntry{owner, 0, assets::Project::GetAssetTypeForReference(owner)});

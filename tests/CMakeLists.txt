@@ -192,6 +192,10 @@ if (TARGET OpenAL)
 endif()
 
 # Editor data tests run without initializing a window or graphics device.
+add_executable(PlutoGEProjectValidationTests ProjectValidationTests.cpp
+    ../engine/assets/src/ProjectValidation.cpp ../engine/assets/src/AssetReferences.cpp)
+target_include_directories(PlutoGEProjectValidationTests PRIVATE ../engine/assets/include)
+add_test(NAME PlutoGEProjectValidationTests COMMAND PlutoGEProjectValidationTests)
 add_executable(PlutoGESceneRecoveryTests SceneRecoveryTests.cpp ../editor/ui/src/SceneRecovery.cpp)
 target_include_directories(PlutoGESceneRecoveryTests PRIVATE ../editor/ui/include)
 add_test(NAME PlutoGESceneRecoveryTests COMMAND PlutoGESceneRecoveryTests)

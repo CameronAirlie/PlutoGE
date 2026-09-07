@@ -13,6 +13,7 @@
 #include "PlutoGE/ui/GroundPlacement.h"
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/ui/SceneRecovery.h"
+#include "PlutoGE/assets/ProjectValidation.h"
 #include <chrono>
 
 #include <algorithm>
@@ -299,6 +300,8 @@ namespace PlutoGE::ui
         void SynchronizeHistoryState();
         void UpdateSceneRecovery();
         void RenderSceneRecovery();
+        bool RunProjectValidation(bool includeCurrentScene);
+        void RenderProjectValidation(const std::function<void(const std::string &)> &reveal);
         void SaveRecoveryBackup();
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime();
@@ -340,6 +343,13 @@ namespace PlutoGE::ui
         std::filesystem::path m_recoveryDirectory;
         RecoverySettings m_recoverySettings;
         bool m_showSceneRecovery = false;
+        bool m_showProjectValidation = false;
+        bool m_validationHasRun = false;
+        bool m_validationWarnings = true;
+        assets::ProjectValidationResult m_validationResult;
+        std::filesystem::path m_validationProject;
+        std::string m_validationCurrentOwner;
+        std::string m_validationCurrentState;
         bool m_recoveredSceneNeedsSaveAs = false;
         std::string m_recoveryError;
         std::vector<RecoveryBackup> m_recoveryBackups;

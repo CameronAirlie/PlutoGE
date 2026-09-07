@@ -625,6 +625,11 @@ namespace PlutoGE::scene
         return SaveSceneToStream(scene, output, errorMessage);
     }
 
+    std::string SceneSerializer::GetComponentTypeName(const Component &component)
+    {
+        return ResolveComponentTypeName(component);
+    }
+
     bool SceneSerializer::SaveToString(const Scene &scene, std::string &outputText, std::string *errorMessage)
     {
         std::ostringstream output;

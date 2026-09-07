@@ -32,6 +32,9 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Perspective and orthographic editor cameras
 - Entity selection, parenting, copy/paste, duplication, deletion, and undo/redo
 - Play-in-editor with configurable simulation speed
+- Selectively keep serialized play-mode changes as one undoable edit
+- Named viewport bookmarks with project-local persistence
+- Undoable ground placement with surface alignment and seeded yaw/scale variation
 - Dedicated material, mesh, particle-system, shader-graph, animation-clip, and animation-graph editors
 - Scene baking with fast, balanced, final, and custom quality settings
 - Project settings for startup scene, script assembly, window size/title, VSync, editor camera, and post-processing
@@ -502,6 +505,8 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 
 ## Further documentation
 
+- [Feature milestones](docs/FEATURE_MILESTONES.md)
+- [Editor iteration tools](docs/EDITOR_WORKFLOWS.md)
 - [Foliage, spatial cells, and tree collision](docs/FOLIAGE.md)
 - [C# scripting specification](docs/CSHARP_SCRIPTING.md)
 - [RmlUi project quick start](docs/RMLUI_QUICKSTART.md)

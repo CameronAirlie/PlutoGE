@@ -275,6 +275,7 @@ namespace PlutoGE::scene
 
         component->m_entity = this;
         m_componentBuckets[typeID].push_back(component);
+        ++m_componentRevision;
     }
 
     void Entity::DetachComponent(Component *component)
@@ -288,6 +289,7 @@ namespace PlutoGE::scene
         auto &bucket = m_componentBuckets[typeID];
         bucket.erase(std::remove(bucket.begin(), bucket.end(), component), bucket.end());
         component->m_entity = nullptr;
+        ++m_componentRevision;
     }
 
     Component *Entity::AddComponent(Component *component)

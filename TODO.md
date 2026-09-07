@@ -1,3 +1,5 @@
+Feature roadmap: [Feature milestones](docs/FEATURE_MILESTONES.md).
+
 1. [x] - Discrete mesh, material and animation assets
     a. [x] - Imported gltf/fbx creates meshes, animations, materials, textures
     b. [x] - each mesh has its own lod settings (source of truth for mesh lod)

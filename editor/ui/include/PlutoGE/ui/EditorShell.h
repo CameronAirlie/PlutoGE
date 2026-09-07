@@ -8,8 +8,12 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/ui/EditorProfiler.h"
 #include "PlutoGE/ui/PanelManager.h"
+#include "PlutoGE/ui/PlayModeChanges.h"
+#include "PlutoGE/ui/ViewportBookmarks.h"
+#include "PlutoGE/ui/GroundPlacement.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -300,7 +304,11 @@ namespace PlutoGE::ui
         void PushSceneHistoryEntry(SceneHistoryEntry entry);
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime();
-        bool StopEditorRuntime();
+        bool StopEditorRuntime(bool reviewChanges = false);
+        void RenderPlayModeChanges();
+        bool ApplyPlayModeChanges();
+        void RenderViewportBookmarks();
+        void RenderGroundPlacement();
         void HandleRuntimeSceneLoadRequest();
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
@@ -347,6 +355,23 @@ namespace PlutoGE::ui
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
+        bool m_runtimeSceneReplaced = false;
+        bool m_openPlayModeChanges = false;
+        std::string m_playModeChangesError;
+        PlayModeChanges::Snapshot m_playModeBaseline;
+        std::vector<PlayModeChanges::Change> m_playModeChanges;
+        std::vector<SceneHistoryEntry> m_prePlayUndoStack;
+        std::vector<SceneHistoryEntry> m_prePlayRedoStack;
+        bool m_showViewportBookmarks = false;
+        bool m_bookmarksLoaded = false;
+        std::filesystem::path m_bookmarkPath;
+        std::vector<ViewportBookmark> m_viewportBookmarks;
+        std::array<char, 129> m_bookmarkName{};
+        int m_selectedBookmark = -1;
+        std::string m_bookmarkError;
+        bool m_showGroundPlacement = false;
+        GroundPlacementOptions m_groundPlacementOptions;
+        std::string m_groundPlacementError;
         bool m_openMaterialEditorRequested = false;
         bool m_openMeshEditorRequested = false;
         bool m_openShaderGraphEditorRequested = false;

@@ -88,6 +88,8 @@ namespace PlutoGE::scene
         bool RemoveComponent(Component *component);
 
         const std::vector<std::vector<Component *>> &GetComponentBuckets() const { return m_componentBuckets; }
+        // Changes whenever components are attached or detached; not persisted.
+        uint64_t GetComponentRevision() const { return m_componentRevision; }
 
         template <typename T>
         T *AddComponent(T *component)
@@ -246,6 +248,7 @@ namespace PlutoGE::scene
         std::vector<std::string> m_tags; // Optional tags for categorizing entities (e.g., "Player", "Enemy", "Collectible")
         std::vector<std::unique_ptr<Component>> m_componentStorage;
         std::vector<std::vector<Component *>> m_componentBuckets;
+        uint64_t m_componentRevision = 0;
         std::string m_prefabSource;
         EntityID m_prefabEntityId = 0;
         bool m_isPrefabInstanceRoot = false;

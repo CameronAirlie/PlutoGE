@@ -185,6 +185,45 @@ if (TARGET OpenAL)
     )
 endif()
 
+# Editor data tests run without initializing a window or graphics device.
+add_executable(PlutoGEViewportBookmarksTests
+    ViewportBookmarksTests.cpp
+    ../editor/ui/src/ViewportBookmarks.cpp)
+target_include_directories(PlutoGEViewportBookmarksTests PRIVATE ../editor/ui/include)
+target_link_libraries(PlutoGEViewportBookmarksTests PRIVATE glm::glm)
+add_test(NAME PlutoGEViewportBookmarksTests COMMAND PlutoGEViewportBookmarksTests)
+
+add_executable(PlutoGEPlayModeChangesTests
+    PlayModeChangesTests.cpp
+    ../editor/ui/src/PlayModeChanges.cpp)
+target_include_directories(PlutoGEPlayModeChangesTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEPlayModeChangesTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGEPlayModeChangesTests PRIVATE PlutoGE::Scene)
+endif()
+add_test(NAME PlutoGEPlayModeChangesTests COMMAND PlutoGEPlayModeChangesTests)
+add_executable(PlutoGEGroundPlacementTests
+    GroundPlacementTests.cpp
+    ../editor/ui/src/GroundPlacement.cpp)
+target_include_directories(PlutoGEGroundPlacementTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEGroundPlacementTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGEGroundPlacementTests PRIVATE PlutoGE::Scene)
+endif()
+add_test(NAME PlutoGEGroundPlacementTests COMMAND PlutoGEGroundPlacementTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEGroundPlacementTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEGroundPlacementTests>/$<TARGET_FILE_NAME:OpenAL>)
+    add_custom_command(TARGET PlutoGEPlayModeChangesTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEPlayModeChangesTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+
 # Collider sizing is independent of the renderer/engine initialization.
 add_executable(PlutoGEColliderCcdTests
     ColliderCcdTests.cpp

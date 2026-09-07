@@ -8,11 +8,15 @@
 namespace PlutoGE::scene
 {
     class Scene;
+    class Component;
 
     class SceneSerializer
     {
     public:
         using LoadTraceCallback = std::function<void(std::string_view)>;
+
+        // Stable serialized type name, shared by scene tools and prefab property paths.
+        static std::string GetComponentTypeName(const Component &component);
 
         static bool Save(const Scene &scene, const std::string &filePath, std::string *errorMessage = nullptr);
         static std::unique_ptr<Scene> Load(const std::string &filePath, std::string *errorMessage = nullptr);

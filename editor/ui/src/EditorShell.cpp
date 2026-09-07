@@ -946,6 +946,7 @@ namespace PlutoGE::ui
 
     void EditorShell::ApplyProjectContext()
     {
+        m_bookmarkPath.clear();
         auto &assetManager = m_engine.GetAssetManager();
         if (m_project)
         {
@@ -1568,6 +1569,14 @@ namespace PlutoGE::ui
             return false;
         }
 
+        EndSceneEdit();
+        m_playModeBaseline = PlayModeChanges::Capture(*m_scene);
+        m_playModeChanges.clear();
+        m_runtimeSceneReplaced = false;
+        m_prePlayUndoStack = std::move(m_undoStack);
+        m_prePlayRedoStack = std::move(m_redoStack);
+        m_undoStack.clear();
+        m_redoStack.clear();
         m_runtimeSceneWasDirty = m_sceneDirty;
         m_runtimeSceneSnapshotPath = m_scene ? m_scene->GetFilePath() : std::string{};
         m_engine.GetWindow().SetCursorLockOverride(false);
@@ -1576,13 +1585,18 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::StopEditorRuntime()
+    bool EditorShell::StopEditorRuntime(bool reviewChanges)
     {
         if (!m_engine.IsRuntimeRunning())
         {
             return true;
         }
 
+        // Capture before OnDestroy and physics teardown can change the values.
+        m_playModeChanges.clear();
+        if (reviewChanges && !m_runtimeSceneReplaced && m_scene)
+            m_playModeChanges = PlayModeChanges::Compare(m_playModeBaseline, PlayModeChanges::Capture(*m_scene));
+        CancelSceneEdit();
         m_engine.StopRuntime();
         render::RmlUiRuntime::Get().ResetRuntimeState();
         auto &window = m_engine.GetWindow();
@@ -1608,6 +1622,12 @@ namespace PlutoGE::ui
         }
 
         m_runtimeSceneSnapshotPath.clear();
+
+        m_undoStack = std::move(m_prePlayUndoStack);
+        m_redoStack = std::move(m_prePlayRedoStack);
+        m_playModeBaseline.clear();
+        m_openPlayModeChanges = reviewChanges && !m_runtimeSceneReplaced;
+        m_playModeChangesError.clear();
 
         m_sceneDirty = m_runtimeSceneWasDirty;
         UpdateWindowTitle();
@@ -1920,7 +1940,7 @@ namespace PlutoGE::ui
     void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel)
     {
         const ImGuiIO &io = ImGui::GetIO();
-        if (io.WantTextInput)
+        if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
         }
@@ -2051,6 +2071,8 @@ namespace PlutoGE::ui
 
     void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene)
     {
+        if (m_engine.IsRuntimeRunning())
+            m_runtimeSceneReplaced = true;
         if (m_activeBakeTask)
         {
             m_activeBakeTask->Cancel();
@@ -2292,6 +2314,10 @@ namespace PlutoGE::ui
             return false;
         }
 
+        // Finish the editor play session while its original asset context is active.
+        if (!StopEditorRuntime())
+            return false;
+
         if (loadedProject->GetManifest().graphicsApi != m_engine.GetConfig().graphicsApi)
         {
             // Switching a GLFW window between OpenGL and no-client-API requires
@@ -2305,6 +2331,8 @@ namespace PlutoGE::ui
         }
 
         m_project = std::move(loadedProject);
+        m_undoStack.clear();
+        m_redoStack.clear();
         ApplyProjectContext();
         m_project->RefreshAssetRegistry();
 
@@ -2379,6 +2407,8 @@ namespace PlutoGE::ui
 
     bool EditorShell::CreateProjectAtPath(const std::filesystem::path &manifestPath)
     {
+        if (!StopEditorRuntime())
+            return false;
         std::string errorMessage;
         std::string projectName = manifestPath.stem().string();
         if (projectName.empty())
@@ -3535,6 +3565,10 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("Edit"))
                 {
+                    if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
+                                        GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
+                        m_showGroundPlacement = true;
+                    ImGui::Separator();
                     ImGui::BeginDisabled(!CanUndo());
                     if (ImGui::MenuItem("Undo", "Ctrl+Z"))
                     {
@@ -3552,6 +3586,7 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("View"))
                 {
+                    ImGui::MenuItem("Viewport Bookmarks", nullptr, &m_showViewportBookmarks);
                     if (ImGui::MenuItem("Editor Viewport", NULL, viewportPanel->IsOpen()))
                     {
                         viewportPanel->SetOpen(!viewportPanel->IsOpen());
@@ -3629,6 +3664,14 @@ namespace PlutoGE::ui
                         window.SetScriptInputEnabled(false);
                         window.SetCursorLocked(false);
                     }
+                    if (ImGui::MenuItem("Stop and Keep Changes...", nullptr, false,
+                                        m_engine.IsRuntimeRunning() && !m_runtimeSceneReplaced))
+                    {
+                        StopEditorRuntime(true);
+                        forceEditorCursorVisible = false;
+                    }
+                    if (m_runtimeSceneReplaced)
+                        ImGui::TextDisabled("Keeping changes is unavailable after replacing the play scene.");
                     ImGui::EndDisabled();
 
                     ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
@@ -3674,6 +3717,10 @@ namespace PlutoGE::ui
                 }
                 ImGui::EndMainMenuBar();
             }
+
+            RenderPlayModeChanges();
+            RenderViewportBookmarks();
+            RenderGroundPlacement();
 
             if (shouldOpenProjectSettingsPopup)
             {

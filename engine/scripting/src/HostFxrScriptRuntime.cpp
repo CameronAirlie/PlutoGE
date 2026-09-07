@@ -1,3 +1,4 @@
+#include <cstring>
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 
@@ -125,6 +126,7 @@ namespace PlutoGE::scripting
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
 
@@ -3035,6 +3037,35 @@ namespace PlutoGE::scripting
             return decal ? decal->GetID() : 0;
         }
 
+        struct NativeSurfaceResponse
+        {
+            float friction;
+            char sound[4096], particles[4096], decal[4096];
+        };
+        static_assert(sizeof(NativeSurfaceResponse) == 12292);
+        int ResolveSurfaceResponse(uint32_t entity, int32_t event, NativeSurfaceResponse *output)
+        {
+            if (!output) return 0;
+            *output = {};
+            output->friction = 0.5f;
+            if (event < 0 || event > 1) return 0;
+            try
+            {
+                auto &engine = core::Engine::GetInstance();
+                auto *scene = engine.GetScene();
+                if (!engine.IsRuntimeRunning() || !scene) return 0;
+                bool loaded = false;
+                const auto asset = scene->ResolveSurfaceResponse(entity, &loaded);
+                const auto &response = asset.GetResponse(static_cast<assets::SurfaceEvent>(event));
+                output->friction = asset.friction;
+                std::memcpy(output->sound, response.sound.c_str(), response.sound.size() + 1);
+                std::memcpy(output->particles, response.particles.c_str(), response.particles.size() + 1);
+                std::memcpy(output->decal, response.decalMaterial.c_str(), response.decalMaterial.size() + 1);
+                return loaded ? 1 : 0;
+            }
+            catch (...) { return 0; }
+        }
+
         struct NativeCameraRigRequest
         {
             int32_t operation;
@@ -3193,6 +3224,7 @@ namespace PlutoGE::scripting
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
+        register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
@@ -3297,6 +3329,7 @@ namespace PlutoGE::scripting
             impl.registerPhysicsApi = nullptr;
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
+            impl.registerSurfaceResponseApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
@@ -3642,6 +3675,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi);
 
@@ -4278,6 +4312,11 @@ namespace PlutoGE::scripting
             return false;
         }
 
+        if (!m_impl->registerSurfaceResponseApi || m_impl->registerSurfaceResponseApi(reinterpret_cast<void *>(&ResolveSurfaceResponse)) == 0)
+        {
+            setManagedBridgeFailure("RegisterSurfaceResponseApi");
+            return false;
+        }
         if (!m_impl->registerCameraRigApi || m_impl->registerCameraRigApi(reinterpret_cast<void *>(&ControlCameraRig)) == 0)
         {
             setManagedBridgeFailure("RegisterCameraRigApi");

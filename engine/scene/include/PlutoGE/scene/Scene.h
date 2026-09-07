@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -142,6 +143,7 @@ namespace PlutoGE::scene
         [[nodiscard]] bool HasNativeRuntimeUI() const;
         [[nodiscard]] bool HasRmlRuntimeUI() const;
 
+        assets::SurfaceResponseAsset ResolveSurfaceResponse(EntityID id, bool *loaded = nullptr) const;
         Entity *FindEntityByName(const std::string &name) const; // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;               // Utility function to find an entity by its unique ID (useful for serialization and referencing)
         bool ContainsEntity(const Entity *entity) const;

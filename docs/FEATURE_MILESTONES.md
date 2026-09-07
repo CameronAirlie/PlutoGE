@@ -33,7 +33,7 @@ that a milestone is complete.
 | M06 | Project validation panel | Medium | Implemented; automated checks passed |
 | M07 | Gameplay debug drawing | Medium | Implemented for editor views; automated checks passed |
 | M08 | Camera rigs | Medium | Implemented; automated checks passed |
-| M09 | Surface response assets | Medium | Planned |
+| M09 | Surface response assets | Medium | Implemented; automated checks passed |
 | M10 | Prefab variants | Medium–large | Planned |
 | M11 | Sequencer/timeline | Large | Planned |
 | M12 | Additive scene loading and streaming | Large | Planned |
@@ -255,3 +255,22 @@ ranges, group transform gizmos, mixed local values and common component properti
 and selection-wide duplicate/delete. See [controls and verification](MULTI_ENTITY_EDITING.md).
 Automated regression coverage is in `PlutoGEMultiEntityEditTests`; interactive
 OpenGL/Vulkan verification remains pending.
+
+
+### 2026-09-07: M09 surface response assets
+
+- Added versioned `.plutosurface` assets with separate footstep/impact sound,
+  particle, and decal references plus validated contact friction and safe defaults.
+- Added Content Browser creation/editing and collider assignment, including terrain
+  colliders. Assignments survive scene history, prefab duplication, and play/stop
+  snapshot restoration. Shared asset content uses explicit Save/Revert.
+- Added native and managed resolution, project-scoped caching, reference scanning,
+  pruned cooking, and the built-in `SurfaceFootsteps` example.
+- Validation: editor and managed SDK builds passed; both new surface tests and all
+  14 focused regressions passed (16 tests total). Coverage includes actual Bullet
+  friction, cooked transitive dependencies, UTF-8 managed ABI, scene history,
+  built-in meshes, multi-entity edits, camera rigs, and collider sizing.
+- The editor was linked from temporary stripped archive copies to fit host memory;
+  original library debug information was retained. Interactive audio/render checks
+  remain pending. M10-M14 remain planned.
+- Setup, API, and scope: [Surface responses](SURFACE_RESPONSES.md).

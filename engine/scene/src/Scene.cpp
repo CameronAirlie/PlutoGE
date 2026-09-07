@@ -1318,6 +1318,9 @@ namespace PlutoGE::scene
             HashVec3(signature, collider.GetSize());
             HashCombine(signature, collider.GetRadius());
             HashCombine(signature, collider.GetHeight());
+            HashCombine(signature, collider.GetSurfaceAssetReference());
+            if (!collider.GetSurfaceAssetReference().empty())
+                HashCombine(signature, core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider.GetSurfaceAssetReference()).friction);
             HashScale(signature, entity.GetWorldScale());
 
             if (const auto *terrain = entity.GetComponent<TerrainComponent>())
@@ -1651,9 +1654,12 @@ namespace PlutoGE::scene
             constructionInfo.m_angularDamping = rigidbodyEnabled ? rigidbody->GetAngularDrag() : 0.0f;
             auto body = std::make_unique<btRigidBody>(constructionInfo);
             body->setUserPointer(entity);
+            const bool hasSurface = !collider->GetSurfaceAssetReference().empty();
+            const float surfaceFriction = hasSurface ? core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider->GetSurfaceAssetReference()).friction : 0.5f;
+            body->setFriction(surfaceFriction);
             if (rigidbodyEnabled)
             {
-                body->setFriction(rigidbody->GetFriction());
+                body->setFriction(hasSurface ? surfaceFriction : rigidbody->GetFriction());
                 body->setRestitution(rigidbody->GetRestitution());
                 body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
                 body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
@@ -4285,5 +4291,17 @@ namespace PlutoGE::scene
             SearchEntitiesByTagRecursive(rootEntity, tag, taggedEntities);
         }
         return taggedEntities;
+    }
+}
+
+namespace PlutoGE::scene
+{
+    assets::SurfaceResponseAsset Scene::ResolveSurfaceResponse(EntityID id, bool *loaded) const
+    {
+        if (loaded) *loaded = false;
+        const auto *entity = FindEntityByID(id);
+        const auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+        if (!collider || !collider->IsEnabled()) return {};
+        return core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider->GetSurfaceAssetReference(), loaded);
     }
 }

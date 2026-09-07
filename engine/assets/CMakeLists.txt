@@ -4,6 +4,7 @@ add_library(PlutoGEAssets
     src/ProjectValidation.cpp
     src/ModelAsset.cpp
     src/AssetManager.cpp
+    src/SurfaceResponseAsset.cpp
     src/ParticleSystemAsset.cpp
     src/PostProcessPresetAsset.cpp
     src/Project.cpp

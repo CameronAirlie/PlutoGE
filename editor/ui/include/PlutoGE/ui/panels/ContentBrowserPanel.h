@@ -2,6 +2,7 @@
 
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/assets/ModelAsset.h"
+#include "PlutoGE/assets/SurfaceResponseAsset.h"
 
 #include <array>
 #include <cstdint>
@@ -55,6 +56,7 @@ namespace PlutoGE::ui
             None,
             ImportModel,
             CreateMaterial,
+            CreateSurfaceResponse,
             CreateParticleSystem,
             CreatePostProcessPreset,
             CreateShaderGraph,
@@ -74,6 +76,10 @@ namespace PlutoGE::ui
 
         std::array<char, 160> m_filterBuffer{};
         std::array<char, 96> m_newMaterialNameBuffer{};
+        std::array<char, 96> m_newSurfaceNameBuffer{};
+        std::string m_surfaceEditorReference;
+        assets::SurfaceResponseAsset m_surfaceDraft;
+        std::string m_surfaceError;
         std::array<char, 96> m_newParticleSystemNameBuffer{};
         std::array<char, 96> m_newPostProcessPresetNameBuffer{};
         std::array<char, 96> m_newShaderGraphNameBuffer{};

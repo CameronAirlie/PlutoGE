@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AnimationGraph.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
+#include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -81,6 +82,8 @@ namespace PlutoGE::assets
         bool SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage = nullptr);
         AnimationGraphAsset LoadAnimationGraphAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveAnimationGraphAsset(const std::string &assetReference, const AnimationGraphAsset &graph, std::string *errorMessage = nullptr);
+        SurfaceResponseAsset LoadSurfaceResponseAsset(const std::string &reference, bool *loaded = nullptr);
+        bool SaveSurfaceResponseAsset(const std::string &reference, const SurfaceResponseAsset &asset, std::string *error = nullptr);
         ParticleSystemAsset LoadParticleSystemAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveParticleSystemAsset(const std::string &assetReference, const ParticleSystemAsset &asset, std::string *errorMessage = nullptr);
         PostProcessPresetAsset LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded = nullptr);
@@ -109,6 +112,7 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
         std::unordered_map<std::string, render::ShaderGraph> m_shaderGraphCache;
         std::unordered_map<std::string, AnimationGraphAsset> m_animationGraphCache;
+        std::unordered_map<std::string, std::pair<bool, SurfaceResponseAsset>> m_surfaceResponseCache;
         std::unordered_map<std::string, ParticleSystemAsset> m_particleSystemCache;
         std::unordered_map<std::string, PostProcessPresetAsset> m_postProcessPresetCache;
         std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;

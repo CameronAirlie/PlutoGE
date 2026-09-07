@@ -3041,12 +3041,14 @@ namespace PlutoGE::assets
 
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)
     {
+        m_surfaceResponseCache.clear();
         m_projectRootDirectory = NormalizePath(projectRootDirectory);
         m_projectAssetDirectory = projectAssetDirectory.empty() ? "Assets" : projectAssetDirectory;
     }
 
     void AssetManager::ClearProjectContext()
     {
+        m_surfaceResponseCache.clear();
         m_projectRootDirectory.clear();
         m_projectAssetDirectory = "Assets";
     }

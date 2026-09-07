@@ -24,6 +24,7 @@ namespace PlutoGE::scene
         float height = 2.0f;
         bool isTrigger = false;
         bool blocksAudio = true;
+        std::string surfaceAssetReference;
     };
 
     class ColliderComponent : public TypedComponent<ColliderComponent>
@@ -54,6 +55,8 @@ namespace PlutoGE::scene
 
         bool IsTrigger() const { return m_config.isTrigger; }
         void SetTrigger(bool isTrigger) { m_config.isTrigger = isTrigger; }
+        const std::string &GetSurfaceAssetReference() const { return m_config.surfaceAssetReference; }
+        void SetSurfaceAssetReference(const std::string &reference) { m_config.surfaceAssetReference = reference; }
         bool BlocksAudio() const { return m_config.blocksAudio; }
         void SetBlocksAudio(bool blocksAudio) { m_config.blocksAudio = blocksAudio; }
 

@@ -6019,6 +6019,25 @@ namespace PlutoGE::ui
                             }
                             if (auto *colliderComponent = dynamic_cast<scene::ColliderComponent *>(componentPtr))
                             {
+                                if (property.name == "Surface Asset")
+                                {
+                                    const auto &options = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::SurfaceResponse);
+                                    const auto &current = colliderComponent->GetSurfaceAssetReference();
+                                    if (ImGui::BeginCombo("Surface Asset", current.empty() ? "None (rigidbody friction)" : current.c_str()))
+                                    {
+                                        auto assign = [&](const std::string &reference)
+                                        {
+                                            colliderComponent->SetSurfaceAssetReference(reference);
+                                            entity->AddPrefabOverride("Component:ColliderComponent:Surface Asset");
+                                            editorShell.MarkSceneDirty();
+                                        };
+                                        if (ImGui::Selectable("None", current.empty())) assign({});
+                                        for (const auto &option : options)
+                                            if (ImGui::Selectable(option.reference.c_str(), option.reference == current)) assign(option.reference);
+                                        ImGui::EndCombo();
+                                    }
+                                    continue;
+                                }
                                 if ((colliderComponent->GetShape() == scene::ColliderShape::Terrain ||
                                      colliderComponent->GetShape() == scene::ColliderShape::Mesh) &&
                                     (property.name == "Center" ||

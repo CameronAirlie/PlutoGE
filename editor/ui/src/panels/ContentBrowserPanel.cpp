@@ -2098,6 +2098,11 @@ void main() {
                     m_newMaterialNameBuffer.fill('\0');
                     m_pendingMenuAction = PendingMenuAction::CreateMaterial;
                 }
+                if (ImGui::MenuItem("Surface Response"))
+                {
+                    m_newSurfaceNameBuffer.fill(0);
+                    m_pendingMenuAction = PendingMenuAction::CreateSurfaceResponse;
+                }
                 if (ImGui::MenuItem("Particle System"))
                 {
                     m_newParticleSystemNameBuffer.fill('\0');
@@ -2194,6 +2199,9 @@ void main() {
         }
         case PendingMenuAction::CreateMaterial:
             ImGui::OpenPopup("Create Material Asset");
+            break;
+        case PendingMenuAction::CreateSurfaceResponse:
+            ImGui::OpenPopup("Create Surface Response Asset");
             break;
         case PendingMenuAction::CreateParticleSystem:
             ImGui::OpenPopup("Create Particle System Asset");
@@ -2437,6 +2445,51 @@ void main() {
             ImGui::EndPopup();
         }
 
+        if (ImGui::BeginPopupModal("Create Surface Response Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newSurfaceNameBuffer.data(), m_newSurfaceNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newSurfaceNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Surfaces");
+            if (!sanitizedName.empty())
+            {
+                const std::string fileName = sanitizedName + ".plutosurface";
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("Enter a surface response name.");
+            }
+
+            ImGui::BeginDisabled(sanitizedName.empty() || std::filesystem::exists(createDirectory / (sanitizedName + ".plutosurface")));
+            if (ImGui::Button("Create"))
+            {
+                const auto particlePath = createDirectory / (sanitizedName + ".plutosurface");
+                const std::string reference = project->MakeAssetReference(particlePath);
+                std::string errorMessage;
+                if (core::Engine::GetInstance().GetAssetManager().SaveSurfaceResponseAsset(reference, assets::SurfaceResponseAsset{}, &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
+                    m_surfaceEditorReference.clear();
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created surface response: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create surface response." : errorMessage);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         if (ImGui::BeginPopupModal("Create Particle System Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             ImGui::InputText("Name", m_newParticleSystemNameBuffer.data(), m_newParticleSystemNameBuffer.size());
@@ -2610,6 +2663,7 @@ void main() {
         {
             if (m_thumbnailCache) m_thumbnailCache->Clear();
             m_assetCacheDirty = false;
+            if (m_cachedProject != project) m_surfaceEditorReference.clear();
             m_cachedProject = project;
             m_cachedAssetReferences.clear();
             m_cachedAssetFolders.clear();
@@ -3493,6 +3547,47 @@ void main() {
                 {
                     ImGui::TextDisabled("Type '%s' is not loaded. Build scripts to edit this asset.", className.c_str());
                 }
+            }
+            else if (asset.type == assets::ProjectAssetType::SurfaceResponse)
+            {
+                auto &manager = core::Engine::GetInstance().GetAssetManager();
+                if (m_surfaceEditorReference != asset.reference)
+                {
+                    m_surfaceEditorReference = asset.reference;
+                    bool loaded = false;
+                    m_surfaceDraft = manager.LoadSurfaceResponseAsset(asset.reference, &loaded);
+                    m_surfaceError = loaded ? "" : "Could not load surface; saving will replace it with the values below.";
+                }
+                ImGui::TextUnformatted("Surface Response");
+                ImGui::SliderFloat("Friction", &m_surfaceDraft.friction, 0.0f, 10.0f);
+                const auto choose = [&](const char *label, std::string &value, assets::ProjectAssetType type)
+                {
+                    if (ImGui::BeginCombo(label, value.empty() ? "None" : value.c_str()))
+                    {
+                        if (ImGui::Selectable("None", value.empty())) value.clear();
+                        for (const auto &candidate : project->GetManifest().assetEntries)
+                            if (candidate.type == type && ImGui::Selectable(candidate.reference.c_str(), candidate.reference == value))
+                                value = candidate.reference;
+                        ImGui::EndCombo();
+                    }
+                };
+                for (int event = 0; event < 2; ++event)
+                {
+                    ImGui::PushID(event);
+                    ImGui::SeparatorText(event == 0 ? "Footstep" : "Impact");
+                    auto &response = event == 0 ? m_surfaceDraft.footstep : m_surfaceDraft.impact;
+                    choose("Sound", response.sound, assets::ProjectAssetType::Audio);
+                    choose("Particles", response.particles, assets::ProjectAssetType::ParticleSystem);
+                    choose("Decal material", response.decalMaterial, assets::ProjectAssetType::Material);
+                    ImGui::PopID();
+                }
+                if (ImGui::Button("Save Surface"))
+                {
+                    if (manager.SaveSurfaceResponseAsset(asset.reference, m_surfaceDraft, &m_surfaceError)) editorShell.MarkProjectDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Revert Unsaved Changes")) m_surfaceEditorReference.clear();
+                if (!m_surfaceError.empty()) ImGui::TextWrapped("%s", m_surfaceError.c_str());
             }
             else if (asset.type == assets::ProjectAssetType::Material)
             {

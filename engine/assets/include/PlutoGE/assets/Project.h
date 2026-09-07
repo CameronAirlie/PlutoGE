@@ -31,6 +31,7 @@ namespace PlutoGE::assets
         ScriptableObject,
         RmlDocument,
         InputMapping,
+        SurfaceResponse,
         Count,
     };
 

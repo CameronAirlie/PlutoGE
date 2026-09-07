@@ -1040,6 +1040,7 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::AnimationGraph;
         }
+        if (EndsWithInsensitive(reference, ".plutosurface")) return ProjectAssetType::SurfaceResponse;
         if (EndsWithInsensitive(reference, ".plutoparticles"))
         {
             return ProjectAssetType::ParticleSystem;
@@ -1104,6 +1105,7 @@ namespace PlutoGE::assets
             return "Shader Graph";
         case ProjectAssetType::AnimationGraph:
             return "Animation Graph";
+        case ProjectAssetType::SurfaceResponse: return "Surface Response";
         case ProjectAssetType::ParticleSystem:
             return "Particle System";
         case ProjectAssetType::PostProcessPreset:
@@ -1149,6 +1151,7 @@ namespace PlutoGE::assets
             return ProjectAssetType::ShaderGraph;
         if (typeName == "Animation Graph" || typeName == "AnimationGraph")
             return ProjectAssetType::AnimationGraph;
+        if (typeName == "Surface Response" || typeName == "SurfaceResponse") return ProjectAssetType::SurfaceResponse;
         if (typeName == "Particle System" || typeName == "ParticleSystem")
             return ProjectAssetType::ParticleSystem;
         if (typeName == "Post Process Preset" || typeName == "PostProcessPreset")

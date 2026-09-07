@@ -225,3 +225,11 @@ available memory. Its empty `Entity.cpp.obj` was removed and rebuilt successfull
 
 Interactive editor verification on OpenGL/Vulkan and a Linux build remain pending
 for this delivery; automated data/scene checks do not substitute for those checks.
+
+### Additional editor workflow — Multi-entity editing
+
+Implemented shared hierarchy/viewport selection, Ctrl toggling, visible Shift
+ranges, group transform gizmos, mixed local values and common component properties,
+and selection-wide duplicate/delete. See [controls and verification](MULTI_ENTITY_EDITING.md).
+Automated regression coverage is in `PlutoGEMultiEntityEditTests`; interactive
+OpenGL/Vulkan verification remains pending.

@@ -1001,7 +1001,14 @@ namespace PlutoGE::scene
             {
                 sourceMeshPath = resolvedModelObject;
             }
-            if (sourceMeshPath.empty()) return;
+        }
+
+        // Built-in primitives and direct mesh assets have a mesh reference but
+        // no imported model identity. Resolve that identity when present, then
+        // load the effective reference independently of where it came from.
+        if (!sourceMeshPath.empty())
+        {
+            auto &engine = core::Engine::GetInstance();
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);

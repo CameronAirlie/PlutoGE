@@ -57,6 +57,9 @@ namespace PlutoGE::ui
         std::uint32_t m_renamingEntityId = 0;
         std::uint32_t m_pendingDeleteEntityId = 0;
         std::vector<std::uint32_t> m_selectedEntityIds;
+        std::vector<std::uint32_t> m_visibleEntityIds;
+        std::uint32_t m_rangeClickId = 0;
+        bool m_rangeClickControl = false;
         bool m_groupSelectionRequested = false;
         bool m_focusRenameInput = false;
         std::array<char, 256> m_renameBuffer{};

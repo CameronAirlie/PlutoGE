@@ -248,6 +248,7 @@ namespace PlutoGE::ui
             return;
         }
 
+        m_visibleEntityIds.push_back(entity->GetID());
         const std::string entityName = entity->GetName().empty() ? "Entity" : entity->GetName();
         const bool isRenaming = m_renamingEntityId == entity->GetID();
         ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -295,7 +296,15 @@ namespace PlutoGE::ui
         // If clicked, set this entity as the selected entity in the editor shell
         if (ImGui::IsItemClicked() && ImGui::IsItemHovered())
         {
-            SelectEntity(entity, ImGui::GetIO().KeyShift || ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyCtrl);
+            if (!isRenaming && !ImGui::IsItemToggledOpen())
+            {
+                if (ImGui::GetIO().KeyShift)
+                {
+                    m_rangeClickId = entity->GetID();
+                    m_rangeClickControl = ImGui::GetIO().KeyCtrl;
+                }
+                else SelectEntity(entity, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyCtrl);
+            }
         }
 
         if (ImGui::BeginDragDropSource())
@@ -802,30 +811,10 @@ namespace PlutoGE::ui
 
     void SceneHierarchyPanel::SelectEntity(scene::Entity *entity, bool additive, bool rangeToggle)
     {
-        if (!entity)
-        {
-            m_selectedEntityIds.clear();
-            EditorShell::GetInstance().SetSelectedEntity(nullptr);
-            return;
-        }
-
-        const auto found = std::find(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), entity->GetID());
-        if (!additive)
-        {
-            m_selectedEntityIds = {entity->GetID()};
-        }
-        else if (rangeToggle && found != m_selectedEntityIds.end())
-        {
-            m_selectedEntityIds.erase(found);
-        }
-        else if (found == m_selectedEntityIds.end())
-        {
-            m_selectedEntityIds.push_back(entity->GetID());
-        }
-
-        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
-        auto *primary = !m_selectedEntityIds.empty() && scene ? scene->FindEntityByID(m_selectedEntityIds.back()) : nullptr;
-        EditorShell::GetInstance().SetSelectedEntity(primary);
+        auto &shell = EditorShell::GetInstance();
+        shell.ClickEntity(entity, rangeToggle, additive && !rangeToggle);
+        m_selectedEntityIds.clear();
+        for (auto *selected : shell.GetSelectedEntities()) m_selectedEntityIds.push_back(selected->GetID());
     }
 
     void SceneHierarchyPanel::GroupSelectedEntities()
@@ -970,19 +959,10 @@ namespace PlutoGE::ui
             return;
         }
 
-        auto *shellSelection = EditorShell::GetInstance().GetSelectedEntity();
-        if (shellSelection && !IsEntitySelected(shellSelection))
-        {
-            m_selectedEntityIds = {shellSelection->GetID()};
-        }
-        else if (!shellSelection && !m_selectedEntityIds.empty())
-        {
-            m_selectedEntityIds.clear();
-        }
-
-        m_selectedEntityIds.erase(std::remove_if(m_selectedEntityIds.begin(), m_selectedEntityIds.end(),
-                                                  [scene](std::uint32_t id) { return scene->FindEntityByID(id) == nullptr; }),
-                                  m_selectedEntityIds.end());
+        m_selectedEntityIds.clear();
+        for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())
+            m_selectedEntityIds.push_back(selected->GetID());
+        m_visibleEntityIds.clear();
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
         {
             GroupSelectedEntities();
@@ -993,13 +973,23 @@ namespace PlutoGE::ui
             RenderEntityNode(entity);
         }
 
+        if (m_rangeClickId)
+        {
+            EditorShell::GetInstance().ClickEntity(scene->FindEntityByID(m_rangeClickId),
+                                                   m_rangeClickControl, true, m_visibleEntityIds);
+            m_rangeClickId = 0;
+            m_selectedEntityIds.clear();
+            for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())
+                m_selectedEntityIds.push_back(selected->GetID());
+        }
+
         if (m_pendingDeleteEntityId != 0)
         {
             const auto deletedEntityId = m_pendingDeleteEntityId;
             m_pendingDeleteEntityId = 0;
             if (auto *entity = scene->FindEntityByID(deletedEntityId))
             {
-                EditorShell::GetInstance().SetSelectedEntity(entity);
+                if (!IsEntitySelected(entity)) SelectEntity(entity, false, false);
                 if (EditorShell::GetInstance().DeleteSelectedEntity())
                 {
                     m_selectedEntityIds.erase(

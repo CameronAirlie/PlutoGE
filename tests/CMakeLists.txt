@@ -290,3 +290,21 @@ add_executable(PlutoGEColliderCcdTests
 target_include_directories(PlutoGEColliderCcdTests PRIVATE ../engine/scene/include)
 target_link_libraries(PlutoGEColliderCcdTests PRIVATE glm::glm)
 add_test(NAME PlutoGEColliderCcdTests COMMAND PlutoGEColliderCcdTests)
+
+add_executable(PlutoGEMultiEntityEditTests
+    MultiEntityEditTests.cpp
+    ../editor/ui/src/MultiEntityEdit.cpp)
+target_include_directories(PlutoGEMultiEntityEditTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEMultiEntityEditTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGEMultiEntityEditTests PRIVATE PlutoGE::Scene)
+endif()
+add_test(NAME PlutoGEMultiEntityEditTests COMMAND PlutoGEMultiEntityEditTests)
+
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEMultiEntityEditTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEMultiEntityEditTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()

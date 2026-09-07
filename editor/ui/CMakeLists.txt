@@ -1,4 +1,5 @@
 add_library(PlutoGEEditorUI
+    src/MultiEntityEdit.cpp
     src/EditorShell.cpp
     src/SceneRecovery.cpp
     src/SceneRecoveryUI.cpp

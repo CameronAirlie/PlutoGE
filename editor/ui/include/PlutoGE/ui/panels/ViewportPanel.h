@@ -103,6 +103,9 @@ namespace PlutoGE::ui
         bool m_showDebugShapes = true;
         bool m_showNavigation = false;
         bool m_showAgentPaths = true;
+        std::vector<std::uint32_t> m_multiGizmoSelection;
+        glm::mat4 m_multiGizmoTransform{1.0f};
+        bool m_multiGizmoUsing = false;
         bool m_enableSnap = false;
         ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;

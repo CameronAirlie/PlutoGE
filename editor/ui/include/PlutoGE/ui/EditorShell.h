@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/ui/EntitySelection.h"
+
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -163,14 +165,14 @@ namespace PlutoGE::ui
         }
 
         [[nodiscard]] scene::Entity *GetSelectedEntity();
-        void SetSelectedEntity(scene::Entity *entity)
-        {
-            m_selectedEntity = entity;
-            m_isEditorCameraSelected = false;
-        }
+        void SetSelectedEntity(scene::Entity *entity);
+        void SetSelectedEntities(const std::vector<std::uint32_t> &ids);
+        void ClickEntity(scene::Entity *entity, bool control, bool shift,
+                         const std::vector<std::uint32_t> &visible = {});
+        [[nodiscard]] std::vector<scene::Entity *> GetSelectedEntities(bool rootsOnly = false);
         void SelectEditorCamera()
         {
-            m_selectedEntity = nullptr;
+            SetSelectedEntity(nullptr);
             m_isEditorCameraSelected = true;
         }
         [[nodiscard]] bool IsEditorCameraSelected() const { return m_isEditorCameraSelected; }
@@ -325,6 +327,7 @@ namespace PlutoGE::ui
         std::unique_ptr<EditorSceneRenderService> m_gameSceneRenderService;
         EditorProfiler m_profiler;
 
+        EntitySelection m_entitySelection;
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;

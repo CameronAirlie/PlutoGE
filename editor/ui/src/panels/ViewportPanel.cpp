@@ -1,3 +1,4 @@
+#include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 
 // Editor selection access is validated by EditorShell before panel use.
@@ -832,12 +833,7 @@ namespace PlutoGE::ui
                 return;
             }
 
-            std::vector<scene::Entity *> entities;
-            for (auto *rootEntity : scene->GetRootEntities())
-            {
-                CollectEntitiesRecursive(rootEntity, entities);
-            }
-
+            const std::array<scene::Entity *, 1> entities{selectedEntity};
             auto *drawList = ImGui::GetWindowDrawList();
             drawList->PushClipRect(viewportMin,
                                    ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y),
@@ -2614,6 +2610,13 @@ namespace PlutoGE::ui
         ImGuizmo::Enable(true);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
+        // Each viewport owns its interaction; another visible viewport must not
+        // apply the active gizmo's delta to the same selection a second time.
+        struct GizmoIdScope
+        {
+            explicit GizmoIdScope(const void *id) { ImGuizmo::PushID(id); }
+            ~GizmoIdScope() { ImGuizmo::PopID(); }
+        } gizmoIdScope(this);
         bool gizmoBlocksSelection = false;
         bool splineHandleClicked = false;
         bool entityGizmoSubmitted = false;
@@ -2621,7 +2624,8 @@ namespace PlutoGE::ui
 
         if (m_showDebugShapes)
         {
-            DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), editorShell.GetSelectedEntity(), cameraData, viewportMin, viewportSize);
+            for (auto *selected : editorShell.GetSelectedEntities())
+                DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), selected, cameraData, viewportMin, viewportSize);
         }
 
         auto *activeScene = editorShell.GetEngine().GetScene();
@@ -2733,7 +2737,59 @@ namespace PlutoGE::ui
             drawList->PopClipRect();
         }
 
-        if (auto *selectedEntity = editorShell.GetSelectedEntity())
+        const auto selection = editorShell.GetSelectedEntities();
+        if (selection.size() > 1)
+        {
+            auto *selectionDrawList = ImGui::GetWindowDrawList();
+            selectionDrawList->PushClipRect(viewportMin,
+                ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+            for (auto *entity : selection)
+            {
+                const auto point = ProjectWorldPoint(glm::vec3(entity->GetWorldTransform()[3]),
+                                                     cameraData, viewportMin, viewportSize);
+                if (point.visible)
+                    selectionDrawList->AddCircle(point.screen, 5.0f,
+                        entity == selection.back() ? IM_COL32(255, 210, 70, 255) : IM_COL32(70, 175, 255, 245), 12, 2.0f);
+            }
+            selectionDrawList->PopClipRect();
+            const auto roots = SelectionRoots(selection);
+            std::vector<std::uint32_t> selectionIds;
+            for (auto *entity : selection) selectionIds.push_back(entity->GetID());
+            if (selectionIds != m_multiGizmoSelection)
+            {
+                m_multiGizmoUsing = false;
+                m_multiGizmoSelection = std::move(selectionIds);
+            }
+            if (!m_multiGizmoUsing)
+            {
+                glm::vec3 center(0);
+                for (auto *entity : roots) center += glm::vec3(entity->GetWorldTransform()[3]);
+                center /= static_cast<float>(roots.size());
+                m_multiGizmoTransform = glm::translate(glm::mat4(1), center);
+            }
+            const auto before = m_multiGizmoTransform;
+            float snap[3] = {m_translateSnap.x, m_translateSnap.y, m_translateSnap.z};
+            if (m_gizmoOperation == ImGuizmo::ROTATE) snap[0] = m_rotateSnapDegrees;
+            if (m_gizmoOperation == ImGuizmo::SCALE) snap[0] = snap[1] = snap[2] = m_scaleSnap;
+            ImGuizmo::Manipulate(glm::value_ptr(cameraData.view), glm::value_ptr(gizmoProjection),
+                                 m_gizmoOperation, ImGuizmo::WORLD, glm::value_ptr(m_multiGizmoTransform),
+                                 nullptr, m_enableSnap ? snap : nullptr);
+            m_multiGizmoUsing = ImGuizmo::IsUsing();
+            if (m_multiGizmoUsing)
+            {
+                gizmoBlocksSelection = true;
+                m_isTransformGizmoUsing = true;
+                std::string error;
+                if (TransformSelection(selection, m_multiGizmoTransform * glm::inverse(before), error))
+                    editorShell.MarkSceneDirty();
+                else
+                {
+                    m_multiGizmoTransform = before;
+                    editorShell.SetStatusMessage(error);
+                }
+            }
+        }
+        else if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {
             if (m_resizeHandleAxis >= 0 &&
                 (m_resizeHandleEntityId != selectedEntity->GetID() ||
@@ -3946,7 +4002,7 @@ namespace PlutoGE::ui
                     pickDebugInfo = std::move(fallbackPickDebugInfo);
                 }
             }
-            editorShell.SetSelectedEntity(pickedEntity);
+            editorShell.ClickEntity(pickedEntity, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
             editorShell.Log(EditorShell::ConsoleSeverity::Info,
                             FormatPickDebugMessage(pickDebugInfo, ImGui::GetIO().MousePos, viewportMin, viewportSize));
         }

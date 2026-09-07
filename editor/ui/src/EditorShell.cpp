@@ -1,3 +1,4 @@
+#include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
@@ -1555,9 +1556,9 @@ namespace PlutoGE::ui
 
         const std::string previousPath = m_scene ? m_scene->GetFilePath() : std::string{};
         restoredScene->SetFilePath(previousPath);
-        const auto selectedId = m_selectedEntity ? m_selectedEntity->GetID() : 0;
+        const auto selectedIds = m_entitySelection.Ids();
         SetScene(std::move(restoredScene), false);
-        SetSelectedEntity(m_scene->FindEntityByID(selectedId));
+        SetSelectedEntities(selectedIds);
         if (markDirty)
         {
             MarkSceneDirty();
@@ -1949,47 +1950,30 @@ namespace PlutoGE::ui
 
     bool EditorShell::DuplicateSelectedEntity()
     {
-        if (!m_scene || !m_selectedEntity)
+        const auto roots = GetSelectedEntities(true);
+        if (roots.empty()) return false;
+        std::vector<std::uint32_t> created;
+        ExecuteSceneEdit("Duplicate Selection", [&]()
         {
-            return false;
-        }
-
-        auto *sourceEntity = m_selectedEntity;
-        auto *parent = sourceEntity->GetParent();
-        scene::Entity *createdEntity = nullptr;
-        ExecuteSceneEdit("Duplicate Entity",
-                         [&]()
-                         {
-                             createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceEntity, parent, true);
-                             if (createdEntity)
-                             {
-                                 createdEntity->SetName(sourceEntity->GetName() + " Copy");
-                                 createdEntity->SetPosition(sourceEntity->GetPosition() + glm::vec3(0.0f, 0.0f, 0.0f));
-                             }
-                         });
-
-        if (createdEntity)
-        {
-            SetSelectedEntity(createdEntity);
-            return true;
-        }
-
-        return false;
+            for (auto *source : roots)
+                if (auto *copy = scene::Prefab::DuplicateEntity(*m_scene, *source, source->GetParent(), true))
+                {
+                    copy->SetName(source->GetName() + " Copy");
+                    created.push_back(copy->GetID());
+                }
+        });
+        SetSelectedEntities(created);
+        return !created.empty();
     }
 
     bool EditorShell::DeleteSelectedEntity()
     {
-        if (!m_scene || !m_selectedEntity)
+        const auto roots = GetSelectedEntities(true);
+        if (roots.empty()) return false;
+        ExecuteSceneEdit("Delete Selection", [&]()
         {
-            return false;
-        }
-
-        auto *entity = m_selectedEntity;
-        ExecuteSceneEdit("Delete Entity",
-                         [&]()
-                         {
-                             m_scene->RemoveEntity(entity);
-                         });
+            for (auto *entity : roots) m_scene->RemoveEntity(entity);
+        });
         SetSelectedEntity(nullptr);
         return true;
     }
@@ -2112,18 +2096,45 @@ namespace PlutoGE::ui
 
     void EditorShell::ResetSelection()
     {
+        m_entitySelection.Clear();
         m_selectedEntity = nullptr;
         m_isEditorCameraSelected = false;
     }
 
+    void EditorShell::SetSelectedEntity(scene::Entity *entity)
+    {
+        SetSelectedEntities(entity ? std::vector<std::uint32_t>{entity->GetID()} : std::vector<std::uint32_t>{});
+    }
+
+    void EditorShell::SetSelectedEntities(const std::vector<std::uint32_t> &ids)
+    {
+        m_entitySelection.Set(ids);
+        m_isEditorCameraSelected = false;
+        (void)GetSelectedEntity();
+    }
+
+    void EditorShell::ClickEntity(scene::Entity *entity, bool control, bool shift,
+                                  const std::vector<std::uint32_t> &visible)
+    {
+        m_entitySelection.Click(entity ? entity->GetID() : 0, control, shift, visible);
+        m_isEditorCameraSelected = false;
+        (void)GetSelectedEntity();
+    }
+
     scene::Entity *EditorShell::GetSelectedEntity()
     {
-        if (m_selectedEntity && (!m_scene || !m_scene->ContainsEntity(m_selectedEntity)))
-        {
-            m_selectedEntity = nullptr;
-            m_isEditorCameraSelected = false;
-        }
+        m_entitySelection.Prune([&](std::uint32_t id) { return m_scene && m_scene->FindEntityByID(id); });
+        const auto &ids = m_entitySelection.Ids();
+        m_selectedEntity = ids.empty() ? nullptr : m_scene->FindEntityByID(ids.back());
         return m_selectedEntity;
+    }
+
+    std::vector<scene::Entity *> EditorShell::GetSelectedEntities(bool rootsOnly)
+    {
+        (void)GetSelectedEntity();
+        std::vector<scene::Entity *> entities;
+        for (auto id : m_entitySelection.Ids()) entities.push_back(m_scene->FindEntityByID(id));
+        return rootsOnly ? SelectionRoots(entities) : entities;
     }
 
     void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs)
@@ -4266,6 +4277,7 @@ namespace PlutoGE::ui
             m_activeBakeTask->Cancel();
             m_activeBakeTask.reset();
         }
+        m_entitySelection.Clear();
         m_selectedEntity = nullptr;
         m_engine.SetScene(nullptr);
         m_engine.GetWindow().EnsureOpenGLContextCurrent(true);

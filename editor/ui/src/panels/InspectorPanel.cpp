@@ -1,3 +1,4 @@
+#include "PlutoGE/ui/MultiEntityEdit.h"
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
@@ -3460,12 +3461,134 @@ namespace PlutoGE::ui
         ImGui::TreePop();
     }
 
+    void InspectorPanel::RenderMultiEntityInspector(const std::vector<scene::Entity *> &selection) const
+    {
+        auto &shell = EditorShell::GetInstance();
+        ImGui::Text("%zu entities selected", selection.size());
+        ImGui::TextDisabled("Mixed fields show the first entity's value. Editing applies to all.");
+        char name[256];
+        strncpy_s(name, sizeof(name), selection.front()->GetName().c_str(), _TRUNCATE);
+        const bool nameMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return e->GetName() != selection.front()->GetName(); });
+        if (ImGui::InputText(nameMixed ? "Name (mixed)###SelectionName" : "Name###SelectionName", name, sizeof(name)))
+        {
+            for (auto *e : selection) { e->SetName(name); e->AddPrefabOverride("Name"); }
+            shell.MarkSceneDirty();
+        }
+        bool active = selection.front()->IsSelfActive();
+        const bool activeMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return e->IsSelfActive() != active; });
+        if (ImGui::Checkbox(activeMixed ? "Active (mixed)###SelectionActive" : "Active###SelectionActive", &active))
+        {
+            for (auto *e : selection) { e->SetActive(active); e->AddPrefabOverride("Active"); }
+            shell.MarkSceneDirty();
+        }
+        if (ImGui::CollapsingHeader("Local Transform", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            const char *names[] = {"Position", "Rotation", "Scale"};
+            const auto value = [](scene::Entity *e, int kind)
+            { return kind == 0 ? e->GetPosition() : kind == 1 ? e->GetRotation() : e->GetScale(); };
+            for (int kind = 0; kind < 3; ++kind)
+            {
+                ImGui::PushID(kind);
+                ImGui::TextUnformatted(names[kind]);
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    ImGui::PushID(axis);
+                    float component = value(selection.front(), kind)[axis];
+                    const bool mixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return value(e, kind)[axis] != component; });
+                    const char *axisNames[] = {"X", "Y", "Z"};
+                    const std::string label = std::string(axisNames[axis]) + (mixed ? " (mixed)" : "") + "###Axis";
+                    if (ImGui::DragFloat(label.c_str(), &component, kind == 1 ? 0.5f : 0.1f) && std::isfinite(component))
+                    {
+                        for (auto *e : selection)
+                        {
+                            auto updated = value(e, kind);
+                            updated[axis] = component;
+                            if (kind == 0) e->SetPosition(updated);
+                            else if (kind == 1) e->SetRotation(updated);
+                            else e->SetScale(updated);
+                            e->AddPrefabOverride(std::string("Transform.") + names[kind]);
+                        }
+                        shell.MarkSceneDirty();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::PopID();
+            }
+        }
+        auto groups = FindCommonComponents(selection);
+        ImGui::Separator();
+        ImGui::TextUnformatted("Common Components");
+        for (std::size_t index = 0; index < groups.size(); ++index)
+        {
+            auto &group = groups[index];
+            ImGui::PushID(static_cast<int>(index));
+            if (ImGui::CollapsingHeader(group.name.c_str()))
+            {
+                bool enabled = group.instances.front()->IsEnabled();
+                const bool mixed = std::any_of(group.instances.begin(), group.instances.end(), [&](auto *c) { return c->IsEnabled() != enabled; });
+                if (ImGui::Checkbox(mixed ? "Enabled (mixed)###SelectionEnabled" : "Enabled###SelectionEnabled", &enabled))
+                {
+                    for (auto *c : group.instances)
+                    {
+                        c->SetEnabled(enabled);
+                        c->GetOwner()->AddPrefabOverride("Component:" + group.name + ":Enabled");
+                    }
+                    shell.MarkSceneDirty();
+                }
+                for (auto property : group.properties)
+                {
+                    ImGui::PushID(property.name.c_str());
+                    bool mixedValue = false;
+                    for (auto *c : group.instances)
+                        for (const auto &p : c->Serialize())
+                            if (p.name == property.name && p.value != property.value) mixedValue = true;
+                    ImGui::TextDisabled("%s", mixedValue ? "Mixed values" : "Shared value");
+                    if (property.type == scene::PropertyType::Vec2 || property.type == scene::PropertyType::Vec3)
+                    {
+                        ImGui::TextUnformatted(property.name.c_str());
+                        float values[3] = {};
+                        std::sscanf(property.value.c_str(), "%f,%f,%f", &values[0], &values[1], &values[2]);
+                        const char *axes[] = {"X", "Y", "Z"};
+                        const int count = property.type == scene::PropertyType::Vec2 ? 2 : 3;
+                        for (int axis = 0; axis < count; ++axis)
+                        {
+                            ImGui::PushID(axis);
+                            if (ImGui::DragFloat(axes[axis], &values[axis], 0.1f) && std::isfinite(values[axis]))
+                            {
+                                auto scalar = property;
+                                scalar.value = std::to_string(values[axis]);
+                                SetCommonProperty(group, scalar, axis);
+                                shell.MarkSceneDirty();
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    else if (RenderPropertyEditor(property))
+                    {
+                        SetCommonProperty(group, property);
+                        shell.MarkSceneDirty();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::PopID();
+        }
+        if (groups.empty()) ImGui::TextDisabled("No components shared by every selected entity.");
+    }
+
     void InspectorPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
         if (editorShell.IsEditorCameraSelected())
         {
             RenderEditorCameraInspector(editorShell.GetEditorCamera());
+            return;
+        }
+
+        const auto selection = editorShell.GetSelectedEntities();
+        if (selection.size() > 1)
+        {
+            RenderMultiEntityInspector(selection);
             return;
         }
 

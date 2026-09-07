@@ -35,6 +35,7 @@ namespace PlutoGE::ui
         void Shutdown() override;
 
     private:
+        void RenderMultiEntityInspector(const std::vector<scene::Entity *> &selection) const;
         bool RenderPropertyEditor(scene::Property &property) const;
         void RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const;
         void RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const;

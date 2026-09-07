@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -99,6 +100,8 @@ namespace PlutoGE::scene
                 return "ActiveRagdollComponent";
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
+            if (dynamic_cast<const CameraRigComponent *>(&component))
+                return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const LightComponent *>(&component))
@@ -153,6 +156,8 @@ namespace PlutoGE::scene
                 return std::make_unique<ActiveRagdollComponent>();
             if (componentType == "SkeletonAttachmentComponent")
                 return std::make_unique<SkeletonAttachmentComponent>();
+            if (componentType == "CameraRigComponent")
+                return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}), false);
             if (componentType == "LightComponent")
@@ -404,12 +409,13 @@ namespace PlutoGE::scene
                 for (auto *component : bucket)
                 {
                     auto *navAgent = dynamic_cast<NavAgentComponent *>(component);
-                    if (!navAgent)
+                    auto *cameraRig = dynamic_cast<CameraRigComponent *>(component);
+                    if (!navAgent && !cameraRig)
                     {
                         continue;
                     }
 
-                    auto properties = navAgent->Serialize();
+                    auto properties = component->Serialize();
                     for (auto &property : properties)
                     {
                         if (property.name != "Target Entity")
@@ -430,7 +436,7 @@ namespace PlutoGE::scene
                         {
                         }
                     }
-                    navAgent->Deserialize(properties);
+                    component->Deserialize(properties);
                 }
             }
 

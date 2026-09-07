@@ -154,6 +154,9 @@ namespace PlutoGE::scene
                      float maxDistance,
                      PhysicsRaycastHit &hit,
                      EntityID ignoredEntityId = 0) const;
+        // Distance is sphere-center travel to contact; ignores both entity hierarchies and triggers.
+        bool SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
+                         PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0, EntityID secondIgnoredEntityId = 0) const;
         void RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
                           EntityID ignoredEntityId,
                           std::vector<PhysicsRaycastHit> &hits,

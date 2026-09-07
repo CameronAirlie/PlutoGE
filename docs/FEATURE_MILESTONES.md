@@ -32,7 +32,7 @@ that a milestone is complete.
 | M05 | Autosave and recovery | Small–medium | Implemented; automated checks passed |
 | M06 | Project validation panel | Medium | Implemented; automated checks passed |
 | M07 | Gameplay debug drawing | Medium | Implemented for editor views; automated checks passed |
-| M08 | Camera rigs | Medium | Planned |
+| M08 | Camera rigs | Medium | Implemented; automated checks passed |
 | M09 | Surface response assets | Medium | Planned |
 | M10 | Prefab variants | Medium–large | Planned |
 | M11 | Sequencer/timeline | Large | Planned |
@@ -100,6 +100,13 @@ for format coverage and the limits of literal reference scanning.
 - Follow/orbit, smoothing, collision avoidance, shake, and blended transitions.
 - Serializable settings, managed control, and examples using vehicles and characters.
 - Stable behavior across frame rates, missing targets, pause, and scene changes.
+
+Implemented as an engine Camera Rig component with a late runtime update, sphere
+sweep obstruction avoidance, per-scene target IDs, exponential smoothing,
+world-space follow/orbit poses, fading positional shake and smooth target blends.
+The inspector uses existing serialization/history; prefab copies remap targets.
+C# controls and character/vehicle examples are included. See
+[Camera rigs](CAMERA_RIGS.md) for setup, control semantics and scope.
 
 ### M09 — Surface response assets
 
@@ -213,11 +220,26 @@ for format coverage and the limits of literal reference scanning.
   omits debug symbols. The three linker flags remain in the local GCC CMake cache;
   no repository build defaults were changed.
 
+- 2026-09-07: Implemented M08 engine camera rigs with follow/orbit poses,
+  exponential smoothing, sphere-sweep obstruction avoidance, fading positional
+  shake, and interruptible target blends. Rigs run after script LateUpdate and
+  physics presentation, freeze with simulation time, and reset on runtime
+  transitions. Added inspector creation/editing, snapshot persistence, prefab
+  cloning/remapping, C# controls, and character/vehicle example scripts.
+  Native tests cover pose math, parent transforms, collision/hierarchy filtering,
+  pause/restart, failed commands, serialization, undo/redo and prefab duplication;
+  managed tests cover ABI layout, registration and command dispatch. All thirteen
+  focused suites passed (76.87 seconds), including the earlier mesh restoration
+  regression. The final GCC editor and managed SDK build passed. Memory limits
+  required temporary stripped archives and a smaller GNU linker hash table;
+  original archives remain intact, and the executable omits debug symbols.
+  Interactive OpenGL/Vulkan checks remain pending. M09-M14 remain planned.
+
 Reproduce the focused checks from the repository root:
 
 ```powershell
-cmake --build out/build/gcc --target PlutoGEEditor PlutoGEDebugDrawTests PlutoGEProjectValidationTests PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
-ctest --test-dir out/build/gcc -R '^PlutoGE(DebugDraw|DebugDrawManaged|ProjectValidation|SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement)Tests$' --output-on-failure
+cmake --build out/build/gcc --target PlutoGEEditor PlutoGECameraRigTests PlutoGEMultiEntityEditTests PlutoGEDebugDrawTests PlutoGEProjectValidationTests PlutoGESceneRecoveryTests PlutoGESceneHistoryTests PlutoGEAssetReferencesTests PlutoGEAssetReferenceCookingTests PlutoGEPlayModeChangesTests PlutoGEViewportBookmarksTests PlutoGEGroundPlacementTests -j 1
+ctest --test-dir out/build/gcc -R '^PlutoGE(DebugDraw|DebugDrawManaged|ProjectValidation|SceneRecovery|SceneHistory|AssetReferences|AssetReferenceCooking|PlayModeChanges|ViewportBookmarks|GroundPlacement|MultiEntityEdit|CameraRig|CameraRigManaged)Tests$' --output-on-failure
 ```
 
 The build uses one compile job because the first parallel GCC build exhausted

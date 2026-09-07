@@ -9,7 +9,7 @@ using System.Text;
 
 namespace PlutoGE.ScriptCore.Native;
 
-internal static unsafe class ScriptBridge
+internal static unsafe partial class ScriptBridge
 {
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativeDebugDrawRequest

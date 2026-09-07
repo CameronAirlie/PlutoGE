@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
@@ -1994,6 +1995,19 @@ namespace PlutoGE::scene
         }
     }
 
+    namespace
+    {
+        template<class Function> void VisitCameraRigs(const std::vector<Entity *> &roots, Function function)
+        {
+            const auto visit = [&](Entity *entity, const auto &self) -> void
+            {
+                for (auto *rig : entity->GetComponents<CameraRigComponent>()) function(*rig);
+                for (auto *child : entity->GetChildren()) self(child, self);
+            };
+            for (auto *root : roots) visit(root, visit);
+        }
+    }
+
     void Scene::StartRuntime()
     {
         if (m_runtimeStarted)
@@ -2001,6 +2015,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
         m_physicsTimeAccumulator = 0.0f;
@@ -2087,6 +2102,7 @@ namespace PlutoGE::scene
         core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
 
         m_runtimeStarted = false;
+        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
         m_physicsTimeAccumulator = 0.0f;
@@ -2653,6 +2669,8 @@ namespace PlutoGE::scene
                 }
             }
         }
+        if (m_runtimeStarted)
+            VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
         const auto lateScriptsEnd = Clock::now();
 
         const auto audioStart = Clock::now();
@@ -3216,6 +3234,43 @@ namespace PlutoGE::scene
                     break;
                 }
         }
+        return true;
+    }
+
+    bool Scene::SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
+                            PhysicsRaycastHit &hit, EntityID ignoredEntityId, EntityID secondIgnoredEntityId) const
+    {
+        hit = {};
+        const float distance = glm::length(to - from);
+        btVector3 start, end;
+        if (!std::isfinite(radius) || radius <= 0 || !BuildRaycastEndpoints(from, to - from, distance, start, end)) return false;
+        class Filter final : public btCollisionWorld::ClosestConvexResultCallback
+        {
+        public:
+            Filter(const btVector3 &a, const btVector3 &b, EntityID first, EntityID second)
+                : ClosestConvexResultCallback(a, b), first(first), second(second) {}
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!ClosestConvexResultCallback::needsCollision(proxy)) return false;
+                auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
+                auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
+                return object && object->hasContactResponse() && !IsEntityOrDescendantOf(entity, first) && !IsEntityOrDescendantOf(entity, second);
+            }
+            EntityID first, second;
+        } callback(start, end, ignoredEntityId, secondIgnoredEntityId);
+        btSphereShape shape(radius);
+        btTransform a, b;
+        a.setIdentity(); b.setIdentity();
+        a.setOrigin(start); b.setOrigin(end);
+        const bool runtimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
+        if (runtimeWorld) m_runtimePhysicsState->world->dynamicsWorld.convexSweepTest(&shape, a, b, callback);
+        else GetPhysicsQueryCache().world->collisionWorld.convexSweepTest(&shape, a, b, callback);
+        if (!callback.hasHit()) return false;
+        auto *entity = static_cast<Entity *>(callback.m_hitCollisionObject->getUserPointer());
+        hit.entityId = entity ? entity->GetID() : 0;
+        hit.point = FromBullet(callback.m_hitPointWorld);
+        hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
+        hit.distance = distance * callback.m_closestHitFraction;
         return true;
     }
 

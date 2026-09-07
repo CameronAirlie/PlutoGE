@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -124,6 +125,7 @@ namespace PlutoGE::scripting
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
 
         struct HostFxrLocation
@@ -3033,6 +3035,53 @@ namespace PlutoGE::scripting
             return decal ? decal->GetID() : 0;
         }
 
+        struct NativeCameraRigRequest
+        {
+            int32_t operation;
+            uint32_t camera, target;
+            int32_t mode, followHeading;
+            NativeVector3 offset, focusOffset;
+            float yaw, pitch, distance, smoothing, radius, padding, seconds, amplitude, frequency;
+        };
+        static_assert(sizeof(NativeCameraRigRequest) == 80);
+        int ControlCameraRig(const NativeCameraRigRequest *request)
+        {
+            if (!request || !core::Engine::GetInstance().IsRuntimeRunning()) return 0;
+            try
+            {
+                auto *entity = FindEntity(request->camera);
+                auto *rig = entity ? entity->GetComponent<scene::CameraRigComponent>() : nullptr;
+                if (!rig) return 0;
+                switch (request->operation)
+                {
+                case 0:
+                {
+                    scene::CameraRigSettings settings;
+                    settings.target = request->target;
+                    settings.mode = static_cast<scene::CameraRigMode>(request->mode);
+                    settings.followHeading = request->followHeading != 0;
+                    settings.offset = {request->offset.x, request->offset.y, request->offset.z};
+                    settings.focusOffset = {request->focusOffset.x, request->focusOffset.y, request->focusOffset.z};
+                    settings.yaw = request->yaw; settings.pitch = request->pitch; settings.distance = request->distance;
+                    settings.smoothing = request->smoothing; settings.collisionRadius = request->radius; settings.collisionPadding = request->padding;
+                    return rig->SetSettings(settings) ? 1 : 0;
+                }
+                case 1:
+                {
+                    auto settings = rig->GetSettings();
+                    settings.mode = scene::CameraRigMode::Orbit;
+                    settings.yaw = request->yaw; settings.pitch = request->pitch; settings.distance = request->distance;
+                    return rig->SetSettings(settings) ? 1 : 0;
+                }
+                case 2: return rig->BlendTo(request->target, request->seconds) ? 1 : 0;
+                case 3: return rig->Shake(request->amplitude, request->seconds, request->frequency) ? 1 : 0;
+                case 4: rig->ResetRuntime(); return 1;
+                default: return 0;
+                }
+            }
+            catch (...) { return 0; }
+        }
+
         struct NativeDebugDrawRequest
         {
             int32_t kind;
@@ -3144,6 +3193,7 @@ namespace PlutoGE::scripting
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
+        register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
@@ -3247,6 +3297,7 @@ namespace PlutoGE::scripting
             impl.registerPhysicsApi = nullptr;
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
+            impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
             impl.bridgeSourceRuntimeConfigPath.clear();
@@ -3591,6 +3642,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi);
 
             if (!requiredExportsLoaded)
@@ -4226,6 +4278,11 @@ namespace PlutoGE::scripting
             return false;
         }
 
+        if (!m_impl->registerCameraRigApi || m_impl->registerCameraRigApi(reinterpret_cast<void *>(&ControlCameraRig)) == 0)
+        {
+            setManagedBridgeFailure("RegisterCameraRigApi");
+            return false;
+        }
         if (!m_impl->registerDebugDrawApi || m_impl->registerDebugDrawApi(
                 reinterpret_cast<void *>(&SubmitDebugDraw), reinterpret_cast<void *>(&ClearDebugDraw)) == 0)
         {

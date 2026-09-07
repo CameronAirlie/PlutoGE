@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -230,6 +231,7 @@ namespace PlutoGE::scene
             {
                 return "SkeletonAttachmentComponent";
             }
+            if (dynamic_cast<const CameraRigComponent *>(&component)) return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
             {
                 return "CameraComponent";
@@ -343,6 +345,7 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<SkeletonAttachmentComponent>();
             }
+            if (componentType == "CameraRigComponent") return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
             {
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}), false);

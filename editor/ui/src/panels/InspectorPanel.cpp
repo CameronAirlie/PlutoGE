@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -181,6 +182,7 @@ namespace PlutoGE::ui
             AudioEnvironmentVolume = 29,
             LegacyCanvas = 27,
             ActiveRagdoll = 28,
+            CameraRig = 30,
         };
 
         struct ScriptAssetOption
@@ -1605,6 +1607,7 @@ namespace PlutoGE::ui
             {
                 return "Skeleton Attachment Component";
             }
+            if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "Camera Rig";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
             {
                 return "Camera Component";
@@ -1698,6 +1701,7 @@ namespace PlutoGE::ui
                 return "ActiveRagdollComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
+            if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "CameraRigComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const scene::LightComponent *>(&component))
@@ -1838,6 +1842,8 @@ namespace PlutoGE::ui
             case AddableComponentType::ActiveRagdoll:
                 return entity.HasComponent<scene::AnimationComponent>() &&
                        !entity.HasComponent<scene::ActiveRagdollComponent>();
+            case AddableComponentType::CameraRig:
+                return entity.HasComponent<scene::CameraComponent>() && !entity.HasComponent<scene::CameraRigComponent>();
             case AddableComponentType::Camera:
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
@@ -1904,6 +1910,7 @@ namespace PlutoGE::ui
                 renderItem("Cloth", AddableComponentType::Cloth);
                 renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
+                renderItem("Camera Rig", AddableComponentType::CameraRig);
                 renderItem("Light", AddableComponentType::Light);
                 ImGui::EndMenu();
             }
@@ -2022,6 +2029,9 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Ocean:
                 entity.CreateComponent<scene::OceanComponent>();
+                break;
+            case AddableComponentType::CameraRig:
+                entity.CreateComponent<scene::CameraRigComponent>();
                 break;
             case AddableComponentType::Camera:
             {

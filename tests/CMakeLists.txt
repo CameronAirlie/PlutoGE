@@ -308,3 +308,25 @@ if (TARGET OpenAL)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEMultiEntityEditTests>/$<TARGET_FILE_NAME:OpenAL>)
 endif()
+
+add_executable(PlutoGECameraRigTests
+    CameraRigTests.cpp
+)
+target_include_directories(PlutoGECameraRigTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGECameraRigTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGECameraRigTests PRIVATE PlutoGE::Scene)
+endif()
+add_test(NAME PlutoGECameraRigTests COMMAND PlutoGECameraRigTests)
+
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGECameraRigTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGECameraRigTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGECameraRigManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.CameraRigSmokeTests/PlutoGE.CameraRigSmokeTests.csproj --configuration Release)
+endif()

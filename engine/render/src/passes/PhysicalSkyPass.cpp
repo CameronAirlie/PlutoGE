@@ -159,8 +159,8 @@ namespace PlutoGE::render
                     float viewAirMass = 1.0 / max(viewHeight + 0.075, 0.075);
                     float sunAirMass = 1.0 / max(sunHeight + 0.075, 0.04);
                     float day = smoothstep(-0.09, 0.035, sunHeight);
-                    float night = 1.0 - smoothstep(-0.12, 0.035, sunHeight);
-                    float twilight = smoothstep(-0.28, -0.02, sunHeight) * (1.0 - smoothstep(0.02, 0.22, sunHeight));
+                    float night = 1.0 - smoothstep(-0.31, -0.04, sunHeight);
+                    float twilight = smoothstep(-0.31, -0.02, sunHeight) * (1.0 - smoothstep(0.02, 0.22, sunHeight));
 
                     vec3 betaRayleigh = vec3(0.028, 0.067, 0.155) * uRayleighStrength;
                     vec3 betaMie = vec3(0.035) * uMieStrength;
@@ -175,10 +175,11 @@ namespace PlutoGE::render
 
                     float horizon = pow(1.0 - clamp(direction.y, 0.0, 1.0), 5.0);
                     float sunsetAlignment = pow(max(cosine, 0.0), 12.0);
-                    sky += vec3(1.0, 0.12, 0.018) * twilight * horizon * (0.18 + sunsetAlignment * 1.6) * uSunIntensity;
+                    sky += vec3(1.0, 0.12, 0.018) * twilight * twilight * horizon * (0.02 + sunsetAlignment * 0.16) * uSunIntensity;
 
                     vec3 nightGradient = mix(vec3(0.002, 0.003, 0.009), vec3(0.012, 0.022, 0.06), pow(clamp(direction.y, 0.0, 1.0), 0.35));
-                    sky += nightGradient * uNightIntensity * 24.0 * night;
+                    // Dim airglow remains after astronomical twilight; avoid a daylight-sized floor.
+                    sky += nightGradient * uNightIntensity * night;
                     float stars = StarField(direction) * smoothstep(-0.02, 0.16, direction.y) * night;
                     sky += vec3(0.72, 0.82, 1.0) * stars * uStarIntensity;
 
@@ -197,7 +198,7 @@ namespace PlutoGE::render
                     sky += uMoonColor * uMoonIntensity * moonVisibility * (moonDisc + moonHalo * 0.08);
 
                     float groundBlend = smoothstep(-0.08, 0.015, direction.y);
-                    return mix(uGroundColor * mix(0.35, 1.0, day), sky, groundBlend) * uExposure;
+                    return mix(uGroundColor * mix(uNightIntensity * 0.1, 1.0, day), sky, groundBlend) * uExposure;
                 }
 
                 void main()

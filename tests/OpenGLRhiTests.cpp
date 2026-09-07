@@ -308,6 +308,31 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         std::array<unsigned char, 96u * 64u * 4u> clearSkyPixels{};
         glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, clearSkyPixels.data());
 
+        // With the sun below the horizon, background radiance must fall even
+        // when direct lighting has already been attenuated to zero.
+        auto nightSky = physicalSky;
+        nightSky.parameters[0] = {0.25f, -0.8f, 0.4f, 1.0f};
+        auto nightLighting = atmosphereLighting;
+        nightLighting.directionalDirection = -glm::normalize(glm::vec3(nightSky.parameters[0]));
+        nightLighting.directionalIntensity = 0.0f;
+        basicRenderer.Render(atmosphereProjection * nightLighting.view,
+                             nightLighting, {}, std::span(&nightSky, 1));
+        std::array<unsigned char, 96u * 64u * 4u> nightSkyPixels{};
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, nightSkyPixels.data());
+        unsigned int dayBrightness = 0, nightBrightness = 0;
+        for (std::size_t pixel = 0; pixel < clearSkyPixels.size(); pixel += 4)
+            for (std::size_t channel = 0; channel < 3; ++channel)
+            {
+                dayBrightness += clearSkyPixels[pixel + channel];
+                nightBrightness += nightSkyPixels[pixel + channel];
+            }
+        if (glGetError() != GL_NO_ERROR || nightBrightness >= dayBrightness / 4)
+        {
+            std::cerr << "Physical sky stays too bright at night: day=" << dayBrightness
+                      << " night=" << nightBrightness << '\n';
+            return 13;
+        }
+
         render::BasicPostProcessEffect cloud{render::BasicPostProcessEffectType::VolumetricCloud};
         cloud.quality = 32u | (4u << 8u);
         cloud.parameters[0] = {1.0f, 1.0f, 1.0f, 0.65f};
@@ -333,6 +358,36 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             std::cerr << "OpenGL volumetric cloud did not change the sky image; total difference="
                       << cloudDifference << '\n';
+            return 14;
+        }
+
+        auto moonlitCloud = cloud;
+        moonlitCloud.parameters[0].w = 0.95f;
+        moonlitCloud.parameters[1].w = 2.0f;
+        moonlitCloud.parameters[5].y = 0.0f;
+        moonlitCloud.parameters[2] = {0.25f, 0.8f, 0.4f, cloud.parameters[2].w};
+        moonlitCloud.parameters[3] = {0.55f, 0.65f, 1.0f, 0.8f};
+        moonlitCloud.parameters[5].z = 1.0f;
+        std::array moonlitEffects{nightSky, moonlitCloud};
+        basicRenderer.Render(atmosphereProjection * nightLighting.view,
+                             nightLighting, {}, moonlitEffects);
+        std::array<unsigned char, 96u * 64u * 4u> moonlitPixels{}, unlitPixels{};
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, moonlitPixels.data());
+        moonlitEffects[1].parameters[3].w = 0.0f;
+        basicRenderer.Render(atmosphereProjection * nightLighting.view,
+                             nightLighting, {}, moonlitEffects);
+        glReadPixels(0, 0, 96, 64, GL_RGBA, GL_UNSIGNED_BYTE, unlitPixels.data());
+        unsigned int moonlitBrightness = 0, unlitBrightness = 0;
+        for (std::size_t pixel = 0; pixel < moonlitPixels.size(); pixel += 4)
+            for (std::size_t channel = 0; channel < 3; ++channel)
+            {
+                moonlitBrightness += moonlitPixels[pixel + channel];
+                unlitBrightness += unlitPixels[pixel + channel];
+            }
+        if (glGetError() != GL_NO_ERROR || moonlitBrightness <= unlitBrightness + 100)
+        {
+            std::cerr << "Moonlight did not illuminate the cloud volume: moonlit="
+                      << moonlitBrightness << " unlit=" << unlitBrightness << '\n';
             return 14;
         }
 

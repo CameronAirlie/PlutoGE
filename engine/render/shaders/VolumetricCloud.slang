@@ -119,6 +119,11 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float cosine = dot(rayDirection, normalize(pass.parameters[2].xyz));
     const float phase = (1.0 - anisotropy * anisotropy) /
                         (12.56637061 * pow(max(1.0 + anisotropy * anisotropy - 2.0 * anisotropy * cosine, 0.0001), 1.5));
+    // Fade the uniform daylight fill early in twilight. At night, the
+    // directional moon term supplies illumination without an emissive floor.
+    const float sunHeight = normalize(pass.parameters[2].xyz).y * (pass.parameters[5].z > 0.5 ? -1.0 : 1.0);
+    const float daylight = smoothstep(-0.12, 0.035, sunHeight);
+    const float ambientLight = pass.parameters[4].z * daylight * daylight;
     for (uint index = 0; index < 128u; ++index)
     {
         if (index >= primarySteps || transmittance < 0.01)
@@ -129,7 +134,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         const float sunlight = pass.parameters[3].w > 0.0001
                                    ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps)
                                    : 1.0;
-        const float3 incident = pass.parameters[4].z +
+        const float3 incident = ambientLight +
                                 pass.parameters[3].rgb * pass.parameters[3].w * phase * sunlight;
         radiance += transmittance * pass.parameters[0].rgb * incident * pass.parameters[4].x * (1.0 - segmentTransmittance);
         transmittance *= segmentTransmittance;

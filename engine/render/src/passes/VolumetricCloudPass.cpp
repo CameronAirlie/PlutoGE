@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
 #include <algorithm>
@@ -18,6 +19,16 @@ namespace PlutoGE::render
 {
     namespace
     {
+        const scene::PhysicalSkyComponent *FindSky(const scene::Entity *entity)
+        {
+            if (!entity || !entity->IsActive()) return nullptr;
+            for (const auto *sky : entity->GetComponents<scene::PhysicalSkyComponent>())
+                if (sky && sky->IsEnabled()) return sky;
+            for (const auto *child : entity->GetChildren())
+                if (const auto *sky = FindSky(child)) return sky;
+            return nullptr;
+        }
+
         struct CloudDraw
         {
             const scene::VolumetricCloudComponent *component = nullptr;
@@ -87,6 +98,7 @@ namespace PlutoGE::render
                 uniform vec3 uWindOffset;
                 uniform vec3 uCloudColor;
                 uniform vec3 uLightDirection;
+                uniform float uSunHeight;
                 uniform vec3 uLightColor;
                 uniform float uLightIntensity;
                 uniform float uCoverage;
@@ -284,6 +296,10 @@ namespace PlutoGE::render
                     float transmittance = 1.0;
                     vec3 radiance = vec3(0.0);
                     float phase = Phase(dot(rayDirection, uLightDirection));
+                    // Remove uniform daylight fill early in twilight; moonlight
+                    // supplies directional illumination at night without a floor.
+                    float daylight = smoothstep(-0.12, 0.035, uSunHeight);
+                    float ambientLight = uAmbientLight * daylight * daylight;
 
                     for (int i = 0; i < 128; ++i)
                     {
@@ -297,7 +313,7 @@ namespace PlutoGE::render
                             float sunlight = uLightIntensity > 0.0001
                                 ? LightTransmittance(position, fract(jitter + float(i) * 0.61803398875))
                                 : 1.0;
-                            vec3 incident = vec3(uAmbientLight) + uLightColor * uLightIntensity * phase * sunlight;
+                            vec3 incident = vec3(ambientLight) + uLightColor * uLightIntensity * phase * sunlight;
                             vec3 source = uCloudColor * incident * uScatteringAlbedo;
                             radiance += transmittance * source * (1.0 - segmentT);
                             transmittance *= segmentT;
@@ -432,13 +448,24 @@ namespace PlutoGE::render
             lightDirection = glm::normalize(lightDirection);
         else
             lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
-        const glm::vec3 lightColor = sun ? glm::max(sun->color, glm::vec3(0.0f)) : glm::vec3(1.0f);
+        glm::vec3 lightColor = sun ? glm::max(sun->color, glm::vec3(0.0f)) : glm::vec3(1.0f);
         // A physical sun below the horizon must not illuminate cloud undersides
         // through the terrain. Fade it out across the horizon to avoid popping.
         const float horizonVisibility = ctx.renderer
             ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(sun)
             : glm::smoothstep(-0.02f, 0.03f, lightDirection.y);
-        const float lightIntensity = sun ? std::max(sun->intensity, 0.0f) * horizonVisibility : 0.0f;
+        float lightIntensity = sun ? std::max(sun->intensity, 0.0f) * horizonVisibility : 0.0f;
+        const float sunHeight = lightDirection.y;
+        if (sunHeight <= -0.02f)
+            for (const auto *root : ctx.scene->GetRootEntities())
+                if (const auto *sky = FindSky(root))
+                {
+                    const float night = 1.0f - glm::smoothstep(-0.31f, -0.04f, sunHeight);
+                    lightDirection = -lightDirection;
+                    lightColor = sky->GetMoonColor();
+                    lightIntensity = sky->GetMoonIntensity() * night * glm::smoothstep(-0.04f, 0.04f, -sunHeight);
+                    break;
+                }
         bool hasTemporalAA = false;
         if (ctx.postProcessEffects)
         {
@@ -465,6 +492,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uInverseViewProjection", glm::inverse(ctx.cameraData.projection * ctx.cameraData.view));
         m_shader->SetUniform("uCameraPosition", cameraPosition);
         m_shader->SetUniform("uLightDirection", lightDirection);
+        m_shader->SetUniform("uSunHeight", sunHeight);
         m_shader->SetUniform("uLightColor", lightColor);
         m_shader->SetUniform("uLightIntensity", lightIntensity);
         m_shader->SetUniform("uFrameIndex", hasTemporalAA ? static_cast<float>(ctx.frameSequence % 4096) : 0.0f);

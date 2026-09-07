@@ -77,9 +77,9 @@ namespace PlutoGE::ui
                     if (sky && sky->IsEnabled())
                     {
                         render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
-                        glm::vec3 sunDirection = lighting.directionalIntensity > 0.0f
-                                                     ? -lighting.directionalDirection
-                                                     : glm::vec3(0.25f, 0.8f, 0.4f);
+                        // Horizon attenuation can make a valid sun's intensity zero.
+                        // Keep its direction so sunset cannot reset the sky to daytime.
+                        glm::vec3 sunDirection = -lighting.directionalDirection;
                         if (glm::dot(sunDirection, sunDirection) < 0.000001f)
                             sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
                         effect.exposure = sky->GetExposure();
@@ -224,6 +224,7 @@ namespace PlutoGE::ui
         lighting.view = cameraData.view;
         lighting.ambientIntensity = 0.0f;
         lighting.directionalIntensity = 0.0f;
+        lighting.directionalDirection = -glm::normalize(glm::vec3(0.25f, 0.8f, 0.4f));
         if (scene)
             for (const auto *light : scene->GetLights())
                 if (light && light->type == scene::LightType::Directional)
@@ -300,7 +301,20 @@ namespace PlutoGE::ui
         std::sort(clouds.begin(), clouds.end(), [](const CloudPacket &lhs, const CloudPacket &rhs)
                   { return lhs.distanceSquared > rhs.distanceSquared; });
         for (auto &cloud : clouds)
+        {
+            if (const auto *sky = FindPhysicalSky(scene); sky && cloud.effect.parameters[2].y <= -0.02f)
+            {
+                auto &effect = cloud.effect;
+                const float sunHeight = effect.parameters[2].y;
+                const float night = 1.0f - glm::smoothstep(-0.31f, -0.04f, sunHeight);
+                const float visibility = night * glm::smoothstep(-0.04f, 0.04f, -sunHeight);
+                effect.parameters[2] = {-glm::vec3(effect.parameters[2]), effect.parameters[2].w};
+                effect.parameters[3] = {sky->GetMoonColor(), sky->GetMoonIntensity() * visibility};
+                // The scattering light is now the moon; ambient still follows the sun.
+                effect.parameters[5].z = 1.0f;
+            }
             atmosphereEffects.push_back(std::move(cloud.effect));
+        }
 
         try
         {

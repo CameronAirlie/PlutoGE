@@ -30,6 +30,10 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <set>
+#include <stdexcept>
+#include "PlutoGE/assets/AssetDatabase.h"
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -52,6 +56,7 @@ namespace PlutoGE::scene
             std::filesystem::file_time_type lastWriteTime{};
             bool hasLastWriteTime = false;
             std::unique_ptr<Scene> scene;
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
         };
 
         std::unordered_map<std::string, CachedPrefab> &PrefabCache()
@@ -464,9 +469,135 @@ namespace PlutoGE::scene
             RemapScriptEntityReferences(clone, entityIdRemap);
         }
 
-        std::unique_ptr<Scene> LoadPrefabScene(std::string_view prefabReference, std::string *errorMessage)
+        std::optional<std::string> CaptureOverrideValue(const Entity &, std::string_view);
+        void ApplyOverrideValue(Entity &, std::string_view, std::string_view);
+
+        struct VariantPatch { EntityID entity; std::string path, value; };
+        struct VariantData { std::string base; std::vector<VariantPatch> patches; };
+        std::string EscapeVariant(std::string_view value)
         {
-            return SceneSerializer::Load(ResolvePrefabPath(prefabReference), errorMessage);
+            std::string out;
+            for (char c : value)
+            {
+                if (c == '\\') out += "\\\\";
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else out += c;
+            }
+            return out;
+        }
+        std::string UnescapeVariant(std::string_view value)
+        {
+            std::string out;
+            for (size_t i = 0; i < value.size(); ++i)
+            {
+                char c = value[i];
+                if (c == '\\' && i + 1 < value.size())
+                {
+                    c = value[++i];
+                    if (c == 'n') c = '\n'; else if (c == 'r') c = '\r'; else if (c == 't') c = '\t';
+                }
+                out += c;
+            }
+            return out;
+        }
+        bool ReadVariant(const std::string &path, VariantData &data)
+        {
+            std::ifstream input(path);
+            std::string header;
+            std::getline(input, header);
+            if (!header.empty() && header.back() == '\r') header.pop_back();
+            if (header != "VARIANT\t1") return false;
+            std::string record;
+            if (!(input >> record >> std::quoted(data.base)) || record != "BASE" || data.base.empty())
+                throw std::runtime_error("Invalid variant base: " + path);
+            std::set<std::pair<EntityID, std::string>> seen;
+            while (input >> record)
+            {
+                VariantPatch patch;
+                if (record != "OVERRIDE" || !(input >> patch.entity >> std::quoted(patch.path) >> std::quoted(patch.value)) ||
+                    !patch.entity || !seen.emplace(patch.entity, patch.path).second || seen.size() > 100000)
+                    throw std::runtime_error("Invalid variant override: " + path);
+                patch.path = UnescapeVariant(patch.path);
+                patch.value = UnescapeVariant(patch.value);
+                data.patches.push_back(std::move(patch));
+            }
+            if (!input.eof()) throw std::runtime_error("Cannot read variant: " + path);
+            return true;
+        }
+        std::unique_ptr<Scene> ResolvePrefab(std::string_view reference, std::set<std::string> &stack,
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> &dependencies)
+        {
+            const auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(reference)).string();
+            if (stack.size() >= 64 || !stack.insert(path).second)
+                throw std::runtime_error("Prefab dependency cycle: " + path);
+            dependencies[path] = {std::filesystem::last_write_time(path), assets::AssetDatabase::HashFile(path)};
+            VariantData variant;
+            std::unique_ptr<Scene> scene;
+            if (ReadVariant(path, variant))
+            {
+                scene = ResolvePrefab(variant.base, stack, dependencies);
+                for (const auto &patch : variant.patches)
+                {
+                    auto *entity = scene->FindEntityByID(patch.entity);
+                    if (!entity || !CaptureOverrideValue(*entity, patch.path))
+                        throw std::runtime_error("Variant override target no longer exists: " + patch.path + " in " + path);
+                    ApplyOverrideValue(*entity, patch.path, patch.value);
+                }
+            }
+            else
+            {
+                std::string error;
+                scene = SceneSerializer::Load(path, &error);
+                if (!scene || !error.empty()) throw std::runtime_error("Cannot load prefab " + path + ": " + error);
+            }
+            stack.erase(path);
+            return scene;
+        }
+        std::unique_ptr<Scene> LoadPrefabScene(std::string_view reference, std::string *error,
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> *dependenciesOut = nullptr)
+        {
+            if (error) error->clear();
+            try
+            {
+                std::set<std::string> stack;
+                std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
+                auto scene = ResolvePrefab(reference, stack, dependencies);
+                if (dependenciesOut) *dependenciesOut = std::move(dependencies);
+                return scene;
+            }
+            catch (const std::exception &exception) { if (error) *error = exception.what(); return nullptr; }
+        }
+        bool DependenciesCurrent(const CachedPrefab &cached)
+        {
+            for (const auto &[path, timestamp] : cached.dependencies)
+            {
+                std::error_code error;
+                const auto current = std::filesystem::last_write_time(path, error);
+                if (error || current != timestamp.first || assets::AssetDatabase::HashFile(path) != timestamp.second) return false;
+            }
+            return true;
+        }
+        bool DependsOn(std::string_view reference, std::string_view target)
+        {
+            std::set<std::string> seen;
+            try
+            {
+                const auto targetPath = std::filesystem::weakly_canonical(ResolvePrefabPath(target));
+                std::string next(reference);
+                while (seen.size() < 64)
+                {
+                    auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(next));
+                    if (path == targetPath) return true;
+                    if (!seen.insert(path.string()).second) return false;
+                    VariantData variant;
+                    if (!ReadVariant(path.string(), variant)) return false;
+                    next = variant.base;
+                }
+            }
+            catch (...) {}
+            return false;
         }
 
         Scene *LoadCachedPrefabScene(std::string_view prefabReference, std::string *errorMessage,
@@ -485,7 +616,7 @@ namespace PlutoGE::scene
             auto &cache = PrefabCache();
             auto cached = cache.find(resolvedPath);
             if (cached != cache.end() &&
-                cached->second.hasLastWriteTime == hasLastWriteTime &&
+                DependenciesCurrent(cached->second) && cached->second.hasLastWriteTime == hasLastWriteTime &&
                 (!hasLastWriteTime || cached->second.lastWriteTime == lastWriteTime))
             {
                 if (cacheHit) *cacheHit = true;
@@ -495,7 +626,8 @@ namespace PlutoGE::scene
 
             if (cacheHit) *cacheHit = false;
             const auto parsingStart = ProfileClock::now();
-            auto loadedScene = SceneSerializer::Load(resolvedPath, errorMessage);
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
+            auto loadedScene = LoadPrefabScene(prefabReference, errorMessage, &dependencies);
             if (parsingMs) *parsingMs = ElapsedMs(parsingStart);
             if (!loadedScene)
             {
@@ -506,6 +638,7 @@ namespace PlutoGE::scene
                 .lastWriteTime = lastWriteTime,
                 .hasLastWriteTime = hasLastWriteTime,
                 .scene = std::move(loadedScene),
+                .dependencies = std::move(dependencies),
             };
             auto [iterator, inserted] = cache.insert_or_assign(resolvedPath, std::move(entry));
             (void)inserted;
@@ -724,7 +857,7 @@ namespace PlutoGE::scene
             }
 
             if (entity->IsPrefabInstanceRoot() &&
-                (prefabReference.empty() || entity->GetPrefabSource() == prefabReference))
+                (prefabReference.empty() || DependsOn(entity->GetPrefabSource(), prefabReference)))
             {
                 roots.push_back(entity);
                 return;
@@ -823,7 +956,7 @@ namespace PlutoGE::scene
         std::scoped_lock lock(PrefabStateMutex());
         const auto cached = PrefabCache().find(resolvedPath);
         return cached != PrefabCache().end() && cached->second.scene &&
-               cached->second.hasLastWriteTime == hasLastWriteTime &&
+               DependenciesCurrent(cached->second) && cached->second.hasLastWriteTime == hasLastWriteTime &&
                (!hasLastWriteTime || cached->second.lastWriteTime == lastWriteTime);
     }
 
@@ -844,6 +977,107 @@ namespace PlutoGE::scene
         std::scoped_lock lock(PrefabStateMutex());
         g_latestProfile = {};
         g_maximumProfile = {};
+    }
+
+    std::string Prefab::GetVariantBase(std::string_view reference)
+    {
+        try { VariantData data; return ReadVariant(ResolvePrefabPath(reference), data) ? data.base : std::string{}; }
+        catch (...) { return {}; }
+    }
+
+    bool Prefab::SaveVariant(const Entity &instance, const std::filesystem::path &destination, std::string *error)
+    {
+        if (error) error->clear();
+        try
+        {
+            if (!instance.IsPrefabInstanceRoot() || instance.GetPrefabSource().empty())
+                throw std::runtime_error("Create a variant from a prefab instance root.");
+            if (destination.extension() != kFileExtension) throw std::runtime_error("Variants require .plutoprefab files.");
+            VariantData data;
+            const auto sourcePath = std::filesystem::weakly_canonical(ResolvePrefabPath(instance.GetPrefabSource()));
+            const auto targetPath = std::filesystem::weakly_canonical(destination);
+            const bool applying = sourcePath == targetPath;
+            if (applying)
+            {
+                if (!ReadVariant(sourcePath.string(), data)) throw std::runtime_error("The source is not a variant.");
+            }
+            else
+            {
+                if (std::filesystem::exists(destination)) throw std::runtime_error("The destination already exists.");
+                if (DependsOn(instance.GetPrefabSource(), destination.string())) throw std::runtime_error("Variant would create a cycle.");
+                data.base = instance.GetPrefabSource();
+            }
+            std::string loadError;
+            auto base = LoadPrefabScene(data.base, &loadError);
+            if (!base) throw std::runtime_error(loadError);
+            Scene normalized;
+            auto *root = CloneEntityTreeIntoScenePreservingIds(normalized, instance, nullptr);
+            RemapClonedScriptEntityReferences(instance, *root);
+            std::vector<Entity *> entities, inherited;
+            CollectEntitiesRecursive(root, entities);
+            for (auto *baseRoot : base->GetRootEntities()) CollectEntitiesRecursive(baseRoot, inherited);
+            if (entities.size() != inherited.size()) throw std::runtime_error("Variants currently support property overrides; hierarchy changes must be made in the base prefab.");
+            for (auto *entity : entities)
+            {
+                auto *original = base->FindEntityByID(entity->GetID());
+                if (!original || (entity->GetParent() ? entity->GetParent()->GetID() : 0) != (original->GetParent() ? original->GetParent()->GetID() : 0))
+                    throw std::runtime_error("Variant hierarchy differs from its base.");
+                std::multiset<std::string> componentTypes, originalTypes;
+                for (const auto &bucket : entity->GetComponentBuckets()) for (auto *component : bucket) if (component) componentTypes.insert(ResolveComponentTypeName(*component));
+                for (const auto &bucket : original->GetComponentBuckets()) for (auto *component : bucket) if (component) originalTypes.insert(ResolveComponentTypeName(*component));
+                if (componentTypes != originalTypes) throw std::runtime_error("Component additions/removals must be made in the base prefab.");
+                for (const auto &path : entity->GetPrefabOverrides())
+                {
+                    const auto value = CaptureOverrideValue(*entity, path);
+                    if (!value || !CaptureOverrideValue(*original, path)) throw std::runtime_error("Unsupported variant override: " + path);
+                    if (path.starts_with("Component:"))
+                    {
+                        auto end = path.find(':', 10);
+                        if (componentTypes.count(path.substr(10, end - 10)) > 1)
+                            throw std::runtime_error("Overrides of repeated component types are ambiguous.");
+                    }
+                    auto found = std::find_if(data.patches.begin(), data.patches.end(), [&](const auto &patch) { return patch.entity == entity->GetID() && patch.path == path; });
+                    if (found == data.patches.end()) data.patches.push_back({entity->GetID(), path, *value});
+                    else found->value = *value;
+                }
+            }
+            for (const auto &patch : data.patches)
+            {
+                auto *entity = base->FindEntityByID(patch.entity);
+                if (!entity || !CaptureOverrideValue(*entity, patch.path)) throw std::runtime_error("A saved override target is missing from the base.");
+            }
+            std::filesystem::create_directories(destination.parent_path());
+            auto temporary = destination;
+            temporary += "." + std::to_string(ProfileClock::now().time_since_epoch().count()) + ".tmp";
+            std::ofstream output(temporary);
+            output << "VARIANT\t1\nBASE\t" << std::quoted(data.base) << '\n';
+            for (const auto &patch : data.patches)
+                output << "OVERRIDE\t" << patch.entity << '\t' << std::quoted(EscapeVariant(patch.path)) << '\t' << std::quoted(EscapeVariant(patch.value)) << '\n';
+            output.close();
+            std::error_code ec;
+            if (output) std::filesystem::rename(temporary, destination, ec);
+            if (!output || ec)
+            {
+                std::filesystem::remove(temporary, ec);
+                throw std::runtime_error("Could not write variant asset.");
+            }
+            return true;
+        }
+        catch (const std::exception &exception) { if (error) *error = exception.what(); return false; }
+    }
+
+    bool Prefab::RevertInstance(Entity &instance, std::string *error)
+    {
+        // Resolve first so a broken dependency cannot destroy local overrides.
+        if (!LoadPrefabScene(instance.GetPrefabSource(), error)) return false;
+        std::vector<Entity *> entities;
+        CollectEntitiesRecursive(&instance, entities);
+        std::unordered_map<EntityID, std::vector<std::string>> overrides;
+        for (auto *entity : entities) overrides[entity->GetID()] = entity->GetPrefabOverrides();
+        instance.ClearPrefabOverridesRecursive();
+        if (UpdateInstance(instance, error)) return true;
+        for (auto *entity : entities) for (const auto &path : overrides[entity->GetID()]) entity->AddPrefabOverride(path);
+        return false;
     }
 
     bool Prefab::SaveFromEntity(const Entity &entity,
@@ -1062,6 +1296,9 @@ namespace PlutoGE::scene
             return false;
         }
 
+        if (!LoadPrefabScene(instanceRoot.GetPrefabSource(), errorMessage)) return false;
+        if (!GetVariantBase(instanceRoot.GetPrefabSource()).empty())
+            return SaveVariant(instanceRoot, ResolvePrefabPath(instanceRoot.GetPrefabSource()), errorMessage);
         return SaveSingleEntityScene(instanceRoot, ResolvePrefabPath(instanceRoot.GetPrefabSource()), true, errorMessage);
     }
 }

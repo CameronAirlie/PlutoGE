@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <limits>
@@ -74,6 +75,7 @@ namespace PlutoGE::assets
         {
             const ProjectValidationInput &input;
             ProjectValidationResult result;
+            std::map<std::string, std::string> variantBases;
             void Add(std::string code, const std::string &owner, std::uint32_t entity, std::size_t line,
                      std::string message, ValidationSeverity severity = ValidationSeverity::Error)
             { result.diagnostics.push_back({severity, std::move(code), owner, entity, line, std::move(message)}); }
@@ -95,6 +97,26 @@ namespace PlutoGE::assets
                 if (path.empty() || !std::filesystem::is_regular_file(path, ec))
                     Add("asset.missing", owner, entity, line, "Missing asset: " + reference + (ec ? " (" + ec.message() + ")" : ""));
             }
+            void Variant(std::istream &stream, const std::string &owner)
+            {
+                std::string record, base;
+                if (!(stream >> record >> std::quoted(base)) || record != "BASE" || !base.ends_with(".plutoprefab") || !base.starts_with("project://"))
+                { Add("prefab.variant", owner, 0, 2, "Variant requires a project prefab base."); return; }
+                variantBases[owner] = NormalizeAssetReference(base);
+                Reference(base, owner, 0, 2);
+                std::set<std::pair<std::uint32_t, std::string>> seen;
+                std::size_t line = 2;
+                while (stream >> record)
+                {
+                    ++line;
+                    std::uint32_t id = 0;
+                    std::string path, value;
+                    if (record != "OVERRIDE" || !(stream >> id >> std::quoted(path) >> std::quoted(value)) || !id || path.empty() || !seen.emplace(id, path).second)
+                    { Add("prefab.variant", owner, id, line, "Invalid or duplicate variant override."); return; }
+                    if (path != "Name" && path != "Tags") Reference(value, owner, id, line);
+                }
+                if (!stream.eof()) Add("prefab.variant", owner, 0, line, "Cannot read variant records.");
+            }
             void Scene(std::istream &stream, const std::string &owner, bool prefab)
             {
                 std::map<std::uint32_t, Entity> entities;
@@ -106,6 +128,7 @@ namespace PlutoGE::assets
                 {
                     ++number;
                     if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (number == 1 && prefab && line == "VARIANT\t1") { Variant(stream, owner); return; }
                     if (number == 1 && line != "SCENE\t1") { Add("scene.header", owner, 0, 1, "Unsupported or missing scene header."); return; }
                     if (line.size() > 1024 * 1024) { Add("scan.incomplete", owner, 0, number, "Scene record exceeds 1 MiB; record not validated."); continue; }
                     const auto fields = Fields(line);
@@ -251,6 +274,17 @@ namespace PlutoGE::assets
                 }
             }
             if (!ec) it.increment(ec);
+        }
+        for (const auto &[owner, base] : v.variantBases)
+        {
+            std::set<std::string> seen{owner};
+            auto next = base;
+            while (v.variantBases.contains(next))
+            {
+                if (!seen.insert(next).second || seen.size() > 64)
+                { v.Add("prefab.cycle", owner, 0, 2, "Variant base chain contains a cycle or exceeds 64 levels."); break; }
+                next = v.variantBases.at(next);
+            }
         }
         if (ec) v.Add("scan.incomplete", "Project", 0, 0, "Could not enumerate all assets: " + ec.message());
         if (input.currentScene)

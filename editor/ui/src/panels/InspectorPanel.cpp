@@ -3666,7 +3666,47 @@ namespace PlutoGE::ui
             ImGui::Text("Prefab: %s", entity->GetPrefabSource().c_str());
             ImGui::TextDisabled(entity->IsPrefabInstanceRoot() ? "Instance Root" : "Nested Prefab Entity");
             ImGui::TextDisabled("Overrides: %zu", entity->GetPrefabOverrides().size());
+            const auto variantBase = scene::Prefab::GetVariantBase(entity->GetPrefabSource());
+            if (!variantBase.empty()) ImGui::TextWrapped("Variant base: %s", variantBase.c_str());
             ImGui::BeginDisabled(!entity->IsPrefabInstanceRoot());
+            if (ImGui::Button("Create Variant")) ImGui::OpenPopup("Create Prefab Variant");
+            if (ImGui::BeginPopupModal("Create Prefab Variant", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                static char variantName[128] = "Variant";
+                ImGui::InputText("Name", variantName, sizeof(variantName));
+                auto *project = editorShell.GetProject();
+                const std::string name(variantName);
+                const bool valid = project && !name.empty() && name != "." && name != ".." && name.find_first_of("/\\:") == std::string::npos;
+                ImGui::BeginDisabled(!valid);
+                if (ImGui::Button("Create"))
+                {
+                    const auto path = project->GetAssetDirectoryPath() / "Prefabs" / (name + ".plutoprefab");
+                    std::string error;
+                    if (scene::Prefab::SaveVariant(*entity, path, &error))
+                    {
+                        const auto reference = project->MakeAssetReference(path);
+                        editorShell.ExecuteSceneEdit("Create prefab variant", [&] {
+                            entity->SetPrefabLink(reference, entity->GetPrefabEntityID(), true);
+                            scene::Prefab::RevertInstance(*entity, &error);
+                        });
+                        project->RefreshAssetRegistry();
+                        editorShell.MarkProjectDirty();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (!error.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Revert Instance Overrides"))
+            {
+                std::string error;
+                editorShell.ExecuteSceneEdit("Revert prefab overrides", [&] { scene::Prefab::RevertInstance(*entity, &error); });
+                if (!error.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
+            }
             if (ImGui::Button("Update From Prefab"))
             {
                 std::string errorMessage;

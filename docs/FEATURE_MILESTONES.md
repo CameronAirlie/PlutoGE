@@ -34,7 +34,7 @@ that a milestone is complete.
 | M07 | Gameplay debug drawing | Medium | Implemented for editor views; automated checks passed |
 | M08 | Camera rigs | Medium | Implemented; automated checks passed |
 | M09 | Surface response assets | Medium | Implemented; automated checks passed |
-| M10 | Prefab variants | Medium–large | Planned |
+| M10 | Prefab variants | Medium–large | Property variants implemented; automated checks passed |
 | M11 | Sequencer/timeline | Large | Planned |
 | M12 | Additive scene loading and streaming | Large | Planned |
 | M13 | Networked entity replication | Large | Planned |
@@ -274,3 +274,23 @@ OpenGL/Vulkan verification remains pending.
   original library debug information was retained. Interactive audio/render checks
   remain pending. M10-M14 remain planned.
 - Setup, API, and scope: [Surface responses](SURFACE_RESPONSES.md).
+
+
+### 2026-09-07: M10 prefab property variants
+
+- Added derived `.plutoprefab` assets retaining a base reference and explicit
+  property overrides, including multi-level variant inheritance.
+- Added Inspector Create Variant and Revert Instance Overrides workflows. Apply
+  preserves the variant format; base apply updates derived instances. Scene
+  snapshots preserve variant links and local overrides for undo/redo.
+- Added dependency-aware preload/cache checks, cycle/depth/missing-base diagnostics,
+  project validation, reference scanning, and transitive pruned cooking.
+- Scope: hierarchy/component structure is inherited. Structural edits and ambiguous
+  repeated-component overrides are rejected explicitly. Separate nested prefab
+  authoring retains existing engine behavior; nested variant chains are supported.
+- Validation: editor and managed SDK builds passed; all 9 focused tests passed,
+  covering variants, history/built-in meshes, multi-entity edits, cameras, surfaces,
+  play-mode changes, validation, reference scanning, and cooking. Interactive checks
+  remain pending. Editor linking used temporary stripped archive copies to fit
+  host memory while preserving the original library debug information.
+- Guide: [Prefab variants](PREFAB_VARIANTS.md). M11-M14 remain planned.

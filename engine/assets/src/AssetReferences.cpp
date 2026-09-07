@@ -134,6 +134,19 @@ namespace PlutoGE::assets
                 // Human-facing entity names and tags are not dependencies.
                 const auto record = line.substr(0, line.find('\t'));
                 if (record == "ENTITY" || record == "TAGS" || record == "CLASS") return;
+                if (record == "BASE") { QuotedValues(scan, line, number); return; }
+                if (record == "OVERRIDE")
+                {
+                    std::istringstream fields{std::string(line)};
+                    std::string token, path;
+                    std::uint32_t id;
+                    if (fields >> token >> id >> std::quoted(path))
+                    {
+                        if (path != "Name" && path != "Tags") QuotedValues(scan, line, number);
+                    }
+                    else scan.errors.push_back("Malformed variant override at line " + std::to_string(number));
+                    return;
+                }
                 SplitValues(scan, line, '\t', number, extension != ".plutomodel");
                 return;
             }

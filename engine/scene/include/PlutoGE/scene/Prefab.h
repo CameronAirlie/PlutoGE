@@ -52,6 +52,10 @@ namespace PlutoGE::scene
         static PrefabInstantiationProfile GetMaximumInstantiationProfile();
         static void ResetInstantiationProfiles();
 
+        static bool SaveVariant(const Entity &instanceRoot, const std::filesystem::path &filePath,
+                                std::string *errorMessage = nullptr);
+        static std::string GetVariantBase(std::string_view reference);
+        static bool RevertInstance(Entity &instanceRoot, std::string *errorMessage = nullptr);
         static bool SaveFromEntity(const Entity &entity,
                                    const std::filesystem::path &filePath,
                                    std::string *errorMessage = nullptr);

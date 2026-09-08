@@ -17,10 +17,16 @@ void resetMain(uint3 id : SV_DispatchThreadID)
     if (index < PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES)
     {
         uint2 at = virtualPageCoordinate(index);
-        requestMask[at] = 0;
+        const uint level = index / PLUTO_VSM_LEVEL_PAGES;
+        const uint2 local = virtualPageCoordinate(index % PLUTO_VSM_LEVEL_PAGES);
+        const bool root = level == PLUTO_VSM_ROOT_LEVEL && all(local < PLUTO_VSM_ROOT_GRID);
+        requestMask[at] = root ? 1u : 0u;
         pageTable[at] = 0;
+        if (root)
+            requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + local.y * PLUTO_VSM_ROOT_GRID + local.x] =
+                local.y * PLUTO_VSM_GRID + local.x;
     }
-    if (index < PLUTO_VSM_LEVELS) requests[index] = 0;
+    if (index < PLUTO_VSM_LEVELS) requests[index] = index == PLUTO_VSM_ROOT_LEVEL ? PLUTO_VSM_ROOT_PAGES : 0;
     if (index < 16) stats[index] = 0;
     if (index < PLUTO_VSM_CAPACITY && vsm.settings.z > 0.5)
         pages[index] = (VirtualShadowPage)0;
@@ -33,23 +39,12 @@ float3 reconstruct(uint2 pixel, float depth)
     float4 world = mul(vsm.inverseViewProjection, float4(uv * 2.0 - 1.0, z, 1));
     return world.xyz / world.w;
 }
-[shader("compute")][numthreads(8, 8, 1)]
-void requestMain(uint3 id : SV_DispatchThreadID)
+void requestFootprint(float3 world, int level)
 {
-    if (any(id.xy >= vsm.viewport.xy)) return;
-    float depth = receiverDepth.SampleLevel((float2(id.xy) + 0.5) / float2(vsm.viewport.xy), 0).r;
-    if (depth <= 0.0) return;
-    float3 world = reconstruct(id.xy, depth);
-    // Same-depth neighbouring samples estimate the projected pixel footprint
-    // without allowing disocclusions to choose an arbitrarily coarse level.
-    float footprint = max(length(reconstruct(id.xy + uint2(1, 0), depth) - world),
-                          length(reconstruct(id.xy + uint2(0, 1), depth) - world));
-    int level = selectVirtualLevel(vsm, world, footprint);
-    if (level < 0) return;
     float2 uv = virtualCoordinate(vsm, level, world).xy;
-    float guard = (clamp(vsm.settings.x, 0.0, 4.0) + 2.0) / PLUTO_VSM_RESOLUTION;
-    int2 lo = clamp(int2(floor((uv - guard) * PLUTO_VSM_GRID)), 0, PLUTO_VSM_GRID - 1);
-    int2 hi = clamp(int2(floor((uv + guard) * PLUTO_VSM_GRID)), 0, PLUTO_VSM_GRID - 1);
+    float guard = (clamp(vsm.settings.x, 0.0, 4.0) + 2.0) / virtualResolution(level);
+    int2 lo = clamp(int2(floor((uv - guard) * virtualGrid(level))), 0, int(virtualGrid(level)) - 1);
+    int2 hi = clamp(int2(floor((uv + guard) * virtualGrid(level))), 0, int(virtualGrid(level)) - 1);
     for (int y = lo.y; y <= hi.y; ++y)
         for (int x = lo.x; x <= hi.x; ++x)
         {
@@ -63,15 +58,30 @@ void requestMain(uint3 id : SV_DispatchThreadID)
             }
         }
 }
+[shader("compute")][numthreads(8, 8, 1)]
+void requestMain(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= vsm.viewport.xy)) return;
+    float depth = receiverDepth.SampleLevel((float2(id.xy) + 0.5) / float2(vsm.viewport.xy), 0).r;
+    if (depth <= 0.0) return;
+    float3 world = reconstruct(id.xy, depth);
+    float footprint = max(length(reconstruct(id.xy + uint2(1, 0), depth) - world),
+                          length(reconstruct(id.xy + uint2(0, 1), depth) - world));
+    int level = selectVirtualLevel(vsm, world, footprint);
+    if (level >= 0) requestFootprint(world, level);
+}
 [shader("compute")][numthreads(1, 1, 1)]
 void allocateMain(uint3 id : SV_DispatchThreadID)
 {
-    uint counts[PLUTO_VSM_LEVELS] = {0, 0, 0, 0};
+    uint counts[PLUTO_VSM_LEVELS];
     uint quotas[PLUTO_VSM_LEVELS];
     uint spare = PLUTO_VSM_CAPACITY;
     for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
-        quotas[level] = min(requests[level], uint(PLUTO_VSM_CAPACITY / PLUTO_VSM_LEVELS));
+        counts[level] = 0;
+        const uint share = level == PLUTO_VSM_ROOT_LEVEL ? PLUTO_VSM_ROOT_PAGES :
+            (PLUTO_VSM_CAPACITY - PLUTO_VSM_ROOT_PAGES) / PLUTO_VSM_FINE_LEVELS;
+        quotas[level] = min(requests[level], share);
         spare -= quotas[level];
     }
     for (uint round = 0; round < PLUTO_VSM_CAPACITY && spare > 0; ++round)
@@ -87,7 +97,7 @@ void allocateMain(uint3 id : SV_DispatchThreadID)
         int level = p.address.z;
         int2 local = p.address.xy - vsm.origins[level].xy;
         bool retained = p.state.y != 0 && p.address.w == vsm.origins[level].z &&
-            all(local >= 0) && all(local < PLUTO_VSM_GRID);
+            all(local >= 0) && all(local < int(virtualGrid(level)));
         if (retained && counts[level] < quotas[level] && requestMask[uint2(local.x, local.y + level * PLUTO_VSM_GRID)] != 0)
         {
             p.state.x = local.y * PLUTO_VSM_GRID + local.x;
@@ -127,8 +137,8 @@ bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
     uint level = page.address.z;
     float3 uv = virtualCoordinate(vsm, level, caster.bounds.xyz);
     float2 radius = caster.bounds.w / vsm.metrics[level].w;
-    float2 lo = float2(virtualPageCoordinate(page.state.x)) / PLUTO_VSM_GRID;
-    float2 hi = lo + 1.0 / PLUTO_VSM_GRID;
+    float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(level);
+    float2 hi = lo + 1.0 / virtualGrid(level);
     float depthRadius = caster.bounds.w / vsm.metrics[level].y;
     return all(uv.xy + radius >= lo) && all(uv.xy - radius <= hi) &&
         uv.z + depthRadius >= 0 && uv.z - depthRadius <= 1;
@@ -159,23 +169,33 @@ void budgetMain(uint3 id : SV_DispatchThreadID)
 {
     uint remaining = vsm.limits.w;
     uint updates = 0;
-    for (uint index = 0; index < PLUTO_VSM_CAPACITY; ++index)
-    {
-        uint slot = (index + vsm.limits.y * 13) % PLUTO_VSM_CAPACITY;
-        VirtualShadowPage p = pages[slot];
-        if (p.state.y != vsm.limits.y) continue;
-        if (p.state.z != 0 && all(p.signature.xy == p.pending.xy)) { ++stats[3]; continue; }
-        p.state.z = 0;
-        ++stats[2];
-        if (updates < vsm.limits.z && p.pending.z <= remaining)
+    // Establish coarse coverage before refining newly visible pages. Dirty
+    // resident pages retain their previous depth until replacement is recorded,
+    // so budget pressure delays shadow motion rather than flashing fully lit.
+    for (uint priority = 0; priority < 3; ++priority)
+        for (uint index = 0; index < PLUTO_VSM_CAPACITY; ++index)
         {
-            p.state.w = 1;
-            remaining -= p.pending.z;
-            ++updates;
+            uint slot = (index + vsm.limits.y * 13) % PLUTO_VSM_CAPACITY;
+            VirtualShadowPage p = pages[slot];
+            if (p.state.y != vsm.limits.y) continue;
+            if (p.state.z != 0 && all(p.signature.xy == p.pending.xy))
+            {
+                if (priority == 2) ++stats[3];
+                continue;
+            }
+            const uint pagePriority = p.state.z != 0 ? 2u :
+                (p.address.z == PLUTO_VSM_ROOT_LEVEL ? 0u : 1u);
+            if (pagePriority != priority) continue;
+            ++stats[2];
+            if (updates < vsm.limits.z && p.pending.z <= remaining)
+            {
+                p.state.w = 1;
+                remaining -= p.pending.z;
+                ++updates;
+            }
+            else ++stats[8];
+            pages[slot] = p;
         }
-        else ++stats[8];
-        pages[slot] = p;
-    }
     stats[7] = vsm.limits.w - remaining;
     stats[9] = updates;
 }

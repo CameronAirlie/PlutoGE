@@ -405,8 +405,11 @@ namespace PlutoGE::scene
 
     void LightComponent::Initialize()
     {
-        if (!m_config.castsShadows)
+        if (!m_config.castsShadows || (m_config.type == LightType::Directional &&
+            m_config.directionalShadowSettings.method == render::ShadowMethod::Virtual))
         {
+            // VSM resources belong to the RHI renderer. Do not allocate or
+            // retain the legacy dynamic/static/scratch cascade textures here.
             ResetShadowState(m_config);
             ClearDirty();
             return;

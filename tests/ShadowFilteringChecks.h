@@ -99,6 +99,10 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     {
         renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {},
                         std::span(&caster, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
+        const auto &frame = renderer.GetFrameStats();
+        if (frame.virtualShadowsActive && (frame.shadowCascadeTargets != 0 || frame.shadowCascadeUpdates != 0 ||
+            frame.shadowCascadeCacheHits != 0 || frame.shadowObjectUploads != 0 || frame.shadowInstances != 0))
+            throw std::runtime_error("VSM performed or retained cascade work");
         return readPixels(renderer.GetColorTexture());
     };
     for (int frame = 0; frame < 8; ++frame) renderVirtual();
@@ -143,8 +147,8 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     if (virtualStats.updated > 1 || virtualStats.submittedTriangles > 1 || virtualStats.deferred == 0)
         throw std::runtime_error("GPU virtual shadow update budgets were exceeded or did not defer work");
     const auto fallbackPixels = renderVirtual();
-    if (static_cast<unsigned char>(fallbackPixels[(128 * 256 + 64) * 4]) > 10)
-        throw std::runtime_error("Budget-deferred pages lost conventional fallback shadows");
+    if (static_cast<unsigned char>(fallbackPixels[(128 * 256 + 64) * 4]) < 245)
+        throw std::runtime_error("Budget-deferred VSM pages sampled stale or conventional shadow depth");
     lighting.shadowMethod = ShadowMethod::Cascaded;
     lighting.directionalDirection = {0, 0, -1};
     if (renderVirtual() != edge || renderer.GetFrameStats().virtualShadowsActive)

@@ -26,7 +26,7 @@ namespace PlutoGE::render
         glm::uvec4 viewport{}, limits{};
         glm::vec4 settings{}, camera{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 576);
+    static_assert(sizeof(VirtualShadowParameters) == 672);
 
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
@@ -47,7 +47,9 @@ namespace PlutoGE::render
                      std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
                      std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height);
         void Record(rhi::ICommandContext &commands, const SubmitMesh &submit);
-        [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting);
+        [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting,
+                                                                  const VirtualShadowParameters *previous = nullptr);
+        [[nodiscard]] static bool CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters);
         [[nodiscard]] auto Atlas() const { return m_depth.Get(); }
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
@@ -63,6 +65,7 @@ namespace PlutoGE::render
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;
+        VirtualShadowParameters m_previousClipmaps{};
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();
     };
 }

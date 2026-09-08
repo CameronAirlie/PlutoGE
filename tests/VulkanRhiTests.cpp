@@ -1,10 +1,12 @@
 #include "VirtualShadowPerformanceChecks.h"
+#include "VsmOnlyRenderingChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <array>
 #include <filesystem>
@@ -64,6 +66,7 @@ int main(int argc, char **argv)
             shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
         };
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
+        loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
@@ -114,14 +117,43 @@ int main(int argc, char **argv)
             return 0;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--vsm-only")
+        {
+            PlutoGE::scene::LightComponent light;
+            light.GetLight().type = PlutoGE::scene::LightType::Directional;
+            light.GetLight().castsShadows = true;
+            light.GetLight().directionalShadowSettings.method = ShadowMethod::Virtual;
+            light.GetLight().activeShadowCascadeCount = 4;
+            light.Initialize();
+            if (light.GetLight().activeShadowCascadeCount != 0 ||
+                std::any_of(light.GetLight().shadowCascadeMaps.begin(), light.GetLight().shadowCascadeMaps.end(),
+                            [](const auto &map) { return bool(map); }))
+                throw std::runtime_error("VSM light component retained legacy cascade state");
+            CheckVsmOnlyRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")
         {
             CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssr-only")
+        {
+            // Exercise odd extents and replacement of pooled trace/resolve
+            // targets when the editor viewport changes size.
+            for (const auto size : {rhi::Extent2D{127, 95}, rhi::Extent2D{256, 192}})
+            {
+                renderer.Resize(size.width, size.height);
+                CheckSsrRendering(renderer, [&](rhi::TextureHandle texture)
+                {
+                    return device.ReadTextureRgba8(texture);
+                });
+            }
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--ssr-performance")
         {
-            renderer.Resize(582, 507);
+            renderer.Resize(1222, 796);
             // Optional raw RGBA8 snapshots support before/after shader comparisons.
             std::ofstream snapshots;
             if (argc > 2)

@@ -1,6 +1,8 @@
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
+#include "VirtualShadowCommon.slang"
+#include "VirtualShadowSampling.slang"
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -35,6 +37,9 @@ cbuffer FogLightingParameters : register(b7, space0)
 [[vk::binding(9, 0)]] Sampler2D shadowTexture1 : register(t9, space0);
 [[vk::binding(10, 0)]] Sampler2D shadowTexture2 : register(t10, space0);
 [[vk::binding(11, 0)]] Sampler2D shadowTexture3 : register(t11, space0);
+[[vk::binding(12, 0)]] cbuffer VirtualShadowData : register(b12, space0) { VirtualShadowParameters vsm; };
+[[vk::binding(13, 0)]] Sampler2D virtualShadowAtlas : register(t13, space0);
+[[vk::binding(14, 0)]] Sampler2D virtualShadowTable : register(t14, space0);
 
 static const float FOUR_PI = 12.566370614359172;
 
@@ -100,6 +105,8 @@ float directionalVisibility(float3 worldPosition)
 {
     if (fogShadowsEnabled == 0)
         return 1.0;
+    if (fogShadowCascadeParameters.w > 0.5)
+        return virtualShadowVolumeVisibility(vsm, virtualShadowAtlas, virtualShadowTable, worldPosition);
 
     const float receiverDistance = -(mul(fogView, float4(worldPosition, 1.0))).z;
     const int cascadeCount = clamp((int)fogShadowCascadeParameters.x, 1, 4);

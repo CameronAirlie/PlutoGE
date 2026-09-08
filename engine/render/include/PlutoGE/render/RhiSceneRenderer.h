@@ -33,6 +33,7 @@ namespace PlutoGE::render
         std::size_t shadowObjectUploadCount = 0;
         std::size_t shadowCascadeUpdateCount = 0;
         std::size_t shadowCascadeCacheHitCount = 0;
+        std::size_t shadowCascadeTargetCount = 0;
         VirtualShadowStats virtualShadows;
         bool virtualShadowsActive = false;
         std::array<std::size_t, 4> recordedShadowDrawsByCascade{};

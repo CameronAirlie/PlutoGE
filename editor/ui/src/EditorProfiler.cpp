@@ -209,12 +209,12 @@ namespace PlutoGE::ui
                << rhiScene.recordedShadowDrawsByCascade[3] << " by cascade; "
                << rhiScene.shadowObjectUploadCount << " object uploads)\n";
         report << "RHI shadow cascade cache: " << rhiScene.shadowCascadeCacheHitCount << " hits, "
-               << rhiScene.shadowCascadeUpdateCount << " updates\n";
+               << rhiScene.shadowCascadeUpdateCount << " updates, " << rhiScene.shadowCascadeTargetCount << " allocated targets\n";
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;
             report << "VSM submissions: " << pages.submittedIndirectCommands << " indirect commands, " << pages.receiverDraws
-                   << " receiver draws; " << pages.memoryBytes << " bytes (+ cascades)\n";
+                   << " receiver draws; " << pages.memoryBytes << " bytes\n";
             if (pages.gpuCountersAvailable)
                 report << "VSM GPU frame " << pages.gpuFrame << " (delayed): " << pages.requested << " requested, " << pages.resident
                        << " resident, " << pages.cacheHits << " hits, " << pages.dirty << " dirty, " << pages.updated << " updated, "

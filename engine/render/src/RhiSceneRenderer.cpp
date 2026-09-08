@@ -418,69 +418,72 @@ namespace PlutoGE::render
                                              : shadowDistance;
             effectiveLighting.shadowDistance = shadowDistance;
             effectiveLighting.shadowCasterDistance = casterDistance;
-            const std::uint32_t cascadeCount = std::clamp(effectiveLighting.shadowCascadeCount, 1u, 4u);
-            const float cameraNear = std::max(cameraData.nearPlane, 0.01f);
-            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+            if (!m_renderer->UsesVirtualShadows(effectiveLighting, draws, shadowDraws))
             {
-                const float splitFactor = static_cast<float>(cascade + 1u) / static_cast<float>(cascadeCount);
-                const float logarithmic = cameraNear * std::pow(shadowDistance / cameraNear, splitFactor);
-                const float uniform = cameraNear + (shadowDistance - cameraNear) * splitFactor;
-                effectiveLighting.shadowCascadeSplits[cascade] = glm::mix(
-                    uniform, logarithmic, std::clamp(effectiveLighting.shadowSplitLambda, 0.0f, 1.0f));
-            }
-            if (cascadeCount > 1 && effectiveLighting.shadowNearCascadeDistance > cameraNear)
-            {
-                const float nearCascadeEnd = std::clamp(
-                    effectiveLighting.shadowNearCascadeDistance,
-                    cameraNear + 0.01f,
-                    shadowDistance - 0.01f * static_cast<float>(cascadeCount - 1));
-                effectiveLighting.shadowCascadeSplits[0] = nearCascadeEnd;
-                // Treat the explicitly-sized near cascade as a fixed first
-                // partition, then redistribute the remaining range. Merely
-                // replacing split zero can leave split one almost coincident
-                // with it for high logarithmic lambdas (for example 8.00 and
-                // 8.08), producing a visibly degenerate shadow projection.
-                for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
+                const std::uint32_t cascadeCount = std::clamp(effectiveLighting.shadowCascadeCount, 1u, 4u);
+                const float cameraNear = std::max(cameraData.nearPlane, 0.01f);
+                for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
                 {
-                    const float factor = static_cast<float>(cascade) /
-                                         static_cast<float>(cascadeCount - 1);
-                    const float logarithmic = nearCascadeEnd *
-                        std::pow(shadowDistance / nearCascadeEnd, factor);
-                    const float uniform = nearCascadeEnd +
-                        (shadowDistance - nearCascadeEnd) * factor;
+                    const float splitFactor = static_cast<float>(cascade + 1u) / static_cast<float>(cascadeCount);
+                    const float logarithmic = cameraNear * std::pow(shadowDistance / cameraNear, splitFactor);
+                    const float uniform = cameraNear + (shadowDistance - cameraNear) * splitFactor;
                     effectiveLighting.shadowCascadeSplits[cascade] = glm::mix(
-                        uniform, logarithmic,
-                        std::clamp(effectiveLighting.shadowSplitLambda, 0.0f, 1.0f));
+                        uniform, logarithmic, std::clamp(effectiveLighting.shadowSplitLambda, 0.0f, 1.0f));
                 }
-            }
-            for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
-                effectiveLighting.shadowCascadeSplits[cascade] = std::max(
-                    effectiveLighting.shadowCascadeSplits[cascade],
-                    effectiveLighting.shadowCascadeSplits[cascade - 1] + 0.01f);
-            effectiveLighting.shadowCascadeSplits[cascadeCount - 1] = shadowDistance;
+                if (cascadeCount > 1 && effectiveLighting.shadowNearCascadeDistance > cameraNear)
+                {
+                    const float nearCascadeEnd = std::clamp(
+                        effectiveLighting.shadowNearCascadeDistance,
+                        cameraNear + 0.01f,
+                        shadowDistance - 0.01f * static_cast<float>(cascadeCount - 1));
+                    effectiveLighting.shadowCascadeSplits[0] = nearCascadeEnd;
+                    // Treat the explicitly-sized near cascade as a fixed first
+                    // partition, then redistribute the remaining range. Merely
+                    // replacing split zero can leave split one almost coincident
+                    // with it for high logarithmic lambdas (for example 8.00 and
+                    // 8.08), producing a visibly degenerate shadow projection.
+                    for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
+                    {
+                        const float factor = static_cast<float>(cascade) /
+                                             static_cast<float>(cascadeCount - 1);
+                        const float logarithmic = nearCascadeEnd *
+                            std::pow(shadowDistance / nearCascadeEnd, factor);
+                        const float uniform = nearCascadeEnd +
+                            (shadowDistance - nearCascadeEnd) * factor;
+                        effectiveLighting.shadowCascadeSplits[cascade] = glm::mix(
+                            uniform, logarithmic,
+                            std::clamp(effectiveLighting.shadowSplitLambda, 0.0f, 1.0f));
+                    }
+                }
+                for (std::uint32_t cascade = 1; cascade < cascadeCount; ++cascade)
+                    effectiveLighting.shadowCascadeSplits[cascade] = std::max(
+                        effectiveLighting.shadowCascadeSplits[cascade],
+                        effectiveLighting.shadowCascadeSplits[cascade - 1] + 0.01f);
+                effectiveLighting.shadowCascadeSplits[cascadeCount - 1] = shadowDistance;
 
-            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
-            {
-                const float cascadeNear = cascade == 0 ? cameraNear
-                                                       : effectiveLighting.shadowCascadeSplits[cascade - 1];
-                const auto projection = BuildDirectionalShadowProjection(
-                    cameraData, effectiveLighting, cascadeNear,
-                    effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
-                    std::clamp(static_cast<std::uint32_t>(std::lround(
-                                   effectiveLighting.shadowResolution * std::pow(
-                                                                            std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
-                                                                            static_cast<float>(cascade)))),
-                               256u, 8192u));
-                effectiveLighting.shadowMatrices[cascade] = projection.matrix;
-                effectiveLighting.shadowCascadeMetrics[cascade] = {
-                    projection.worldTexelSize, projection.depthRange, 0.0f, 0.0f};
-            }
-            if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
-                effectiveLighting.shadowFlipY = true;
-            if (!m_device->UsesZeroToOneClipDepth())
-            {
-                effectiveLighting.shadowDepthScale = 0.5f;
-                effectiveLighting.shadowDepthBias = 0.5f;
+                for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+                {
+                    const float cascadeNear = cascade == 0 ? cameraNear
+                                                           : effectiveLighting.shadowCascadeSplits[cascade - 1];
+                    const auto projection = BuildDirectionalShadowProjection(
+                        cameraData, effectiveLighting, cascadeNear,
+                        effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
+                        std::clamp(static_cast<std::uint32_t>(std::lround(
+                                       effectiveLighting.shadowResolution * std::pow(
+                                                                                std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
+                                                                                static_cast<float>(cascade)))),
+                                   256u, 8192u));
+                    effectiveLighting.shadowMatrices[cascade] = projection.matrix;
+                    effectiveLighting.shadowCascadeMetrics[cascade] = {
+                        projection.worldTexelSize, projection.depthRange, 0.0f, 0.0f};
+                }
+                if (m_device->GetApi() == rhi::GraphicsApi::Vulkan)
+                    effectiveLighting.shadowFlipY = true;
+                if (!m_device->UsesZeroToOneClipDepth())
+                {
+                    effectiveLighting.shadowDepthScale = 0.5f;
+                    effectiveLighting.shadowDepthBias = 0.5f;
+                }
             }
         }
         std::vector<BasicPostProcessEffect> basicEffects(atmosphereEffects.begin(), atmosphereEffects.end());
@@ -657,6 +660,7 @@ namespace PlutoGE::render
         m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;
         m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
         m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
+        m_timingStats.shadowCascadeTargetCount = frameStats.shadowCascadeTargets;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;

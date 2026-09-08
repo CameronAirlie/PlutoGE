@@ -293,6 +293,8 @@ namespace PlutoGE::render
         std::uint32_t quality = 0;
         // Effect-specific values are deliberately grouped into aligned lanes.
         // This keeps the GPU ABI stable while new single-input passes are added.
+        // SSR reserves lane 4.xyz for its internal trace/resolve passes; set
+        // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
         std::array<glm::vec4, 6> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
@@ -309,6 +311,7 @@ namespace PlutoGE::render
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
+        std::size_t shadowCascadeTargets = 0;
         std::array<std::size_t, 4> shadowDrawsByCascade{};
 
         [[nodiscard]] std::size_t ShadowDraws() const noexcept
@@ -344,6 +347,8 @@ namespace PlutoGE::render
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
+        [[nodiscard]] bool UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
+                                             std::span<const BasicDraw> shadowDraws = {}) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                     std::span<const BasicDraw> draws,

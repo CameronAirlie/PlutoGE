@@ -513,8 +513,16 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::Motion, 5);
                 addInput(BasicPostProcessInput::History, 6);
                 addInput(BasicPostProcessInput::Albedo, 7);
+                if (type == BasicPostProcessEffectType::SSR)
+                    postDescriptor.resourceBindings.push_back(
+                        {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 if (type == BasicPostProcessEffectType::VolumetricFog)
                 {
+                    postDescriptor.resourceBindings.push_back(
+                        {12, 0, 12, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
+                    for (std::uint32_t slot = 13; slot <= 14; ++slot)
+                        postDescriptor.resourceBindings.push_back(
+                            {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     // Fog is the only post-process that consumes scene lighting.
                     // Reuse the frame buffer and shadow cascades from opaque
                     // lighting so both paths share one authoritative light state.
@@ -776,9 +784,6 @@ namespace PlutoGE::render
                 {sizeof(emptyTable), rhi::BufferUsage::Uniform, "Empty virtual shadow table"}, Bytes(emptyTable)));
             m_debugViewBuffer = rhi::Buffer(device, device.CreateBuffer(
                 {sizeof(BasicDebugViewParameters), rhi::BufferUsage::Uniform, "BasicRenderer debug view"}));
-            for (auto &buffer : m_shadowCameraBuffers)
-                buffer = rhi::Buffer(device, device.CreateBuffer(
-                                                 {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
             m_postProcessResourcePool = std::make_unique<PostProcessResourcePool>(device);
 
             constexpr std::array<std::uint8_t, 4> neutralBaseColor = {255, 255, 255, 255};
@@ -1038,6 +1043,14 @@ namespace PlutoGE::render
         return true;
     }
 
+    bool BasicRenderer::UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
+                                          std::span<const BasicDraw> shadowDraws) const
+    {
+        return m_device && lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual &&
+            m_device->GetImmediateContext().SupportsGpuDrivenShadows() && m_virtualShadowShaders.Complete() &&
+            VirtualShadowMaps::CanPrepare(draws, shadowDraws.empty() ? draws : shadowDraws);
+    }
+
     void BasicRenderer::EnsureShadowTargets(const BasicLighting &lighting)
     {
         const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
@@ -1045,6 +1058,9 @@ namespace PlutoGE::render
         {
             if (cascade >= cascadeCount)
                 continue;
+            if (!m_shadowCameraBuffers[cascade])
+                m_shadowCameraBuffers[cascade] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Directional shadow camera"}));
             const float scale = std::pow(std::clamp(lighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
                                          static_cast<float>(cascade));
             const std::uint32_t resolution = std::clamp(
@@ -1089,10 +1105,8 @@ namespace PlutoGE::render
         m_postProcessProjection = viewProjection * glm::inverse(lighting.view);
         m_postProcessCameraPosition = glm::vec4(lighting.cameraPosition, 1.0f);
 
-        EnsureShadowTargets(lighting);
         auto &commands = m_device->GetImmediateContext();
-        bool virtualShadowsActive = lighting.shadowsEnabled &&
-            lighting.shadowMethod == ShadowMethod::Virtual && commands.SupportsGpuDrivenShadows() && m_virtualShadowShaders.Complete();
+        bool virtualShadowsActive = UsesVirtualShadows(lighting, draws, shadowDraws);
         if (virtualShadowsActive && !m_virtualShadows)
         {
             auto maps = std::make_unique<VirtualShadowMaps>();
@@ -1111,6 +1125,42 @@ namespace PlutoGE::render
         m_timingStats.beginFrameMs = elapsedMs(beginFrameStart, beginFrameEnd);
         const auto shadowRecordingStart = beginFrameEnd;
 
+        if (shadowDraws.empty()) shadowDraws = draws;
+        m_frameStats.shadowCandidates = shadowDraws.size();
+        if (lighting.shadowsEnabled)
+        {
+            m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
+            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+            {
+                const auto &draw = shadowDraws[index];
+                if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow && draw.surfaceType != 1 && draw.alphaMode != 2)
+                    m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
+            }
+        }
+        if (virtualShadowsActive)
+        {
+            virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
+                m_shadowDrawSignatures, m_width, m_height);
+        }
+        m_frameStats.virtualShadowsActive = virtualShadowsActive;
+        if (lighting.shadowsEnabled && !virtualShadowsActive)
+            EnsureShadowTargets(lighting);
+        else
+        {
+            // Release CSM storage when switching methods; VSM never maintains
+            // a second set of shadow maps for cache misses or post-processing.
+            for (auto &target : m_shadowDepthTargets) target.Reset();
+            for (auto &target : m_shadowColorTargets) target.Reset();
+            for (auto &buffer : m_shadowCameraBuffers) buffer.Reset();
+            for (auto &indices : m_shadowCascadeDrawIndices) indices.clear();
+            m_shadowResolutions.fill(0);
+            m_shadowCacheValid.fill(false);
+            m_shadowObjectBuffers.clear();
+            m_shadowInstanceBuffers.clear();
+            m_shadowMaterialBuffers.clear();
+        }
+        for (const auto &target : m_shadowDepthTargets)
+            if (target) ++m_frameStats.shadowCascadeTargets;
         std::array<glm::vec4, 4> inverseShadowResolutions{};
         for (std::size_t cascade = 0; cascade < inverseShadowResolutions.size(); ++cascade)
         {
@@ -1175,10 +1225,21 @@ namespace PlutoGE::render
             temporalClipOffset,
         };
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
-        if (shadowDraws.empty())
-            shadowDraws = draws;
-        m_frameStats.shadowCandidates = shadowDraws.size();
-        if (lighting.shadowsEnabled)
+        if (virtualShadowsActive)
+        {
+            m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
+            {
+                const auto &mesh = *submission.draw->mesh;
+                commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
+                commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
+                if (submission.indirect)
+                    commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
+                else
+                    commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
+            });
+            m_frameStats.virtualShadows = m_virtualShadows->GetStats();
+        }
+        if (lighting.shadowsEnabled && !virtualShadowsActive)
         {
             const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
             m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
@@ -1193,7 +1254,6 @@ namespace PlutoGE::render
                 const auto &draw = shadowDraws[index];
                 if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
                     continue;
-                m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
                 HashVctValue(sceneSignature, index);
                 HashVctValue(sceneSignature, m_shadowDrawSignatures[index]);
                 HashVctValue(sceneSignature, draw.shadowBoundsCenter);
@@ -1345,31 +1405,6 @@ namespace PlutoGE::render
                 commands.EndGpuScope();
                 m_shadowCacheValid[cascade] = true;
             }
-            if (virtualShadowsActive)
-            {
-                virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
-                    m_shadowDrawSignatures, m_width, m_height);
-                if (virtualShadowsActive)
-                {
-                    m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
-                    {
-                        const auto &mesh = *submission.draw->mesh;
-                        commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
-                        commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
-                        if (submission.indirect)
-                            commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
-                        else
-                            commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
-                    });
-                    m_frameStats.virtualShadows = m_virtualShadows->GetStats();
-                }
-                else
-                {
-                    frameParameters.shadowCascadeParameters.w = 0;
-                    m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
-                    m_frameStats.virtualShadowsActive = false;
-                }
-            }
         }
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
@@ -1395,7 +1430,7 @@ namespace PlutoGE::render
         // Transition shadow outputs before entering dynamic rendering.
         commands.BindPipeline(m_pipeline.Get());
         for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
-            commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
+            commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
         if (virtualShadowsActive)
         {
             commands.BindTexture(19, m_virtualShadows->Atlas(), m_shadowSampler.Get());
@@ -1490,11 +1525,11 @@ namespace PlutoGE::render
             if (transparent || !geometryResourcesBound)
                 for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
                     commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
-                        ? m_shadowDepthTargets[cascade].Get() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
+                        ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
             if (transparent || !geometryResourcesBound)
             {
                 commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
-                commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_shadowDepthTargets[0].Get(), m_shadowSampler.Get());
+                commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
             previousMaterialTextures = materialTextures;
@@ -1725,7 +1760,7 @@ namespace PlutoGE::render
             {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
             }
-            const BasicPostProcessParameters parameters{
+            BasicPostProcessParameters parameters{
                 effect.exposure,
                 (std::max)(effect.gamma, 0.001f),
                 m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u,
@@ -1741,6 +1776,54 @@ namespace PlutoGE::render
                 m_postProcessCameraPosition,
                 effect.worldToLocal,
             };
+            if (effect.type == BasicPostProcessEffectType::SSR)
+            {
+                if (effect.parameters[0].x <= 0.0f)
+                    continue;
+                // Keep the source at full resolution. Only indirect specular
+                // is traced at half resolution, then reconstructed at edges.
+                const bool fullResolution = effect.parameters[4].w > 0.5f;
+                const auto traceWidth = fullResolution ? m_postProcessWidth : (m_postProcessWidth + 1u) / 2u;
+                const auto traceHeight = fullResolution ? m_postProcessHeight : (m_postProcessHeight + 1u) / 2u;
+                const auto source = m_outputColor;
+                const auto trace = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
+                const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
+                                         std::uint32_t width, std::uint32_t height, float mode)
+                {
+                    parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
+                                                static_cast<float>(traceHeight), 0.0f};
+                    // Both stages address the same full-resolution G-buffer.
+                    parameters.inverseResolution = {1.0f / m_postProcessWidth, 1.0f / m_postProcessHeight};
+                    auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+                    m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
+                    rhi::RenderingInfo info;
+                    info.colorAttachments = {destination};
+                    info.width = width;
+                    info.height = height;
+                    info.clearDepth = false;
+                    commands.BeginRendering(info);
+                    commands.BindPipeline(pipeline);
+                    commands.BindUniformBuffer(0, buffer.Get());
+                    commands.BindTexture(1, source, m_screenSampler.Get());
+                    commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(6, reflections, m_screenSampler.Get());
+                    commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
+                    commands.Draw(3);
+                    commands.EndRendering();
+                };
+                drawSsr(trace, source, traceWidth, traceHeight, fullResolution ? 0.0f : 1.0f);
+                m_outputColor = trace;
+                if (!fullResolution)
+                {
+                    const auto resolved = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth,
+                                                                   m_postProcessHeight).Get();
+                    drawSsr(resolved, trace, m_postProcessWidth, m_postProcessHeight, 2.0f);
+                    m_outputColor = resolved;
+                }
+                continue;
+            }
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
             rhi::Texture *destination = nullptr;
@@ -1776,8 +1859,11 @@ namespace PlutoGE::render
                                      m_screenSampler.Get());
             if (effect.type == BasicPostProcessEffectType::VolumetricFog)
             {
+                commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
+                commands.BindTexture(13, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                commands.BindTexture(14, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
                 commands.BindUniformBuffer(7, m_cameraBuffer.Get());
-                const auto fallbackShadow = m_shadowDepthTargets[0].Get();
+                const auto fallbackShadow = m_fallbackDataTexture.Get();
                 for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
                     commands.BindTexture(8 + cascade,
                                          m_shadowDepthTargets[cascade]

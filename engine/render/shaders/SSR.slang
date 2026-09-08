@@ -6,6 +6,7 @@
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 [[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
 [[vk::binding(4, 0)]] Sampler2D materialTexture : register(t4, space0);
+[[vk::binding(6, 0)]] Sampler2D reflectionTexture : register(t6, space0);
 [[vk::binding(7, 0)]] Sampler2D albedoTexture : register(t7, space0);
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
@@ -25,7 +26,7 @@ bool projectRay(float4 clip, out float2 uv, out float projectedDepth)
 
 bool behindSurface(float2 uv, float projectedDepth)
 {
-    const float sceneDepth = depthTexture.Sample(uv).r;
+    const float sceneDepth = depthTexture.SampleLevel(uv, 0.0).r;
     // Both RHI backends use reverse Z. At the same screen coordinate, depth
     // ordering identifies a crossing without reconstructing view-space depth.
     // Keep the full reconstruction below for the final world-unit thickness test.
@@ -34,7 +35,7 @@ bool behindSurface(float2 uv, float projectedDepth)
 
 float depthDelta(float2 uv, float rayDepth, float4 viewDepthRow, float4 homogeneousRow)
 {
-    float depth = depthTexture.Sample(uv).r;
+    float depth = depthTexture.SampleLevel(uv, 0.0).r;
     if (depth <= 0.000001) return -1e20;
     float2 ndc = uv * 2.0 - 1.0;
     if (pass.flipY != 0) ndc.y = -ndc.y;
@@ -53,20 +54,61 @@ float smithG1(float cosine, float alphaSquared)
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
-    const float4 scene = sceneTexture.Sample(uv);
-    const float depth = depthTexture.Sample(uv).r;
+    float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    // parameters[4]: internal pass mode, trace width, trace height. Mode zero
+    // remains a full-resolution reference path for rendering comparisons.
+    const bool traceOnly = pass.parameters[4].x == 1.0;
+    // Choose an actual G-buffer pixel rather than interpolating unrelated
+    // depths/normals at the centre of a 2x2 block.
+    if (traceOnly)
+        uv = (floor(uv / pass.inverseResolution) + 0.5) * pass.inverseResolution;
+    const float4 scene = traceOnly ? float4(0.0) : sceneTexture.SampleLevel(uv, 0.0);
+    const float depth = depthTexture.SampleLevel(uv, 0.0).r;
     if (depth <= 0.000001 || pass.parameters[0].x <= 0.0) return scene;
-    const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
-    const float4 material = materialTexture.Sample(uv);
+    const float3 normal = decodeNormal(normalTexture.SampleLevel(uv, 0.0).xyz);
+    const float4 material = materialTexture.SampleLevel(uv, 0.0);
     const float metallic = saturate(material.r);
     const float roughness = clamp(material.g, 0.04, 1.0);
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);
+    if (pass.parameters[4].x == 2.0)
+    {
+        const float2 traceSize = pass.parameters[4].yz;
+        const float2 pixel = uv * traceSize - 0.5;
+        const float2 base = floor(pixel);
+        const float2 fraction = frac(pixel);
+        float3 sum = 0.0;
+        float weightSum = 0.0;
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x)
+            {
+                const float2 at = (clamp(base + float2(x, y), 0.0, traceSize - 1.0) + 0.5) / traceSize;
+                const float2 surfaceUv = (floor(at / pass.inverseResolution) + 0.5) * pass.inverseResolution;
+                const float tapDepth = depthTexture.SampleLevel(surfaceUv, 0.0).r;
+                if (tapDepth <= 0.000001) continue;
+                const float3 tapPosition = reconstructWorldPosition(surfaceUv, tapDepth,
+                    pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
+                const float3 tapNormal = decodeNormal(normalTexture.SampleLevel(surfaceUv, 0.0).xyz);
+                // Tangent-plane distance preserves sloped surfaces without
+                // leaking reflections across depth discontinuities.
+                const float planeDistance = abs(dot(tapPosition - position, normal));
+                const float depthWeight = saturate(1.0 - planeDistance / max(pass.parameters[0].z, 0.01));
+                const float normalWeight = pow(saturate(dot(normal, tapNormal)), 32.0);
+                const float2 tapMaterial = materialTexture.SampleLevel(surfaceUv, 0.0).rg;
+                const float materialWeight = saturate(1.0 - 8.0 * max(
+                    abs(tapMaterial.x - metallic), abs(tapMaterial.y - material.g)));
+                const float2 bilinear = float2(x == 0 ? 1.0 - fraction.x : fraction.x,
+                                               y == 0 ? 1.0 - fraction.y : fraction.y);
+                const float weight = bilinear.x * bilinear.y * depthWeight * normalWeight * materialWeight;
+                sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
+                weightSum += weight;
+            }
+        return float4(scene.rgb + sum / max(weightSum, 0.000001), scene.a);
+    }
     const float3 view = normalize(pass.cameraPosition.xyz - position);
     const float ndotv = dot(normal, view);
     if (ndotv <= 0.0) return scene;
-    const float3 f0 = lerp(float3(0.04), albedoTexture.Sample(uv).rgb, metallic);
+    const float3 f0 = lerp(float3(0.04), albedoTexture.SampleLevel(uv, 0.0).rgb, metallic);
     const float alpha = roughness * roughness;
     const float a2 = alpha * alpha;
     const float3 tangent = normalize(cross(abs(normal.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0), normal));
@@ -126,14 +168,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 projectRay(clipOrigin + clipRay * high, rayUv, projectedDepth);
                 float rayDepth = -(viewOrigin.z + viewRay.z * high);
                 float delta = depthDelta(rayUv, rayDepth, viewDepthRow, homogeneousRow);
-                float3 hitNormal = decodeNormal(normalTexture.Sample(rayUv).xyz);
+                float3 hitNormal = decodeNormal(normalTexture.SampleLevel(rayUv, 0.0).xyz);
                 if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
                 {
                     float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - saturate(vdoth), 5.0);
                     // BRDF * N.L / pdf, with pdf = D * N.H / (4 * V.H).
                     float weight = smithG1(ndotv, a2) * smithG1(ndotl, a2) * vdoth /
                                    max(ndotv * cosTheta, 0.000001);
-                    reflection += sceneTexture.Sample(rayUv).rgb * fresnel * weight *
+                    reflection += sceneTexture.SampleLevel(rayUv, 0.0).rgb * fresnel * weight *
                                   edgeFade(rayUv, pass.parameters[1].x);
                 }
                 break;

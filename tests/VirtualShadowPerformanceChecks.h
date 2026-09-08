@@ -72,15 +72,21 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
             render(scenario == 0 ? 0.0f : float(frame) * .005f);
             const auto stats = renderer.GetFrameStats().virtualShadows;
             if (!renderer.GetFrameStats().virtualShadowsActive) throw std::runtime_error("GPU VSM performance path unavailable");
+            const auto &frameStats = renderer.GetFrameStats();
+            if (frameStats.shadowCascadeTargets || frameStats.shadowCascadeUpdates || frameStats.shadowCascadeCacheHits ||
+                frameStats.shadowObjectUploads || frameStats.shadowInstances)
+                throw std::runtime_error("VSM performance path retained cascade resources or work");
             if (stats.submittedTriangles > lighting.virtualShadowTriangleBudget || stats.updated > lighting.virtualShadowPageBudget ||
                 stats.submittedIndirectCommands > casters.size())
                 throw std::runtime_error("VSM performance budget regression");
             if (frame < 5 || !stats.gpuCountersAvailable) continue;
             const auto timing = device.GetTimingStats("Scene");
-            if (timing.indexedDrawCalls > 650) throw std::runtime_error("VSM returned to per-page CPU draw submission");
+            if (timing.indexedDrawCalls > 122) throw std::runtime_error("VSM recorded non-VSM shadow draws");
             total += timing.frameGpuMs;
             for (const auto &scope : timing.gpuScopes)
             {
+                if (scope.name.starts_with("RHI Shadow Cascade"))
+                    throw std::runtime_error("VSM submitted a cascade GPU scope");
                 if (scope.name == "RHI VSM GPU Planning") planning += scope.milliseconds;
                 if (scope.name == "RHI Virtual Shadow Pages") pages += scope.milliseconds;
             }

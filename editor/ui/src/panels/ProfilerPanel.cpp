@@ -230,13 +230,14 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[1]),
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[2]),
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawsByCascade[3]));
-        ImGui::Text("  Shadow cache: %llu hits, %llu updates",
+        ImGui::Text("  Shadow cache: %llu hits, %llu updates, %llu allocated cascade targets",
                     static_cast<unsigned long long>(rhiScene.shadowCascadeCacheHitCount),
-                    static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount));
+                    static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount),
+                    static_cast<unsigned long long>(rhiScene.shadowCascadeTargetCount));
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;
-            ImGui::Text("  VSM submissions: %u indirect commands, %u receiver draws; %.2f MiB (+ cascades)",
+            ImGui::Text("  VSM submissions: %u indirect commands, %u receiver draws; %.2f MiB",
                 pages.submittedIndirectCommands, pages.receiverDraws, pages.memoryBytes / 1048576.0);
             if (pages.gpuCountersAvailable)
             {

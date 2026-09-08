@@ -345,7 +345,18 @@ namespace PlutoGE::render::rhi::opengl
                 glBlendEquation(GL_FUNC_ADD);
                 glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             }
-            const auto compare = pipeline->descriptor.depthCompare == CompareOperation::GreaterOrEqual ? GL_GEQUAL : GL_LESS;
+            GLenum compare = GL_LESS;
+            switch (pipeline->descriptor.depthCompare)
+            {
+            case CompareOperation::Never: compare = GL_NEVER; break;
+            case CompareOperation::Less: compare = GL_LESS; break;
+            case CompareOperation::Equal: compare = GL_EQUAL; break;
+            case CompareOperation::LessOrEqual: compare = GL_LEQUAL; break;
+            case CompareOperation::Greater: compare = GL_GREATER; break;
+            case CompareOperation::NotEqual: compare = GL_NOTEQUAL; break;
+            case CompareOperation::GreaterOrEqual: compare = GL_GEQUAL; break;
+            case CompareOperation::Always: compare = GL_ALWAYS; break;
+            }
             glDepthFunc(compare);
             if (pipeline->descriptor.cullMode == CullMode::None)
                 glDisable(GL_CULL_FACE);

@@ -35,7 +35,8 @@ namespace PlutoGE::render
         const auto present = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
         return std::all_of(compute.begin(), compute.end(), present) && std::all_of(raster.begin(), raster.end(), present);
     }
-    VirtualShadowParameters VirtualShadowMaps::BuildClipmaps(const BasicLighting &lighting)
+    VirtualShadowParameters VirtualShadowMaps::BuildClipmaps(const BasicLighting &lighting,
+                                                                  const VirtualShadowParameters *previous)
     {
         VirtualShadowParameters result;
         glm::vec3 direction = lighting.directionalDirection;
@@ -51,21 +52,33 @@ namespace PlutoGE::render
         // during normal travel. The envelope includes receivers and upstream casters.
         const float depthRange = std::max(4.0f * (distance + casterDistance), 64.0f);
         const float depthStep = depthRange / 8.0f;
-        const float depthCentre = std::floor(centre.z / depthStep) * depthStep;
+        float depthCentre = std::round(centre.z / depthStep) * depthStep;
+        if (previous && previous->metrics[PLUTO_VSM_ROOT_LEVEL].y == depthRange)
+        {
+            // A round-to-nearest centre avoids a global invalidation at world
+            // zero. Hysteresis keeps the old projection across quantisation
+            // boundaries while receivers/casters still have ample depth room.
+            const float oldCentre = (previous->matrices[PLUTO_VSM_ROOT_LEVEL][3][2] - 0.5f) * depthRange;
+            if (std::abs(centre.z - oldCentre) < depthRange * 0.25f)
+                depthCentre = oldCentre;
+        }
+        // Projection epochs hash float bits; -0 and +0 are the same centre.
+        if (depthCentre == 0.0f) depthCentre = 0.0f;
         for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            const float span = std::ldexp(2.0f * distance, level - (PLUTO_VSM_LEVELS - 1));
-            const float page = span / PLUTO_VSM_GRID;
-            const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - PLUTO_VSM_GRID / 2;
+            const float span = std::ldexp(2.0f * distance, std::min(level, PLUTO_VSM_FINE_LEVELS - 1) - (PLUTO_VSM_FINE_LEVELS - 1));
+            const int grid = PLUTO_VSM_LEVEL_GRID(level);
+            const float page = span / grid;
+            const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - grid / 2;
             glm::mat4 projection(1);
             projection[0][0] = projection[1][1] = 2.0f / span;
             projection[2][2] = -1.0f / depthRange;
-            projection[3][0] = -1.0f - 2.0f * origin.x / PLUTO_VSM_GRID;
-            projection[3][1] = -1.0f - 2.0f * origin.y / PLUTO_VSM_GRID;
+            projection[3][0] = -1.0f - 2.0f * origin.x / grid;
+            projection[3][1] = -1.0f - 2.0f * origin.y / grid;
             projection[3][2] = 0.5f + depthCentre / depthRange;
             result.matrices[level] = projection * view;
             result.origins[level] = glm::ivec4(origin, static_cast<int>(ProjectionEpoch(view, depthCentre, depthRange, span)), 0);
-            result.metrics[level] = {span / PLUTO_VSM_RESOLUTION, depthRange, page, span};
+            result.metrics[level] = {span / (grid * PLUTO_VSM_PAGE_SIZE), depthRange, page, span};
         }
         result.camera = glm::vec4(lighting.cameraPosition, 1);
         return result;
@@ -127,18 +140,22 @@ namespace PlutoGE::render
         const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
         m_white = Texture(device, device.CreateTexture({1, 1, Format::R8G8B8A8Unorm, TextureUsage::Sampled, "VSM neutral alpha"}, Bytes(white)));
     }
-    bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
-                                   std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
-                                   std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height)
+    bool VirtualShadowMaps::CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters)
     {
-        if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
         const auto chunkCount = [](std::span<const BasicDraw> draws)
         {
             std::size_t count = 0;
             for (const auto &draw : draws) count += draw.instanceModels && !draw.instanceModels->empty() ? (draw.instanceModels->size() + 63) / 64 : 1;
             return count;
         };
-        if (chunkCount(casters) > PLUTO_VSM_MAX_DRAW_CHUNKS || chunkCount(receivers) > PLUTO_VSM_MAX_DRAW_CHUNKS) return false;
+        return chunkCount(casters) <= PLUTO_VSM_MAX_DRAW_CHUNKS && chunkCount(receivers) <= PLUTO_VSM_MAX_DRAW_CHUNKS;
+    }
+    bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
+                                   std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
+                                   std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height)
+    {
+        if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
+        if (!CanPrepare(receivers, casters)) return false;
         if (m_width != width || m_height != height)
         {
             m_receiverDepth = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::D32Float,
@@ -197,7 +214,8 @@ namespace PlutoGE::render
         }
         if (!inputs.empty()) device.UpdateBuffer(m_casters.Get(), 0, std::as_bytes(std::span(inputs)));
         for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
-        auto parameters = BuildClipmaps(lighting);
+        auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr);
+        m_previousClipmaps = parameters;
         parameters.viewProjection = viewProjection;
         parameters.inverseViewProjection = glm::inverse(viewProjection);
         parameters.viewport = {width, height, device.GetApi() == rhi::GraphicsApi::Vulkan ? 1 : 0, device.UsesZeroToOneClipDepth() ? 1 : 0};

@@ -46,6 +46,7 @@ target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEOpenGLRhiTests COMMAND PlutoGEOpenGLRhiTests)
 add_test(NAME PlutoGEOpenGLSsrTests COMMAND PlutoGEOpenGLRhiTests --ssr-only)
+add_test(NAME PlutoGEOpenGLVsmOnlyTests COMMAND PlutoGEOpenGLRhiTests --vsm-only)
 
 add_executable(PlutoGEVulkanBootstrapTests VulkanBootstrapTests.cpp)
 target_link_libraries(PlutoGEVulkanBootstrapTests PRIVATE PlutoGE::Render)
@@ -62,6 +63,9 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEVulkanSsrTests COMMAND PlutoGEVulkanRhiTests --ssr-only)
+add_test(NAME PlutoGEVulkanVsmOnlyTests COMMAND PlutoGEVulkanRhiTests --vsm-only)
+add_test(NAME PlutoGEVulkanVsmPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)
 add_test(NAME PlutoGEVctWorldCacheRenderingTests COMMAND PlutoGEVulkanRhiTests --vct-world-cache)
 
 add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)

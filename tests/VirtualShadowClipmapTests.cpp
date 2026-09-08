@@ -13,6 +13,17 @@ int main()
         BasicLighting lighting;
         lighting.directionalDirection = {0, 0, 1}; lighting.cameraPosition = {.1f, .1f, .1f};
         const auto original = VirtualShadowMaps::BuildClipmaps(lighting);
+        Require(original.metrics[PLUTO_VSM_ROOT_LEVEL].x > original.metrics[PLUTO_VSM_FINE_LEVELS - 1].x,
+                "Coarse VSM coverage must have a bounded low-resolution footprint");
+        auto depthLighting = lighting;
+        depthLighting.cameraPosition.z = 80.0f;
+        const auto nearBoundary = VirtualShadowMaps::BuildClipmaps(depthLighting, &original);
+        Require(nearBoundary.origins[0].z == original.origins[0].z,
+                "Crossing a depth quantisation boundary discarded usable shadow depth");
+        depthLighting.cameraPosition.z = 400.0f;
+        const auto farBoundary = VirtualShadowMaps::BuildClipmaps(depthLighting, &nearBoundary);
+        Require(farBoundary.origins[0].z != original.origins[0].z,
+                "Depth hysteresis failed to recenter outside the safe envelope");
         lighting.view = glm::rotate(glm::mat4(1), .7f, glm::vec3(0, 1, 0));
         lighting.cameraPosition.x += .0001f;
         const auto moved = VirtualShadowMaps::BuildClipmaps(lighting);
@@ -24,8 +35,8 @@ int main()
         {
             Require(original.origins[level].z == scrolled.origins[level].z, "XY scroll changed projection epoch");
             const glm::vec4 point(.7f, .2f, .5f, 1);
-            const auto before = (glm::vec2(original.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_GRID) + glm::vec2(original.origins[level]);
-            const auto after = (glm::vec2(scrolled.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_GRID) + glm::vec2(scrolled.origins[level]);
+            const auto before = (glm::vec2(original.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level)) + glm::vec2(original.origins[level]);
+            const auto after = (glm::vec2(scrolled.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level)) + glm::vec2(scrolled.origins[level]);
             Require(glm::length(before - after) < .0001f, "Clipmap scroll changed absolute page addressing");
         }
         lighting.directionalDirection.x += .1f;

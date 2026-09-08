@@ -1,6 +1,11 @@
 #pragma once
 // Shared by C++ and Slang. Keep addressing and resource sizes in one place.
-#define PLUTO_VSM_LEVELS 4
+#define PLUTO_VSM_FINE_LEVELS 4
+#define PLUTO_VSM_ROOT_LEVEL PLUTO_VSM_FINE_LEVELS
+#define PLUTO_VSM_LEVELS (PLUTO_VSM_FINE_LEVELS + 1)
+#define PLUTO_VSM_ROOT_GRID 8
+#define PLUTO_VSM_ROOT_PAGES (PLUTO_VSM_ROOT_GRID * PLUTO_VSM_ROOT_GRID)
+#define PLUTO_VSM_LEVEL_GRID(level) ((level) == PLUTO_VSM_ROOT_LEVEL ? PLUTO_VSM_ROOT_GRID : PLUTO_VSM_GRID)
 #define PLUTO_VSM_GRID 128
 #define PLUTO_VSM_PAGE_SIZE 128
 #define PLUTO_VSM_ATLAS_TILES 16

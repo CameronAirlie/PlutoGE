@@ -3,6 +3,7 @@
 cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
 [[vk::binding(11, 1)]] Sampler2D virtualShadowAtlas : register(t11, space1);
 [[vk::binding(12, 1)]] Sampler2D virtualShadowTable : register(t12, space1);
+#include "VirtualShadowSampling.slang"
 
 struct VertexInput
 {
@@ -278,23 +279,35 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
     {
         float3 receiver = world + normal * vsm.metrics[level].x * lerp(0.08, 0.60, slope);
         float3 coordinate = virtualCoordinate(vsm, level, receiver);
-        float2 position = coordinate.xy * PLUTO_VSM_RESOLUTION - 0.5;
+        float2 position = coordinate.xy * virtualResolution(level) - 0.5;
         int2 first = int2(floor(position - support)) + 1;
         int2 last = int2(ceil(position + support)) - 1;
-        if (any(first < 0) || any(last >= PLUTO_VSM_RESOLUTION) || coordinate.z < 0 || coordinate.z > 1) continue;
+        if (any(first < 0) || any(last >= virtualResolution(level)) || coordinate.z < 0 || coordinate.z > 1) continue;
         int2 lowPage = first / PLUTO_VSM_PAGE_SIZE, highPage = last / PLUTO_VSM_PAGE_SIZE;
         uint mappings[4];
         bool complete = true;
         for (int corner = 0; corner < 4; ++corner)
         {
+            // Most filter footprints stay in one physical page. Reuse the
+            // mapping along axes that do not cross a page boundary.
+            if ((corner & 1) != 0 && lowPage.x == highPage.x)
+            {
+                mappings[corner] = mappings[corner - 1];
+                continue;
+            }
+            if ((corner & 2) != 0 && lowPage.y == highPage.y)
+            {
+                mappings[corner] = mappings[corner - 2];
+                continue;
+            }
             int2 page = int2((corner & 1) != 0 ? highPage.x : lowPage.x, (corner & 2) != 0 ? highPage.y : lowPage.y);
             float2 at = (float2(page + int2(0, level * PLUTO_VSM_GRID)) + 0.5) /
                         float2(PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS);
             mappings[corner] = uint(virtualShadowTable.SampleLevel(at, 0).r);
             complete = complete && mappings[corner] != 0;
         }
-        // Try a resident coarser clipmap before evaluating the CSM fallback
-        // once. Never nest a fallback PCF inside every fine-resolution tap.
+        // Try a resident coarser clipmap when the requested filter footprint
+        // is unavailable. The VSM path never samples conventional cascades.
         if (!complete) continue;
         float3 dx = mul(vsm.matrices[level], float4(worldDx, 0)).xyz;
         float3 dy = mul(vsm.matrices[level], float4(worldDy, 0)).xyz;
@@ -311,7 +324,7 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                 uint slot = mappings[corner] - 1;
                 float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
                                 float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
-                float2 tapUv = (float2(texel) + 0.5) / PLUTO_VSM_RESOLUTION;
+                float2 tapUv = (float2(texel) + 0.5) / virtualResolution(level);
                 float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= virtualShadowAtlas.SampleLevel(atlas, 0).r ? 1.0 : 0.0;
                 float2 tent = max(support - abs(float2(texel) - position), 0.0);
                 float weight = tent.x * tent.y;
@@ -432,11 +445,16 @@ float4 glassAtmosphere(float3 worldPosition)
         float visibility = 1.0;
         if (shadowsEnabled != 0 && any(sunlight > 0.0))
         {
+            if (shadowCascadeParameters.w > 0.5)
+                visibility = virtualShadowVolumeVisibility(vsm, virtualShadowAtlas, virtualShadowTable, position);
+            else
+            {
             const float depth = -mul(view, float4(position, 1)).z;
             const int count = clamp((int)shadowCascadeParameters.x, 1, 4);
             int cascade = 0;
             while (cascade + 1 < count && depth > shadowCascadeSplits[cascade]) ++cascade;
             visibility = depth > shadowCascadeSplits[count - 1] ? 0.0 : evaluateShadowCascadeTap(cascade, position, 0.0015);
+            }
         }
         const float segment = exp(-density * stepLength);
         radiance += transmittance * (1.0 - segment) * (ambientLight + sunlight * visibility);
@@ -566,6 +584,31 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         // they remain continuous when a 2x2 fragment quad straddles a split.
         const float3 shadowWorldDx = ddx(input.worldPosition);
         const float3 shadowWorldDy = ddy(input.worldPosition);
+        // Shadow bias must follow the actual receiver plane. A normal-map
+        // perturbation is a lighting detail and can point the bias back into
+        // the geometry, which becomes visible as acne in wider cascades.
+        float3 shadowNormal = cross(shadowWorldDx, shadowWorldDy);
+        const float shadowNormalLengthSquared = dot(shadowNormal, shadowNormal);
+        shadowNormal = shadowNormalLengthSquared > 0.000000000001
+            ? shadowNormal * rsqrt(shadowNormalLengthSquared)
+            : normalize(input.worldNormal);
+        if (dot(shadowNormal, input.worldNormal) < 0.0)
+            shadowNormal = -shadowNormal;
+        const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
+        const float slope = 1.0 - shadowNdotl;
+        if (shadowCascadeParameters.w > 0.5)
+        {
+            float virtualRaw, virtualLevel;
+            const float visibility = evaluateVirtualShadow(input.worldPosition, shadowNormal,
+                shadowWorldDx, shadowWorldDy, slope, virtualRaw, virtualLevel);
+            // Try resident coarser VSM levels inside evaluateVirtualShadow.
+            // Unmapped/deferred pages are lit until resident, never backed by CSM.
+            shadowVisibility = visibility >= 0.0 ? visibility : 1.0;
+            rawShadowVisibility = virtualRaw;
+            normalizedCascade = virtualLevel;
+        }
+        else
+        {
         const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
         const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
         int cascade = cascadeCount - 1;
@@ -579,30 +622,6 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
         const float cascadeWorldTexel = max(shadowCascadeMetrics[cascade].x, 0.00001);
         const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
-        // Shadow bias must follow the actual receiver plane. A normal-map
-        // perturbation is a lighting detail and can point the bias back into
-        // the geometry, which becomes visible as acne in wider cascades.
-        float3 shadowNormal = cross(shadowWorldDx, shadowWorldDy);
-        const float shadowNormalLengthSquared = dot(shadowNormal, shadowNormal);
-        shadowNormal = shadowNormalLengthSquared > 0.000000000001
-            ? shadowNormal * rsqrt(shadowNormalLengthSquared)
-            : normalize(input.worldNormal);
-        if (dot(shadowNormal, input.worldNormal) < 0.0)
-            shadowNormal = -shadowNormal;
-        const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
-        const float slope = 1.0 - shadowNdotl;
-        float virtualRaw, virtualLevel;
-        float virtualVisibility = shadowCascadeParameters.w > 0.5
-            ? evaluateVirtualShadow(input.worldPosition, shadowNormal, shadowWorldDx, shadowWorldDy, slope, virtualRaw, virtualLevel)
-            : -1.0;
-        if (virtualVisibility >= 0.0)
-        {
-            shadowVisibility = virtualVisibility;
-            rawShadowVisibility = virtualRaw;
-            normalizedCascade = virtualLevel;
-        }
-        else
-        {
         const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
         // A large caster range can make the world-space-derived bias approach
         // zero in the near cascade. Retain a texel-scaled floor to prevent

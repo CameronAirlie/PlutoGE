@@ -87,22 +87,33 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         throw std::runtime_error("Roughness faded SSR instead of broadening its lobe");
     if (rough.energy[0] < rough.energy[1]*2)
         throw std::runtime_error("SSR ignored metallic albedo tint");
+    ssr.parameters[4].w = 1.0f;
+    const auto reference = measure(1, 1);
+    if (rough.energy[0] < reference.energy[0] * 0.65 ||
+        rough.energy[0] > reference.energy[0] * 1.35)
+        throw std::runtime_error("Half-resolution SSR changed rough reflection energy excessively");
+    ssr.parameters[4].w = 0.0f;
     if (performanceDevice)
     {
-        double gpuMs = 0, effectMs = 0;
-        int samples = 0;
-        for (int frame = 0; frame < 48; ++frame)
+        for (const bool fullResolution : {true, false})
         {
-            renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr, 1));
-            const auto timing = performanceDevice->GetTimingStats("Scene");
-            if (frame < 16 || !timing.hasGpuResult) continue;
-            for (const auto &scope : timing.gpuScopes)
-                if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
-            gpuMs += timing.frameGpuMs;
-            ++samples;
+            ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
+            double gpuMs = 0, effectMs = 0;
+            int samples = 0;
+            for (int frame = 0; frame < 48; ++frame)
+            {
+                renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr, 1));
+                const auto timing = performanceDevice->GetTimingStats("Scene");
+                if (frame < 16 || !timing.hasGpuResult) continue;
+                for (const auto &scope : timing.gpuScopes)
+                    if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
+                gpuMs += timing.frameGpuMs;
+                ++samples;
+            }
+            if (!samples) throw std::runtime_error("SSR benchmark has no GPU timings");
+            std::cout << "SSR benchmark (" << (fullResolution ? "full-resolution reference" : "half-resolution resolve")
+                      << "): " << gpuMs / samples << " ms GPU frame, "
+                      << effectMs / samples << " ms reflections (" << samples << " samples)\n";
         }
-        if (!samples) throw std::runtime_error("SSR benchmark has no GPU timings");
-        std::cout << "SSR benchmark: " << gpuMs / samples << " ms GPU frame, "
-                  << effectMs / samples << " ms reflections (" << samples << " samples)\n";
     }
 }

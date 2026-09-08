@@ -1,5 +1,6 @@
 #include "ShadowFilteringChecks.h"
 #include "SsrRenderingChecks.h"
+#include "VsmOnlyRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -131,6 +132,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.shadowInstancedVertex.glsl = ReadText("DirectionalShadowInstanced.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
         shaders.maskedShadowFragment.glsl = ReadText("DirectionalShadowMasked.fragment.glsl");
+        shaders.displayOutput.vertex.glsl = ReadText("DisplayOutput.vertex.glsl");
+        shaders.displayOutput.fragment.glsl = ReadText("DisplayOutput.fragment.glsl");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].glsl = ReadText((std::string(vsmCompute[index]) + ".compute.glsl").c_str());
@@ -147,6 +150,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
         };
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
+        loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(render::BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
@@ -186,6 +190,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string(argv[1]) == "--vsm-only")
+        {
+            CheckVsmOnlyRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "--ssr-only")
         {
             CheckSsrRendering(basicRenderer, [&](render::rhi::TextureHandle texture)

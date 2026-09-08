@@ -38,7 +38,7 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
     VirtualShadowPage page = pages[slot];
     float3 world = mul(models[instance % drawParameters.y], float4(input.position, 1)).xyz;
     float3 coordinate = virtualCoordinate(vsm, page.address.z, world);
-    float2 local = coordinate.xy * PLUTO_VSM_GRID - float2(virtualPageCoordinate(page.state.x));
+    float2 local = coordinate.xy * virtualGrid(page.address.z) - float2(virtualPageCoordinate(page.state.x));
     float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) + local) / PLUTO_VSM_ATLAS_TILES;
     PageOutput output;
     output.position = float4(atlas * 2.0 - 1.0, coordinate.z, 1);

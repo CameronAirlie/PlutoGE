@@ -25,6 +25,8 @@ struct VirtualShadowCaster
     uint4 identity;
 };
 uint2 virtualPageCoordinate(uint key) { return uint2(key % PLUTO_VSM_GRID, key / PLUTO_VSM_GRID); }
+uint virtualGrid(uint level) { return PLUTO_VSM_LEVEL_GRID(level); }
+uint virtualResolution(uint level) { return virtualGrid(level) * PLUTO_VSM_PAGE_SIZE; }
 float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
 {
     float3 clip = mul(p.matrices[level], float4(world, 1)).xyz;
@@ -35,9 +37,9 @@ int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
     for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);
-        float guard = 7.0 / PLUTO_VSM_RESOLUTION;
+        float guard = 7.0 / virtualResolution(level);
         if (all(uv.xy > guard) && all(uv.xy < 1.0 - guard) && uv.z >= 0 && uv.z <= 1 &&
-            (p.metrics[level].x * 2.0 >= footprint || level == PLUTO_VSM_LEVELS - 1)) return level;
+            (p.metrics[level].x * 2.0 >= footprint || level >= PLUTO_VSM_FINE_LEVELS - 1)) return level;
     }
     return -1;
 }

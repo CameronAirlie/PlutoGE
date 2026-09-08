@@ -1,3 +1,4 @@
+#include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -50,6 +51,7 @@ int main(int argc, char **argv)
             shader.vertex.spirv = ReadSpirv((std::string(module) + ".vertex.spv").c_str());
             shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
         };
+        loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
@@ -446,6 +448,11 @@ int main(int argc, char **argv)
             std::cerr << "Per-draw material or transform data changed with draw order\n";
             return 20;
         }
+
+        CheckSsrRendering(renderer, [&](rhi::TextureHandle texture)
+        {
+            return device.ReadTextureRgba8(texture);
+        });
 
         // Exercise the editor's persistent readback allocation across a
         // render-target resize. This also verifies that retiring the old

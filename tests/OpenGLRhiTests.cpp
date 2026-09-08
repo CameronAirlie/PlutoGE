@@ -1,3 +1,4 @@
+#include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -32,7 +33,7 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
     using namespace PlutoGE;
     using namespace render::rhi;
@@ -133,6 +134,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shader.vertex.glsl = ReadText((std::string(module) + ".vertex.glsl").c_str());
             shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
         };
+        loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(render::BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
@@ -170,6 +172,18 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             std::cerr << "BasicRenderer initialization failed: " << error.what() << '\n';
             return 6;
+        }
+
+        if (argc > 1 && std::string(argv[1]) == "--ssr-only")
+        {
+            CheckSsrRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
         }
 
         CheckGlassRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
@@ -434,6 +448,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             std::cerr << "OpenGL VCTGI execution produced error: " << error << '\n';
             return 12;
         }
+
 
         auto swapchain = device.CreateSwapchain({
             .nativeWindow = window.GetWindow(),

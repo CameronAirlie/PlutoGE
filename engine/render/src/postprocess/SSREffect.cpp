@@ -28,8 +28,6 @@ namespace PlutoGE::render
             {.name = "Steps", .type = PostProcessParameterType::Int, .value = std::to_string(m_stepCount)},
             {.name = "Binary Search Steps", .type = PostProcessParameterType::Int, .value = std::to_string(m_binarySearchSteps)},
             {.name = "Edge Fade", .type = PostProcessParameterType::Float, .value = std::to_string(m_edgeFade)},
-            {.name = "Fresnel Power", .type = PostProcessParameterType::Float, .value = std::to_string(m_fresnelPower)},
-            {.name = "Metallic Boost", .type = PostProcessParameterType::Float, .value = std::to_string(m_metallicBoost)},
         };
     }
 
@@ -79,8 +77,6 @@ namespace PlutoGE::render
             uniform float uThickness;
             uniform float uStartOffset;
             uniform float uEdgeFade;
-            uniform float uFresnelPower;
-            uniform float uMetallicBoost;
             uniform int uStepCount;
             uniform int uBinarySearchSteps;
 
@@ -138,107 +134,101 @@ namespace PlutoGE::render
                 vec3 viewPosition = ReconstructViewPosition(UV, surfaceDepth);
                 vec3 viewNormal = normalize(mat3(uView) * normalize(worldNormal));
                 vec3 viewDirection = normalize(viewPosition);
-                vec3 rayDirection = normalize(reflect(viewDirection, viewNormal));
-
-                // The final confidence is exactly zero at this roughness, so
-                // avoid the ray march (and its depth reconstruction samples)
-                // for surfaces that cannot contribute a reflection. Rays
-                // travelling back towards the camera cannot intersect a
-                // front-facing scene surface either.
                 float roughness = clamp(normalRoughness.a, 0.04, 1.0);
-                float roughnessConfidence = 1.0 - smoothstep(0.2, 0.8, roughness);
-                roughnessConfidence *= roughnessConfidence;
-                // Every later confidence term is in [0, 1]. If this upper
-                // bound is already below one 10-bit display step, a full ray
-                // march cannot produce a visible contribution.
-                if (roughness >= 0.8 || roughnessConfidence * uIntensity < (1.0 / 1024.0) ||
-                    uIntensity <= 0.0 || rayDirection.z >= -0.001)
+                if (uIntensity <= 0.0) { FragColor = vec4(0.0); return; }
+                float alpha = roughness * roughness;
+                float a2 = alpha * alpha;
+                vec3 view = -viewDirection;
+                float ndotv = dot(viewNormal, view);
+                if (ndotv <= 0.0) { FragColor = vec4(0.0); return; }
+                vec4 albedo = texture(uSceneAlbedoTexture, UV);
+                vec3 f0 = mix(vec3(0.04), albedo.rgb, clamp(albedo.a, 0.0, 1.0));
+                vec3 tangent = normalize(cross(abs(viewNormal.z) < 0.999 ? vec3(0, 0, 1) : vec3(1, 0, 0), viewNormal));
+                vec3 bitangent = cross(viewNormal, tangent);
+                vec3 reflection = vec3(0.0);
+                for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex)
                 {
-                    FragColor = vec4(0.0);
-                    return;
-                }
+                    float xi = (float(sampleIndex) + 0.5) / 16.0;
+                    float phi = 6.283185307 * fract(float(sampleIndex) * 0.618033989);
+                    float cosTheta = sqrt((1.0 - xi) / (1.0 + (a2 - 1.0) * xi));
+                    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+                    vec3 halfVector = tangent * cos(phi) * sinTheta + bitangent * sin(phi) * sinTheta + viewNormal * cosTheta;
+                    float vdoth = dot(view, halfVector);
+                    vec3 rayDirection = reflect(viewDirection, halfVector);
+                    float ndotl = dot(viewNormal, rayDirection);
+                    if (vdoth <= 0.0 || ndotl <= 0.0) continue;
 
-                vec3 rayOrigin = viewPosition + viewNormal * uStartOffset;
-                float previousTravel = uStartOffset;
-                float previousDepthDelta = -1.0;
-                vec2 hitUv = vec2(0.0);
-                float hitTravel = -1.0;
+                    vec3 rayOrigin = viewPosition + viewNormal * uStartOffset;
+                    float previousTravel = uStartOffset;
+                    float previousDepthDelta = -1.0;
+                    vec2 hitUv = vec2(0.0);
+                    float hitTravel = -1.0;
 
-                for (int stepIndex = 0; stepIndex < MAX_STEPS; ++stepIndex)
-                {
-                    if (stepIndex >= uStepCount) break;
-                    float fraction = (float(stepIndex) + 1.0) / float(uStepCount);
-                    float travel = uStartOffset + uMaxRayDistance * fraction * fraction;
-                    vec3 rayPosition = rayOrigin + rayDirection * travel;
-                    vec2 rayUv;
-                    if (!ProjectToUv(rayPosition, rayUv)) break;
-
-                    float depthDelta = -rayPosition.z - SceneViewDepth(rayUv);
-                    float adaptiveThickness = uThickness * (1.0 + travel / uMaxRayDistance);
-                    bool crossedSurface = previousDepthDelta < 0.0 && depthDelta >= 0.0;
-                    if (crossedSurface || (depthDelta >= 0.0 && depthDelta <= adaptiveThickness))
+                    for (int stepIndex = 0; stepIndex < MAX_STEPS; ++stepIndex)
                     {
-                        float low = previousTravel;
-                        float high = travel;
-                        for (int binaryIndex = 0; binaryIndex < MAX_BINARY_STEPS; ++binaryIndex)
-                        {
-                            if (binaryIndex >= uBinarySearchSteps) break;
-                            float middle = (low + high) * 0.5;
-                            vec3 middlePosition = rayOrigin + rayDirection * middle;
-                            vec2 middleUv;
-                            if (!ProjectToUv(middlePosition, middleUv)) { high = middle; continue; }
-                            float middleDelta = -middlePosition.z - SceneViewDepth(middleUv);
-                            if (middleDelta >= 0.0) high = middle; else low = middle;
-                        }
-                        vec3 refinedPosition = rayOrigin + rayDirection * high;
-                        vec2 refinedUv;
-                        if (!ProjectToUv(refinedPosition, refinedUv)) break;
+                        if (stepIndex >= uStepCount) break;
+                        float fraction = (float(stepIndex) + 1.0) / float(uStepCount);
+                        float travel = uStartOffset + uMaxRayDistance * fraction * fraction;
+                        vec3 rayPosition = rayOrigin + rayDirection * travel;
+                        vec2 rayUv;
+                        if (!ProjectToUv(rayPosition, rayUv)) break;
 
-                        float refinedSceneDepth = SceneViewDepth(refinedUv);
-                        float refinedDepthDelta = -refinedPosition.z - refinedSceneDepth;
-                        float refinedThickness = uThickness * (1.0 + high / uMaxRayDistance);
-                        vec3 refinedWorldNormal = texture(uSceneNormalTexture, refinedUv).xyz;
-                        float refinedNormalLengthSq = dot(refinedWorldNormal, refinedWorldNormal);
-                        vec3 refinedViewNormal = mat3(uView) * refinedWorldNormal;
-                        refinedViewNormal /= sqrt(max(dot(refinedViewNormal, refinedViewNormal), 0.0001));
-
-                        // A depth sign change can also be caused by stepping across
-                        // a foreground silhouette. Only accept a hit when the ray is
-                        // actually close to, and entering the front of, the surface.
-                        bool withinSurfaceThickness = refinedDepthDelta >= 0.0 && refinedDepthDelta <= refinedThickness;
-                        bool frontFacingSurface = refinedNormalLengthSq >= 0.01 &&
-                                                  dot(rayDirection, refinedViewNormal) < -0.01;
-                        if (withinSurfaceThickness && frontFacingSurface)
+                        float depthDelta = -rayPosition.z - SceneViewDepth(rayUv);
+                        float adaptiveThickness = uThickness * (1.0 + travel / uMaxRayDistance);
+                        bool crossedSurface = previousDepthDelta < 0.0 && depthDelta >= 0.0;
+                        if (crossedSurface || (depthDelta >= 0.0 && depthDelta <= adaptiveThickness))
                         {
-                            hitTravel = high;
-                            hitUv = refinedUv;
+                            float low = previousTravel;
+                            float high = travel;
+                            for (int binaryIndex = 0; binaryIndex < MAX_BINARY_STEPS; ++binaryIndex)
+                            {
+                                if (binaryIndex >= uBinarySearchSteps) break;
+                                float middle = (low + high) * 0.5;
+                                vec3 middlePosition = rayOrigin + rayDirection * middle;
+                                vec2 middleUv;
+                                if (!ProjectToUv(middlePosition, middleUv)) { high = middle; continue; }
+                                float middleDelta = -middlePosition.z - SceneViewDepth(middleUv);
+                                if (middleDelta >= 0.0) high = middle; else low = middle;
+                            }
+                            vec3 refinedPosition = rayOrigin + rayDirection * high;
+                            vec2 refinedUv;
+                            if (!ProjectToUv(refinedPosition, refinedUv)) break;
+
+                            float refinedSceneDepth = SceneViewDepth(refinedUv);
+                            float refinedDepthDelta = -refinedPosition.z - refinedSceneDepth;
+                            float refinedThickness = uThickness * (1.0 + high / uMaxRayDistance);
+                            vec3 refinedWorldNormal = texture(uSceneNormalTexture, refinedUv).xyz;
+                            float refinedNormalLengthSq = dot(refinedWorldNormal, refinedWorldNormal);
+                            vec3 refinedViewNormal = mat3(uView) * refinedWorldNormal;
+                            refinedViewNormal /= sqrt(max(dot(refinedViewNormal, refinedViewNormal), 0.0001));
+
+                            // A depth sign change can also be caused by stepping across
+                            // a foreground silhouette. Only accept a hit when the ray is
+                            // actually close to, and entering the front of, the surface.
+                            bool withinSurfaceThickness = refinedDepthDelta >= 0.0 && refinedDepthDelta <= refinedThickness;
+                            bool frontFacingSurface = refinedNormalLengthSq >= 0.01 &&
+                                                      dot(rayDirection, refinedViewNormal) < -0.01;
+                            if (withinSurfaceThickness && frontFacingSurface)
+                            {
+                                hitTravel = high;
+                                hitUv = refinedUv;
+                            }
+                            break;
                         }
-                        break;
+                        previousTravel = travel;
+                        previousDepthDelta = depthDelta;
                     }
-                    previousTravel = travel;
-                    previousDepthDelta = depthDelta;
-                }
 
-                if (hitTravel < 0.0)
-                {
-                    FragColor = vec4(0.0);
-                    return;
+                    if (hitTravel < 0.0) continue;
+                    float edgeDistance = min(min(hitUv.x, 1.0 - hitUv.x), min(hitUv.y, 1.0 - hitUv.y));
+                    float confidence = smoothstep(0.0, uEdgeFade, edgeDistance);
+                    vec3 fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(vdoth, 0.0, 1.0), 5.0);
+                    float gv = 2.0 * ndotv / max(ndotv + sqrt(a2 + (1.0 - a2) * ndotv * ndotv), 0.000001);
+                    float gl = 2.0 * ndotl / max(ndotl + sqrt(a2 + (1.0 - a2) * ndotl * ndotl), 0.000001);
+                    float weight = gv * gl * vdoth / max(ndotv * cosTheta, 0.000001);
+                    reflection += texture(uSceneTexture, hitUv).rgb * fresnel * weight * confidence;
                 }
-
-                float edgeDistance = min(min(hitUv.x, 1.0 - hitUv.x), min(hitUv.y, 1.0 - hitUv.y));
-                float edgeConfidence = smoothstep(0.0, uEdgeFade, edgeDistance);
-                float distanceConfidence = 1.0 - smoothstep(uMaxRayDistance * 0.25, uMaxRayDistance, hitTravel);
-                float facingConfidence = smoothstep(0.01, 0.2, dot(rayDirection, viewNormal));
-                float fresnel = pow(1.0 - clamp(dot(-viewDirection, viewNormal), 0.0, 1.0), uFresnelPower);
-                float metallic = clamp(texture(uSceneAlbedoTexture, UV).a, 0.0, 1.0);
-                float reflectivity = mix(0.04 + fresnel * 0.96, 1.0, metallic * uMetallicBoost);
-                // SSR traces a single sharp ray and cannot represent the wide
-                // reflection lobe of a rough surface. Fade it out as that lobe
-                // broadens; smooth dielectrics retain their Fresnel reflection.
-                float confidence = edgeConfidence * distanceConfidence * facingConfidence *
-                                   reflectivity * roughnessConfidence * uIntensity;
-                vec3 reflectedColor = texture(uSceneTexture, hitUv).rgb;
-                FragColor = vec4(reflectedColor, clamp(confidence, 0.0, 1.0));
+                FragColor = vec4(reflection * (uIntensity / 16.0), 1.0);
             }
         )";
         m_shader = Shader::Create(source);
@@ -295,7 +285,7 @@ namespace PlutoGE::render
                     totalWeight += weight;
                 }
                 reflection /= max(totalWeight, 0.0001);
-                FragColor = vec4(mix(scene.rgb, reflection.rgb, clamp(reflection.a, 0.0, 1.0)), scene.a);
+                FragColor = vec4(scene.rgb + reflection.rgb, scene.a);
             }
         )";
         m_compositeShader = Shader::Create(compositeSource);
@@ -331,7 +321,7 @@ namespace PlutoGE::render
         if (!m_traceTarget || !m_traceTarget->IsInitialized())
             return;
 
-        // The ray march dominates SSR cost. Trace one ray per 2x2 output block,
+        // The ray march dominates SSR cost. Trace the lobe per 2x2 output block,
         // while retaining the full configured step and refinement budgets.
         Graphics::BindRenderTarget(m_traceTarget.get());
         Graphics::SetViewport(0, 0, traceWidth, traceHeight);
@@ -351,8 +341,6 @@ namespace PlutoGE::render
         m_shader->SetUniform("uThickness", m_thickness);
         m_shader->SetUniform("uStartOffset", m_startOffset);
         m_shader->SetUniform("uEdgeFade", m_edgeFade);
-        m_shader->SetUniform("uFresnelPower", m_fresnelPower);
-        m_shader->SetUniform("uMetallicBoost", m_metallicBoost);
         m_shader->SetUniform("uStepCount", m_stepCount);
         m_shader->SetUniform("uBinarySearchSteps", m_binarySearchSteps);
         DrawFullscreenTriangle();

@@ -469,6 +469,7 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::Material, 4);
                 addInput(BasicPostProcessInput::Motion, 5);
                 addInput(BasicPostProcessInput::History, 6);
+                addInput(BasicPostProcessInput::Albedo, 7);
                 if (type == BasicPostProcessEffectType::VolumetricFog)
                 {
                     // Fog is the only post-process that consumes scene lighting.
@@ -1638,6 +1639,8 @@ namespace PlutoGE::render
                 commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Material))
                 commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+            if (HasInput(inputs, BasicPostProcessInput::Albedo))
+                commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Motion))
                 commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::History))

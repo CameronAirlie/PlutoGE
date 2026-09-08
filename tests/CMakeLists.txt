@@ -38,6 +38,7 @@ target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Pla
 target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEOpenGLRhiTests COMMAND PlutoGEOpenGLRhiTests)
+add_test(NAME PlutoGEOpenGLSsrTests COMMAND PlutoGEOpenGLRhiTests --ssr-only)
 
 add_executable(PlutoGEVulkanBootstrapTests VulkanBootstrapTests.cpp)
 target_link_libraries(PlutoGEVulkanBootstrapTests PRIVATE PlutoGE::Render)

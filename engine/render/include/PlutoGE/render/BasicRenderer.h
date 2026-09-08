@@ -49,6 +49,7 @@ namespace PlutoGE::render
         Material = 1u << 2u,
         Motion = 1u << 3u,
         History = 1u << 4u,
+        Albedo = 1u << 5u,
     };
 
     enum class BasicPostProcessStage : std::uint8_t
@@ -121,7 +122,7 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
-                   BasicPostProcessInput::Material;
+                   BasicPostProcessInput::Material | BasicPostProcessInput::Albedo;
         case BasicPostProcessEffectType::VolumetricFog:
         case BasicPostProcessEffectType::PhysicalSky:
         case BasicPostProcessEffectType::VolumetricCloud:

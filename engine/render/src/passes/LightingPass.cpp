@@ -401,7 +401,6 @@ namespace PlutoGE::render
                     float distribution = DistributionGGX(normal, halfwayDir, roughness);
                     float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
                     vec3 specular = (distribution * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.0001);
-                    specular *= 1.0 - smoothstep(0.92, 1.0, roughness);
                     return specular * radiance * ndotl;
                 }
 

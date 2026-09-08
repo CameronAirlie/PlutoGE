@@ -130,7 +130,7 @@ namespace PlutoGE::assets
                     if (!line.empty() && line.back() == '\r') line.pop_back();
                     if (number == 1 && prefab && line == "VARIANT\t1") { Variant(stream, owner); return; }
                     if (number == 1 && line != "SCENE\t1") { Add("scene.header", owner, 0, 1, "Unsupported or missing scene header."); return; }
-                    if (line.size() > 1024 * 1024) { Add("scan.incomplete", owner, 0, number, "Scene record exceeds 1 MiB; record not validated."); continue; }
+                    if (line.size() > MaxSceneRecordSize) { Add("scan.incomplete", owner, 0, number, "Scene record exceeds 64 MiB; record not validated."); continue; }
                     const auto fields = Fields(line);
                     try
                     {

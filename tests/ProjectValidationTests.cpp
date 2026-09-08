@@ -48,6 +48,14 @@ int main()
         Write(main, good);
         auto result = ValidateProject(input);
         Require(result.diagnostics.empty(), "Valid scene produced diagnostics");
+        const std::string terrainScene = good + "COMPONENT\t1\tTerrainComponent\t1\nPROPERTY\tHeightSamples\t2\t" +
+            std::string(3 * 1024 * 1024, '0') + "\t0\nEND_COMPONENT\n";
+        Write(main, terrainScene);
+        Require(ValidateProject(input).diagnostics.empty(), "Large inline terrain record rejected on disk");
+        input.currentScene = terrainScene;
+        input.currentSceneOwner = "project://Main.plutoscene";
+        Require(ValidateProject(input).diagnostics.empty(), "Large inline terrain record rejected in current scene");
+        input.currentScene.reset();
         Write(main, "SCENE\t1\n" + entity + "COMPONENT\t1\tMeshComponent\t1\nPROPERTY\tMesh\t2\tproject://Missing mesh.plutomesh\t0\nEND_COMPONENT\n");
         result = ValidateProject(input);
         Require(result.HasErrors() && Has(result, "asset.missing", 1) && Has(result, "camera.missing"), "Missing assets/cameras not reported");

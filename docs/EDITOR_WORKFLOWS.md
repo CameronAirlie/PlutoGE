@@ -109,7 +109,7 @@ not evaluate computed script paths, CSS URL syntax, external files, or reference
 from other projects. Binary matches recognize length-prefixed reference strings;
 text matches recognize serialized fields and literals. Malformed structures are
 not fully validated. Read failures, interrupted file changes, truncated reference
-strings, and text records over 1 MiB appear under **Scan issues**, with an explicit
+strings, and text records over 1 MiB (64 MiB for scenes/prefabs) appear under **Scan issues**, with an explicit
 incomplete-results message. A result count of zero is not proof an asset is unused.
 
 The cooker shares this extraction logic. Pruned cooking refuses to proceed when
@@ -210,7 +210,7 @@ bypass. Other callers of the low-level export API must invoke validation themsel
 Validation is read-only and does not instantiate scenes, start scripts, write
 metadata, or repair files. It runs synchronously on demand, so large projects can
 pause the editor during the scan. Scene files are limited to 256 MiB and individual
-scene records to 1 MiB; exceeding either produces an export-blocking incomplete-scan
+scene/prefab records to 64 MiB (to accommodate inline terrain samples); exceeding either produces an export-blocking incomplete-scan
 diagnostic. The checks do not prove runtime correctness, validate every component
 property, inspect mesh collision geometry, or resolve computed script references.
 Legacy external/relative scene paths outside explicit asset-reference syntax are

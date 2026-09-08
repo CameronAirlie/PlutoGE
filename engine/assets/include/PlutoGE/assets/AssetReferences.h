@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -10,6 +11,9 @@
 
 namespace PlutoGE::assets
 {
+    // Terrain height samples are serialized as a single scene property.
+    inline constexpr std::size_t MaxSceneRecordSize = 64ull * 1024 * 1024;
+
     struct AssetReferenceOccurrence
     {
         std::string reference;

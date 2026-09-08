@@ -248,6 +248,9 @@ namespace PlutoGE::assets
         std::ifstream input(path, std::ios::binary);
         if (!input) { result.errors.push_back("Cannot open asset for reading."); return result; }
         const auto extension = Extension(path);
+        const bool sceneRecord = extension == ".plutoscene" || extension == ".plutoprefab";
+        const auto recordLimit = sceneRecord ? MaxSceneRecordSize : MaxRecordSize;
+        const std::string recordLimitError = sceneRecord ? "Record exceeds 64 MiB at line " : "Record exceeds 1 MiB at line ";
         std::array<char, 4> magic{};
         input.read(magic.data(), magic.size());
         const bool binary = magic == std::array<char, 4>{'L','P','G','M'} ||
@@ -268,13 +271,13 @@ namespace PlutoGE::assets
                 if (c == '\n')
                 {
                     if (!oversized) ParseLine(result, line, number, extension, path, assetRoot);
-                    else result.errors.push_back("Record exceeds 1 MiB at line " + std::to_string(number));
+                    else result.errors.push_back(recordLimitError + std::to_string(number));
                     line.clear(); oversized = false; ++number;
                 }
-                else if (line.size() < MaxRecordSize) line.push_back(c);
+                else if (line.size() < recordLimit) line.push_back(c);
                 else oversized = true;
             }
-            if (oversized) result.errors.push_back("Record exceeds 1 MiB at line " + std::to_string(number));
+            if (oversized) result.errors.push_back(recordLimitError + std::to_string(number));
             else if (!line.empty()) ParseLine(result, line, number, extension, path, assetRoot);
         }
         if (input.bad()) result.errors.push_back("I/O error while reading asset.");

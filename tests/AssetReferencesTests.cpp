@@ -110,7 +110,15 @@ namespace
         Require(Has(ScanAssetReferences(textPath), reference), "Large text asset was skipped");
         Write(root / "Truncated.plutomesh", std::string("LPGM") + std::string(1, 100) + std::string(7, '\0') + "project://cut");
         Require(!ScanAssetReferences(root / "Truncated.plutomesh").errors.empty(), "Truncated binary did not report an issue");
-        Write(root / "Oversized.plutoscene", std::string(1024 * 1024 + 1, 'x') + "\nPROPERTY\tMaterial\t2\t" + reference + "\t0\n");
+        for (const auto *extension : {".plutoscene", ".plutoprefab"})
+        {
+            const auto terrainPath = root / (std::string("Terrain") + extension);
+            Write(terrainPath, "PROPERTY\tHeightSamples\t2\t" + std::string(3 * 1024 * 1024, '0') +
+                "\t0\nPROPERTY\tMaterial\t2\t" + reference + "\t0\n");
+            const auto terrain = ScanAssetReferences(terrainPath);
+            Require(terrain.errors.empty() && Has(terrain, reference), "Large terrain record prevented reference scanning");
+        }
+        Write(root / "Oversized.plutoscene", std::string(MaxSceneRecordSize + 1, 'x') + "\nPROPERTY\tMaterial\t2\t" + reference + "\t0\n");
         const auto oversized = ScanAssetReferences(root / "Oversized.plutoscene");
         Require(!oversized.errors.empty() && Has(oversized, reference), "Oversized record did not report incomplete coverage and continue");
     }

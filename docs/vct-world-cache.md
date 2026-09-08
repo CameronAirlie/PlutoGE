@@ -20,7 +20,11 @@ A cache lookup estimates the remaining distant contribution at that point along 
 
 Receiver albedo, metallic response and GI intensity are applied once after averaging the cones. There is no camera-distance mask that switches a receiver wholesale between cached and uncached GI. The finite outer volume still limits coverage. Broad directional probes remain an approximation of distant diffuse lighting, especially around thin walls and small emitters.
 
-Emissive rigid submeshes use their source LOD for GI, independently of the camera's visible LOD. The Slang voxelizer expands their raster footprint by half a voxel diagonal so sub-voxel triangles do not disappear between raster sample centers. Deposited world positions and UVs remain on the original triangle; non-emissive occluders keep their ordinary footprint. This improves source coverage without increasing the voxel grid resolution.
+Emissive rigid submeshes use their source LOD for GI, independently of the camera's visible LOD. Both voxelizers conservatively rasterize the projected bounds of emissive triangles, then clip the original triangle against each unit raster cell. Only the actual overlap contributes radiance and opacity. Material UVs, normals and deposited world positions come from a point inside that overlap. Non-emissive occluders retain ordinary rasterization.
+
+Resolve retains fractional coverage in RGB rather than dividing it back out: summed premultiplied radiance is normalized only when accumulated coverage exceeds one full footprint. Directional mip generation and cone compositing already consume premultiplied radiance. This prevents a small fixture from becoming a full-voxel light source and makes isolated planar emitters conserve projected energy across tessellation and voxel size changes, within storage quantization.
+
+This remains an approximation: the base field is isotropic, a tilted triangle's overlap is deposited at one representative depth per projected cell, and overlapping surfaces share a voxel. Alpha textures are sampled at the representative point rather than integrated over the overlap. Fixed-point accumulation can lose extremely small, dim contributions. Conservative bounds increase raster work for large diagonal emissive triangles; no extra voxel textures are allocated. These changes do not add photometric units, directional base-level emission, or inverse-square attenuation to cone samples.
 
 ## Lifetime
 
@@ -42,4 +46,6 @@ A Vulkan image regression rasterizes and voxelizes a red emissive ceiling over a
 
 The same regression turns the camera 180 degrees, removes the emitter from visible draws and requires identical GI on the first frame looking back. A separate initialization comparison moves the presentation shadow map completely away from the scene and requires the same GI as initialization with full presentation-shadow coverage. Both exercise Vulkan with progressive update budgets.
 
-A Vulkan voxel-radiance check renders a 0.02-unit emissive submesh at seven alignments within a 0.375-unit voxel. Every alignment must inject radiance; the original unexpanded rasterizer fails this check.
+A Vulkan voxel-radiance check renders a 0.02-unit emissive submesh at seven alignments within a 0.375-unit voxel. Every alignment must inject radiance; the original unexpanded rasterizer fails this check. The source radiance is 16 so its coverage-weighted result remains visible in the 8-bit readback; the check no longer requires a tiny emitter to look like a filled voxel.
+
+`PlutoGEVctEmissionCoverageTests` reads floating-point GPU voxel data from both the Slang and legacy source pipelines. It compares integrated radiance times projected voxel area against emitter radiance times physical area across two resolutions, three source sizes, four grid alignments, two tessellations, three dominant axes and reversed winding. It also checks unit emission and compares a directional mip against reference premultiplied compositing, including the existing opacity dilation. Tolerances account for integer-atomic and half-float quantization.

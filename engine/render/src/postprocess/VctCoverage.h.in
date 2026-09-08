@@ -1,0 +1,13 @@
+#pragma once
+namespace PlutoGE::render
+{
+inline constexpr const char* kVctCoverage = R"GLSL(
+#define float2 vec2
+#define float3 vec3
+#define lerp mix
+@PLUTO_VCT_COVERAGE_SOURCE@
+#undef lerp
+#undef float3
+#undef float2
+)GLSL";
+}

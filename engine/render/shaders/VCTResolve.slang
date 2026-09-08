@@ -30,9 +30,11 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (any(coordinate >= size)) return;
     const uint weight = accumulationWeight[coordinate];
     float3 radiance = 0.0;
+    // Keep sub-voxel radiance premultiplied by coverage. Normalize only when
+    // overlapping surfaces exceed a full footprint, never by a fractional area.
     if (weight > 0)
         radiance = float3(accumulationR[coordinate], accumulationG[coordinate],
-                          accumulationB[coordinate]) * (16.0 / float(weight));
+                          accumulationB[coordinate]) * (16.0 / max(float(weight), 4095.0));
     float opacity = opacityAt(coordinate, size);
     const int3 offsets[6] = {int3(1,0,0), int3(-1,0,0), int3(0,1,0),
                              int3(0,-1,0), int3(0,0,1), int3(0,0,-1)};

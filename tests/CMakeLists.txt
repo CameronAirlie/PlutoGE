@@ -131,6 +131,7 @@ else()
 endif()
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
+add_test(NAME PlutoGEVctEmissionCoverageTests COMMAND PlutoGEPostProcessInitializationTests --vct-coverage)
 
 add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp

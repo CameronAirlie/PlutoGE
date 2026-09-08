@@ -175,7 +175,9 @@ void CheckVctSmallEmitters(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     auto mesh = renderer.CreateMesh({vertices,indices});
     BasicDraw emitter;
     emitter.mesh = &mesh; emitter.firstIndex = 3; emitter.indexCount = 3;
-    emitter.emission = {4,1,0}; emitter.castsShadow = false;
+    // A coverage-weighted 0.02-unit source needs HDR radiance to survive the
+    // display readback; floating-point conservation is checked separately.
+    emitter.emission = {16,4,0}; emitter.castsShadow = false;
     BasicLighting lighting;
     lighting.ambientIntensity = lighting.directionalIntensity = 0;
     BasicPostProcessEffect effect{BasicPostProcessEffectType::VCTGI};
@@ -198,7 +200,7 @@ void CheckVctSmallEmitters(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
         const auto pixels = readPixels(renderer.GetColorTexture());
         const auto at = (renderer.GetHeight()/2*renderer.GetWidth()+renderer.GetWidth()/2)*4;
         minimumRed = std::min(minimumRed,int(pixels.at(at)));
-        if (int(pixels.at(at)) < 16)
+        if (int(pixels.at(at)) < 1)
             throw std::runtime_error("An emissive submesh disappeared between voxel centers");
     }
     std::cout << "VCT small emissive submeshes: all 7 alignments injected light, minimum red=" << minimumRed << '\n';

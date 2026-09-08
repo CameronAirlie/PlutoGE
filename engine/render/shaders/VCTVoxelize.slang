@@ -1,3 +1,5 @@
+#include "VCTCoverage.slang"
+
 struct VoxelParameters
 {
     float3 volumeOrigin;
@@ -49,6 +51,17 @@ struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float2 
 struct VertexOutput { float3 worldPosition : POSITION0; float3 worldNormal : NORMAL0; float2 uv : TEXCOORD0; };
 struct GeometryOutput
 {
+    float2 rasterCell : TEXCOORD1;
+    nointerpolation float3 triangleA : TEXCOORD2;
+    nointerpolation float3 triangleB : TEXCOORD3;
+    nointerpolation float3 triangleC : TEXCOORD4;
+    nointerpolation float2 uvA : TEXCOORD5;
+    nointerpolation float2 uvB : TEXCOORD6;
+    nointerpolation float2 uvC : TEXCOORD7;
+    nointerpolation float3 normalA : TEXCOORD8;
+    nointerpolation float3 normalB : TEXCOORD9;
+    nointerpolation float3 normalC : TEXCOORD10;
+    nointerpolation int axis : TEXCOORD11;
     float4 position : SV_Position;
     float3 worldPosition : POSITION0;
     float3 worldNormal : NORMAL0;
@@ -117,50 +130,43 @@ VertexOutput vertexMain(VertexInput input)
     return output;
 }
 
-float2 projectAxis(float3 position, uint axis)
-{
-    return axis == 0 ? position.zy : axis == 1 ? position.xz : position.xy;
-}
-
 [shader("geometry")]
-[maxvertexcount(3)]
+[maxvertexcount(4)]
 void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<GeometryOutput> stream)
 {
     const float3 faceNormal = abs(cross(vertices[1].worldPosition - vertices[0].worldPosition,
                                         vertices[2].worldPosition - vertices[0].worldPosition));
-    const uint axis = faceNormal.y > faceNormal.x
+    if (max(max(faceNormal.x, faceNormal.y), faceNormal.z) == 0.0) return;
+    const int axis = faceNormal.y > faceNormal.x
                           ? (faceNormal.z > faceNormal.y ? 2 : 1)
                           : (faceNormal.z > faceNormal.x ? 2 : 0);
+    float3 positions[3];
     float2 projected[3];
-    for (uint index = 0; index < 3; ++index)
-        projected[index] = projectAxis((vertices[index].worldPosition - voxel.volumeOrigin) /
-                                      voxel.volumeSize * 2.0 - 1.0, axis);
-    const float2 edge0 = projected[1] - projected[0], edge1 = projected[2] - projected[0];
-    const float orientation = edge0.x * edge1.y - edge0.y * edge1.x >= 0.0 ? 1.0 : -1.0;
-    for (uint index = 0; index < 3; ++index)
+    for (int i = 0; i < 3; ++i)
+    {
+        positions[i] = (vertices[i].worldPosition - voxel.volumeOrigin) *
+                        (float(voxel.resolution) / voxel.volumeSize);
+        projected[i] = vctProject(positions[i], axis);
+    }
+    const bool emissive = any(material.emission > 0.0);
+    // Rasterize intersected cells conservatively; the fragment stage integrates
+    // only the original triangle. Bounds also cover arbitrarily thin triangles.
+    const float2 lo = max(floor(min(projected[0], min(projected[1], projected[2]))), 0.0);
+    const float2 hi = min(ceil(max(projected[0], max(projected[1], projected[2]))), float(voxel.resolution));
+    if (emissive && any(hi <= lo)) return;
+    for (int i = 0; i < (emissive ? 4 : 3); ++i)
     {
         GeometryOutput output;
-        float2 rasterPosition = projected[index];
-        if (any(material.emission > 0.0))
-        {
-            // Expand only the raster footprint of emitters by half a voxel's
-            // diagonal. Original world/UV attributes keep the deposited light
-            // on the emitting triangle. Ordinary occluders are not inflated.
-            const float2 incoming = projected[index] - projected[(index + 2) % 3];
-            const float2 outgoing = projected[(index + 1) % 3] - projected[index];
-            const float2 n0 = orientation * float2(incoming.y, -incoming.x) / max(length(incoming), 1e-7);
-            const float2 n1 = orientation * float2(outgoing.y, -outgoing.x) / max(length(outgoing), 1e-7);
-            const float2 bisector = n0 + n1;
-            if (length(bisector) > 1e-6)
-            {
-                const float2 miter = normalize(bisector);
-                rasterPosition += miter * (1.41421356 / float(voxel.resolution)) / max(dot(miter, n1), 0.25);
-            }
-        }
-        output.position = float4(rasterPosition, 0.0, 1.0);
-        output.worldPosition = vertices[index].worldPosition;
-        output.worldNormal = vertices[index].worldNormal;
-        output.uv = vertices[index].uv;
+        const int vertex = min(i, 2);
+        output.rasterCell = emissive ? float2(i % 2 == 0 ? lo.x : hi.x, i < 2 ? lo.y : hi.y) : projected[i];
+        output.position = float4(output.rasterCell / float(voxel.resolution) * 2.0 - 1.0, 0.0, 1.0);
+        output.worldPosition = vertices[vertex].worldPosition;
+        output.worldNormal = vertices[vertex].worldNormal;
+        output.uv = vertices[vertex].uv;
+        output.triangleA = positions[0]; output.triangleB = positions[1]; output.triangleC = positions[2];
+        output.uvA = vertices[0].uv; output.uvB = vertices[1].uv; output.uvC = vertices[2].uv;
+        output.normalA = vertices[0].worldNormal; output.normalB = vertices[1].worldNormal; output.normalC = vertices[2].worldNormal;
+        output.axis = axis;
         stream.Append(output);
     }
     stream.RestartStrip();
@@ -169,12 +175,26 @@ void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<Geomet
 [shader("fragment")]
 void fragmentMain(GeometryOutput input)
 {
+    float areaCoverage = 1.0;
+    if (any(material.emission > 0.0))
+    {
+        float3 barycentric;
+        areaCoverage = vctTriangleCoverage(vctProject(input.triangleA, input.axis),
+            vctProject(input.triangleB, input.axis), vctProject(input.triangleC, input.axis),
+            floor(input.rasterCell), barycentric);
+        if (areaCoverage <= 0.0) discard;
+        input.worldPosition = voxel.volumeOrigin + (input.triangleA * barycentric.x +
+            input.triangleB * barycentric.y + input.triangleC * barycentric.z) *
+            (voxel.volumeSize / float(voxel.resolution));
+        input.uv = input.uvA * barycentric.x + input.uvB * barycentric.y + input.uvC * barycentric.z;
+        input.worldNormal = input.normalA * barycentric.x + input.normalB * barycentric.y + input.normalC * barycentric.z;
+    }
     const float3 textureCoordinate = (input.worldPosition - voxel.volumeOrigin) / voxel.volumeSize;
     if (any(textureCoordinate < 0.0) || any(textureCoordinate >= 1.0)) discard;
     float4 albedo = material.baseColor;
     if (material.hasAlbedoTexture != 0) albedo *= albedoTexture.Sample(input.uv);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;
-    const float coverage = material.alphaMode == 2 ? saturate(albedo.a) : 1.0;
+    const float coverage = areaCoverage * (material.alphaMode == 2 ? saturate(albedo.a) : 1.0);
     const float3 normal = normalize(input.worldNormal);
     float3 direct = 0.0;
     if (voxel.hasDirectionalLight != 0)
@@ -188,8 +208,10 @@ void fragmentMain(GeometryOutput input)
         metallic *= packedMetallic[min(material.metallicChannel, 3)];
     }
     float3 radiance = albedo.rgb * (1.0 - metallic) * direct *
-                      (coverage / 3.14159265) + max(material.emission, 0.0) * coverage;
-    radiance = clamp(radiance, 0.0, 16.0);
+                      (1.0 / 3.14159265) + max(material.emission, 0.0);
+    // Clamp source radiance before weighting so the storage limit cannot
+    // change a source's effective brightness as its voxel footprint changes.
+    radiance = clamp(radiance, 0.0, 16.0) * coverage;
     const uint3 encoded = uint3(round(radiance * (4095.0 / 16.0)));
     const uint encodedOpacity = uint(round(coverage * 4095.0));
     const int3 coordinate = clamp(int3(textureCoordinate * float(voxel.resolution)),

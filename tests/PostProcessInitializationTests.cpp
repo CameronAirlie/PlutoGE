@@ -9,12 +9,14 @@
 
 #include <glad/glad.h>
 #include "VctProbeCacheChecks.h"
+#include "VctEmissionCoverageChecks.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include <iostream>
 #include <sstream>
+#include <string_view>
 
-int main()
+int main(int argc, char** argv)
 {
     PlutoGE::platform::Window window;
     if (!window.Create({
@@ -35,6 +37,9 @@ int main()
         window.Close();
         return 1;
     }
+
+    if (argc > 1 && std::string_view(argv[1]) == "--vct-coverage")
+        return CheckVctEmissionCoverage() ? 0 : 1;
 
     while (glGetError() != GL_NO_ERROR)
     {

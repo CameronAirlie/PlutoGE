@@ -1,4 +1,10 @@
+# Use one coverage implementation in Slang and the legacy runtime GLSL shader.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" PLUTO_VCT_COVERAGE_SOURCE)
+configure_file(src/postprocess/VctCoverage.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/VctCoverage.h" @ONLY)
+
 add_library(PlutoGERender
+    src/postprocess/VctVoxelizationShaders.cpp
     src/Renderer.cpp
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
@@ -131,7 +137,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang geometry pipeline for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -283,3 +289,5 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::rmlui
     PlutoGE::vulkan
 )
+
+target_include_directories(PlutoGERender PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")

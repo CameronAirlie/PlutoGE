@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Shader.h"
@@ -1931,6 +1932,7 @@ namespace PlutoGE::render
 
     void Renderer::ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex)
     {
+        core::CpuScope traceScope(renderPass.GetName(), core::CpuCategory::Rendering);
         if (!m_config.enableProfiling)
         {
             renderPass.Execute(ctx);

@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <numeric>
 #include <sstream>
+#include <utility>
 
 namespace PlutoGE::ui
 {
@@ -13,8 +14,86 @@ namespace PlutoGE::ui
         constexpr float kMillisecondsPerSecond = 1000.0f;
     }
 
+    void EditorProfiler::StartCapture(std::size_t frameLimit)
+    {
+        m_captureLimit = std::clamp(frameLimit, std::size_t{1}, MaxCaptureFrames);
+        m_capture.clear();
+        m_traceBytes = 0;
+        m_memoryLimited = false;
+        m_capture.reserve(m_captureLimit);
+        m_recording = true;
+    }
+
+    void EditorProfiler::ClearCapture()
+    {
+        StopCapture();
+        m_capture.clear();
+        m_traceBytes = 0;
+        m_memoryLimited = false;
+    }
+
+    void EditorProfiler::RecordFrame(EditorProfileFrame frame)
+    {
+        if (!m_recording || !std::isfinite(frame.durationMs) || frame.durationMs < 0.0f)
+            return;
+        std::size_t traceBytes = frame.samples.capacity() * sizeof(core::CpuSample);
+        for (const auto &sample : frame.samples)
+            traceBytes += sample.name.capacity() + sample.context.capacity();
+        if (traceBytes > MaxTraceBytes - m_traceBytes)
+        {
+            m_memoryLimited = true;
+            StopCapture();
+            return;
+        }
+        m_traceBytes += traceBytes;
+        frame.categoryMs.fill(0.0f);
+        const auto selfTimes = core::CpuSelfTimes(frame.samples);
+        for (std::size_t i = 0; i < frame.samples.size(); ++i)
+            frame.categoryMs[static_cast<std::size_t>(frame.samples[i].category)] += selfTimes[i];
+        const float measured = std::accumulate(frame.categoryMs.begin(), frame.categoryMs.end(), 0.0f);
+        if (measured > frame.durationMs && measured > 0.0f)
+            for (auto &value : frame.categoryMs) value *= frame.durationMs / measured;
+        else
+            frame.categoryMs[static_cast<std::size_t>(core::CpuCategory::Other)] += frame.durationMs - measured;
+        m_capture.push_back(std::move(frame));
+        if (m_capture.size() >= m_captureLimit)
+            StopCapture();
+    }
+
+    void EditorProfiler::CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,
+                                      const PanelManagerTimingStats &panels, const render::Renderer &renderer,
+                                      const render::RmlUiCpuTiming &runtimeUi,
+                                      std::vector<core::CpuSample> samples, std::uint32_t droppedSamples)
+    {
+        ++m_frameSequence;
+        SetLatestFrameTimingStats(timing);
+        AddFrameSample(durationMs);
+        if (!m_recording)
+            return;
+        EditorProfileFrame frame;
+        frame.samples = std::move(samples);
+        frame.droppedSamples = droppedSamples;
+        frame.sequence = m_frameSequence;
+        frame.durationMs = durationMs;
+        frame.timing = timing;
+        frame.panels = panels;
+        frame.renderer = renderer.GetCpuFrameStats();
+        frame.runtimeUi = runtimeUi;
+        frame.cpuPasses = renderer.GetCpuPassTimings();
+        frame.gpuPasses = renderer.GetGpuPassTimings();
+        frame.postProcessGpuPasses = renderer.GetPostProcessGpuTimings();
+        frame.gpuDetails = renderer.GetGpuDetailTimings();
+        frame.lighting = renderer.GetLightingGpuTiming();
+        frame.totalCpuMs = renderer.GetTotalCpuPassTimeMs();
+        frame.totalGpuMs = renderer.GetTotalGpuPassTimeMs();
+        frame.renderCount = renderer.GetProfiledRenderCount();
+        RecordFrame(std::move(frame));
+    }
+
     void EditorProfiler::AddFrameSample(float frameTimeMs)
     {
+        if (!std::isfinite(frameTimeMs) || frameTimeMs < 0.0f)
+            return;
         if (frameTimeMs > m_peakFrameTimeMs)
         {
             m_peakFrameTimeMs = frameTimeMs;
@@ -117,36 +196,45 @@ namespace PlutoGE::ui
                                                    const std::vector<render::GpuPassTiming> &gpuDetailTimings,
                                                    float totalCpuPassTimeMs,
                                                    float totalGpuPassTimeMs,
-                                                   const render::LightingGpuTiming &lightingGpuTiming) const
+                                                   const render::LightingGpuTiming &lightingGpuTiming,
+                                                   float capturedDurationMs) const
     {
         std::ostringstream report;
         report.setf(std::ios::fixed);
         report.precision(2);
         report << "Editor Profiling\n";
-        report << "Current frame time: " << GetCurrentFrameTimeMs() << " ms\n";
-        report << "Average frame time: " << GetAverageFrameTimeMs() << " ms\n";
-        report << "Min frame time: " << GetMinFrameTimeMs() << " ms\n";
-        report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
-        report << "Average FPS: " << GetAverageFPS() << "\n";
-        report << "Samples: " << m_sampleCount << "\n";
-        report << "Session peak frame: " << m_peakFrameTimeMs << " ms; scene update "
-               << m_peakFrameTimingStats.sceneUpdateMs << " ms, viewport " << m_peakFrameTimingStats.viewportRenderMs
-               << " ms, UI " << m_peakFrameTimingStats.editorUiMs << " ms, present "
-               << m_peakFrameTimingStats.presentMs << " ms, events " << m_peakFrameTimingStats.eventPollingMs << " ms\n";
-        report << "Session peak waits: scene fence " << m_peakFrameTimingStats.rhiTimingStats.frameFenceWaitMs
-               << " ms, presentation fence " << m_peakFrameTimingStats.presentationTimingStats.presentFenceWaitMs
-               << " ms, acquire " << m_peakFrameTimingStats.presentationTimingStats.presentAcquireMs << " ms\n";
-        const auto &peakScene = m_peakFrameTimingStats.rhiSceneTimingStats;
-        report << "Session peak RHI: total " << peakScene.totalMs << " ms, command translation "
-               << peakScene.commandTranslationMs << " ms, setup " << peakScene.sceneSetupMs
-               << " ms, render recording " << peakScene.renderRecordingMs << " ms\n";
-        report << "Session peak RHI recording: begin " << peakScene.beginFrameMs << " ms, shadows "
-               << peakScene.shadowRecordingMs << " ms, geometry " << peakScene.geometryRecordingMs
-               << " ms, post-process " << peakScene.postProcessRecordingMs << " ms, upscaler "
-               << peakScene.temporalUpscalerMs << " ms, submit " << peakScene.submitMs << " ms\n";
-        for (const auto &scope : m_peakFrameTimingStats.rhiTimingStats.gpuScopes)
-            report << "Session peak scope / " << scope.name << ": " << scope.cpuMilliseconds
-                   << " ms CPU recording\n";
+        if (capturedDurationMs >= 0.0f)
+        {
+            report << "Captured CPU frame: " << capturedDurationMs << " ms\n";
+            report << "GPU values are asynchronous observations, not aligned to this CPU frame.\n";
+        }
+        else
+        {
+            report << "Current frame time: " << GetCurrentFrameTimeMs() << " ms\n";
+            report << "Average frame time: " << GetAverageFrameTimeMs() << " ms\n";
+            report << "Min frame time: " << GetMinFrameTimeMs() << " ms\n";
+            report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
+            report << "Average FPS: " << GetAverageFPS() << "\n";
+            report << "Samples: " << m_sampleCount << "\n";
+            report << "Session peak frame: " << m_peakFrameTimeMs << " ms; scene update "
+                   << m_peakFrameTimingStats.sceneUpdateMs << " ms, viewport " << m_peakFrameTimingStats.viewportRenderMs
+                   << " ms, UI " << m_peakFrameTimingStats.editorUiMs << " ms, present "
+                   << m_peakFrameTimingStats.presentMs << " ms, events " << m_peakFrameTimingStats.eventPollingMs << " ms\n";
+            report << "Session peak waits: scene fence " << m_peakFrameTimingStats.rhiTimingStats.frameFenceWaitMs
+                   << " ms, presentation fence " << m_peakFrameTimingStats.presentationTimingStats.presentFenceWaitMs
+                   << " ms, acquire " << m_peakFrameTimingStats.presentationTimingStats.presentAcquireMs << " ms\n";
+            const auto &peakScene = m_peakFrameTimingStats.rhiSceneTimingStats;
+            report << "Session peak RHI: total " << peakScene.totalMs << " ms, command translation "
+                   << peakScene.commandTranslationMs << " ms, setup " << peakScene.sceneSetupMs
+                   << " ms, render recording " << peakScene.renderRecordingMs << " ms\n";
+            report << "Session peak RHI recording: begin " << peakScene.beginFrameMs << " ms, shadows "
+                   << peakScene.shadowRecordingMs << " ms, geometry " << peakScene.geometryRecordingMs
+                   << " ms, post-process " << peakScene.postProcessRecordingMs << " ms, upscaler "
+                   << peakScene.temporalUpscalerMs << " ms, submit " << peakScene.submitMs << " ms\n";
+            for (const auto &scope : m_peakFrameTimingStats.rhiTimingStats.gpuScopes)
+                report << "Session peak scope / " << scope.name << ": " << scope.cpuMilliseconds
+                       << " ms CPU recording\n";
+        }
         report << "VSync: " << (frameTimingStats.vSyncEnabled ? "On" : "Off") << "\n";
         if (frameTimingStats.mainThreadCpuMs >= 0.0f)
         {
@@ -222,6 +310,12 @@ namespace PlutoGE::ui
                << rhiScene.visibleDrawCount << " translated groups / "
                << rhiScene.visibleInstanceCount << " instances, "
                << rhiScene.shadowCandidateCount << " shadow candidates)\n";
+        report << "RHI translation / Upscaler + resize: " << rhiScene.translationPreparationMs << " ms\n";
+        report << "RHI translation / Mesh conversion + upload: " << rhiScene.meshUploadMs
+               << " ms (" << rhiScene.meshUploadCount << " attempts)\n";
+        report << "RHI translation / Texture pixel reads: " << rhiScene.textureReadMs << " ms\n";
+        report << "RHI translation / Texture creation + mipmaps: " << rhiScene.textureUploadMs
+               << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
         report << "RHI recorded shadows: " << rhiScene.recordedShadowDrawCount << " draws, "
@@ -284,7 +378,7 @@ namespace PlutoGE::ui
         report << "Presentation submit: " << presentation.presentSubmitMs << " ms\n";
         report << "Presentation queue present: " << presentation.presentQueueMs << " ms\n";
         report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
-        report << "Frame remainder: " << std::max(0.0f, GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
+        report << "Frame remainder: " << std::max(0.0f, (capturedDurationMs >= 0.0f ? capturedDurationMs : GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";
         report << "ImGui submission total: " << timingStats.endPanelUpdateTotalMs << " ms\n";
         report << "Platform windows update: " << timingStats.platformWindowsUpdateMs << " ms\n";

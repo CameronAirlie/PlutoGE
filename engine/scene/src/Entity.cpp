@@ -1,7 +1,10 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/SceneSerializer.h"
+#include <unordered_map>
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -26,6 +29,16 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        const std::string &ComponentTraceName(const Component &component)
+        {
+            thread_local std::unordered_map<ComponentTypeID, std::string> names;
+            const auto id = component.GetTypeID();
+            auto found = names.find(id);
+            if (found == names.end())
+                found = names.emplace(id, SceneSerializer::GetComponentTypeName(component) + ".Update").first;
+            return found->second;
+        }
+
         EntityID &CurrentEntityIDCounter()
         {
             static EntityID currentID = 0;
@@ -541,7 +554,9 @@ namespace PlutoGE::scene
                 component->GetTypeID() != GetComponentTypeID<MeshComponent>())
             {
                 const auto start = std::chrono::high_resolution_clock::now();
+                core::CpuScope componentScope(core::CpuTrace::current ? ComponentTraceName(*component) : std::string_view{}, core::CpuCategory::Other, core::CpuTrace::current ? GetName() : std::string{});
                 component->Update(deltaTime);
+                componentScope.End();
                 if (m_scene)
                 {
                     const float elapsedMs = std::chrono::duration<float, std::milli>(

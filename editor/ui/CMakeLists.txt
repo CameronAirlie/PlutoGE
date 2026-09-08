@@ -25,6 +25,7 @@ add_library(PlutoGEEditorUI
     src/panels/ParticleSystemEditorPanel.cpp
     src/panels/InputMappingEditorPanel.cpp
     src/panels/ShaderGraphEditorPanel.cpp
+    src/panels/ProfilerTimeline.cpp
     src/panels/ProfilerPanel.cpp
     src/panels/ViewportPanel.cpp
     src/panels/CanvasEditorPanel.cpp

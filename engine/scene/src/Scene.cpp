@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
@@ -2559,6 +2560,7 @@ namespace PlutoGE::scene
     void Scene::Update(float deltaTime)
     {
         using Clock = std::chrono::high_resolution_clock;
+        core::CpuScope preparationScope("Scene.Preparation");
         const auto updateStart = Clock::now();
         m_updateTimingStats.componentTimings.clear();
         m_updateTimingStats.animationTimings.clear();
@@ -2576,7 +2578,9 @@ namespace PlutoGE::scene
         std::erase_if(m_pendingRigidbodyForces,
                       [](const PendingRigidbodyForce &force) { return !force.impulse; });
         ClearIblCaptureVolumes();
+        preparationScope.End();
         const auto preparationEnd = Clock::now();
+        core::CpuScope runtimeScope("Runtime UI", core::CpuCategory::UI);
 
         if (m_runtimeStarted)
         {
@@ -2606,7 +2610,9 @@ namespace PlutoGE::scene
                                    simulationDeltaTime);
             }
         }
+        runtimeScope.End();
         const auto runtimeUiEnd = Clock::now();
+        core::CpuScope componentsScope("Component.Update", core::CpuCategory::Other);
 
         // Scripts may instantiate a prefab while an entity is updating. Iterate a
         // snapshot so appending a new root cannot invalidate this traversal.
@@ -2619,7 +2625,9 @@ namespace PlutoGE::scene
                 rootEntity->Update(simulationDeltaTime);
             }
         }
+        componentsScope.End();
         const auto componentsEnd = Clock::now();
+        core::CpuScope physicsScope("Physics.FixedStep", core::CpuCategory::Physics);
 
         FlushPendingDestroyEntities();
         if (m_runtimeStarted)
@@ -2654,7 +2662,9 @@ namespace PlutoGE::scene
             }
         }
         FlushPendingDestroyEntities();
+        physicsScope.End();
         const auto physicsEnd = Clock::now();
+        core::CpuScope lateScope("Script.LateUpdate", core::CpuCategory::Scripts);
 
         // Present physics bodies on the render timeline before late-update so
         // cameras and other followers observe the same extrapolated transforms
@@ -2677,7 +2687,9 @@ namespace PlutoGE::scene
         }
         if (m_runtimeStarted)
             VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
+        lateScope.End();
         const auto lateScriptsEnd = Clock::now();
+        core::CpuScope audioScope("Audio.Update", core::CpuCategory::Audio);
 
         const auto audioStart = Clock::now();
         if (m_runtimeStarted)
@@ -2885,8 +2897,11 @@ namespace PlutoGE::scene
             }
         }
 
+        audioScope.End();
         const auto audioEnd = Clock::now();
+        core::CpuScope submissionScope("Render.Submission", core::CpuCategory::Rendering);
         SubmitRenderCommands();
+        submissionScope.End();
         const auto submissionEnd = Clock::now();
 
         m_updateTimingStats.preparationMs = std::chrono::duration<float, std::milli>(preparationEnd - updateStart).count();

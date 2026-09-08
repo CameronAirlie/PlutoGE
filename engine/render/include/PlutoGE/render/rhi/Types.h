@@ -232,6 +232,8 @@ namespace PlutoGE::render::rhi
         std::uint32_t mipLevels = 0;
         // Linear RGBA8 tangent normals on repeating material textures.
         bool normalMap = false;
+        // Data contains the complete packed RGBA8 normal mip chain.
+        bool normalMipmapsProvided = false;
     };
 
     struct GraphicsPipelineDescriptor

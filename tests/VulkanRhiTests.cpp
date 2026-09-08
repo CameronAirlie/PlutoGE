@@ -171,7 +171,9 @@ int main(int argc, char **argv)
             }, &device);
             return 0;
         }
-        CheckTextureMipRendering(renderer, device, argc > 1 && std::string_view(argv[1]) == "--texture-mips");
+        CheckTextureMipRendering(renderer, device, [&](rhi::TextureHandle texture) {
+            return device.ReadTextureRgba8(texture);
+        }, argc > 1 && std::string_view(argv[1]) == "--texture-mips");
         if (argc > 1 && std::string_view(argv[1]) == "--texture-mips") return 0;
         CheckShadowFiltering(renderer, [&](rhi::TextureHandle texture)
         {

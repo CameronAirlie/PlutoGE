@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 #include "PlutoGE/render/PostProcessResourcePool.h"
@@ -1118,14 +1119,17 @@ namespace PlutoGE::render
         // or CSM selection. Inactive VSM records no GPU work; signatures and
         // projection epochs validate cached depth when it resumes.
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
+        core::CpuScope beginScope("RHI.BeginFrame", core::CpuCategory::Rendering);
         const auto beginFrameStart = std::chrono::steady_clock::now();
         commands.BeginFrame("Scene");
+        beginScope.End();
         const auto beginFrameEnd = std::chrono::steady_clock::now();
         const auto elapsedMs = [](const auto begin, const auto end)
         {
             return std::chrono::duration<float, std::milli>(end - begin).count();
         };
         m_timingStats.beginFrameMs = elapsedMs(beginFrameStart, beginFrameEnd);
+        core::CpuScope shadowScope("Shadows", core::CpuCategory::Rendering);
         const auto shadowRecordingStart = beginFrameEnd;
 
         if (shadowDraws.empty()) shadowDraws = draws;
@@ -1409,6 +1413,7 @@ namespace PlutoGE::render
                 m_shadowCacheValid[cascade] = true;
             }
         }
+        shadowScope.End();
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
         rhi::RenderingInfo renderingInfo;
@@ -1428,6 +1433,7 @@ namespace PlutoGE::render
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
+        core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
         const auto geometryRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Geometry");
         // Transition shadow outputs before entering dynamic rendering.
@@ -1621,10 +1627,12 @@ namespace PlutoGE::render
         });
         commands.EndRendering();
         commands.EndGpuScope();
+        geometryScope.End();
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.geometryRecordingMs = elapsedMs(geometryRecordingStart, geometryRecordingEnd);
 
         m_outputColor = m_colorTarget.Get();
+        core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);
         const auto postProcessRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;
@@ -1914,6 +1922,7 @@ namespace PlutoGE::render
             m_outputColor = m_displayTarget.Get();
         }
         commands.EndGpuScope();
+        postScope.End();
         const auto postProcessRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.postProcessRecordingMs = std::max(
             0.0f, elapsedMs(postProcessRecordingStart, postProcessRecordingEnd) -

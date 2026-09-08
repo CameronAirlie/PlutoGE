@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Camera.h"
 
 #include <functional>
+#include <future>
 #include <memory>
 #include <span>
 #include <string>
@@ -14,6 +15,12 @@ namespace PlutoGE::render
     struct RhiSceneTimingStats
     {
         float commandTranslationMs = 0.0f;
+        float translationPreparationMs = 0.0f;
+        float meshUploadMs = 0.0f;
+        float textureReadMs = 0.0f;
+        float textureUploadMs = 0.0f;
+        std::size_t meshUploadCount = 0;
+        std::size_t textureUploadCount = 0;
         float sceneSetupMs = 0.0f;
         float renderRecordingMs = 0.0f;
         float beginFrameMs = 0.0f;
@@ -122,6 +129,11 @@ namespace PlutoGE::render
         std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
         std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
         std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;
+        // One CPU-only job bounds worker count and temporary image memory.
+        std::future<std::vector<std::byte>> m_normalMipJob;
+        const Texture *m_pendingNormalSource = nullptr;
+        std::uint32_t m_pendingNormalWidth = 0;
+        std::uint32_t m_pendingNormalHeight = 0;
         std::size_t m_sceneCommandCount = 0;
         std::size_t m_drawCount = 0;
         RhiSceneTimingStats m_timingStats;

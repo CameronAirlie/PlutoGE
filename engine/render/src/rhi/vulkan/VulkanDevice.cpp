@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
@@ -1102,7 +1103,9 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::logic_error("Vulkan frame is already recording");
             auto &frame = m_frames[m_frameIndex];
             const auto waitStart = std::chrono::steady_clock::now();
+            core::CpuScope fenceScope("Scene fence wait", core::CpuCategory::Wait);
             Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(frame)");
+            fenceScope.End();
             m_impl.timingStats.frameFenceWaitMs = std::chrono::duration<float, std::milli>(
                                                       std::chrono::steady_clock::now() - waitStart)
                                                       .count();
@@ -2019,13 +2022,17 @@ namespace PlutoGE::render::rhi::vulkan
             const auto totalStart = Clock::now();
             auto &frame = m_frames[m_frameIndex];
             const auto fenceStart = Clock::now();
+            core::CpuScope fenceScope("Presentation fence wait", core::CpuCategory::Wait);
             Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            fenceScope.End();
             timing.presentFenceWaitMs = elapsedMs(fenceStart, Clock::now());
             if (frame.submissionSerial != 0)
                 m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
             std::uint32_t imageIndex = 0;
             const auto acquireStart = Clock::now();
+            core::CpuScope acquireScope("Acquire swapchain image", core::CpuCategory::Wait);
             VkResult acquired = vkAcquireNextImageKHR(m_impl.device, m_swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &imageIndex);
+            acquireScope.End();
             timing.presentAcquireMs = elapsedMs(acquireStart, Clock::now());
             if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
             {
@@ -2618,6 +2625,8 @@ namespace PlutoGE::render::rhi::vulkan
 
     TextureHandle VulkanDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.normalMipmapsProvided && !descriptor.normalMap)
+            throw std::invalid_argument("Packed normal mipmaps require normalMap");
         if (descriptor.normalMap && (descriptor.depth != 1 || descriptor.format != Format::R8G8B8A8Unorm))
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (!descriptor.width || !descriptor.height || !descriptor.depth)
@@ -2629,6 +2638,8 @@ namespace PlutoGE::render::rhi::vulkan
                                                       std::floor(std::log2(static_cast<double>(maximumDimension))));
         resource.mipLevels = descriptor.mipLevels != 0 ? descriptor.mipLevels
                               : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
+        if (descriptor.normalMipmapsProvided)
+            ValidateNormalMipChain(data, descriptor.width, descriptor.height, resource.mipLevels);
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = descriptor.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
         image.extent = {descriptor.width, descriptor.height, descriptor.depth};
@@ -2676,10 +2687,11 @@ namespace PlutoGE::render::rhi::vulkan
             const bool gpuMips = !descriptor.normalMap && descriptor.depth == 1 && stored->mipLevels > 1 &&
                 (descriptor.format == Format::R8G8B8A8Srgb || descriptor.format == Format::R8G8B8A8Unorm) &&
                 (formatProperties.optimalTilingFeatures & blitFeatures) == blitFeatures;
-            std::vector<std::byte> mipData(data.begin(), data.end());
-            const auto normalMips = descriptor.normalMap
+            core::CpuScope mipScope("CPU normal mipmaps", core::CpuCategory::Rendering);
+            auto mipData = descriptor.normalMap && !descriptor.normalMipmapsProvided
                 ? BuildNormalMipmaps(data, descriptor.width, descriptor.height, stored->mipLevels)
-                : std::vector<std::byte>{};
+                : std::vector<std::byte>(data.begin(), data.end());
+            mipScope.End();
             std::vector<VkBufferImageCopy> copies;
             copies.reserve(stored->mipLevels);
             std::uint32_t mipWidth = descriptor.width;
@@ -2691,14 +2703,10 @@ namespace PlutoGE::render::rhi::vulkan
                 const std::uint32_t nextWidth = (std::max)(1u, mipWidth / 2u);
                 const std::uint32_t nextHeight = (std::max)(1u, mipHeight / 2u);
                 const std::size_t sourceOffset = levelOffset;
-                levelOffset = mipData.size();
-                mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * 4);
-                if (descriptor.normalMap)
-                    std::copy_n(normalMips.begin() + levelOffset,
-                                static_cast<std::size_t>(nextWidth) * nextHeight * 4,
-                                mipData.begin() + levelOffset);
-                else
+                levelOffset += static_cast<std::size_t>(mipWidth) * mipHeight * 4;
+                if (!descriptor.normalMap)
                 {
+                    mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * 4);
                     for (std::uint32_t y = 0; y < nextHeight; ++y)
                     {
                         for (std::uint32_t x = 0; x < nextWidth; ++x)

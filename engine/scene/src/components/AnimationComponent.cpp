@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
@@ -1015,6 +1016,7 @@ namespace PlutoGE::scene
 
     void AnimationComponent::Update(float deltaTime)
     {
+        core::CpuScope traceScope("Animation.Update", core::CpuCategory::Animation);
         if (m_ragdollEnabled)
         {
             m_jointMatricesDirty = true;

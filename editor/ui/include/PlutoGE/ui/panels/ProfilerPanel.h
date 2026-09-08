@@ -26,6 +26,23 @@ namespace PlutoGE::ui
         void CopyMetricsToClipboard();
 
     private:
+        void RenderCaptureControls();
+        void RenderProfilerWorkspace();
+        void RenderFrameHistory();
+        void RenderCpuTimeline(const EditorProfileFrame &frame);
+        void RenderCpuHierarchy(const EditorProfileFrame &frame);
+        void RenderSampleDetails(const EditorProfileFrame &frame);
+        void SelectFrame(int index);
+        void FocusSample(const EditorProfileFrame &frame);
+        bool m_followLatest = true;
+        int m_selectedSample = -1;
+        float m_timelineStartMs = 0.0f;
+        float m_timelineRangeMs = 0.0f;
+        char m_sampleSearch[128]{};
+        [[nodiscard]] const EditorProfileFrame *GetSelectedFrame() const;
+        int m_captureFrameLimit = 240;
+        int m_selectedFrame = -1;
+        float m_hitchThresholdMs = 33.3f;
         EditorProfiler *m_profiler = nullptr;
         PanelManager *m_panelManager = nullptr;
         render::Renderer *m_renderer = nullptr;

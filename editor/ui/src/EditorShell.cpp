@@ -3055,6 +3055,8 @@ namespace PlutoGE::ui
             // reconstruction path. Their renderers retain independent history.
             viewportPanel->SetTemporalUpscalerOptions(viewportUpscaler);
             viewportPanel2->SetTemporalUpscalerOptions(viewportUpscaler);
+            core::CpuTrace cpuTrace(m_profiler.IsRecording());
+            core::CpuScope frameScope("EditorLoop");
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
@@ -3064,11 +3066,13 @@ namespace PlutoGE::ui
             ULONG64 threadCyclesStart = 0;
             QueryThreadCycleTime(GetCurrentThread(), &threadCyclesStart);
 #endif
+            core::CpuScope profilingScope("Profiler.BeginFrame", core::CpuCategory::Other);
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
             if (vulkanEditorHost)
                 renderer.BeginCpuProfilingFrame();
             else
                 renderer.BeginProfilingFrame();
+            profilingScope.End();
             const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
 
@@ -3194,6 +3198,7 @@ namespace PlutoGE::ui
 
             // Scene update
 
+            core::CpuScope sceneScope("Scene.Update", core::CpuCategory::Other);
             const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorSetupMs = std::chrono::duration<float, std::milli>(sceneUpdateStart - profilingBeginEnd).count();
             if (!isBakeRunning)
@@ -3267,6 +3272,7 @@ namespace PlutoGE::ui
                     }
                 }
             }
+            sceneScope.End();
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
@@ -3322,6 +3328,7 @@ namespace PlutoGE::ui
                 }
             }
 
+            core::CpuScope viewportScope("Viewport.Render", core::CpuCategory::Rendering);
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
@@ -3384,6 +3391,7 @@ namespace PlutoGE::ui
             {
                 viewportPanel2->ClearFrame();
             }
+            viewportScope.End();
             const auto viewportRenderEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.viewportRenderMs = std::chrono::duration<float, std::milli>(viewportRenderEnd - viewportRenderStart).count();
             if (m_editorSceneRenderService && m_editorSceneRenderService->GetRenderDevice())
@@ -3396,10 +3404,13 @@ namespace PlutoGE::ui
 
             // UI
 
+            core::CpuScope rendererScope("Renderer.BeginFrame", core::CpuCategory::Rendering);
             const auto beginFrameStart = std::chrono::high_resolution_clock::now();
             renderer.BeginFrame();
+            rendererScope.End();
             const auto beginFrameEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.rendererBeginFrameMs = std::chrono::duration<float, std::milli>(beginFrameEnd - beginFrameStart).count();
+            core::CpuScope uiScope("Editor.UI", core::CpuCategory::UI);
             const auto editorUiStart = beginFrameEnd;
 
             m_panelManager.BeginPanelUpdate();
@@ -4142,9 +4153,11 @@ namespace PlutoGE::ui
             m_panelManager.EndPanelUpdate();
             if (m_scene && m_engine.IsRuntimeRunning() && !m_activeBakeTask)
                 render::DebugDraw::Get().Advance(deltaSeconds * m_scene->GetTimeScale());
+            uiScope.End();
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 
+            core::CpuScope presentScope("Present / VSync", core::CpuCategory::Wait);
             const auto presentStart = std::chrono::high_resolution_clock::now();
             frameTimingStats.vSyncEnabled = m_engine.IsVSyncEnabled();
             if (vulkanEditorHost)
@@ -4155,17 +4168,21 @@ namespace PlutoGE::ui
             {
                 renderer.EndFrame();
             }
+            presentScope.End();
             const auto presentEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
             if (vulkanEditorHost && m_engine.GetRenderDevice())
                 frameTimingStats.presentationTimingStats =
                     m_engine.GetRenderDevice()->GetTimingStats("Presentation");
 
+            core::CpuScope eventsScope("PollEvents", core::CpuCategory::Other);
             const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();
+            eventsScope.End();
             const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
 
+            frameScope.End();
             const auto frameEndTime = std::chrono::high_resolution_clock::now();
 #ifdef _WIN32
             const auto diagnosticTime = std::chrono::steady_clock::now();
@@ -4192,8 +4209,9 @@ namespace PlutoGE::ui
                 lastStallLog = diagnosticTime;
             }
 #endif
-            m_profiler.SetLatestFrameTimingStats(frameTimingStats);
-            m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
+            m_profiler.CompleteFrame(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count(),
+                                     frameTimingStats, m_panelManager.GetTimingStats(), renderer,
+                                     render::RmlUiRuntime::Get().GetCpuTiming(), cpuTrace.TakeSamples(), cpuTrace.GetDroppedCount());
 
             if (m_pendingGraphicsApi)
             {

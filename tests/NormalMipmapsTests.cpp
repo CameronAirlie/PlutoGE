@@ -1,4 +1,5 @@
 #include "rhi/NormalMipmaps.h"
+#include "NormalMipmapsReference.h"
 #include <iostream>
 
 int main()
@@ -9,6 +10,24 @@ int main()
     };
     try
     {
+        // Compare nonuniform inputs across odd, even, thin and seam cases.
+        for (unsigned w = 1; w <= 65; ++w)
+            for (unsigned h = 1; h <= 65; ++h)
+            {
+                std::vector<std::byte> pixels(std::size_t(w) * h * 4);
+                unsigned seed = w * 127 + h;
+                for (auto &pixel : pixels)
+                {
+                    seed = seed * 1664525u + 1013904223u;
+                    pixel = static_cast<std::byte>(seed >> 24);
+                }
+                const auto levels = 1u + unsigned(std::floor(std::log2(std::max(w, h))));
+                require(BuildNormalMipmaps(pixels, w, h, levels) ==
+                            PlutoGE::render::rhi::BuildNormalMipmapsBefore(pixels, w, h, levels),
+                        "Optimized normal mipmaps differ from reference filter");
+                require(BuildNormalMipmaps(pixels, w, h, 1) == pixels,
+                        "Single-level texture changed");
+            }
         // Constant tangent normals must not drift, including odd and thin maps.
         for (const auto size : {std::pair{32u, 32u}, {7u, 5u}, {1u, 16u}})
         {

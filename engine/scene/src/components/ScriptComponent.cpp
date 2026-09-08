@@ -1,6 +1,8 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 
@@ -244,6 +246,9 @@ namespace PlutoGE::scene
             return;
         }
 
+        core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnUpdate" : std::string{},
+                                  core::CpuCategory::Scripts,
+                                  core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         Start();
         if (!m_instance)
         {
@@ -265,6 +270,9 @@ namespace PlutoGE::scene
             return;
         }
 
+        core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnLateUpdate" : std::string{},
+                                  core::CpuCategory::Scripts,
+                                  core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         Start();
         if (!m_instance)
         {
@@ -281,6 +289,9 @@ namespace PlutoGE::scene
             return;
         }
 
+        core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnFixedUpdate" : std::string{},
+                                  core::CpuCategory::Scripts,
+                                  core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         Start();
         if (m_instance)
         {

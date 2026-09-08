@@ -650,19 +650,23 @@ namespace PlutoGE::render::rhi::opengl
 
     TextureHandle OpenGLDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.normalMipmapsProvided && !descriptor.normalMap)
+            throw std::invalid_argument("Packed normal mipmaps require normalMap");
         if (descriptor.normalMap && (descriptor.depth != 1 || descriptor.format != Format::R8G8B8A8Unorm))
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (descriptor.width == 0 || descriptor.height == 0 || descriptor.depth == 0)
             throw std::invalid_argument("RHI texture dimensions must be non-zero");
         const auto format = ToTextureFormat(descriptor.format);
-        GLuint name = 0;
-        glGenTextures(1, &name);
         const GLenum target = descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
-        glBindTexture(target, name);
         const auto maximumDimension = std::max({descriptor.width, descriptor.height, descriptor.depth});
         const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(std::floor(std::log2(maximumDimension)));
         const std::uint32_t mipCount = descriptor.mipLevels != 0 ? descriptor.mipLevels
                                       : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
+        if (descriptor.normalMipmapsProvided)
+            ValidateNormalMipChain(data, descriptor.width, descriptor.height, mipCount);
+        GLuint name = 0;
+        glGenTextures(1, &name);
+        glBindTexture(target, name);
         if (descriptor.depth > 1)
             glTexStorage3D(target, static_cast<GLsizei>(mipCount), format.internalFormat,
                            static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height),
@@ -681,7 +685,9 @@ namespace PlutoGE::render::rhi::opengl
                                 static_cast<GLsizei>(descriptor.height), format.format, format.type, data.data());
             if (mipCount > 1 && descriptor.normalMap)
             {
-                const auto mips = BuildNormalMipmaps(data, descriptor.width, descriptor.height, mipCount);
+                const auto generated = descriptor.normalMipmapsProvided ? std::vector<std::byte>{}
+                    : BuildNormalMipmaps(data, descriptor.width, descriptor.height, mipCount);
+                const auto mips = descriptor.normalMipmapsProvided ? data : std::span<const std::byte>(generated);
                 std::size_t offset = std::size_t(descriptor.width) * descriptor.height * 4;
                 auto width = descriptor.width;
                 auto height = descriptor.height;

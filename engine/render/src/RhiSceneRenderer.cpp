@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include "PlutoGE/render/Material.h"
@@ -5,6 +6,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/Texture.h"
+#include "rhi/NormalMipmaps.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -165,6 +167,9 @@ namespace PlutoGE::render
         m_srgbTextures.clear();
         m_linearTextures.clear();
         m_normalTextures.clear();
+        // The worker owns its pixels and never touches scene or GPU objects.
+        m_normalMipJob = {};
+        m_pendingNormalSource = nullptr;
         if (m_renderer)
             m_renderer->Shutdown();
         m_renderer.reset();
@@ -191,6 +196,8 @@ namespace PlutoGE::render
                                   PostProcessDebugView debugView,
                                   bool submit)
     {
+        core::CpuScope renderScope("RHI.Scene", core::CpuCategory::Rendering);
+        core::CpuScope translationScope("Command translation", core::CpuCategory::Rendering);
         const auto totalStart = std::chrono::steady_clock::now();
         const auto millisecondsBetween = [](const auto start, const auto end)
         {
@@ -229,10 +236,26 @@ namespace PlutoGE::render
             return false;
         width = renderSize.width;
         height = renderSize.height;
+        m_timingStats.translationPreparationMs = millisecondsBetween(totalStart, std::chrono::steady_clock::now());
 
         m_sceneCommandCount = commands.size();
         std::vector<BasicDraw> draws;
         draws.reserve(commands.size());
+        if (m_normalMipJob.valid() &&
+            m_normalMipJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            auto pixels = m_normalMipJob.get();
+            const auto uploadStart = std::chrono::steady_clock::now();
+            core::CpuScope uploadScope("Prepared normal texture upload", core::CpuCategory::Rendering);
+            ++m_timingStats.textureUploadCount;
+            rhi::Texture uploaded(*m_device, m_device->CreateTexture(
+                {m_pendingNormalWidth, m_pendingNormalHeight, rhi::Format::R8G8B8A8Unorm,
+                 rhi::TextureUsage::Sampled, "Scene normal", false, 1, false, 0, true, true}, pixels));
+            m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
+            if (uploaded)
+                m_normalTextures.emplace(m_pendingNormalSource, std::move(uploaded));
+            m_pendingNormalSource = nullptr;
+        }
         const auto uploadTexture = [&](const Texture *source, rhi::Format format,
                                        auto &cache,
                                        const char *debugName, bool normalMap = false) -> rhi::TextureHandle
@@ -241,14 +264,38 @@ namespace PlutoGE::render
                 return {};
             if (const auto cached = cache.find(source); cached != cache.end())
                 return cached->second.Get();
+            if (normalMap && m_normalMipJob.valid())
+                return {};
+            core::CpuScope readScope("Texture pixel read", core::CpuCategory::Rendering);
+            const auto readStart = std::chrono::steady_clock::now();
             auto pixels = texturePixelReader(*source);
+            m_timingStats.textureReadMs += millisecondsBetween(readStart, std::chrono::steady_clock::now());
+            readScope.End();
             const auto expectedSize = static_cast<std::size_t>(source->GetWidth()) * source->GetHeight() * 4;
             if (pixels.size() != expectedSize)
                 return {};
+            if (normalMap)
+            {
+                const auto width = static_cast<std::uint32_t>(source->GetWidth());
+                const auto height = static_cast<std::uint32_t>(source->GetHeight());
+                m_pendingNormalSource = source;
+                m_pendingNormalWidth = width;
+                m_pendingNormalHeight = height;
+                m_normalMipJob = std::async(std::launch::async,
+                    [pixels = std::move(pixels), width, height]() {
+                        const auto levels = 1u + static_cast<unsigned>(std::floor(std::log2(std::max(width, height))));
+                        return rhi::BuildNormalMipmaps(pixels, width, height, levels);
+                    });
+                return {};
+            }
+            core::CpuScope uploadScope("Texture creation and mipmaps", core::CpuCategory::Rendering);
+            const auto uploadStart = std::chrono::steady_clock::now();
+            ++m_timingStats.textureUploadCount;
             rhi::Texture uploaded(*m_device, m_device->CreateTexture(
                                                  {static_cast<std::uint32_t>(source->GetWidth()), static_cast<std::uint32_t>(source->GetHeight()),
                                                   format, rhi::TextureUsage::Sampled, debugName, false, 1, false, 0, normalMap},
                                                  pixels));
+            m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
             return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get()
                             : rhi::TextureHandle{};
         };
@@ -264,14 +311,18 @@ namespace PlutoGE::render
                 auto mesh = m_meshes.find(command.mesh);
                 if (mesh == m_meshes.end())
                 {
+                    core::CpuScope meshScope("Mesh conversion and upload", core::CpuCategory::Rendering);
                     const auto &source = command.mesh->GetMeshData();
                     if (source.vertices.empty() || source.indices.empty())
                         continue;
+                    const auto meshStart = std::chrono::steady_clock::now();
+                    ++m_timingStats.meshUploadCount;
                     std::vector<BasicVertex> vertices;
                     vertices.reserve(source.vertices.size());
                     for (const auto &vertex : source.vertices)
                         vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
                     mesh = m_meshes.emplace(command.mesh, m_renderer->CreateMesh({vertices, source.indices})).first;
+                    m_timingStats.meshUploadMs += millisecondsBetween(meshStart, std::chrono::steady_clock::now());
                 }
 
                 std::uint32_t firstIndex = 0;
@@ -355,7 +406,9 @@ namespace PlutoGE::render
             shadowDraws.reserve(shadowCommands.size());
             appendDraws(shadowCommands, shadowDraws, true);
         }
+        translationScope.End();
         const auto translationEnd = std::chrono::steady_clock::now();
+        core::CpuScope setupScope("Scene setup", core::CpuCategory::Rendering);
         m_timingStats.commandTranslationMs = millisecondsBetween(totalStart, translationEnd);
         m_timingStats.visibleDrawCount = draws.size();
         m_timingStats.visibleInstanceCount = std::accumulate(
@@ -604,7 +657,9 @@ namespace PlutoGE::render
             // disabled.
             upscalerFrame.motionVectorsJittered = false;
         }
+        setupScope.End();
         const auto setupEnd = std::chrono::steady_clock::now();
+        core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         std::vector<BasicDraw> giDraws;
         if (std::ranges::any_of(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::VCTGI; }))

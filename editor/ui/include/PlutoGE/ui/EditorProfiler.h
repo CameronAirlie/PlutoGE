@@ -1,6 +1,8 @@
 #pragma once
 
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/ui/PanelManager.h"
@@ -10,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::ui
 {
@@ -56,10 +59,49 @@ namespace PlutoGE::ui
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> scriptLateUpdateTimings;
     };
 
+    // Owned observations taken once at the completed CPU frame boundary. GPU query
+    // results may describe earlier frames; no CPU/GPU timestamp alignment is implied.
+    struct EditorProfileFrame
+    {
+        std::array<float, static_cast<std::size_t>(core::CpuCategory::Count)> categoryMs{};
+        std::vector<core::CpuSample> samples;
+        std::uint32_t droppedSamples = 0;
+        std::uint64_t sequence = 0;
+        float durationMs = 0.0f;
+        EditorFrameTimingStats timing;
+        PanelManagerTimingStats panels;
+        render::RendererCpuFrameStats renderer;
+        render::RmlUiCpuTiming runtimeUi;
+        std::vector<render::CpuPassTiming> cpuPasses;
+        std::vector<render::GpuPassTiming> gpuPasses;
+        std::vector<render::GpuPassTiming> postProcessGpuPasses;
+        std::vector<render::GpuPassTiming> gpuDetails;
+        render::LightingGpuTiming lighting;
+        float totalCpuMs = 0.0f;
+        float totalGpuMs = 0.0f;
+        int renderCount = 0;
+    };
+
     class EditorProfiler
     {
     public:
         static constexpr std::size_t MaxFrameSamples = 240;
+
+        static constexpr std::size_t MaxCaptureFrames = 2000;
+
+        void StartCapture(std::size_t frameLimit = 240);
+        [[nodiscard]] bool IsCaptureMemoryLimited() const noexcept { return m_memoryLimited; }
+        static constexpr std::size_t MaxTraceBytes = 64 * 1024 * 1024;
+        void StopCapture() noexcept { m_recording = false; }
+        void ClearCapture();
+        [[nodiscard]] bool IsRecording() const noexcept { return m_recording; }
+        [[nodiscard]] const std::vector<EditorProfileFrame> &GetCapturedFrames() const noexcept { return m_capture; }
+        // Called by the editor after panel submission and presentation, never by a panel.
+        void CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,
+                           const PanelManagerTimingStats &panels, const render::Renderer &renderer,
+                           const render::RmlUiCpuTiming &runtimeUi,
+                           std::vector<core::CpuSample> samples = {}, std::uint32_t droppedSamples = 0);
+        void RecordFrame(EditorProfileFrame frame);
 
         void AddFrameSample(float frameTimeMs);
         void SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats);
@@ -82,9 +124,16 @@ namespace PlutoGE::ui
                                                      const std::vector<render::GpuPassTiming> &gpuDetailTimings,
                                                      float totalCpuPassTimeMs,
                                                      float totalGpuPassTimeMs,
-                                                     const render::LightingGpuTiming &lightingGpuTiming) const;
+                                                     const render::LightingGpuTiming &lightingGpuTiming,
+                                                     float capturedDurationMs = -1.0f) const;
 
     private:
+        std::vector<EditorProfileFrame> m_capture;
+        std::size_t m_captureLimit = 240;
+        std::uint64_t m_frameSequence = 0;
+        bool m_recording = false;
+        bool m_memoryLimited = false;
+        std::size_t m_traceBytes = 0;
         std::array<float, MaxFrameSamples> m_frameSamples{};
         std::size_t m_nextSampleIndex = 0;
         std::size_t m_sampleCount = 0;

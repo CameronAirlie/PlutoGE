@@ -1,4 +1,5 @@
 #include "ShadowFilteringChecks.h"
+#include "TextureMipRenderingChecks.h"
 #include "SsrRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -51,6 +52,23 @@ int main(int argc, char **argv)
         opengl::OpenGLDevice device;
         if (device.GetApi() != GraphicsApi::OpenGL)
             return 3;
+        if (argc > 1 && std::string_view(argv[1]) == "--prepared-normal-mips")
+        {
+            std::vector<std::byte> packed(16, std::byte{0});
+            packed.resize(20, std::byte{128});
+            TextureDescriptor descriptor{2, 2, Format::R8G8B8A8Unorm,
+                TextureUsage::Sampled, "Prepared mip upload", false, 1, false, 0, true, true};
+            Texture texture(device, device.CreateTexture(descriptor, packed));
+            std::array<std::byte, 4> mip{};
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture.Get())));
+            glGetTexImage(GL_TEXTURE_2D, 1, GL_RGBA, GL_UNSIGNED_BYTE, mip.data());
+            for (auto value : mip)
+                if (value != std::byte{128}) return 4;
+            packed.pop_back();
+            try { Texture invalid(device, device.CreateTexture(descriptor, packed)); }
+            catch (const std::invalid_argument &) { return 0; }
+            return 5;
+        }
 
         constexpr std::array<float, 18> vertices = {
              0.0f,  0.8f, 0.5f, 1.0f, 0.1f, 0.1f,
@@ -213,6 +231,12 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 0;
         }
 
+        CheckTextureMipRendering(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
+            std::vector<std::byte> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
         CheckShadowFiltering(basicRenderer, [&](render::rhi::TextureHandle texture)
         {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

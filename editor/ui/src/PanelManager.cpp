@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 
@@ -364,7 +365,9 @@ namespace PlutoGE::ui
         for (auto panel : m_panels)
         {
             const auto panelStart = std::chrono::high_resolution_clock::now();
+            core::CpuScope panelScope(panel->GetName(), core::CpuCategory::UI);
             panel->Update();
+            panelScope.End();
             const auto panelEnd = std::chrono::high_resolution_clock::now();
             const float updateMs = DurationMs(panelStart, panelEnd);
             totalMs += updateMs;

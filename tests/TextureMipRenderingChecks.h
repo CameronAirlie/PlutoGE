@@ -5,8 +5,8 @@
 #include <iostream>
 #include <stdexcept>
 
-template<class Device>
-void CheckTextureMipRendering(PlutoGE::render::BasicRenderer &renderer, Device &device, bool benchmark = false)
+template<class Device, class Reader>
+void CheckTextureMipRendering(PlutoGE::render::BasicRenderer &renderer, Device &device, Reader readTexture, bool benchmark = false)
 {
     using namespace PlutoGE::render;
     const auto width = renderer.GetWidth(), height = renderer.GetHeight();
@@ -36,13 +36,33 @@ void CheckTextureMipRendering(PlutoGE::render::BasicRenderer &renderer, Device &
                 rhi::TextureUsage::Sampled, "Colour mip regression", false, 1, false, 0}, pixels));
             draw.baseColorTexture = texture.Get();
             renderer.Render(glm::mat4(1), lighting, std::span(&draw, 1), {}, {}, PostProcessDebugView::Albedo);
-            const auto image = device.ReadTextureRgba8(renderer.GetColorTexture());
+            const auto image = readTexture(renderer.GetColorTexture());
             const int expected = constant && format == rhi::Format::R8G8B8A8Srgb ? 55 : 128;
             for (int y = 16; y < 48; ++y)
                 for (int x = 16; x < 48; ++x)
                     if (std::abs(int(std::to_integer<unsigned char>(image[(y * 64 + x) * 4])) - expected) > 4)
                         throw std::runtime_error("Colour mip filtering lost linear-light averaging or mip coverage");
         }
+    // Supply deliberately distinct mip values: the distant quad must sample
+    // the supplied lower levels, not regenerate them from the base image.
+    {
+        std::vector<std::byte> packed(64 * 64 * 4, std::byte{0});
+        for (unsigned extent = 32; extent; extent /= 2)
+            packed.resize(packed.size() + extent * extent * 4, std::byte{128});
+        rhi::TextureDescriptor descriptor{64, 64, rhi::Format::R8G8B8A8Unorm,
+            rhi::TextureUsage::Sampled, "Prepared normal mip regression", false, 1, false, 0, true, true};
+        rhi::Texture texture(device, device.CreateTexture(descriptor, packed));
+        draw.baseColorTexture = texture.Get();
+        renderer.Render(glm::mat4(1), lighting, std::span(&draw, 1), {}, {}, PostProcessDebugView::Albedo);
+        const auto image = readTexture(renderer.GetColorTexture());
+        if (std::abs(int(std::to_integer<unsigned char>(image[(32 * 64 + 32) * 4])) - 128) > 4)
+            throw std::runtime_error("Prepared normal mip levels were not uploaded");
+        packed.pop_back();
+        bool rejected = false;
+        try { rhi::Texture invalid(device, device.CreateTexture(descriptor, packed)); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Truncated normal mip chain accepted");
+    }
     if (benchmark)
     {
         std::vector<std::byte> pixels(4096ull * 4096 * 4, std::byte{128});

@@ -390,3 +390,39 @@ if (TARGET OpenAL)
 endif()
 
 add_test(NAME PlutoGEVirtualShadowPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)
+
+if (TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEEditorProfilerTests EditorProfilerTests.cpp)
+    target_link_libraries(PlutoGEEditorProfilerTests PRIVATE PlutoGE::EditorUI)
+    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        target_link_libraries(PlutoGEEditorProfilerTests PRIVATE
+            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
+    endif()
+    if (TARGET OpenAL)
+        add_custom_command(TARGET PlutoGEEditorProfilerTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorProfilerTests>/$<TARGET_FILE_NAME:OpenAL>)
+    endif()
+    add_test(NAME PlutoGEEditorProfilerTests COMMAND PlutoGEEditorProfilerTests)
+endif()
+
+add_executable(PlutoGECpuTraceTests CpuTraceTests.cpp)
+target_include_directories(PlutoGECpuTraceTests PRIVATE ../engine/core/include)
+target_compile_features(PlutoGECpuTraceTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGECpuTraceTests COMMAND PlutoGECpuTraceTests)
+
+if (TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEEditorProfilerPanelTests EditorProfilerPanelTests.cpp)
+    target_link_libraries(PlutoGEEditorProfilerPanelTests PRIVATE PlutoGE::EditorUI)
+    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        target_link_libraries(PlutoGEEditorProfilerPanelTests PRIVATE
+            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
+    endif()
+    if (TARGET OpenAL)
+        add_custom_command(TARGET PlutoGEEditorProfilerPanelTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorProfilerPanelTests>/$<TARGET_FILE_NAME:OpenAL>)
+    endif()
+    add_test(NAME PlutoGEEditorProfilerPanelTests COMMAND PlutoGEEditorProfilerPanelTests)
+    set_tests_properties(PlutoGEEditorProfilerPanelTests PROPERTIES SKIP_RETURN_CODE 77)
+endif()

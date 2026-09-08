@@ -7,6 +7,7 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -34,6 +35,13 @@ namespace
 
 namespace PlutoGE::ui
 {
+    const EditorProfileFrame *ProfilerPanel::GetSelectedFrame() const
+    {
+        const auto &frames = m_profiler->GetCapturedFrames();
+        return m_selectedFrame >= 0 && static_cast<std::size_t>(m_selectedFrame) < frames.size()
+            ? &frames[static_cast<std::size_t>(m_selectedFrame)] : nullptr;
+    }
+
     void ProfilerPanel::CopyMetricsToClipboard()
     {
         if (!m_profiler || !m_panelManager || !m_renderer)
@@ -41,18 +49,22 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
+        const auto *selected = GetSelectedFrame();
+        const auto &rmlTiming = (selected ? selected->runtimeUi : render::RmlUiRuntime::Get().GetCpuTiming());
         m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
-            m_panelManager->GetTimingStats(),
-            m_profiler->GetLatestFrameTimingStats(),
-            m_renderer->GetCpuPassTimings(),
-            m_renderer->GetCpuFrameStats(),
-            m_renderer->GetGpuPassTimings(),
-            m_renderer->GetPostProcessGpuTimings(),
-            m_renderer->GetGpuDetailTimings(),
-            m_renderer->GetTotalCpuPassTimeMs(),
-            m_renderer->GetTotalGpuPassTimeMs(),
-            m_renderer->GetLightingGpuTiming());
+            (selected ? selected->panels : m_panelManager->GetTimingStats()),
+            (selected ? selected->timing : m_profiler->GetLatestFrameTimingStats()),
+            (selected ? selected->cpuPasses : m_renderer->GetCpuPassTimings()),
+            (selected ? selected->renderer : m_renderer->GetCpuFrameStats()),
+            (selected ? selected->gpuPasses : m_renderer->GetGpuPassTimings()),
+            (selected ? selected->postProcessGpuPasses : m_renderer->GetPostProcessGpuTimings()),
+            (selected ? selected->gpuDetails : m_renderer->GetGpuDetailTimings()),
+            (selected ? selected->totalCpuMs : m_renderer->GetTotalCpuPassTimeMs()),
+            (selected ? selected->totalGpuMs : m_renderer->GetTotalGpuPassTimeMs()),
+            (selected ? selected->lighting : m_renderer->GetLightingGpuTiming()),
+            selected ? selected->durationMs : -1.0f);
+        if (selected)
+            m_lastCopiedMetrics = "Frame sequence: " + std::to_string(selected->sequence) + "\n" + m_lastCopiedMetrics;
         std::ostringstream rmlReport;
         rmlReport << std::fixed << std::setprecision(3)
                   << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
@@ -84,15 +96,19 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto &timingStats = m_panelManager->GetTimingStats();
-        const auto &cpuPassTimings = m_renderer->GetCpuPassTimings();
-        const auto &cpuFrameStats = m_renderer->GetCpuFrameStats();
-        const auto &gpuPassTimings = m_renderer->GetGpuPassTimings();
-        const auto &postProcessGpuTimings = m_renderer->GetPostProcessGpuTimings();
-        const auto &gpuDetailTimings = m_renderer->GetGpuDetailTimings();
-        const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
-        const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
-        const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
+        RenderCaptureControls();
+        RenderProfilerWorkspace();
+        if (!ImGui::CollapsingHeader("Detailed frame metrics")) return;
+        const auto *selected = GetSelectedFrame();
+        const auto &timingStats = (selected ? selected->panels : m_panelManager->GetTimingStats());
+        const auto &cpuPassTimings = (selected ? selected->cpuPasses : m_renderer->GetCpuPassTimings());
+        const auto &cpuFrameStats = (selected ? selected->renderer : m_renderer->GetCpuFrameStats());
+        const auto &gpuPassTimings = (selected ? selected->gpuPasses : m_renderer->GetGpuPassTimings());
+        const auto &postProcessGpuTimings = (selected ? selected->postProcessGpuPasses : m_renderer->GetPostProcessGpuTimings());
+        const auto &gpuDetailTimings = (selected ? selected->gpuDetails : m_renderer->GetGpuDetailTimings());
+        const auto &lightingGpuTiming = (selected ? selected->lighting : m_renderer->GetLightingGpuTiming());
+        const auto &frameTimingStats = (selected ? selected->timing : m_profiler->GetLatestFrameTimingStats());
+        const auto &rmlTiming = (selected ? selected->runtimeUi : render::RmlUiRuntime::Get().GetCpuTiming());
         float lightingTotalMs = 0.0f;
         if (lightingGpuTiming.hasSetupResult)
         {
@@ -106,18 +122,18 @@ namespace PlutoGE::ui
         {
             lightingTotalMs += lightingGpuTiming.lightAccumulationMs;
         }
-        const float totalGpuPassTimeMs = m_renderer->GetTotalGpuPassTimeMs();
+        const float totalGpuPassTimeMs = (selected ? selected->totalGpuMs : m_renderer->GetTotalGpuPassTimeMs());
         const float lightingShare = totalGpuPassTimeMs > 0.0f ? (lightingTotalMs / totalGpuPassTimeMs) * 100.0f : 0.0f;
-        ImGui::Text("Frame: %.2f ms", m_profiler->GetCurrentFrameTimeMs());
-        ImGui::Text("Average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
-        ImGui::Text("Min / Max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
+        ImGui::Text("Frame: %.2f ms", (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()));
+        ImGui::Text("Live average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
+        ImGui::Text("Live min / max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
         ImGui::Text("VSync: %s", frameTimingStats.vSyncEnabled ? "On" : "Off");
         ImGui::Separator();
 
         if (m_profiler->GetSampleCount() > 0)
         {
             ImGui::PlotLines(
-                "Frametime (ms)",
+                "Live frametime (ms)",
                 m_profiler->GetFrameSamples(),
                 static_cast<int>(m_profiler->GetSampleCount()),
                 m_profiler->GetPlotOffset(),
@@ -132,7 +148,7 @@ namespace PlutoGE::ui
         }
 
         ImGui::Separator();
-        if (ImGui::TreeNode("Prefab instantiation"))
+        if (!selected && ImGui::TreeNode("Prefab instantiation"))
         {
             const auto latest = scene::Prefab::GetLatestInstantiationProfile();
             const auto maximum = scene::Prefab::GetMaximumInstantiationProfile();
@@ -218,6 +234,12 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.visibleDrawCount),
                     static_cast<unsigned long long>(rhiScene.visibleInstanceCount),
                     static_cast<unsigned long long>(rhiScene.shadowCandidateCount));
+        ImGui::Text("    Upscaler + resize: %.2f ms", rhiScene.translationPreparationMs);
+        ImGui::Text("    Mesh conversion + upload: %.2f ms (%llu attempts)", rhiScene.meshUploadMs,
+                    static_cast<unsigned long long>(rhiScene.meshUploadCount));
+        ImGui::Text("    Texture reads: %.2f ms; creation + mipmaps: %.2f ms (%llu attempts)",
+                    rhiScene.textureReadMs, rhiScene.textureUploadMs,
+                    static_cast<unsigned long long>(rhiScene.textureUploadCount));
         ImGui::Text("  Recorded: %llu geometry draws / %llu instances",
                     static_cast<unsigned long long>(rhiScene.recordedGeometryDrawCount),
                     static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount));
@@ -290,7 +312,7 @@ namespace PlutoGE::ui
                         presentation.presentQueueMs);
         }
         ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
-        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, m_profiler->GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
+        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
         ImGui::Separator();
         ImGui::Text("ImGui render: %.2f ms", timingStats.imguiRenderMs);
         ImGui::Text("ImGui submission total: %.2f ms", timingStats.endPanelUpdateTotalMs);
@@ -300,8 +322,8 @@ namespace PlutoGE::ui
         ImGui::Text("Platform viewports: %d", timingStats.platformViewportCount);
 
         ImGui::Separator();
-        ImGui::Text("Profiled renders: %d", m_renderer->GetProfiledRenderCount());
-        ImGui::Text("CPU passes total: %.2f ms", m_renderer->GetTotalCpuPassTimeMs());
+        ImGui::Text("Profiled renders: %d", (selected ? selected->renderCount : m_renderer->GetProfiledRenderCount()));
+        ImGui::Text("CPU passes total: %.2f ms", (selected ? selected->totalCpuMs : m_renderer->GetTotalCpuPassTimeMs()));
         if (ImGui::TreeNode("Renderer frame breakdown"))
         {
             ImGui::Text("Total: %.2f ms", cpuFrameStats.renderFrameTotalMs);

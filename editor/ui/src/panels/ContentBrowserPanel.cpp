@@ -1,22 +1,25 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
-#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/ModelAsset.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
-#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/PrefabMeshExporter.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
-#include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/AssetReferenceSearchPanel.h"
+#include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
 #include <array>
@@ -55,131 +58,132 @@ namespace PlutoGE::ui
     class AssetThumbnailCache
     {
     public:
-        ~AssetThumbnailCache()
-        {
-            if (!CanDeleteOpenGLResources()) return;
-            for (const auto &[reference, entry] : m_entries)
-            {
-                (void)reference;
-                if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
-            }
-            if (m_depthBuffer != 0) glDeleteRenderbuffers(1, &m_depthBuffer);
-            if (m_framebuffer != 0) glDeleteFramebuffers(1, &m_framebuffer);
-            if (m_program != 0) glDeleteProgram(m_program);
+      ~AssetThumbnailCache()
+      {
+          Clear();
+      }
+      void BeginFrame()
+      {
+          m_generationBudget = 2;
+          ++m_frameSequence;
+      }
+      std::uint64_t Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
+      {
+          if (!engine.GetRenderDevice())
+              return 0;
+          if (asset.type != assets::ProjectAssetType::Texture && asset.type != assets::ProjectAssetType::Model &&
+              asset.type != assets::ProjectAssetType::Mesh && asset.type != assets::ProjectAssetType::Material)
+          {
+              return 0;
+          }
+
+          const auto found = m_entries.find(asset.reference);
+          if (found != m_entries.end() &&
+              m_frameSequence - found->second.lastValidatedFrame < kValidationIntervalFrames)
+          {
+              return found->second.texture;
+          }
+
+          auto stamp = GetStamp(project, asset.reference);
+          render::Material *preloadedMaterial = nullptr;
+          if (asset.type == assets::ProjectAssetType::Material)
+          {
+              preloadedMaterial = engine.GetAssetManager().LoadMaterialAsset(asset.reference);
+              if (preloadedMaterial)
+              {
+                  const auto &config = preloadedMaterial->GetConfig();
+                  for (const render::Texture *texture :
+                       {config.albedoTexture, config.normalTexture, config.metallicTexture, config.roughnessTexture})
+                  {
+                      if (!texture)
+                          continue;
+                      std::error_code error;
+                      const auto time = std::filesystem::last_write_time(texture->GetFilePath(), error);
+                      if (!error)
+                          stamp ^= static_cast<std::uint64_t>(time.time_since_epoch().count()) + 0x9e3779b97f4a7c15ull +
+                                   (stamp << 6u) + (stamp >> 2u);
+                  }
+              }
+          }
+          if (found != m_entries.end() && found->second.stamp == stamp)
+          {
+              found->second.lastValidatedFrame = m_frameSequence;
+              return found->second.texture;
+          }
+          if (m_generationBudget <= 0)
+              return 0;
+          --m_generationBudget;
+
+          if (asset.type == assets::ProjectAssetType::Texture)
+          {
+              const auto path = project.ResolveAssetReference(asset.reference).string();
+              auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
+              if (!texture)
+                  return 0;
+
+              auto &entry = m_entries[asset.reference];
+              const auto pixels = ReadPixels(*texture);
+              if (pixels.empty())
+                  return 0;
+              auto &device = *engine.GetRenderDevice();
+              entry.image = render::rhi::Texture(
+                  device, device.CreateTexture({static_cast<std::uint32_t>(texture->GetWidth()),
+                                                static_cast<std::uint32_t>(texture->GetHeight()),
+                                                render::rhi::Format::R8G8B8A8Unorm, render::rhi::TextureUsage::Sampled,
+                                                "Asset thumbnail"},
+                                               pixels));
+              Publish(entry, device, entry.image.Get());
+              entry.stamp = stamp;
+              entry.lastValidatedFrame = m_frameSequence;
+              return entry.texture;
+          }
+
+          std::string renderReference = asset.reference;
+          if (asset.type == assets::ProjectAssetType::Model)
+          {
+              const auto sourcePath = project.ResolveAssetReference(asset.reference);
+              const auto manifestPath = assets::FindModelManifestPath(project, asset.reference);
+              assets::ModelAsset model;
+              if (!assets::LoadModelAsset(manifestPath.string(), model))
+                  return 0;
+              const auto mesh = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object) {
+                  return object.type == assets::ProjectAssetType::Mesh;
+              });
+              if (mesh == model.objects.end())
+                  return 0;
+              renderReference = mesh->reference;
+          }
+
+          render::Mesh *mesh = nullptr;
+          render::Material *material = nullptr;
+          if (asset.type == assets::ProjectAssetType::Material)
+          {
+              material = preloadedMaterial;
+              mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
+          }
+          else
+          {
+              mesh = engine.GetAssetManager().LoadMeshAsset(renderReference);
+              const auto &materials = engine.GetAssetManager().GetMeshAssetMaterialReferences(renderReference);
+              if (!materials.empty())
+                  material = engine.GetAssetManager().LoadMaterialAsset(materials.front());
+          }
+          if (!mesh)
+              return 0;
+
+          auto &entry = m_entries[asset.reference];
+          if (!Render(entry, engine, *mesh, material))
+              return 0;
+          entry.stamp = stamp;
+          entry.lastValidatedFrame = m_frameSequence;
+          return entry.texture;
         }
 
-        void BeginFrame()
+        std::uint64_t GetMaterial(core::Engine &engine, const std::string &key, const render::MaterialConfig &config,
+                                  std::uint64_t revision)
         {
-            m_generationBudget = 2;
-            ++m_frameSequence;
-        }
-
-        GLuint Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
-        {
-            // Mesh/material thumbnails are implemented with legacy OpenGL. A Vulkan
-            // editor window has no GL context and its GLAD dispatch table is null.
-            // Texture IDs are not portable to ImGui's Vulkan backend either, so do
-            // not expose any part of this cache when OpenGL is not active.
-            if (!PrepareOpenGL(engine)) return 0;
-
-            if (asset.type != assets::ProjectAssetType::Texture &&
-                asset.type != assets::ProjectAssetType::Model &&
-                asset.type != assets::ProjectAssetType::Mesh &&
-                asset.type != assets::ProjectAssetType::Material)
-            {
+            if (!engine.GetRenderDevice())
                 return 0;
-            }
-
-            const auto found = m_entries.find(asset.reference);
-            if (found != m_entries.end() &&
-                m_frameSequence - found->second.lastValidatedFrame < kValidationIntervalFrames)
-            {
-                return found->second.texture;
-            }
-
-            auto stamp = GetStamp(project, asset.reference);
-            render::Material *preloadedMaterial = nullptr;
-            if (asset.type == assets::ProjectAssetType::Material)
-            {
-                preloadedMaterial = engine.GetAssetManager().LoadMaterialAsset(asset.reference);
-                if (preloadedMaterial)
-                {
-                    const auto &config = preloadedMaterial->GetConfig();
-                    for (const render::Texture *texture : {config.albedoTexture, config.normalTexture,
-                                                          config.metallicTexture, config.roughnessTexture})
-                    {
-                        if (!texture) continue;
-                        std::error_code error;
-                        const auto time = std::filesystem::last_write_time(texture->GetFilePath(), error);
-                        if (!error)
-                            stamp ^= static_cast<std::uint64_t>(time.time_since_epoch().count()) +
-                                     0x9e3779b97f4a7c15ull + (stamp << 6u) + (stamp >> 2u);
-                    }
-                }
-            }
-            if (found != m_entries.end() && found->second.stamp == stamp)
-            {
-                found->second.lastValidatedFrame = m_frameSequence;
-                return found->second.texture;
-            }
-            if (m_generationBudget <= 0) return 0;
-            --m_generationBudget;
-
-            if (asset.type == assets::ProjectAssetType::Texture)
-            {
-                const auto path = project.ResolveAssetReference(asset.reference).string();
-                auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
-                if (!texture) return 0;
-
-                auto &entry = m_entries[asset.reference];
-                entry.texture = texture->GetTextureID();
-                entry.stamp = stamp;
-                entry.lastValidatedFrame = m_frameSequence;
-                entry.ownsTexture = false;
-                return entry.texture;
-            }
-
-            std::string renderReference = asset.reference;
-            if (asset.type == assets::ProjectAssetType::Model)
-            {
-                const auto sourcePath = project.ResolveAssetReference(asset.reference);
-                const auto manifestPath = assets::FindModelManifestPath(project, asset.reference);
-                assets::ModelAsset model;
-                if (!assets::LoadModelAsset(manifestPath.string(), model)) return 0;
-                const auto mesh = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
-                                               { return object.type == assets::ProjectAssetType::Mesh; });
-                if (mesh == model.objects.end()) return 0;
-                renderReference = mesh->reference;
-            }
-
-            render::Mesh *mesh = nullptr;
-            render::Material *material = nullptr;
-            if (asset.type == assets::ProjectAssetType::Material)
-            {
-                material = preloadedMaterial;
-                mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
-            }
-            else
-            {
-                mesh = engine.GetAssetManager().LoadMeshAsset(renderReference);
-                const auto &materials = engine.GetAssetManager().GetMeshAssetMaterialReferences(renderReference);
-                if (!materials.empty()) material = engine.GetAssetManager().LoadMaterialAsset(materials.front());
-            }
-            if (!mesh) return 0;
-
-            auto &entry = m_entries[asset.reference];
-            if (entry.texture == 0) entry.texture = CreateTexture();
-            entry.ownsTexture = true;
-            if (!Render(entry.texture, *mesh, material)) return 0;
-            entry.stamp = stamp;
-            entry.lastValidatedFrame = m_frameSequence;
-            return entry.texture;
-        }
-
-        GLuint GetMaterial(core::Engine &engine, const std::string &key,
-                           const render::MaterialConfig &config, std::uint64_t revision)
-        {
-            if (!PrepareOpenGL(engine)) return 0;
 
             const auto found = m_entries.find(key);
             if (found != m_entries.end() && found->second.stamp == revision)
@@ -187,311 +191,147 @@ namespace PlutoGE::ui
             auto *mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
             if (!mesh) return 0;
             auto &entry = m_entries[key];
-            if (entry.texture == 0) entry.texture = CreateTexture();
-            entry.ownsTexture = true;
             render::Material material(config);
-            if (!Render(entry.texture, *mesh, &material)) return 0;
+            if (!Render(entry, engine, *mesh, &material))
+                return 0;
             entry.stamp = revision;
             return entry.texture;
         }
 
         void Clear()
         {
-            if (CanDeleteOpenGLResources())
-            {
-                for (const auto &[reference, entry] : m_entries)
-                {
-                    (void)reference;
-                    if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
-                }
-            }
+            for (auto &[key, entry] : m_entries)
+                EditorShell::GetInstance().GetPanelManager().UnregisterTexture(entry.registration);
             m_entries.clear();
         }
-
     private:
         struct Entry
         {
-            GLuint texture = 0;
+            std::uint64_t texture = 0;
             std::uint64_t stamp = 0;
             std::uint64_t lastValidatedFrame = 0;
-            bool ownsTexture = false;
+            EditorTextureHandle registration;
+            render::rhi::Texture image;
         };
-
         static constexpr int kSize = 128;
         static constexpr std::uint64_t kValidationIntervalFrames = 60;
-        std::unordered_map<std::string, Entry> m_entries;
-        GLuint m_framebuffer = 0;
-        GLuint m_depthBuffer = 0;
-        GLuint m_program = 0;
-        int m_generationBudget = 0;
+        std::unique_ptr<render::RhiSceneRenderer> m_renderer;
+        render::rhi::GraphicsPipeline m_copyPipeline;
+        render::rhi::Sampler m_copySampler;
+        int m_generationBudget = 2;
         std::uint64_t m_frameSequence = 0;
-
-        static bool PrepareOpenGL(core::Engine &engine)
-        {
-            return engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
-                   engine.GetWindow().EnsureOpenGLContextCurrent();
-        }
-
-        static bool CanDeleteOpenGLResources()
-        {
-            return glfwGetCurrentContext() != nullptr &&
-                   glad_glDeleteTextures != nullptr &&
-                   glad_glDeleteRenderbuffers != nullptr &&
-                   glad_glDeleteFramebuffers != nullptr &&
-                   glad_glDeleteProgram != nullptr;
-        }
-
+        std::unordered_map<std::string, Entry> m_entries;
         static std::uint64_t GetStamp(const assets::Project &project, const std::string &reference)
         {
             std::error_code error;
-            const auto time = std::filesystem::last_write_time(project.ResolveAssetReference(reference), error);
-            return error ? 0 : static_cast<std::uint64_t>(time.time_since_epoch().count());
+            const auto stamp = std::filesystem::last_write_time(project.ResolveAssetReference(reference), error);
+            return error ? 0 : static_cast<std::uint64_t>(stamp.time_since_epoch().count());
         }
-
-        static GLuint Compile(GLenum type, const char *source)
+        static std::vector<std::byte> ReadPixels(const render::Texture &texture)
         {
-            const GLuint shader = glCreateShader(type);
-            glShaderSource(shader, 1, &source, nullptr);
-            glCompileShader(shader);
-            GLint compiled = GL_FALSE;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-            if (compiled == GL_FALSE)
+            const auto pixels = texture.GetRgba8Pixels();
+            const auto *begin = reinterpret_cast<const std::byte *>(pixels.data());
+            return pixels.empty() ? std::vector<std::byte>{} : std::vector<std::byte>(begin, begin + pixels.size());
+        }
+        static void Publish(Entry &entry, render::rhi::IRenderDevice &device, render::rhi::TextureHandle texture)
+        {
+            auto &panels = EditorShell::GetInstance().GetPanelManager();
+            EditorTextureDescriptor descriptor{&device, texture, kSize, kSize};
+            if (entry.registration.IsValid())
+                panels.UpdateTexture(entry.registration, descriptor);
+            else
+                entry.registration = panels.RegisterTexture(descriptor);
+            entry.texture = panels.GetImGuiTextureId(entry.registration);
+        }
+        bool Render(Entry &entry, core::Engine &engine, render::Mesh &mesh, render::Material *material)
+        {
+            auto &device = *engine.GetRenderDevice();
+            if (!m_renderer)
             {
-                glDeleteShader(shader);
-                return 0;
+                m_renderer = std::make_unique<render::RhiSceneRenderer>();
+                auto shaders = render::ShaderArtifactLibrary{}.LoadBasicRendererPackage();
+                shaders.virtualShadows = {}; // Preview lighting does not cast shadows.
+                if (!m_renderer->Initialize(device, shaders))
+                {
+                    m_renderer.reset();
+                    return false;
+                }
             }
-            return shader;
-        }
-
-        bool Initialize()
-        {
-            if (m_program != 0) return true;
-            constexpr const char *vertexSource = R"GLSL(#version 450 core
-layout(location=0) in vec3 position;
-layout(location=1) in vec3 normal;
-layout(location=2) in vec2 uv;
-uniform mat4 mvp;
-uniform mat4 model;
-out vec3 worldNormal;
-out vec2 texCoord;
-out vec3 worldPosition;
-void main() {
-    gl_Position = mvp * vec4(position, 1.0);
-    worldNormal = mat3(transpose(inverse(model))) * normal;
-    texCoord = uv;
-    worldPosition = (model * vec4(position, 1.0)).xyz;
-})GLSL";
-            constexpr const char *fragmentSource = R"GLSL(#version 450 core
-in vec3 worldNormal;
-in vec2 texCoord;
-in vec3 worldPosition;
-layout(location=0) out vec4 colorOut;
-uniform vec4 baseColor;
-uniform sampler2D albedo;
-uniform bool useAlbedo;
-uniform sampler2D normalMap;
-uniform bool useNormal;
-uniform bool flipNormalY;
-uniform sampler2D metallicMap;
-uniform bool useMetallic;
-uniform int metallicChannel;
-uniform sampler2D roughnessMap;
-uniform bool useRoughness;
-uniform int roughnessChannel;
-uniform vec2 uvScale;
-uniform float metallicFactor;
-uniform float roughnessFactor;
-uniform vec3 emission;
-uniform float transmission;
-uniform float ior;
-uniform vec3 attenuationColor;
-uniform vec3 cameraPosition;
-float channelValue(vec4 v, int c) { return c == 1 ? v.g : c == 2 ? v.b : c == 3 ? v.a : v.r; }
-vec3 sky(vec3 d) {
-    float h = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 horizon = vec3(0.72, 0.78, 0.86);
-    vec3 zenith = vec3(0.08, 0.20, 0.42);
-    vec3 ground = vec3(0.055, 0.045, 0.04);
-    vec3 result = d.y >= 0.0 ? mix(horizon, zenith, pow(h, 0.65)) : mix(ground, horizon * 0.35, exp(d.y * 8.0));
-    vec3 sunDir = normalize(vec3(0.55, 0.72, 0.42));
-    return result + vec3(1.0, 0.72, 0.38) * pow(max(dot(d, sunDir), 0.0), 180.0) * 7.0;
-}
-void main() {
-    vec3 n = normalize(worldNormal);
-    vec2 scaledUv = texCoord * uvScale;
-    if (useNormal) {
-        vec3 mapN = texture(normalMap, scaledUv).xyz * 2.0 - 1.0;
-        if (flipNormalY) mapN.y = -mapN.y;
-        vec3 dp1 = dFdx(worldPosition), dp2 = dFdy(worldPosition);
-        vec2 duv1 = dFdx(scaledUv), duv2 = dFdy(scaledUv);
-        vec3 t = normalize(dp1 * duv2.y - dp2 * duv1.y);
-        vec3 b = normalize(-dp1 * duv2.x + dp2 * duv1.x);
-        n = normalize(mat3(t, b, n) * mapN);
-    }
-    vec4 surface = baseColor * (useAlbedo ? texture(albedo, scaledUv) : vec4(1.0));
-    float metallic = clamp(metallicFactor * (useMetallic ? channelValue(texture(metallicMap, scaledUv), metallicChannel) : 1.0), 0.0, 1.0);
-    float roughness = clamp(roughnessFactor * (useRoughness ? channelValue(texture(roughnessMap, scaledUv), roughnessChannel) : 1.0), 0.04, 1.0);
-    vec3 v = normalize(cameraPosition - worldPosition);
-    vec3 l = normalize(vec3(0.55, 0.72, 0.42));
-    vec3 h = normalize(v + l);
-    float ndotl = max(dot(n, l), 0.0), ndotv = max(dot(n, v), 0.001), ndoth = max(dot(n, h), 0.0), vdoth = max(dot(v, h), 0.0);
-    vec3 f0 = mix(vec3(0.04), surface.rgb, metallic);
-    vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
-    float a = roughness * roughness, a2 = a * a;
-    float denom = ndoth * ndoth * (a2 - 1.0) + 1.0;
-    float d = a2 / max(3.14159265 * denom * denom, 0.0001);
-    float k = (roughness + 1.0); k = k * k * 0.125;
-    float g = (ndotv / (ndotv * (1.0 - k) + k)) * (ndotl / (ndotl * (1.0 - k) + k));
-    vec3 direct = ((1.0 - f) * (1.0 - metallic) * surface.rgb / 3.14159265 + d * g * f / max(4.0 * ndotv * ndotl, 0.001)) * ndotl * 3.2;
-    vec3 reflected = sky(reflect(-v, n));
-    vec3 ambient = surface.rgb * (1.0 - metallic) * sky(n) * 0.22 + reflected * f0 * mix(1.0, 0.18, roughness);
-    vec3 hdr = direct + ambient + emission;
-    if (transmission > 0.0) {
-        vec3 refractedDirection = refract(-v, n, 1.0 / max(ior, 1.0));
-        vec3 transmitted = sky(length(refractedDirection) > 0.001 ? refractedDirection : -v) * attenuationColor;
-        hdr = mix(hdr, transmitted + reflected * f, clamp(transmission, 0.0, 1.0));
-    }
-    vec3 mapped = hdr / (hdr + vec3(1.0));
-    colorOut = vec4(pow(mapped, vec3(1.0 / 2.2)), surface.a);
-})GLSL";
-            const GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource);
-            const GLuint fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource);
-            if (vertex == 0 || fragment == 0) return false;
-            m_program = glCreateProgram();
-            glAttachShader(m_program, vertex);
-            glAttachShader(m_program, fragment);
-            glLinkProgram(m_program);
-            glDeleteShader(vertex);
-            glDeleteShader(fragment);
-            GLint linked = GL_FALSE;
-            glGetProgramiv(m_program, GL_LINK_STATUS, &linked);
-            if (linked == GL_FALSE) return false;
-
-            glGenFramebuffers(1, &m_framebuffer);
-            glGenRenderbuffers(1, &m_depthBuffer);
-            glBindRenderbuffer(GL_RENDERBUFFER, m_depthBuffer);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kSize, kSize);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
-            return true;
-        }
-
-        static GLuint CreateTexture()
-        {
-            GLuint texture = 0;
-            glGenTextures(1, &texture);
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            return texture;
-        }
-
-        bool Render(GLuint target, render::Mesh &mesh, render::Material *material)
-        {
-            if (!Initialize()) return false;
-            GLint previousFramebuffer = 0, previousProgram = 0, previousVao = 0;
-            GLint previousActiveTexture = 0, previousCullMode = 0;
-            GLint previousTextures[4]{};
-            GLint previousViewport[4]{};
-            GLfloat previousClearColor[4]{};
-            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
-            glGetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
-            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previousVao);
-            glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
-            for (int unit = 0; unit < 4; ++unit)
+            m_renderer->SetImmediateTextureUploads(true);
+            m_renderer->InvalidateAssetCache();
+            if (!m_copyPipeline)
             {
-                glActiveTexture(GL_TEXTURE0 + unit);
-                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTextures[unit]);
+                render::rhi::GraphicsPipelineDescriptor copy;
+                const render::ShaderArtifactLibrary artifacts;
+                copy.vertexShader = artifacts.Load("ThumbnailCopy", "vertex");
+                copy.fragmentShader = artifacts.Load("ThumbnailCopy", "fragment");
+                copy.colorFormat = render::rhi::Format::R8G8B8A8Unorm;
+                copy.depthFormat = render::rhi::Format::Undefined;
+                copy.depthTest = copy.depthWrite = false;
+                copy.cullMode = render::rhi::CullMode::None;
+                copy.resourceBindings = {{1, 0, 1, render::rhi::ResourceBindingType::SampledTexture,
+                                          render::rhi::ShaderStageMask::Fragment}};
+                copy.debugName = "Thumbnail cache copy";
+                m_copyPipeline = render::rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
+                m_copySampler = render::rhi::Sampler(device, device.CreateSampler({}));
             }
-            glGetIntegerv(GL_CULL_FACE_MODE, &previousCullMode);
-            glGetIntegerv(GL_VIEWPORT, previousViewport);
-            glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
-            const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
-            const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target, 0);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
-            glViewport(0, 0, kSize, kSize);
-            glEnable(GL_DEPTH_TEST);
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
-            glClearColor(0.105f, 0.115f, 0.13f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
             const auto bounds = mesh.GetBounds();
-            const float radius = std::max(bounds.radius, 0.001f);
-            glm::mat4 model(1.0f);
-            model = glm::rotate(model, glm::radians(-18.0f), glm::vec3(1, 0, 0));
-            model = glm::rotate(model, glm::radians(32.0f), glm::vec3(0, 1, 0));
-            // Leave enough framing margin for the rotated sphere/mesh so highlights and
-            // silhouettes are not clipped by the square thumbnail edges.
-            model = glm::scale(model, glm::vec3(0.66f / radius));
-            model = glm::translate(model, -bounds.center);
-            const glm::mat4 view = glm::lookAt(glm::vec3(0, 0, 2.4f), glm::vec3(0), glm::vec3(0, 1, 0));
-            const glm::mat4 projection = glm::perspective(glm::radians(32.0f), 1.0f, 0.01f, 10.0f);
-            const glm::mat4 mvp = projection * view * model;
-
-            glUseProgram(m_program);
-            glUniformMatrix4fv(glGetUniformLocation(m_program, "mvp"), 1, GL_FALSE, glm::value_ptr(mvp));
-            glUniformMatrix4fv(glGetUniformLocation(m_program, "model"), 1, GL_FALSE, glm::value_ptr(model));
-            const auto config = material ? material->GetConfig() : render::MaterialConfig{};
-            glUniform4fv(glGetUniformLocation(m_program, "baseColor"), 1, glm::value_ptr(config.color));
-            const bool useAlbedo = config.albedoTexture && config.albedoTexture->GetTextureID() != 0;
-            glUniform1i(glGetUniformLocation(m_program, "useAlbedo"), useAlbedo ? 1 : 0);
-            glUniform1i(glGetUniformLocation(m_program, "albedo"), 0);
-            const auto bindTexture = [&](int unit, const char *sampler, const char *enabled, render::Texture *texture) {
-                const bool use = texture && texture->GetTextureID() != 0;
-                glUniform1i(glGetUniformLocation(m_program, sampler), unit);
-                glUniform1i(glGetUniformLocation(m_program, enabled), use ? 1 : 0);
-                glActiveTexture(GL_TEXTURE0 + unit);
-                glBindTexture(GL_TEXTURE_2D, use ? texture->GetTextureID() : 0);
-            };
-            bindTexture(0, "albedo", "useAlbedo", config.albedoTexture);
-            bindTexture(1, "normalMap", "useNormal", config.normalTexture);
-            bindTexture(2, "metallicMap", "useMetallic", config.metallicTexture);
-            bindTexture(3, "roughnessMap", "useRoughness", config.roughnessTexture);
-            glUniform1i(glGetUniformLocation(m_program, "flipNormalY"), config.flipNormalY ? 1 : 0);
-            glUniform1i(glGetUniformLocation(m_program, "metallicChannel"), static_cast<int>(config.metallicTextureChannel));
-            glUniform1i(glGetUniformLocation(m_program, "roughnessChannel"), static_cast<int>(config.roughnessTextureChannel));
-            glUniform1f(glGetUniformLocation(m_program, "metallicFactor"), config.metallic);
-            glUniform1f(glGetUniformLocation(m_program, "roughnessFactor"), config.roughness);
-            glUniform2fv(glGetUniformLocation(m_program, "uvScale"), 1, glm::value_ptr(config.uvScale));
-            glUniform3fv(glGetUniformLocation(m_program, "emission"), 1, glm::value_ptr(config.emission));
-            glUniform1f(glGetUniformLocation(m_program, "transmission"), config.transmission);
-            glUniform1f(glGetUniformLocation(m_program, "ior"), config.ior);
-            glUniform3fv(glGetUniformLocation(m_program, "attenuationColor"), 1, glm::value_ptr(config.attenuationColor));
-            const glm::vec3 cameraPosition(0, 0, 2.4f);
-            glUniform3fv(glGetUniformLocation(m_program, "cameraPosition"), 1, glm::value_ptr(cameraPosition));
-            mesh.Draw();
-
-            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-            glUseProgram(static_cast<GLuint>(previousProgram));
-            glBindVertexArray(static_cast<GLuint>(previousVao));
-            for (int unit = 0; unit < 4; ++unit)
-            {
-                glActiveTexture(GL_TEXTURE0 + unit);
-                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTextures[unit]));
-            }
-            glActiveTexture(static_cast<GLenum>(previousActiveTexture));
-            glCullFace(static_cast<GLenum>(previousCullMode));
-            glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
-            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-            if (!depthEnabled) glDisable(GL_DEPTH_TEST);
-            if (!cullEnabled) glDisable(GL_CULL_FACE);
-            return true;
+            render::RenderCommand command;
+            command.mesh = &mesh;
+            command.material = material;
+            command.castsShadow = false;
+            command.model = glm::rotate(glm::mat4(1), glm::radians(-18.0f), glm::vec3(1, 0, 0));
+            command.model = glm::rotate(command.model, glm::radians(32.0f), glm::vec3(0, 1, 0));
+            command.model = glm::scale(command.model, glm::vec3(0.66f / std::max(bounds.radius, 0.001f)));
+            command.model = glm::translate(command.model, -bounds.center);
+            render::CameraData camera;
+            camera.view = glm::lookAt(glm::vec3(0, 0, 2.4f), glm::vec3(0), glm::vec3(0, 1, 0));
+            camera.projection = glm::perspective(glm::radians(32.0f), 1.0f, 10.0f, 0.01f);
+            camera.nearPlane = 0.01f;
+            camera.farPlane = 10.0f;
+            render::BasicLighting lighting;
+            const std::array effects{
+                render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ToneMapping},
+                render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection}};
+            if (!m_renderer->Render(kSize, kSize, camera, lighting, {&command, 1}, {}, {}, effects, ReadPixels))
+                return false;
+            if (!entry.image)
+                entry.image =
+                    render::rhi::Texture(device, device.CreateTexture({kSize, kSize, render::rhi::Format::R8G8B8A8Unorm,
+                                                                       render::rhi::TextureUsage::ColorAttachment,
+                                                                       "Cached thumbnail", true}));
+            auto &commands = device.GetImmediateContext();
+            commands.BeginFrame("Asset thumbnail");
+            render::rhi::RenderingInfo info;
+            info.colorAttachments = {entry.image.Get()};
+            info.width = info.height = kSize;
+            commands.BeginRendering(info);
+            commands.BindPipeline(m_copyPipeline.Get());
+            commands.BindTexture(1, m_renderer->GetColorTexture(), m_copySampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+            commands.Submit();
+            Publish(entry, device, entry.image.Get());
+            return entry.texture != 0;
         }
     };
 
-    unsigned int GetCachedMaterialPreview(core::Engine &engine, const std::string &cacheKey,
-                                          const render::MaterialConfig &config, std::uint64_t revision)
+    namespace
     {
-        // The GL cache deliberately follows the process lifetime: static destruction can run
-        // after the editor has destroyed its OpenGL context.
-        static auto *previewCache = new AssetThumbnailCache();
-        return previewCache->GetMaterial(engine, cacheKey, config, revision);
+        std::unique_ptr<AssetThumbnailCache> materialPreviewCache;
+    }
+
+    void ClearCachedMaterialPreviews()
+    {
+        materialPreviewCache.reset();
+    }
+
+    std::uint64_t GetCachedMaterialPreview(core::Engine &engine, const std::string &cacheKey,
+                                           const render::MaterialConfig &config, std::uint64_t revision)
+    {
+        if (!materialPreviewCache)
+            materialPreviewCache = std::make_unique<AssetThumbnailCache>();
+        return materialPreviewCache->GetMaterial(engine, cacheKey, config, revision);
     }
 
     ContentBrowserPanel::ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
@@ -3060,7 +2900,7 @@ void main() {
             const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
             auto *drawList = ImGui::GetWindowDrawList();
             drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
-            const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+            const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
             if (thumbnail != 0)
             {
                 drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax,
@@ -3181,7 +3021,7 @@ void main() {
             const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
             auto *drawList = ImGui::GetWindowDrawList();
             drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
-            const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+            const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
             const std::string typeName(assets::Project::GetAssetTypeName(object.type));
             if (thumbnail != 0)
                 drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0));

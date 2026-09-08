@@ -85,8 +85,13 @@ namespace PlutoGE::render
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
             glm::vec4 temporalClipOffset{0.0f};
+            std::array<glm::vec4, 16> pointPositionRange{};
+            std::array<glm::vec4, 16> pointColorIntensity{};
+            std::array<glm::vec4, 16> pointSettings{};
+            std::array<glm::mat4, 24> pointShadowMatrices{};
+            glm::vec4 pointParameters{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 896);
+        static_assert(sizeof(BasicFrameParameters) == 3216);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -369,6 +374,7 @@ namespace PlutoGE::render
                 {15, 1, 7, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {16, 1, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {19, 1, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
@@ -422,6 +428,27 @@ namespace PlutoGE::render
                     {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
                 copy.debugName = "Glass scene snapshot";
                 m_glassSceneCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
+            }
+            if (!shaders.particles.vertexShader.spirv.empty() || !shaders.particles.vertexShader.glsl.empty())
+            {
+                auto particle = shaders.particles;
+                particle.colorFormat = rhi::Format::R16G16B16A16Float;
+                particle.depthWrite = false;
+                particle.blend.enabled = true;
+                particle.cullMode = rhi::CullMode::None;
+                particle.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                particle.vertexLayout = {
+                    sizeof(BasicParticleVertex),
+                    {{0, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, position)},
+                     {1, rhi::Format::R32G32B32A32Float, offsetof(BasicParticleVertex, color)},
+                     {2, rhi::Format::R32G32Float, offsetof(BasicParticleVertex, uv)},
+                     {3, rhi::Format::R32G32B32A32Float, offsetof(BasicParticleVertex, ageLifetimeRandomSize)},
+                     {4, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, center)}}};
+                particle.debugName = "RHI particles";
+                m_particlePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(particle));
             }
             rhi::GraphicsPipelineDescriptor shadowDescriptor;
             shadowDescriptor.vertexShader = shaders.shadowVertex;
@@ -833,6 +860,17 @@ namespace PlutoGE::render
         m_ssaoCompositeTarget.Reset();
         for (auto &target : m_ssaoHistoryTargets)
             target.Reset();
+        m_particlePipeline.Reset();
+        m_particleDepthCopy.Reset();
+        m_particleVertices.clear();
+        m_particleVertexCapacities.clear();
+        m_particleParameters.clear();
+        m_pointShadowColor.Reset();
+        m_pointShadowDepth.Reset();
+        for (auto &buffer : m_pointShadowCameras)
+            buffer.Reset();
+        m_pointShadowObjects.clear();
+        m_pointShadowMaterials.clear();
         m_colorTarget.Reset();
         m_normalTarget.Reset();
         m_materialTarget.Reset();
@@ -1095,12 +1133,10 @@ namespace PlutoGE::render
     void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
                                std::span<const BasicDraw> draws,
                                std::span<const BasicPostProcessEffect> postProcessEffects,
-                               std::span<const BasicDraw> shadowDraws,
-                               PostProcessDebugView debugView,
-                               const rhi::TemporalUpscalerFrame *upscalerFrame,
-                               const glm::mat4 *motionViewProjection,
-                               bool submit,
-                               std::span<const BasicDraw> giDraws)
+                               std::span<const BasicDraw> shadowDraws, PostProcessDebugView debugView,
+                               const rhi::TemporalUpscalerFrame *upscalerFrame, const glm::mat4 *motionViewProjection,
+                               bool submit, std::span<const BasicDraw> giDraws,
+                               std::span<const BasicParticleDraw> particles)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -1231,6 +1267,27 @@ namespace PlutoGE::render
                       1.0f, 0.0f),
             temporalClipOffset,
         };
+        const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
+        frameParameters.pointParameters = {static_cast<float>(pointCount),
+                                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f, 0.0f};
+        std::size_t pointShadowCount = 0;
+        constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+        for (std::size_t index = 0; index < pointCount; ++index)
+        {
+            const auto &light = lighting.pointLights[index];
+            frameParameters.pointPositionRange[index] = {light.position, light.range};
+            frameParameters.pointColorIntensity[index] = {light.color, light.intensity};
+            frameParameters.pointSettings[index].x = -1.0f;
+            if (!light.castsShadows || light.range <= 0.02f || pointShadowCount == 4)
+                continue;
+            frameParameters.pointSettings[index].x = static_cast<float>(pointShadowCount);
+            for (std::size_t face = 0; face < 6; ++face)
+                frameParameters.pointShadowMatrices[pointShadowCount * 6 + face] =
+                    glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.01f, light.range) *
+                    glm::lookAt(light.position, light.position + directions[face], ups[face]);
+            ++pointShadowCount;
+        }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         if (virtualShadowsActive)
         {
@@ -1413,6 +1470,89 @@ namespace PlutoGE::render
                 m_shadowCacheValid[cascade] = true;
             }
         }
+        if (pointShadowCount > 0)
+        {
+            if (!m_pointShadowColor)
+            {
+                m_pointShadowColor =
+                    rhi::Texture(*m_device, m_device->CreateTexture({3072, 2048, rhi::Format::R32Float,
+                                                                     rhi::TextureUsage::ColorAttachment,
+                                                                     "Point shadow atlas", true}));
+                m_pointShadowDepth =
+                    rhi::Texture(*m_device, m_device->CreateTexture({3072, 2048, rhi::Format::D32Float,
+                                                                     rhi::TextureUsage::DepthStencilAttachment,
+                                                                     "Point shadow depth", true}));
+            }
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_pointShadowColor.Get()};
+            info.depthAttachment = m_pointShadowDepth.Get();
+            info.width = 3072;
+            info.height = 2048;
+            info.clearColorValue[0] = 1;
+            info.clearDepthValue = 1;
+            commands.BeginRendering(info);
+            std::size_t objectIndex = 0;
+            for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+            {
+                if (!m_pointShadowCameras[face])
+                    m_pointShadowCameras[face] = rhi::Buffer(
+                        *m_device,
+                        m_device->CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow camera"}));
+                m_device->UpdateBuffer(m_pointShadowCameras[face].Get(), 0,
+                                       Bytes(frameParameters.pointShadowMatrices[face]));
+                commands.SetViewport(
+                    {static_cast<float>((face % 6) * 512), static_cast<float>((face / 6) * 512), 512, 512});
+                commands.SetScissor({static_cast<std::int32_t>((face % 6) * 512),
+                                     static_cast<std::int32_t>((face / 6) * 512), 512, 512});
+                const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
+                for (const auto &draw : shadowDraws)
+                {
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 ||
+                        draw.alphaMode == 2 || !frustum.Intersects(draw))
+                        continue;
+                    const auto available =
+                        draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                    const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
+                    if (!count)
+                        continue;
+                    const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline;
+                    commands.BindPipeline(masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
+                    commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const auto record = [&](const glm::mat4 &model) {
+                        if (objectIndex == m_pointShadowObjects.size())
+                        {
+                            m_pointShadowObjects.emplace_back(
+                                *m_device, m_device->CreateBuffer(
+                                               {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
+                            m_pointShadowMaterials.emplace_back(
+                                *m_device, m_device->CreateBuffer(
+                                               {sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Point shadow alpha"}));
+                        }
+                        m_device->UpdateBuffer(m_pointShadowObjects[objectIndex].Get(), 0, Bytes(model));
+                        commands.BindUniformBuffer(16, m_pointShadowObjects[objectIndex].Get());
+                        if (masked)
+                        {
+                            m_device->UpdateBuffer(m_pointShadowMaterials[objectIndex].Get(), 0,
+                                                   Bytes(glm::vec4(draw.uvScale, draw.alphaCutoff, draw.baseColor.a)));
+                            commands.BindUniformBuffer(8, m_pointShadowMaterials[objectIndex].Get());
+                            commands.BindTexture(
+                                9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                                m_fallbackSampler.Get());
+                        }
+                        commands.DrawIndexed(count, draw.firstIndex);
+                        ++objectIndex;
+                    };
+                    if (draw.instanceModels && !draw.instanceModels->empty())
+                        for (const auto &model : *draw.instanceModels)
+                            record(model);
+                    else
+                        record(draw.model);
+                }
+            }
+            commands.EndRendering();
+        }
         shadowScope.End();
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
@@ -1538,6 +1678,8 @@ namespace PlutoGE::render
             if (transparent || !geometryResourcesBound)
             {
                 commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
+                commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
+                                     m_shadowSampler.Get());
                 commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
@@ -1679,6 +1821,74 @@ namespace PlutoGE::render
                 commands.EndRendering();
             }
         };
+        bool particlesPending = !particles.empty();
+        const auto renderParticles = [&]() {
+            if (!particlesPending || !m_particlePipeline)
+                return;
+            particlesPending = false;
+            // Copy depth alongside color using the existing portable snapshot pass.
+            auto &snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height);
+            // Recreate on resize; depth is sampled independently from the depth attachment.
+            if (!m_particleDepthCopy || m_particleDepthSize.width != m_width || m_particleDepthSize.height != m_height)
+            {
+                m_particleDepthCopy =
+                    rhi::Texture(*m_device, m_device->CreateTexture({m_width, m_height, rhi::Format::R32Float,
+                                                                     rhi::TextureUsage::ColorAttachment,
+                                                                     "Particle scene depth", true}));
+                m_particleDepthSize = {m_width, m_height};
+            }
+            rhi::RenderingInfo copy;
+            copy.colorAttachments = {snapshot.Get(), m_particleDepthCopy.Get()};
+            copy.width = m_width;
+            copy.height = m_height;
+            commands.BeginRendering(copy);
+            commands.BindPipeline(m_glassSceneCopyPipeline.Get());
+            commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+            commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_outputColor};
+            info.depthAttachment = m_depthTarget.Get();
+            info.width = m_width;
+            info.height = m_height;
+            info.clearColor = info.clearDepth = false;
+            commands.BeginRendering(info);
+            commands.BindPipeline(m_particlePipeline.Get());
+            for (std::size_t index = 0; index < particles.size(); ++index)
+            {
+                const auto &draw = particles[index];
+                if (draw.vertices.empty())
+                    continue;
+                while (m_particleVertices.size() <= index)
+                {
+                    m_particleVertices.emplace_back();
+                    m_particleVertexCapacities.push_back(0);
+                    m_particleParameters.emplace_back(
+                        *m_device, m_device->CreateBuffer({sizeof(BasicParticleParameters), rhi::BufferUsage::Uniform,
+                                                           "Particle parameters"}));
+                }
+                const auto size = draw.vertices.size() * sizeof(BasicParticleVertex);
+                if (m_particleVertexCapacities[index] < size)
+                {
+                    m_particleVertices[index] = rhi::Buffer(
+                        *m_device, m_device->CreateBuffer({size, rhi::BufferUsage::Vertex, "Particle vertices"}));
+                    m_particleVertexCapacities[index] = size;
+                }
+                m_device->UpdateBuffer(m_particleVertices[index].Get(), 0,
+                                       {reinterpret_cast<const std::byte *>(draw.vertices.data()), size});
+                auto parameters = draw.parameters;
+                parameters.values[23] = {1.0f / m_width, 1.0f / m_height,
+                                         m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0};
+                m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
+                commands.BindUniformBuffer(0, m_particleParameters[index].Get());
+                commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
+                commands.BindVertexBuffer(m_particleVertices[index].Get());
+                commands.Draw(static_cast<std::uint32_t>(draw.vertices.size()));
+            }
+            commands.EndRendering();
+        };
         const bool temporalUpscalerRequested =
             m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
             upscalerFrame && m_temporalUpscalerOutput &&
@@ -1730,7 +1940,10 @@ namespace PlutoGE::render
         for (const auto &effect : postProcessEffects)
         {
             if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
+            {
+                renderParticles();
                 renderTransparency();
+            }
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
                 evaluateTemporalUpscaler();
             if (temporalUpscalerEvaluated && effect.type == BasicPostProcessEffectType::TAA)
@@ -1891,6 +2104,7 @@ namespace PlutoGE::render
                 m_taaHistoryValid = true;
             }
         }
+        renderParticles();
         renderTransparency();
         evaluateTemporalUpscaler();
         if (m_displayPipeline && m_displayTarget)

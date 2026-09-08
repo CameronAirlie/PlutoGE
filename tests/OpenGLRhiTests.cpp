@@ -1,12 +1,13 @@
-#include "ShadowFilteringChecks.h"
-#include "TextureMipRenderingChecks.h"
-#include "SsrRenderingChecks.h"
-#include "VsmOnlyRenderingChecks.h"
 #include "GlassRenderingChecks.h"
+#include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/Resource.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
+#include "ShadowFilteringChecks.h"
+#include "SsrRenderingChecks.h"
+#include "TextureMipRenderingChecks.h"
+#include "VsmOnlyRenderingChecks.h"
 
 #include <array>
 #include <cassert>
@@ -140,6 +141,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
+        shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
+        shaders.particles.fragmentShader.glsl = ReadText("Particles.fragment.glsl");
         shaders.vertex.glsl = ReadText("BasicLit.vertex.glsl");
         shaders.instancedVertex.glsl = ReadText("BasicLitInstanced.vertex.glsl");
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
@@ -199,6 +202,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         try
         {
+            // This focused path does not use VSM. Keep unrelated compute binding
+            // limits on older OpenGL drivers from blocking particle/point checks.
+            if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
+                shaders.virtualShadows = {};
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
                 return 6;
         }
@@ -208,6 +215,24 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
+        {
+            try
+            {
+            CheckParticlePointRendering(basicRenderer, [&](render::rhi::TextureHandle texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            }
+            catch (const std::exception &error)
+            {
+                std::cerr << error.what() << std::endl;
+                return 1;
+            }
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "--vsm-only")
         {
             CheckVsmOnlyRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
@@ -247,7 +272,12 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 
-
+        CheckParticlePointRendering(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
         CheckGlassRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
         {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

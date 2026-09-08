@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 
 #include "PlutoGE/platform/Window.h"
@@ -50,8 +51,8 @@ namespace PlutoGE::ui
 
             void BeginFrame() override
             {
-                ImGui_ImplOpenGL3_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
+                { core::CpuScope scope("ImGui OpenGL backend new frame", core::CpuCategory::UI); ImGui_ImplOpenGL3_NewFrame(); }
+                { core::CpuScope scope("ImGui GLFW new frame", core::CpuCategory::UI); ImGui_ImplGlfw_NewFrame(); }
             }
 
             void RenderDrawData() override
@@ -296,8 +297,8 @@ namespace PlutoGE::ui
 
             void BeginFrame() override
             {
-                ImGui_ImplVulkan_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
+                { core::CpuScope scope("ImGui Vulkan backend new frame", core::CpuCategory::UI); ImGui_ImplVulkan_NewFrame(); }
+                { core::CpuScope scope("ImGui GLFW new frame", core::CpuCategory::UI); ImGui_ImplGlfw_NewFrame(); }
             }
 
             void RenderDrawData() override { m_drawData = ImGui::GetDrawData(); }

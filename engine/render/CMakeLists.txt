@@ -143,6 +143,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
     endfunction()
 
+    pluto_add_slang_graphics_shader(ThumbnailCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ThumbnailCopy.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(Particles "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLit "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
     pluto_add_slang_graphics_shader(GlassSceneCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain fragmentMain)

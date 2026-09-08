@@ -531,10 +531,9 @@ namespace PlutoGE::ui
 
         const float previewExtent = (std::min)(ImGui::GetContentRegionAvail().x, 280.0f);
         const ImVec2 previewSize(previewExtent, previewExtent);
-        const unsigned int previewTexture = GetCachedMaterialPreview(editorShell.GetEngine(),
-                                                                      "material-editor:" + reference,
-                                                                      previewConfig,
-                                                                      static_cast<std::uint64_t>(previewRevision));
+        const std::uint64_t previewTexture =
+            GetCachedMaterialPreview(editorShell.GetEngine(), "material-editor:" + reference, previewConfig,
+                                     static_cast<std::uint64_t>(previewRevision));
         if (previewTexture != 0)
             ImGui::Image(static_cast<ImTextureID>(previewTexture), previewSize, ImVec2(0, 1), ImVec2(1, 0));
         else

@@ -28,10 +28,9 @@ namespace PlutoGE::ui
 {
     // Renders (and caches) the same lit material sphere used by content-browser thumbnails.
     // `revision` must change whenever any preview input changes.
-    unsigned int GetCachedMaterialPreview(core::Engine &engine,
-                                          const std::string &cacheKey,
-                                          const render::MaterialConfig &config,
-                                          std::uint64_t revision);
+    std::uint64_t GetCachedMaterialPreview(core::Engine &engine, const std::string &cacheKey,
+                                           const render::MaterialConfig &config, std::uint64_t revision);
+    void ClearCachedMaterialPreviews();
     class AssetThumbnailCache;
     class AssetReferenceSearchPanel;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";

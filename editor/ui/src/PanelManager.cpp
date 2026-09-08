@@ -1,6 +1,7 @@
-#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/PanelManager.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include "PlutoGE/ui/panels/Panel.h"
 
@@ -382,6 +383,7 @@ namespace PlutoGE::ui
 
     void PanelManager::ShutdownPanels()
     {
+        ClearCachedMaterialPreviews();
         for (auto panel : m_panels)
         {
             panel->Shutdown();
@@ -392,6 +394,7 @@ namespace PlutoGE::ui
 
     void PanelManager::BeginPanelUpdate()
     {
+        core::CpuScope frameScope("ImGui frame startup", core::CpuCategory::UI);
         const auto beginPanelUpdateStart = std::chrono::high_resolution_clock::now();
         auto &io = ImGui::GetIO();
         const bool suppressImguiMouse = m_window && m_window->IsCursorLocked();
@@ -418,7 +421,7 @@ namespace PlutoGE::ui
                 io.MouseReleased[buttonIndex] = false;
             }
         }
-        ImGui::NewFrame();
+        { core::CpuScope scope("ImGui core new frame", core::CpuCategory::UI); ImGui::NewFrame(); }
         ImGuizmo::BeginFrame();
         const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
         if (m_applyDefaultLayout)

@@ -49,6 +49,8 @@ namespace PlutoGE::render
             .maskedShadowFragment = Load("DirectionalShadowMasked", "fragment"),
             .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
                               .fragment = Load("DisplayOutput", "fragment")}};
+        result.particles.vertexShader = Load("Particles", "vertex");
+        result.particles.fragmentShader = Load("Particles", "fragment");
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {

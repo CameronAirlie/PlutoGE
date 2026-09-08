@@ -426,3 +426,6 @@ if (TARGET PlutoGEEditorUI)
     add_test(NAME PlutoGEEditorProfilerPanelTests COMMAND PlutoGEEditorProfilerPanelTests)
     set_tests_properties(PlutoGEEditorProfilerPanelTests PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+add_test(NAME PlutoGEVulkanParticlePointTests COMMAND PlutoGEVulkanRhiTests --particles-points-only)
+add_test(NAME PlutoGEOpenGLParticlePointTests COMMAND PlutoGEOpenGLRhiTests --particles-points-only)

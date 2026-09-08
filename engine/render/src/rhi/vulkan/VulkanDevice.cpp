@@ -1162,8 +1162,12 @@ namespace PlutoGE::render::rhi::vulkan
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             Check(vkBeginCommandBuffer(frame.commandBuffer, &begin), "vkBeginCommandBuffer(frame)");
-            vkCmdResetQueryPool(frame.commandBuffer, frame.queryPool, 0, MaxTimestampQueries);
-            vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, 0);
+            frame.profilingEnabled = m_gpuProfilingEnabled;
+            if (frame.profilingEnabled)
+            {
+                vkCmdResetQueryPool(frame.commandBuffer, frame.queryPool, 0, MaxTimestampQueries);
+                vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, 0);
+            }
             frame.nextQuery = 2;
             frame.scopes.clear();
             frame.hasTimestamps = false;
@@ -1254,10 +1258,12 @@ namespace PlutoGE::render::rhi::vulkan
             m_rendering = false;
         }
 
+        void SetGpuProfilingEnabled(bool enabled) override { m_gpuProfilingEnabled = enabled; }
+
         void BeginGpuScope(std::string_view name) override
         {
             auto &frame = m_frames[m_frameIndex];
-            if (!m_recording)
+            if (!m_recording || !frame.profilingEnabled)
                 return;
             // Reserve both queries now, so a nested scope cannot consume its parent's end query.
             const bool available = frame.nextQuery + 1 < MaxTimestampQueries;
@@ -1290,6 +1296,7 @@ namespace PlutoGE::render::rhi::vulkan
 
         void Submit() override
         {
+            core::CpuScope submitScope("Vulkan scene submission", core::CpuCategory::Rendering);
             if (m_rendering)
                 throw std::logic_error("Cannot submit while Vulkan rendering is active");
             if (!m_recording)
@@ -1298,22 +1305,33 @@ namespace PlutoGE::render::rhi::vulkan
             while (!m_activeScopes.empty())
                 EndGpuScope();
             m_impl.FlushUniformArena();
-            vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
-            frame.hasTimestamps = true;
-            Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer");
+            if (frame.profilingEnabled)
+            {
+                vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
+                frame.hasTimestamps = true;
+            }
+            { core::CpuScope scope("Vulkan end command buffer", core::CpuCategory::Rendering);
+              Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer"); }
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
-            Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(frame)");
+            { core::CpuScope scope("Vulkan queue submit", core::CpuCategory::Rendering);
+              Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(frame)"); }
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
+            if (!frame.profilingEnabled)
+            {
+                m_impl.timingStats.frameGpuMs = 0.0f;
+                m_impl.timingStats.hasGpuResult = false;
+                m_impl.timingStats.gpuScopes.clear();
+            }
             auto &published = m_impl.timingStatsBySubmission[frame.submissionLabel];
             const float resolvedGpuMs = published.frameGpuMs;
             const bool hasResolvedGpu = published.hasGpuResult;
             auto resolvedGpuScopes = std::move(published.gpuScopes);
             published = m_impl.timingStats;
-            published.frameGpuMs = resolvedGpuMs;
-            published.hasGpuResult = hasResolvedGpu;
-            published.gpuScopes = std::move(resolvedGpuScopes);
+            published.frameGpuMs = frame.profilingEnabled ? resolvedGpuMs : 0.0f;
+            published.hasGpuResult = frame.profilingEnabled && hasResolvedGpu;
+            published.gpuScopes = frame.profilingEnabled ? std::move(resolvedGpuScopes) : std::vector<RenderDeviceTimingStats::GpuScope>{};
             m_recording = false;
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
         }
@@ -1817,6 +1835,7 @@ namespace PlutoGE::render::rhi::vulkan
         }
 
         VulkanDevice::Impl &m_impl;
+        bool m_gpuProfilingEnabled = true;
         struct FrameResources
         {
             VkCommandPool commandPool = VK_NULL_HANDLE;
@@ -1834,6 +1853,7 @@ namespace PlutoGE::render::rhi::vulkan
             std::vector<Scope> scopes;
             std::uint32_t nextQuery = 2;
             bool hasTimestamps = false;
+            bool profilingEnabled = true;
             std::string submissionLabel = "Unlabelled";
             std::uint64_t submissionSerial = 0;
             struct Readback

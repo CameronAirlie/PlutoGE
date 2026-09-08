@@ -218,6 +218,7 @@ namespace PlutoGE::core
             return false;
         }
         m_renderDevice = std::move(deviceCreation.device);
+        m_renderDevice->GetImmediateContext().SetGpuProfilingEnabled(m_config.isEditorHost);
         try
         {
             m_swapchain = m_renderDevice->CreateSwapchain(presentation);

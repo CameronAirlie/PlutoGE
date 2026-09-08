@@ -61,9 +61,9 @@ namespace PlutoGE::render
         const bool combineRuntimeUiSubmission = scene && scene->HasRmlRuntimeUI() &&
                                                 RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
-        if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(),
-                                     cameraData, lighting, commands, commands, {}, {}, texturePixelReader,
-                                     PostProcessDebugView::None, !combineRuntimeUiSubmission))
+        if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
+                                     commands, {}, {}, texturePixelReader, PostProcessDebugView::None,
+                                     !combineRuntimeUiSubmission, scene))
             return false;
         if (scene && scene->HasRmlRuntimeUI())
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),

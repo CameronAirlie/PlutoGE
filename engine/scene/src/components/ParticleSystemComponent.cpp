@@ -151,6 +151,28 @@ namespace PlutoGE::scene
 
     void ParticleSystemComponent::Update(float deltaTime)
     {
+        if (UsesCpuSimulation() && GetOwner())
+        {
+            const auto transform = GetOwner()->GetWorldTransform();
+            if (m_cpuEmitterTransformValid && transform != m_cpuEmitterTransform &&
+                std::abs(glm::determinant(m_cpuEmitterTransform)) > 0.000001f)
+            {
+                const auto delta = transform * glm::inverse(m_cpuEmitterTransform);
+                for (std::size_t index = 0; index < m_cpuParticles.size(); ++index)
+                {
+                    auto &particle = m_cpuParticles[index];
+                    if (!particle.active || !particle.followsEmitter)
+                        continue;
+                    particle.position = glm::vec3(delta * glm::vec4(particle.position, 1));
+                    particle.velocity = glm::mat3(delta) * particle.velocity;
+                    if (index < m_trails.size())
+                        for (auto &point : m_trails[index])
+                            point.position = glm::vec3(delta * glm::vec4(point.position, 1));
+                }
+            }
+            m_cpuEmitterTransform = transform;
+            m_cpuEmitterTransformValid = true;
+        }
         if (m_playOnAwake && !m_playing && !m_paused && m_time == 0.0f)
         {
             Play();
@@ -532,7 +554,7 @@ namespace PlutoGE::scene
 
     bool ParticleSystemComponent::UsesCpuSimulation() const
     {
-        return m_collisionEnabled || m_trailsEnabled ||
+        return core::Engine::GetInstance().GetRenderDevice() != nullptr || m_collisionEnabled || m_trailsEnabled ||
                !m_collisionSubEmitterAssetReference.empty() || !m_deathSubEmitterAssetReference.empty() ||
                m_emitAtRequested;
     }
@@ -556,13 +578,20 @@ namespace PlutoGE::scene
         }
 
         const glm::vec3 origin = owner->GetWorldPosition();
-        if (m_simulationSpace == ParticleSimulationSpace::World)
-        {
-            SpawnCpuParticlesAt(origin, count);
-            return;
-        }
-
+        const int first = m_nextCpuEmitIndex;
         SpawnCpuParticlesAt(origin, count);
+        if (m_maxParticles <= 0)
+            return;
+        const auto transform = owner->GetWorldTransform();
+        for (int emitted = 0; emitted < std::min(count, m_maxParticles); ++emitted)
+        {
+            auto &particle = m_cpuParticles[static_cast<std::size_t>((first + emitted) % m_maxParticles)];
+            particle.position = glm::vec3(transform * glm::vec4(particle.position - origin, 1));
+            particle.velocity = glm::mat3(transform) * particle.velocity;
+            particle.followsEmitter = m_simulationSpace == ParticleSimulationSpace::Local;
+        }
+        m_cpuEmitterTransform = transform;
+        m_cpuEmitterTransformValid = true;
     }
 
     void ParticleSystemComponent::SpawnCpuParticlesAt(const glm::vec3 &worldPosition, int count)
@@ -596,6 +625,7 @@ namespace PlutoGE::scene
             particle.seed = seed;
             particle.active = true;
             particle.deathSubEmitterFired = false;
+            particle.followsEmitter = false;
 
             if (particleIndex < static_cast<int>(m_trails.size()))
             {

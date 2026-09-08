@@ -1597,6 +1597,7 @@ namespace PlutoGE::render
 
     void Renderer::PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight)
     {
+        core::CpuScope scope("Viewport visibility preparation", core::CpuCategory::Rendering);
         const auto preparationStart = std::chrono::high_resolution_clock::now();
         EnsureRenderCommandsSorted();
         const auto sortEnd = std::chrono::high_resolution_clock::now();

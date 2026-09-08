@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 
@@ -4010,6 +4011,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
     {
+        core::CpuScope scope("Game viewport frame", core::CpuCategory::Rendering);
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !requiresRhiViewport))
             return;
@@ -4095,6 +4097,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::PresentSceneRenderTarget()
     {
+        core::CpuScope scope("Viewport target presentation", core::CpuCategory::Rendering);
         if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
             return;
         auto *source = GetSceneRenderTarget();
@@ -4115,6 +4118,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::ClearFrame()
     {
+        core::CpuScope scope("Viewport clear", core::CpuCategory::Rendering);
         m_hasGameDebugCamera = false;
         if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan ||
             !m_renderTarget || !m_renderTarget->IsInitialized())

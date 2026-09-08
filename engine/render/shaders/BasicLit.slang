@@ -5,6 +5,8 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(12, 1)]] Sampler2D virtualShadowTable : register(t12, space1);
 #include "VirtualShadowSampling.slang"
 
+[[vk::binding(13, 1)]] Sampler2D pointShadowAtlas : register(t13, space1);
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -59,6 +61,11 @@ cbuffer CameraParameters : register(b0, space0)
     float4 physicalSkyParameters[6];
     float4 physicalSkySettings;
     float4 temporalClipOffset;
+    float4 pointPositionRange[16];
+    float4 pointColorIntensity[16];
+    float4 pointSettings[16];
+    column_major float4x4 pointShadowMatrices[24];
+    float4 pointParameters;
 };
 
 [[vk::binding(0, 2)]]
@@ -574,6 +581,54 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     const float3 diffuse = diffuseWeight * sampledColor.rgb / 3.14159265;
     const float3 direct = (diffuse + specular) * directionalColor.rgb *
                           directionalDirectionIntensity.w * ndotl;
+    float3 pointLighting = 0.0;
+    float3 pointSpecularLighting = 0.0;
+    for (uint light = 0; light < uint(pointParameters.x); ++light)
+    {
+        const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
+        const float distance = length(offset);
+        const float range = pointPositionRange[light].w;
+        if (range <= 0.0 || distance >= range) continue;
+        const float3 l = offset / max(distance, 0.0001);
+        const float3 h = normalize(l + viewDirection);
+        const float nl = saturate(dot(normal, l));
+        const float nh = saturate(dot(normal, h));
+        const float hv = saturate(dot(h, viewDirection));
+        const float3 f = f0 + (1.0 - f0) * pow(1.0 - hv, 5.0);
+        const float d = nh * nh * (alphaSquared - 1.0) + 1.0;
+        const float distributionPoint = alphaSquared / max(PI * d * d, 0.0001);
+        const float geometryPoint = nl / max(nl * (1.0 - geometryK) + geometryK, 0.0001);
+        const float3 brdf = (1.0 - f) * (1.0 - materialMetallic) * sampledColor.rgb / PI +
+            distributionPoint * geometryView * geometryPoint * f / max(4.0 * ndotv * nl, 0.0001);
+        float visibility = 1.0;
+        if (pointSettings[light].x >= 0.0)
+        {
+            const float3 ray = -offset;
+            const float3 axis = abs(ray);
+            const uint face = axis.x >= axis.y && axis.x >= axis.z ? (ray.x >= 0.0 ? 0 : 1) :
+                (axis.y >= axis.z ? (ray.y >= 0.0 ? 2 : 3) : (ray.z >= 0.0 ? 4 : 5));
+            const uint row = uint(pointSettings[light].x);
+            const float4 clip = mul(pointShadowMatrices[row * 6 + face], float4(input.worldPosition, 1.0));
+            const float3 projected = clip.xyz / clip.w;
+            float2 uv = projected.xy * 0.5 + 0.5;
+            if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
+            const float bias = max(0.00002, 0.0002 * (1.0 - nl));
+            visibility = 0.0;
+            for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x)
+                {
+                    const float2 tap = clamp(uv + float2(x,y) / pointParameters.z,
+                        0.5 / pointParameters.z, 1.0 - 0.5 / pointParameters.z);
+                    const float depth = pointShadowAtlas.Sample((tap + float2(face,row)) / float2(6,4)).r;
+                    visibility += projected.z - bias <= depth ? 1.0 / 9.0 : 0.0;
+                }
+        }
+        const float attenuation = pow(saturate(1.0 - distance / range), 2.0);
+        const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
+        pointLighting += brdf * pointRadiance;
+        pointSpecularLighting += distributionPoint * geometryView * geometryPoint * f /
+            max(4.0 * ndotv * nl, 0.0001) * pointRadiance;
+    }
     const float subsurfaceStrength = saturate(subsurfaceColorStrength.w) * (1.0 - materialMetallic);
     const float subsurfaceRadius = max(subsurfaceRadiusPadding.x, 0.001);
     const float wrappedNdotL = saturate((dot(normal, lightDirection) + subsurfaceRadius * 0.25) /
@@ -695,7 +750,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
     }
     FragmentOutput output;
-    output.color = float4(ambient + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
+    output.color = float4(ambient + pointLighting + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
                           sampledColor.a);
 #ifdef PLUTO_GLASS
     if (glass)
@@ -737,7 +792,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                       ndotl * shadowVisibility;
         const float3 transmissionWeight = (1.0 - viewFresnel) * transmission * absorption * saturate(sampledColor.rgb);
         const float3 surface = (1.0 - viewFresnel) * (1.0 - transmission) * surfaceDiffuse +
-                               viewFresnel * environment + directSpecular + emission;
+                               viewFresnel * environment + directSpecular + emission + pointSpecularLighting +
+                               (pointLighting - pointSpecularLighting) * (1.0 - transmission);
         const float4 fog = glassAtmosphere(input.worldPosition);
         output.color = float4(transmissionWeight * background + fog.a * surface +
                                (1.0 - transmissionWeight) * fog.rgb, saturate(sampledColor.a));

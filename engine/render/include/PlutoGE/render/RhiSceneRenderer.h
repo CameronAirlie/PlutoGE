@@ -10,6 +10,11 @@
 #include <string>
 #include <unordered_map>
 
+namespace PlutoGE::scene
+{
+    class Scene;
+}
+
 namespace PlutoGE::render
 {
     struct RhiSceneTimingStats
@@ -74,6 +79,21 @@ namespace PlutoGE::render
 
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
         void Shutdown();
+        void SetImmediateTextureUploads(bool enabled) noexcept
+        {
+            m_immediateTextureUploads = enabled;
+        }
+        void InvalidateAssetCache()
+        {
+            if (m_normalMipJob.valid())
+                m_normalMipJob.wait();
+            m_normalMipJob = {};
+            m_pendingNormalSource = nullptr;
+            m_srgbTextures.clear();
+            m_linearTextures.clear();
+            m_normalTextures.clear();
+            m_meshes.clear();
+        }
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
             if (m_upscalerOptions == options)
@@ -99,15 +119,14 @@ namespace PlutoGE::render
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
-        bool Render(std::uint32_t width, std::uint32_t height,
-                    const CameraData &cameraData, const BasicLighting &lighting,
-                    std::span<const RenderCommand> commands,
+        bool Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
+                    const BasicLighting &lighting, std::span<const RenderCommand> commands,
                     std::span<const RenderCommand> shadowCommands,
                     std::span<IPostProcessEffect *const> postProcessEffects = {},
                     std::span<const BasicPostProcessEffect> atmosphereEffects = {},
                     const TexturePixelReader &texturePixelReader = {},
-                    PostProcessDebugView debugView = PostProcessDebugView::None,
-                    bool submit = true);
+                    PostProcessDebugView debugView = PostProcessDebugView::None, bool submit = true,
+                    const scene::Scene *scene = nullptr);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept;
@@ -123,28 +142,29 @@ namespace PlutoGE::render
         }
 
     private:
-        rhi::IRenderDevice *m_device = nullptr;
-        std::unique_ptr<BasicRenderer> m_renderer;
-        std::unordered_map<const Mesh *, BasicMesh> m_meshes;
-        std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
-        std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
-        std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;
-        // One CPU-only job bounds worker count and temporary image memory.
-        std::future<std::vector<std::byte>> m_normalMipJob;
-        const Texture *m_pendingNormalSource = nullptr;
-        std::uint32_t m_pendingNormalWidth = 0;
-        std::uint32_t m_pendingNormalHeight = 0;
-        std::size_t m_sceneCommandCount = 0;
-        std::size_t m_drawCount = 0;
-        RhiSceneTimingStats m_timingStats;
-        std::uint64_t m_temporalFrameIndex = 0;
-        glm::vec2 m_previousTemporalJitterNdc{0.0f};
-        rhi::TemporalUpscalerOptions m_upscalerOptions;
-        glm::mat4 m_previousUpscalerViewProjection{1.0f};
-        rhi::Extent2D m_previousRenderSize;
-        rhi::Extent2D m_previousOutputSize;
-        bool m_upscalerHistoryValid = false;
-        TemporalUpscalerStatus m_upscalerStatus;
-        std::uint64_t m_upscalerContextId = 0;
+      bool m_immediateTextureUploads = false;
+      rhi::IRenderDevice *m_device = nullptr;
+      std::unique_ptr<BasicRenderer> m_renderer;
+      std::unordered_map<const Mesh *, BasicMesh> m_meshes;
+      std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
+      std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
+      std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;
+      // One CPU-only job bounds worker count and temporary image memory.
+      std::future<std::vector<std::byte>> m_normalMipJob;
+      const Texture *m_pendingNormalSource = nullptr;
+      std::uint32_t m_pendingNormalWidth = 0;
+      std::uint32_t m_pendingNormalHeight = 0;
+      std::size_t m_sceneCommandCount = 0;
+      std::size_t m_drawCount = 0;
+      RhiSceneTimingStats m_timingStats;
+      std::uint64_t m_temporalFrameIndex = 0;
+      glm::vec2 m_previousTemporalJitterNdc{0.0f};
+      rhi::TemporalUpscalerOptions m_upscalerOptions;
+      glm::mat4 m_previousUpscalerViewProjection{1.0f};
+      rhi::Extent2D m_previousRenderSize;
+      rhi::Extent2D m_previousOutputSize;
+      bool m_upscalerHistoryValid = false;
+      TemporalUpscalerStatus m_upscalerStatus;
+      std::uint64_t m_upscalerContextId = 0;
     };
 }

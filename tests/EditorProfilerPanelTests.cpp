@@ -132,6 +132,7 @@ int main(int argc, char **argv)
     click(700, 150);
     panel.CopyMetricsToClipboard();
     const auto selectedFrameLine = clipboard.substr(0, clipboard.find('\n'));
+    valid = valid && clipboard.find("Slowest CPU trace scopes") != std::string::npos;
     const auto append = [&](std::uint64_t sequence)
     {
         PlutoGE::ui::EditorProfileFrame frame;

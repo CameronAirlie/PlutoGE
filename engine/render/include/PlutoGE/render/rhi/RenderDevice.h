@@ -70,6 +70,8 @@ namespace PlutoGE::render::rhi
         // (for example, the scene followed by runtime UI). The stable label
         // keeps timing results associated with the work that produced them.
         virtual void BeginFrame(std::string_view submissionLabel = {}) { (void)submissionLabel; }
+        // Changes apply to the next submission, preserving active scope pairs.
+        virtual void SetGpuProfilingEnabled(bool enabled) { (void)enabled; }
         virtual void BeginGpuScope(std::string_view) {}
         virtual void EndGpuScope() {}
         virtual void BeginRendering(const RenderingInfo &info) = 0;

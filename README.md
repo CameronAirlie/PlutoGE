@@ -55,6 +55,9 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Post-processing effects including bloom, tone mapping, color grading, auto exposure, SSAO, SSGI, SSR, TAA, FXAA, motion blur, depth of field, lens flare, volumetric fog, gamma correction, LPV/RSM lighting, and voxel cone tracing
 - CPU/GPU render-pass timings and draw/submission statistics in the editor profiler
 
+Standalone games disable OpenGL renderer profiling and Vulkan GPU timestamp/scope
+profiling automatically. Editor hosts retain these diagnostics for the profiler.
+
 Some advanced rendering paths are experimental and may depend on scene setup, compatible hardware, or generated bake data.
 
 ### Gameplay systems

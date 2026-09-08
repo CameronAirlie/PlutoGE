@@ -1,13 +1,14 @@
-#include "VirtualShadowPerformanceChecks.h"
-#include "TextureMipRenderingChecks.h"
-#include "VsmOnlyRenderingChecks.h"
-#include "ShadowFilteringChecks.h"
-#include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
-#include "VctWorldCacheRenderingChecks.h"
+#include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "ShadowFilteringChecks.h"
+#include "SsrRenderingChecks.h"
+#include "TextureMipRenderingChecks.h"
+#include "VctWorldCacheRenderingChecks.h"
+#include "VirtualShadowPerformanceChecks.h"
+#include "VsmOnlyRenderingChecks.h"
 
 #include <array>
 #include <filesystem>
@@ -101,10 +102,19 @@ int main(int argc, char **argv)
             shaders.vctPostProcess[index].vertex.spirv = ReadSpirv((std::string(vctModules[index]) + ".vertex.spv").c_str());
             shaders.vctPostProcess[index].fragment.spirv = ReadSpirv((std::string(vctModules[index]) + ".fragment.spv").c_str());
         }
+        shaders.particles.vertexShader.spirv = ReadSpirv("Particles.vertex.spv");
+        shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
+        {
+            CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")
         {
             CheckVctWorldCacheRendering(renderer, [&](rhi::TextureHandle texture)
@@ -198,8 +208,33 @@ int main(int argc, char **argv)
             const auto timing = device.GetTimingStats("NestedTimingTest");
             if (!timing.hasGpuResult || timing.gpuScopes.size() < 2 || timing.gpuScopes.back().name != "parent")
                 throw std::runtime_error("Nested GPU timing lost its parent or failed to resolve");
+            commands.SetGpuProfilingEnabled(false);
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                commands.BeginFrame("NestedTimingTest");
+                commands.BeginGpuScope("disabled");
+                commands.EndGpuScope();
+                commands.Submit();
+                const auto disabledTiming = device.GetTimingStats("NestedTimingTest");
+                if (disabledTiming.hasGpuResult || !disabledTiming.gpuScopes.empty() || disabledTiming.frameGpuMs != 0.0f)
+                    throw std::runtime_error("Disabled GPU profiling published stale timings");
+            }
+            commands.SetGpuProfilingEnabled(true);
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                commands.BeginFrame("NestedTimingTest");
+                commands.BeginGpuScope("restored");
+                commands.EndGpuScope();
+                commands.Submit();
+            }
+            const auto restoredTiming = device.GetTimingStats("NestedTimingTest");
+            if (!restoredTiming.hasGpuResult || restoredTiming.gpuScopes.size() != 1 || restoredTiming.gpuScopes.front().name != "restored")
+                throw std::runtime_error("GPU profiling failed to resume");
         }
 
+        CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
+            return device.ReadTextureRgba8(texture);
+        });
         CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
         {
             return device.ReadTextureRgba8(texture);

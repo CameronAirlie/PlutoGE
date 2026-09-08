@@ -46,6 +46,7 @@ namespace PlutoGE::scene
         float seed = 0.0f;
         bool active = false;
         bool deathSubEmitterFired = false;
+        bool followsEmitter = false;
     };
 
     struct ParticleTrailPoint
@@ -282,6 +283,8 @@ namespace PlutoGE::scene
         std::string m_particleSystemAssetReference;
         bool m_emitAtRequested = false;
         std::vector<EmitAtRequest> m_pendingEmitAtRequests;
+        glm::mat4 m_cpuEmitterTransform{1.0f};
+        bool m_cpuEmitterTransformValid = false;
         std::vector<ParticleCpuData> m_cpuParticles;
         std::vector<std::vector<ParticleTrailPoint>> m_trails;
         int m_nextCpuEmitIndex = 0;

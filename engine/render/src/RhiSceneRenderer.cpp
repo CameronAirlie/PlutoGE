@@ -1,13 +1,18 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/Texture.h"
-#include "rhi/NormalMipmaps.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "rhi/NormalMipmaps.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -186,15 +191,13 @@ namespace PlutoGE::render
         m_upscalerContextId = 0;
     }
 
-    bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height,
-                                  const CameraData &cameraData, const BasicLighting &lighting,
-                                  std::span<const RenderCommand> commands,
+    bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
+                                  const BasicLighting &lighting, std::span<const RenderCommand> commands,
                                   std::span<const RenderCommand> shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
-                                  const TexturePixelReader &texturePixelReader,
-                                  PostProcessDebugView debugView,
-                                  bool submit)
+                                  const TexturePixelReader &texturePixelReader, PostProcessDebugView debugView,
+                                  bool submit, const scene::Scene *scene)
     {
         core::CpuScope renderScope("RHI.Scene", core::CpuCategory::Rendering);
         core::CpuScope translationScope("Command translation", core::CpuCategory::Rendering);
@@ -274,6 +277,18 @@ namespace PlutoGE::render
             const auto expectedSize = static_cast<std::size_t>(source->GetWidth()) * source->GetHeight() * 4;
             if (pixels.size() != expectedSize)
                 return {};
+            if (normalMap && m_immediateTextureUploads)
+            {
+                const auto width = static_cast<std::uint32_t>(source->GetWidth());
+                const auto height = static_cast<std::uint32_t>(source->GetHeight());
+                const auto levels = 1u + static_cast<unsigned>(std::floor(std::log2(std::max(width, height))));
+                pixels = rhi::BuildNormalMipmaps(pixels, width, height, levels);
+                rhi::Texture uploaded(*m_device,
+                                      m_device->CreateTexture({width, height, format, rhi::TextureUsage::Sampled,
+                                                               debugName, false, 1, false, 0, true, true},
+                                                              pixels));
+                return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get() : rhi::TextureHandle{};
+            }
             if (normalMap)
             {
                 const auto width = static_cast<std::uint32_t>(source->GetWidth());
@@ -444,6 +459,14 @@ namespace PlutoGE::render
         // element edits below.
         const glm::mat4 unjitteredProjection = projection;
         BasicLighting effectiveLighting = lighting;
+        if (scene)
+        {
+            effectiveLighting.pointLights.clear();
+            for (const auto *light : scene->GetLights())
+                if (light && light->type == scene::LightType::Point && light->intensity > 0 && light->range > 0)
+                    effectiveLighting.pointLights.push_back(
+                        {light->position, light->range, light->color, light->intensity, light->castsShadows});
+        }
         // Camera-relative lighting consumers (surface cascade selection,
         // volumetric fog, and voxel injection) must use the camera passed to
         // this render call. Do not rely on every frontend duplicating it into
@@ -670,10 +693,157 @@ namespace PlutoGE::render
             giDraws.reserve(sceneCommands.size());
             appendDraws(sceneCommands, giDraws, false, true);
         }
-        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws,
-                           debugView, useTemporalUpscaler ? &upscalerFrame : nullptr,
-                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr,
-                           submit, giDraws);
+        std::vector<BasicParticleDraw> particleDraws;
+        if (scene)
+        {
+            const auto inverseView = glm::inverse(cameraData.view);
+            const glm::vec3 right = glm::normalize(glm::vec3(inverseView[0]));
+            const glm::vec3 up = glm::normalize(glm::vec3(inverseView[1]));
+            const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
+            const auto hash = [](float seed) {
+                const float value = std::sin(seed) * 43758.5453123f;
+                return value - std::floor(value);
+            };
+            for (const auto *system : scene->GetParticleSystemComponents())
+            {
+                if (!system || !system->IsEnabled() || !system->GetOwner() || !system->GetOwner()->IsActive())
+                    continue;
+                BasicParticleDraw draw;
+                auto &parameters = draw.parameters;
+                parameters.viewProjection = projection * cameraData.view;
+                parameters.inverseProjection = glm::inverse(cameraData.projection);
+                parameters.view = cameraData.view;
+                auto &v = parameters.values;
+                v[0] = glm::vec4(1);
+                const auto bindMaterial = [&](BasicParticleDraw &packet, const std::string &reference) {
+                    if (reference.empty())
+                        return;
+                    auto *material = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(reference);
+                    if (!material)
+                        return;
+                    const auto &config = material->GetConfig();
+                    packet.parameters.values[0] = config.color;
+                    packet.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures,
+                                                   "Particle albedo");
+                    packet.parameters.values[1] = {config.emission, packet.texture ? 1.0f : 0.0f};
+                };
+                bindMaterial(draw, system->GetMaterialAssetReference());
+                v[2] = {static_cast<float>(system->GetRenderShape()), static_cast<float>(system->GetRenderMode()),
+                        system->GetSoftParticlesEnabled() ? 1.0f : 0.0f, system->GetSoftParticleDistance()};
+                v[3] = {system->GetFlipbookColumns(), system->GetFlipbookRows(), system->GetFlipbookFramesPerSecond(),
+                        system->GetFlipbookLooping() ? 1.0f : 0.0f};
+                v[4] = {system->GetFlipbookRandomStart() ? 1.0f : 0.0f, system->GetSmokeLightingEnabled() ? 1.0f : 0.0f,
+                        system->GetSmokeLightingStrength(), system->GetSmokeAmbient()};
+                v[5] = {glm::mat3(cameraData.view) * -effectiveLighting.directionalDirection, 0};
+                v[6] = {effectiveLighting.directionalColor * effectiveLighting.directionalIntensity, 0};
+                v[7] = {system->GetVolumeDensity(), system->GetVolumeNoiseStrength(), system->GetVolumeNoiseFrequency(),
+                        system->GetVolumeEdgeSoftness()};
+                v[8].x = system->GetVolumeSelfShadow();
+                std::vector<const scene::Light *> smokeLights;
+                for (const auto *light : scene->GetLights())
+                    if (light && light->type != scene::LightType::Directional && light->range > 0 && light->intensity > 0)
+                        smokeLights.push_back(light);
+                const auto emitterPosition = system->GetOwner()->GetWorldPosition();
+                const auto lightScore = [&](const scene::Light *light)
+                {
+                    const float attenuation = std::max(1.0f - glm::length(light->position - emitterPosition) / light->range, 0.0f);
+                    return light->intensity * attenuation * attenuation;
+                };
+                std::stable_sort(smokeLights.begin(), smokeLights.end(), [&](const auto *a, const auto *b)
+                    { return lightScore(a) > lightScore(b); });
+                const auto localCount = std::min<std::size_t>(smokeLights.size(), 4);
+                v[8].y = static_cast<float>(localCount);
+                for (std::size_t light = 0; light < localCount; ++light)
+                {
+                    const auto &local = *smokeLights[light];
+                    v[9 + light] = {glm::vec3(cameraData.view * glm::vec4(local.position, 1)), local.range};
+                    v[13 + light] = {local.color * local.intensity, static_cast<float>(local.type)};
+                    v[17 + light] = {glm::mat3(cameraData.view) * local.direction, 0};
+                }
+                std::vector<const scene::ParticleCpuData *> sorted;
+                for (const auto &particle : system->GetCpuParticles())
+                    if (particle.active && particle.age < particle.lifetime)
+                        sorted.push_back(&particle);
+                std::sort(sorted.begin(), sorted.end(), [&](const auto *a, const auto *b) {
+                    return glm::dot(a->position - effectiveLighting.cameraPosition, forward) >
+                           glm::dot(b->position - effectiveLighting.cameraPosition, forward);
+                });
+                constexpr glm::vec2 corners[] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {-0.5f, 0.5f},
+                                                 {-0.5f, 0.5f},  {0.5f, -0.5f}, {0.5f, 0.5f}};
+                draw.vertices.reserve(sorted.size() * 6);
+                for (const auto *particle : sorted)
+                {
+                    const float age = glm::clamp(particle->age / std::max(particle->lifetime, 0.0001f), 0.0f, 1.0f);
+                    const float size = system->GetSizeOverLifetimeEnabled()
+                                           ? glm::mix(particle->size, system->GetEndSize(), age)
+                                           : particle->size;
+                    glm::vec4 color = particle->color;
+                    if (system->GetColorOverLifetimeEnabled())
+                        color = glm::mix(color, system->GetEndColor(), age);
+                    else
+                        color.a *= 1.0f - age;
+                    if (system->GetFadeInFraction() > 0)
+                        color.a *= glm::smoothstep(0.0f, system->GetFadeInFraction(), age);
+                    if (system->GetFadeOutFraction() > 0)
+                        color.a *= 1.0f - glm::smoothstep(1.0f - system->GetFadeOutFraction(), 1.0f, age);
+                    const float angle =
+                        glm::radians(system->GetStartRotation() +
+                                     (hash(particle->seed + 23) * 2 - 1) * system->GetStartRotationVariation()) +
+                        glm::radians(system->GetRotationSpeed()) *
+                            (1 + (hash(particle->seed + 24) * 2 - 1) * system->GetRotationSpeedVariation()) *
+                            particle->age;
+                    for (const auto corner : corners)
+                    {
+                        const glm::vec2 rotated{std::cos(angle) * corner.x + std::sin(angle) * corner.y,
+                                                -std::sin(angle) * corner.x + std::cos(angle) * corner.y};
+                        draw.vertices.push_back({particle->position + (right * rotated.x + up * rotated.y) * size,
+                                                 color,
+                                                 corner + 0.5f,
+                                                 {particle->age, particle->lifetime, hash(particle->seed), size},
+                                                 particle->position});
+                    }
+                }
+                if (!draw.vertices.empty())
+                    particleDraws.push_back(std::move(draw));
+                if (system->GetTrailsEnabled())
+                {
+                    BasicParticleDraw trail;
+                    trail.parameters.viewProjection = projection * cameraData.view;
+                    trail.parameters.inverseProjection = glm::inverse(cameraData.projection);
+                    trail.parameters.view = cameraData.view;
+                    trail.parameters.values[0] = glm::vec4(1);
+                    trail.parameters.values[21].x = 1;
+                    trail.parameters.values[2].x = 1;
+                    trail.parameters.values[3] = {1, 1, 0, 0};
+                    bindMaterial(trail, system->GetTrailMaterialAssetReference());
+                    std::vector<scene::ParticleTrailRenderSegment> segments;
+                    system->BuildTrailRenderSegments(segments);
+                    for (const auto &segment : segments)
+                    {
+                        const auto direction = segment.end - segment.start;
+                        if (glm::length(direction) <= 0.0001f || segment.width <= 0)
+                            continue;
+                        auto side = glm::cross(forward, glm::normalize(direction));
+                        side = glm::length(side) > 0.0001f ? glm::normalize(side) : right;
+                        side *= segment.width * 0.5f;
+                        const glm::vec3 positions[] = {segment.start - side, segment.start + side, segment.end - side,
+                                                       segment.end - side,   segment.start + side, segment.end + side};
+                        for (int vertex = 0; vertex < 6; ++vertex)
+                            trail.vertices.push_back({positions[vertex],
+                                                      segment.color,
+                                                      corners[vertex] + 0.5f,
+                                                      {0, 1, 0, segment.width},
+                                                      segment.start});
+                    }
+                    if (!trail.vertices.empty())
+                        particleDraws.push_back(std::move(trail));
+                }
+            }
+        }
+        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
+                           useTemporalUpscaler ? &upscalerFrame : nullptr,
+                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
+                           particleDraws);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&

@@ -179,6 +179,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 3> vctCompute;
+        rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
     };
@@ -242,8 +243,43 @@ namespace PlutoGE::render
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
     };
 
+    struct BasicParticleVertex
+    {
+        glm::vec3 position{0};
+        glm::vec4 color{1};
+        glm::vec2 uv{0};
+        glm::vec4 ageLifetimeRandomSize{0};
+        glm::vec3 center{0};
+    };
+    struct BasicParticleParameters
+    {
+        glm::mat4 viewProjection{1};
+        glm::mat4 inverseProjection{1};
+        glm::mat4 view{1};
+        // Lanes: material 0-1, shape/depth 2, flipbook 3, smoke 4-6,
+        // volume 7-8, local positions/ranges 9-12, colors/types 13-16,
+        // local directions 17-20, trail 21, reserved 22, viewport 23.
+        std::array<glm::vec4, 24> values{};
+    };
+    struct BasicParticleDraw
+    {
+        std::vector<BasicParticleVertex> vertices;
+        BasicParticleParameters parameters;
+        rhi::TextureHandle texture;
+    };
+
+    struct BasicPointLight
+    {
+        glm::vec3 position{0.0f};
+        float range = 10.0f;
+        glm::vec3 color{1.0f};
+        float intensity = 1.0f;
+        bool castsShadows = false;
+    };
+
     struct BasicLighting
     {
+        std::vector<BasicPointLight> pointLights;
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
@@ -350,8 +386,7 @@ namespace PlutoGE::render
         [[nodiscard]] bool UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
                                              std::span<const BasicDraw> shadowDraws = {}) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
-        void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting,
-                    std::span<const BasicDraw> draws,
+        void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws,
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},
                     std::span<const BasicDraw> shadowDraws = {},
                     PostProcessDebugView debugView = PostProcessDebugView::None,
@@ -360,7 +395,7 @@ namespace PlutoGE::render
                     // Allows a caller to append overlays before one final submit.
                     bool submit = true,
                     // Full scene with GI materials, independent of camera visibility.
-                    std::span<const BasicDraw> giDraws = {});
+                    std::span<const BasicDraw> giDraws = {}, std::span<const BasicParticleDraw> particles = {});
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -520,6 +555,17 @@ namespace PlutoGE::render
         bool m_ssaoHistoryValid = false;
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
+        rhi::GraphicsPipeline m_particlePipeline;
+        rhi::Texture m_particleDepthCopy;
+        rhi::Extent2D m_particleDepthSize;
+        std::vector<rhi::Buffer> m_particleVertices;
+        std::vector<std::size_t> m_particleVertexCapacities;
+        std::vector<rhi::Buffer> m_particleParameters;
+        rhi::Texture m_pointShadowColor;
+        rhi::Texture m_pointShadowDepth;
+        std::array<rhi::Buffer, 24> m_pointShadowCameras;
+        std::vector<rhi::Buffer> m_pointShadowObjects;
+        std::vector<rhi::Buffer> m_pointShadowMaterials;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
         std::array<std::uint32_t, 4> m_shadowResolutions{};

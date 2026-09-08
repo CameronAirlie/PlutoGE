@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 
@@ -217,6 +218,8 @@ namespace PlutoGE::ui
                                           const scene::Scene *scene,
                                           render::PostProcessDebugView debugView)
     {
+        core::CpuScope serviceScope("Viewport scene service", core::CpuCategory::Rendering);
+        core::CpuScope preparationScope("Viewport lighting and atmosphere", core::CpuCategory::Rendering);
         if (!m_sceneRenderer || !m_device)
             return false;
 
@@ -290,6 +293,7 @@ namespace PlutoGE::ui
             atmosphereEffects.push_back(std::move(cloud.effect));
         }
 
+        preparationScope.End();
         try
         {
             // Initialization creates GPU resources, so keep the first runtime
@@ -299,7 +303,7 @@ namespace PlutoGE::ui
                                                     render::RmlUiRuntime::Get().IsInitialized();
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
                                          postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView,
-                                         !combineRuntimeUiSubmission))
+                                         !combineRuntimeUiSubmission, scene))
                 return false;
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
             if (scene && scene->HasRmlRuntimeUI())
@@ -309,7 +313,10 @@ namespace PlutoGE::ui
                                                       cameraData.projection,
                                                       !combineRuntimeUiSubmission);
             if (combineRuntimeUiSubmission)
+            {
+                core::CpuScope submitScope("Combined scene and UI submission", core::CpuCategory::Rendering);
                 m_device->GetImmediateContext().Submit();
+            }
         }
         catch (const std::exception &error)
         {

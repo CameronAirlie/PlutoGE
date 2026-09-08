@@ -15,6 +15,11 @@ namespace PlutoGE::ui
 
     void EditorProfiler::AddFrameSample(float frameTimeMs)
     {
+        if (frameTimeMs > m_peakFrameTimeMs)
+        {
+            m_peakFrameTimeMs = frameTimeMs;
+            m_peakFrameTimingStats = m_latestFrameTimingStats;
+        }
         m_frameSamples[m_nextSampleIndex] = frameTimeMs;
         m_nextSampleIndex = (m_nextSampleIndex + 1) % m_frameSamples.size();
         m_sampleCount = std::min(m_sampleCount + 1, m_frameSamples.size());
@@ -124,6 +129,13 @@ namespace PlutoGE::ui
         report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
+        report << "Session peak frame: " << m_peakFrameTimeMs << " ms; scene update "
+               << m_peakFrameTimingStats.sceneUpdateMs << " ms, viewport " << m_peakFrameTimingStats.viewportRenderMs
+               << " ms, UI " << m_peakFrameTimingStats.editorUiMs << " ms, present "
+               << m_peakFrameTimingStats.presentMs << " ms, events " << m_peakFrameTimingStats.eventPollingMs << " ms\n";
+        report << "Session peak waits: scene fence " << m_peakFrameTimingStats.rhiTimingStats.frameFenceWaitMs
+               << " ms, presentation fence " << m_peakFrameTimingStats.presentationTimingStats.presentFenceWaitMs
+               << " ms, acquire " << m_peakFrameTimingStats.presentationTimingStats.presentAcquireMs << " ms\n";
         report << "VSync: " << (frameTimingStats.vSyncEnabled ? "On" : "Off") << "\n";
         if (frameTimingStats.mainThreadCpuMs >= 0.0f)
         {
@@ -222,6 +234,7 @@ namespace PlutoGE::ui
                        << pages.indirectDraws << " non-empty draws, " << pages.casterPagePairs << " caster/page pairs, "
                        << pages.submittedTriangles << " triangles\n";
             else report << "VSM GPU counters: pending asynchronous snapshot\n";
+            report << "VSM current resolution scale: " << pages.resolutionScale << "\n";
         }
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";

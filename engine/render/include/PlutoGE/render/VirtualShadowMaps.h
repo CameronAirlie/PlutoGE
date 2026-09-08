@@ -48,14 +48,15 @@ namespace PlutoGE::render
                      std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height);
         void Record(rhi::ICommandContext &commands, const SubmitMesh &submit);
         [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting,
-                                                                  const VirtualShadowParameters *previous = nullptr);
+                                                                  const VirtualShadowParameters *previous = nullptr,
+                                                                  float resolutionScale = 1.0f);
         [[nodiscard]] static bool CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters);
         [[nodiscard]] auto Atlas() const { return m_depth.Get(); }
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
         [[nodiscard]] VirtualShadowStats GetStats() const;
     private:
-        struct Chunk { Submission submission; rhi::Buffer uniform; rhi::TextureHandle texture; };
+        struct Chunk { Submission submission; rhi::Buffer uniform; rhi::TextureHandle texture; std::vector<std::byte> uploaded; };
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, 3> m_raster;
@@ -66,6 +67,8 @@ namespace PlutoGE::render
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;
         VirtualShadowParameters m_previousClipmaps{};
+        float m_resolutionScale = 1.0f;
+        std::uint32_t m_feedbackAfter = 0, m_feedbackFrame = 0, m_lowPressureFrames = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();
     };
 }

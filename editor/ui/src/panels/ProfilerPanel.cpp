@@ -242,6 +242,7 @@ namespace PlutoGE::ui
             if (pages.gpuCountersAvailable)
             {
                 ImGui::Text("  VSM GPU frame %u (delayed): %u requested, %u resident, %u hits", pages.gpuFrame, pages.requested, pages.resident, pages.cacheHits);
+                ImGui::Text("  VSM resolution scale: %.0fx", pages.resolutionScale);
                 ImGui::Text("  VSM updates: %u dirty, %u rendered, %u deferred; %u evicted, %u overflow",
                     pages.dirty, pages.updated, pages.deferred, pages.evicted, pages.overflow);
                 ImGui::Text("  VSM GPU: %u non-empty draws, %llu caster/page pairs, %llu triangles",

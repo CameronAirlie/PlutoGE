@@ -155,6 +155,32 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     lighting.shadowDistance = 150;
     lighting.shadowSoftness = 1;
 
+    // Demand substantially more fine pages than fit, then require the stable
+    // working set to fit instead of retaining a permanent patchwork of overflow.
+    renderer.Resize(256, 256);
+    lighting.shadowDistance = 8;
+    bool sawOverflow = false;
+    for (int frame = 0; frame < 120; ++frame)
+    {
+        renderSurface(); assertExclusive();
+        const auto &stats = renderer.GetFrameStats().virtualShadows;
+        sawOverflow |= stats.overflow != 0;
+        if (stats.updated > lighting.virtualShadowPageBudget || stats.submittedTriangles > lighting.virtualShadowTriangleBudget)
+            throw std::runtime_error("VSM pressure adaptation bypassed update budgets");
+    }
+    const auto pressure = renderer.GetFrameStats().virtualShadows;
+    std::cout << "VSM pressure: " << pressure.requested << " requests, " << pressure.overflow
+              << " overflow, resolution scale " << pressure.resolutionScale << '\n';
+    if (!sawOverflow || pressure.overflow != 0 || pressure.resolutionScale <= 1)
+        throw std::runtime_error("VSM did not fit an overcommitted working set");
+    const auto pressureImage = readPixels(renderer.GetColorTexture());
+    for (int y = 96; y < 160; ++y)
+        for (int x = 96; x < 160; ++x)
+            if (static_cast<unsigned char>(pressureImage[(y * 256 + x) * 4]) > 20)
+                throw std::runtime_error("VSM pressure adaptation lost shadow coverage");
+    renderer.Resize(64, 64);
+    lighting.shadowDistance = 150;
+
     // No opaque receivers: resident coarse VSM pages must also cover fog.
     BasicPostProcessEffect fog{BasicPostProcessEffectType::VolumetricFog};
     fog.quality = 32;

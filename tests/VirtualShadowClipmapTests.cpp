@@ -13,6 +13,13 @@ int main()
         BasicLighting lighting;
         lighting.directionalDirection = {0, 0, 1}; lighting.cameraPosition = {.1f, .1f, .1f};
         const auto original = VirtualShadowMaps::BuildClipmaps(lighting);
+        const auto reduced = VirtualShadowMaps::BuildClipmaps(lighting, &original, 4.0f);
+        Require(reduced.metrics[0].x == original.metrics[0].x * 4.0f &&
+                reduced.origins[0].z != original.origins[0].z,
+                "Resolution adaptation did not change fine-page identity");
+        Require(std::memcmp(&reduced.matrices[PLUTO_VSM_ROOT_LEVEL], &original.matrices[PLUTO_VSM_ROOT_LEVEL], sizeof(glm::mat4)) == 0 &&
+                reduced.origins[PLUTO_VSM_ROOT_LEVEL] == original.origins[PLUTO_VSM_ROOT_LEVEL],
+                "Resolution adaptation discarded resident coarse coverage");
         Require(original.metrics[PLUTO_VSM_ROOT_LEVEL].x > original.metrics[PLUTO_VSM_FINE_LEVELS - 1].x,
                 "Coarse VSM coverage must have a bounded low-resolution footprint");
         auto depthLighting = lighting;

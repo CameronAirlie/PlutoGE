@@ -279,9 +279,12 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
     rawVisibility = 1.0; normalizedLevel = 0.0;
     int firstLevel = selectVirtualLevel(vsm, world, virtualReceiverFootprint(vsm, world));
     if (firstLevel < 0) return -1.0;
-    const float support = clamp(vsm.settings.x, 0.0, 4.0) + 1.0;
     for (int level = firstLevel; level < PLUTO_VSM_LEVELS; ++level)
     {
+        // Softness is defined at the requested resolution. A coarse fallback
+        // must not multiply the world-space penumbra by its larger texel size.
+        const float support = 1.0 + clamp(vsm.settings.x, 0.0, 4.0) *
+            min(1.0, vsm.metrics[firstLevel].x / vsm.metrics[level].x);
         float3 receiver = world + normal * vsm.metrics[level].x * lerp(0.08, 0.60, slope);
         float3 coordinate = virtualCoordinate(vsm, level, receiver);
         float2 position = coordinate.xy * virtualResolution(level) - 0.5;

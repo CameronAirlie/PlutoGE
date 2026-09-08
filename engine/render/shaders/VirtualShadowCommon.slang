@@ -8,7 +8,7 @@ struct VirtualShadowParameters
     float4 metrics[PLUTO_VSM_LEVELS]; // world texel, depth range, world page, span
     uint4 viewport; // width, height, flipped framebuffer Y, zero-to-one clip depth
     uint4 limits; // caster chunks, frame, page budget, triangle budget
-    float4 settings; // softness, enabled, reset cache, unused
+    float4 settings; // softness, enabled, reset cache, resolution scale
     float4 camera;
 };
 struct VirtualShadowPage
@@ -45,6 +45,7 @@ float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
 }
 int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 {
+    footprint *= max(p.settings.w, 1.0);
     for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);

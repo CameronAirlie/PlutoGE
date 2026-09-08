@@ -36,7 +36,7 @@ namespace PlutoGE::render
         return std::all_of(compute.begin(), compute.end(), present) && std::all_of(raster.begin(), raster.end(), present);
     }
     VirtualShadowParameters VirtualShadowMaps::BuildClipmaps(const BasicLighting &lighting,
-                                                                  const VirtualShadowParameters *previous)
+                                                                  const VirtualShadowParameters *previous, float resolutionScale)
     {
         VirtualShadowParameters result;
         glm::vec3 direction = lighting.directionalDirection;
@@ -66,7 +66,10 @@ namespace PlutoGE::render
         if (depthCentre == 0.0f) depthCentre = 0.0f;
         for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            const float span = std::ldexp(2.0f * distance, std::min(level, PLUTO_VSM_FINE_LEVELS - 1) - (PLUTO_VSM_FINE_LEVELS - 1));
+            // Keep the resident root projection unchanged while fine coverage
+            // adapts, so refinement changes never discard the safety coverage.
+            const float scale = level == PLUTO_VSM_ROOT_LEVEL ? 1.0f : resolutionScale;
+            const float span = std::ldexp(2.0f * distance * scale, std::min(level, PLUTO_VSM_FINE_LEVELS - 1) - (PLUTO_VSM_FINE_LEVELS - 1));
             const int grid = PLUTO_VSM_LEVEL_GRID(level);
             const float page = span / grid;
             const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - grid / 2;
@@ -187,7 +190,13 @@ namespace PlutoGE::render
                     else parameters.models[0] = draw.model;
                     parameters.draw = {cursor, models, draw.alphaMode, 0};
                     parameters.alpha = {draw.uvScale, draw.alphaCutoff, draw.baseColor.a};
-                    device.UpdateBuffer(chunk.uniform.Get(), 0, Bytes(parameters));
+                    const auto bytes = Bytes(parameters);
+                    if (chunk.uploaded.size() != bytes.size() ||
+                        std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
+                    {
+                        device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
+                        chunk.uploaded.assign(bytes.begin(), bytes.end());
+                    }
                     chunk.submission = {&draw, count, draw.firstIndex, models, {}, cursor * 20};
                     chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                     if (shadow)
@@ -214,7 +223,34 @@ namespace PlutoGE::render
         }
         if (!inputs.empty()) device.UpdateBuffer(m_casters.Get(), 0, std::as_bytes(std::span(inputs)));
         for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
-        auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr);
+        // Delayed feedback never stalls the GPU. Fit the working set by changing
+        // resolution globally, rather than leaving arbitrary fine-page islands.
+        if (m_stats->gpuCountersAvailable && m_stats->gpuFrame > m_feedbackFrame &&
+            m_stats->gpuFrame >= m_feedbackAfter)
+        {
+            m_feedbackFrame = m_stats->gpuFrame;
+            const auto fineRequests = m_stats->requested > PLUTO_VSM_ROOT_PAGES ?
+                m_stats->requested - PLUTO_VSM_ROOT_PAGES : 0;
+            constexpr auto fineCapacity = PLUTO_VSM_CAPACITY - PLUTO_VSM_ROOT_PAGES;
+            float nextScale = m_resolutionScale;
+            if (m_stats->overflow && fineRequests > fineCapacity)
+            {
+                nextScale = std::min(16.0f, m_resolutionScale * 2.0f);
+                m_lowPressureFrames = 0;
+            }
+            else if (fineRequests < fineCapacity / 8)
+            {
+                if (++m_lowPressureFrames >= 240) nextScale = std::max(1.0f, m_resolutionScale * 0.5f);
+            }
+            else m_lowPressureFrames = 0;
+            if (nextScale != m_resolutionScale)
+            {
+                m_resolutionScale = nextScale;
+                m_feedbackAfter = m_frame + 32;
+                m_lowPressureFrames = 0;
+            }
+        }
+        auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionScale);
         m_previousClipmaps = parameters;
         parameters.viewProjection = viewProjection;
         parameters.inverseViewProjection = glm::inverse(viewProjection);
@@ -223,7 +259,7 @@ namespace PlutoGE::render
         if (m_frame == 0) ++m_frame;
         parameters.limits = {m_casterCount, m_frame, std::clamp(lighting.virtualShadowPageBudget, 1u, std::uint32_t(PLUTO_VSM_CAPACITY)),
                              std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u)};
-        parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, 0};
+        parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, m_resolutionScale};
         device.UpdateBuffer(m_parameters.Get(), 0, Bytes(parameters));
         return true;
     }
@@ -309,6 +345,7 @@ namespace PlutoGE::render
     VirtualShadowStats VirtualShadowMaps::GetStats() const
     {
         auto stats = *m_stats;
+        stats.resolutionScale = m_resolutionScale;
         stats.submittedIndirectCommands = static_cast<std::uint32_t>(m_casterCount);
         stats.receiverDraws = static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(PLUTO_VSM_ATLAS_SIZE) * PLUTO_VSM_ATLAS_SIZE * 8 +

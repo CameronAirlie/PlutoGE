@@ -78,6 +78,33 @@ derivatives are still used for receiver-plane bias correction. The regression
 checks the level debug output after warm-up and rejects unnecessary root
 fallback in the receiver interior (7,060 pixels before this correction).
 
+## Atlas pressure and frame spikes
+
+The latest capture requests 1,511 pages from a 256-page atlas and reports 1,255
+overflow pages even with a fully cached static frame. This is persistent capacity
+pressure, not a refresh-budget problem. Fine clipmaps now adapt their resolution
+using asynchronous page-demand feedback. Each pressure response doubles world
+texel size, up to 16x, with at least 32 frames between responses. Resolution
+recovers one step only after 240 low-pressure feedback samples with ample spare
+capacity. Requests and shading share the scale. The coarse root projection stays
+unchanged, preserving fallback depth while fine pages are rebuilt within the
+existing page/triangle budgets. The profiler exposes the current scale. Quality
+is reduced consistently under pressure; no additional atlas memory or CSM work
+is introduced. The overloaded rendering regression settles at 164 requests,
+zero overflow and 4x scale, retaining interior shadow coverage.
+
+Fallback filtering also scales its softness down in coarse texel units, avoiding
+an enlarged penumbra and excessive texture taps in coarse-page squares. Unchanged
+draw-chunk uniforms skip redundant CPU updates (Vulkan still copies resident
+uniforms into its per-frame arena when bound).
+
+The capture's current frame is 16.47 ms, but its 240-sample window includes a
+10,290.28 ms maximum. Current-frame pass timings cannot identify that historical
+stall. The metrics report now retains a separate session-peak CPU breakdown and
+scene/presentation fence and acquire waits, so a later export preserves evidence
+from the slow frame. This pass does not establish the cause of that ten-second
+stall or claim to eliminate it.
+
 ```powershell
 cmake --build out/build/gcc-profile --target PlutoGEEditor PlutoGEVulkanRhiTests PlutoGEOpenGLRhiTests -j 6
 ctest --test-dir out/build/gcc-profile -R 'PlutoGE(VirtualShadowClipmap|OpenGLVsmOnly|VulkanRhi|VulkanVsmOnly|VulkanVsmPerformance|VulkanSsr|OpenGLSsr|VctWorldCacheRendering)Tests' --output-on-failure

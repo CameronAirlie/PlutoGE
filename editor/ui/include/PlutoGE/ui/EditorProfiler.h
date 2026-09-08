@@ -89,5 +89,7 @@ namespace PlutoGE::ui
         std::size_t m_nextSampleIndex = 0;
         std::size_t m_sampleCount = 0;
         EditorFrameTimingStats m_latestFrameTimingStats;
+        EditorFrameTimingStats m_peakFrameTimingStats;
+        float m_peakFrameTimeMs = 0.0f;
     };
 }

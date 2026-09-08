@@ -49,6 +49,20 @@ Values average 15 samples after warm-up per scenario. Stationary and camera-moti
 
 ## Validation
 
+### Performance follow-up after scene validation
+
+The next supplied capture reported 25.47 ms average frame time (previously 39.17 ms), 22.94 ms scene GPU time, 72 requested/resident/cached VSM pages and no dirty pages or VSM triangles. VSM atlas rendering was 0.01 ms. The user confirmed acceptable visuals and deferred camera-motion shadow glitches; this follow-up targets performance.
+
+Post-processing remained the dominant scope at 21.82 ms. Individual child scopes originally used TOP-to-BOTTOM timestamps, which could include unfinished preceding passes. They now use completion timestamps at both boundaries; parent scopes remain inclusive and should not be added to their children. These timings describe completion intervals, not isolated execution times or guaranteed additive savings.
+
+SSR now transforms the ray origin once per pixel and directions once per ray, reusing their affine form through marching and binary refinement. Depth intersection reconstructs only homogeneous W and view Z. The 16-ray estimator, configured march/refinement counts, material response and hit criteria are unchanged. `PlutoGEVulkanRhiTests --ssr-performance` measured 17.63 ms before and 11.89 ms after for reflections at 582×507 on AMD Radeon(TM) Graphics, averaging 32 frames after warm-up (about 33% lower). This is a controlled reflection workload, not a predicted improvement for the user's scene.
+
+Diffuse VCT GI now skips cone tracing for fully metallic receivers, whose contribution is zero, and computes the shared cone origin/voxel size once per pixel. Debug views retain their existing behavior. The full Vulkan rendering suite and focused VCT cache tests passed, including rough/dielectric/metallic SSR checks and local-bounce/cache regressions.
+
+### Reproduction
+
+The subsequent scene capture reported 22.74 ms average frame time, 21.31 ms scene GPU time, 7.37 ms SSR and 5.61 ms geometry. All 78 requested VSM pages were cached, with no updates. A further SSR optimization compares reverse-Z depth directly during marching and refinement, retaining view-space reconstruction for the final thickness test. The same controlled benchmark decreased from 11.89 to 9.33 ms (about 22%). All nine RGBA8 snapshots from smooth, rough and dielectric checks were byte-identical to the previous shader. Optional snapshot output is available with `--ssr-performance <output.rgba>`; it contains nine consecutive 582×507 RGBA8 images. The visible workload differed between scene captures (40 draws versus 45 previously), so their frame times are observational rather than a controlled benchmark.
+
 - `PlutoGEVirtualShadowClipmapTests` checks world-coordinate reuse under sub-page motion and page scrolling, and projection epoch changes under light rotation.
 - Shared GPU shadow checks exercise depth requests, residency, stationary cache reuse, scrolling, movement/removal, alpha masks, overflow and budget fallback, and runtime switching. Run either RHI executable with `--shadows-only`.
 - `PlutoGEVulkanRhiTests --vsm-performance` runs a synthetic 120-caster workload at 582×507 with deliberately unknown bounds. It checks stationary convergence and bounded page updates, triangle counts and CPU indexed submissions during camera and caster movement. It is a regression workload, not a reproduction of the supplied scene.

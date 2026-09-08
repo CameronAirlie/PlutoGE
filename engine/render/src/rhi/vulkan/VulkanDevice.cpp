@@ -1262,7 +1262,9 @@ namespace PlutoGE::render::rhi::vulkan
                                       std::chrono::steady_clock::now(), available});
             if (available)
             {
-                vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, frame.nextQuery);
+                // Use completion timestamps at both boundaries. TOP-to-BOTTOM
+                // scopes also charge unfinished preceding passes to every child.
+                vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, frame.nextQuery);
                 frame.nextQuery += 2;
             }
         }

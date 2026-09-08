@@ -5,10 +5,12 @@
 #include <cstdint>
 #include <vector>
 #include <stdexcept>
+#include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
 
 template <class ReadPixels>
-void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
+                       PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr)
 {
     using namespace PlutoGE::render;
     constexpr std::array<BasicVertex, 4> vertices = {{
@@ -85,4 +87,22 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         throw std::runtime_error("Roughness faded SSR instead of broadening its lobe");
     if (rough.energy[0] < rough.energy[1]*2)
         throw std::runtime_error("SSR ignored metallic albedo tint");
+    if (performanceDevice)
+    {
+        double gpuMs = 0, effectMs = 0;
+        int samples = 0;
+        for (int frame = 0; frame < 48; ++frame)
+        {
+            renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr, 1));
+            const auto timing = performanceDevice->GetTimingStats("Scene");
+            if (frame < 16 || !timing.hasGpuResult) continue;
+            for (const auto &scope : timing.gpuScopes)
+                if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
+            gpuMs += timing.frameGpuMs;
+            ++samples;
+        }
+        if (!samples) throw std::runtime_error("SSR benchmark has no GPU timings");
+        std::cout << "SSR benchmark: " << gpuMs / samples << " ms GPU frame, "
+                  << effectMs / samples << " ms reflections (" << samples << " samples)\n";
+    }
 }

@@ -122,10 +122,8 @@ float4 sampleWorld(float3 position, float3 direction, float diameter, out float 
     }
     return result;
 }
-float3 traceCone(float3 origin, float3 normal, float3 direction)
+float3 traceCone(float3 origin, float3 direction, float startVoxel)
 {
-    const float startVoxel = voxelSizeAt(origin);
-    origin += normal * startVoxel * lerp(0.35, 0.75, saturate(pass.traceSettings.w));
     float distance = startVoxel;
     float4 total = 0.0;
     for (uint step = 0; step < 48 && distance < pass.traceSettings.z && total.a < 0.98; ++step)
@@ -173,17 +171,24 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     }
     if (pass.debugView == 2 && cascade >= 0)
         return directionalSample(uint(cascade), coordinate, normal, 0.0).aaaa;
+    const float receiverMetallic = saturate(materialTexture.Sample(uv).r);
+    // This pass contributes diffuse irradiance only. Fully metallic receivers
+    // have an exactly zero result, so do not trace six cones then discard them.
+    if (receiverMetallic >= 1.0 || pass.traceSettings.x == 0.0)
+        return pass.indirectOnly != 0 ? float4(0.0, 0.0, 0.0, 1.0) : scene;
     float3 up = abs(normal.y) < 0.99 ? float3(0,1,0) : float3(1,0,0);
     const float3 tangent = normalize(cross(up, normal));
     const float3 bitangent = cross(normal, tangent);
-    float3 indirect = traceCone(position, normal, normal);
+    const float startVoxel = voxelSizeAt(position);
+    const float3 origin = position + normal * startVoxel * lerp(0.35, 0.75, saturate(pass.traceSettings.w));
+    float3 indirect = traceCone(origin, normal, startVoxel);
     const uint coneCount = clamp(pass.traceCounts.z, 1, 6);
     for (uint cone = 1; cone < coneCount; ++cone)
     {
         const float angle = 6.2831853 * float(cone - 1) / float(max(coneCount - 1, 1));
         const float3 direction = normalize(normal * 0.55 +
             (tangent * cos(angle) + bitangent * sin(angle)) * 0.835);
-        indirect += traceCone(position, normal, direction);
+        indirect += traceCone(origin, direction, startVoxel);
     }
     // The cone set samples the cosine-weighted hemisphere. Its arithmetic mean
     // therefore estimates (1 / PI) * integral(Li * cos(theta) dOmega), which is
@@ -192,7 +197,6 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // PI again would remove roughly two thirds of the energy from every bounce.
     indirect *= coverageAt(position) * pass.traceSettings.x / float(coneCount);
     const float3 receiverAlbedo = albedoTexture.Sample(uv).rgb;
-    const float receiverMetallic = saturate(materialTexture.Sample(uv).r);
     indirect *= receiverAlbedo * (1.0 - receiverMetallic);
     return pass.indirectOnly != 0 ? float4(indirect, 1.0) : float4(scene.rgb + indirect, scene.a);
 }

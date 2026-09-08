@@ -9,26 +9,39 @@
 [[vk::binding(7, 0)]] Sampler2D albedoTexture : register(t7, space0);
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
-bool projectRay(float3 position, out float2 uv, out float viewDepth)
+bool projectRay(float4 clip, out float2 uv, out float projectedDepth)
 {
-    float4 viewPosition = mul(pass.view, float4(position, 1.0));
-    float4 clip = mul(pass.projection, viewPosition);
-    viewDepth = -viewPosition.z;
     uv = 0.0;
+    projectedDepth = 0.0;
     if (clip.w <= 0.000001) return false;
-    uv = clip.xy / clip.w;
+    const float inverseW = 1.0 / clip.w;
+    uv = clip.xy * inverseW;
+    projectedDepth = clip.z * inverseW;
+    if (pass.zeroToOneDepth == 0) projectedDepth = projectedDepth * 0.5 + 0.5;
     if (pass.flipY != 0) uv.y = -uv.y;
     uv = uv * 0.5 + 0.5;
     return all(uv >= 0.0) && all(uv <= 1.0);
 }
 
-float depthDelta(float2 uv, float rayDepth)
+bool behindSurface(float2 uv, float projectedDepth)
+{
+    const float sceneDepth = depthTexture.Sample(uv).r;
+    // Both RHI backends use reverse Z. At the same screen coordinate, depth
+    // ordering identifies a crossing without reconstructing view-space depth.
+    // Keep the full reconstruction below for the final world-unit thickness test.
+    return sceneDepth > 0.000001 && sceneDepth >= projectedDepth;
+}
+
+float depthDelta(float2 uv, float rayDepth, float4 viewDepthRow, float4 homogeneousRow)
 {
     float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return -1e20;
-    float3 world = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
-                                            pass.flipY, pass.zeroToOneDepth);
-    return rayDepth + mul(pass.view, float4(world, 1.0)).z;
+    float2 ndc = uv * 2.0 - 1.0;
+    if (pass.flipY != 0) ndc.y = -ndc.y;
+    float4 clip = float4(ndc, pass.zeroToOneDepth != 0 ? depth : depth * 2.0 - 1.0, 1.0);
+    float w = dot(homogeneousRow, clip);
+    float safeW = abs(w) > 0.000001 ? w : (w < 0.0 ? -0.000001 : 0.000001);
+    return rayDepth + dot(viewDepthRow, clip) / safeW;
 }
 
 float smithG1(float cosine, float alphaSquared)
@@ -62,6 +75,13 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float distance = max(pass.parameters[0].y, start);
     const float thickness = max(pass.parameters[0].z, 0.001);
     const float3 origin = position + normal * start;
+    // Ray positions are affine in travel distance. Transform the origin once
+    // per pixel and the direction once per ray, not at every march/refinement step.
+    const float4 viewOrigin = mul(pass.view, float4(origin, 1.0));
+    const float4 clipOrigin = mul(pass.projection, viewOrigin);
+    const float4x4 clipToView = mul(pass.view, pass.inverseViewProjection);
+    const float4 viewDepthRow = clipToView[2];
+    const float4 homogeneousRow = pass.inverseViewProjection[3];
     const uint steps = clamp(pass.quality, 8u, 128u);
     // Integrate the GGX lobe. Fixed stratified samples avoid temporal shimmer;
     // rejected directions and misses still count in the estimator denominator.
@@ -79,29 +99,33 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         float3 ray = reflect(-view, halfVector);
         float ndotl = dot(normal, ray);
         if (ndotl <= 0.0) continue;
+        const float4 viewRay = mul(pass.view, float4(ray, 0.0));
+        const float4 clipRay = mul(pass.projection, viewRay);
         float previousTravel = 0.0;
-        float previousDelta = -1e20;
         for (uint i = 0; i < steps; ++i)
         {
             float fraction = (float(i) + 1.0) / float(steps);
             float travel = start + distance * fraction * fraction;
             float2 rayUv;
-            float rayDepth;
-            if (!projectRay(origin + ray * travel, rayUv, rayDepth)) break;
-            float delta = depthDelta(rayUv, rayDepth);
-            if (previousDelta < 0.0 && delta >= 0.0)
+            float projectedDepth;
+            if (!projectRay(clipOrigin + clipRay * travel, rayUv, projectedDepth)) break;
+            // Every preceding sample is in front: this loop terminates at its
+            // first crossing, regardless of whether the refined hit is accepted.
+            if (behindSurface(rayUv, projectedDepth))
             {
                 float low = previousTravel, high = travel;
                 for (uint j = 0; j < min(uint(max(pass.parameters[1].w, 0.0)), 8u); ++j)
                 {
                     float middle = (low + high) * 0.5;
-                    float2 middleUv; float middleDepth;
-                    if (!projectRay(origin + ray * middle, middleUv, middleDepth)) break;
-                    if (depthDelta(middleUv, middleDepth) >= 0.0) high = middle;
+                    float2 middleUv;
+                    float middleDepth;
+                    if (!projectRay(clipOrigin + clipRay * middle, middleUv, middleDepth)) break;
+                    if (behindSurface(middleUv, middleDepth)) high = middle;
                     else low = middle;
                 }
-                projectRay(origin + ray * high, rayUv, rayDepth);
-                delta = depthDelta(rayUv, rayDepth);
+                projectRay(clipOrigin + clipRay * high, rayUv, projectedDepth);
+                float rayDepth = -(viewOrigin.z + viewRay.z * high);
+                float delta = depthDelta(rayUv, rayDepth, viewDepthRow, homogeneousRow);
                 float3 hitNormal = decodeNormal(normalTexture.Sample(rayUv).xyz);
                 if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
                 {
@@ -115,7 +139,6 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 break;
             }
             previousTravel = travel;
-            previousDelta = delta;
         }
     }
     // Indirect specular adds to existing diffuse and direct lighting.

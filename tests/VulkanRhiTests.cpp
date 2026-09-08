@@ -119,6 +119,25 @@ int main(int argc, char **argv)
             CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssr-performance")
+        {
+            renderer.Resize(582, 507);
+            // Optional raw RGBA8 snapshots support before/after shader comparisons.
+            std::ofstream snapshots;
+            if (argc > 2)
+            {
+                snapshots.open(argv[2], std::ios::binary);
+                if (!snapshots) throw std::runtime_error("Cannot open SSR snapshot output");
+            }
+            CheckSsrRendering(renderer, [&](rhi::TextureHandle texture)
+            {
+                auto pixels = device.ReadTextureRgba8(texture);
+                if (snapshots.is_open())
+                    snapshots.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+                return pixels;
+            }, &device);
+            return 0;
+        }
         CheckShadowFiltering(renderer, [&](rhi::TextureHandle texture)
         {
             return device.ReadTextureRgba8(texture);

@@ -98,7 +98,64 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0, 1, 0));
     caster.model[3].x = 0;
 
-    // No opaque receivers: fog must request its own VSM pages, including sky.
+    // An oblique receiver must sample the fine levels requested for it, rather
+    // than falling back to the coarse root in screen-space distance bands.
+    renderer.Resize(256, 256);
+    receiver.model = glm::scale(glm::mat4(1), glm::vec3(40));
+    lighting.shadowDistance = 600;
+    lighting.cameraPosition = {0, -4, 2};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0, 0, 1));
+    for (int frame = 0; frame < 24; ++frame)
+        renderer.Render(projection * lighting.view, lighting, std::span(&receiver, 1), {},
+                        std::span(&caster, 1), PostProcessDebugView::ShadowCascades);
+    assertExclusive();
+    const auto oblique = readPixels(renderer.GetColorTexture());
+    int rootPixels = 0;
+    for (int y = 64; y < 192; ++y)
+        for (int x = 64; x < 192; ++x)
+        {
+            const auto pixel = (y * 256 + x) * 4;
+            rootPixels += static_cast<unsigned char>(oblique[pixel]) > 240 &&
+                          static_cast<unsigned char>(oblique[pixel + 1]) > 180;
+        }
+    std::cout << "VSM oblique receiver: " << rootPixels << " unnecessary coarse pixels\n";
+    if (rootPixels != 0)
+        throw std::runtime_error("VSM requests and shading select different levels on an oblique receiver");
+    receiver.model = glm::scale(glm::mat4(1), glm::vec3(4));
+    lighting.cameraPosition = {0, 0, 4};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0, 1, 0));
+
+    // A grazing light must not make a flat, self-shadowing receiver develop
+    // stripes as the projected derivatives shrink across virtual levels.
+    renderer.Resize(256, 256);
+    receiver.castsShadow = true;
+    receiver.shadowBoundsCenter = {0, 0, 0};
+    receiver.shadowBoundsRadius = 6;
+    lighting.directionalDirection = glm::normalize(glm::vec3(1, 0.2f, -0.15f));
+    lighting.shadowSoftness = 4;
+    for (float distance : {75.0f, 150.0f, 300.0f})
+    {
+        lighting.shadowDistance = distance;
+        for (int frame = 0; frame < 16; ++frame)
+            renderer.Render(projection * lighting.view, lighting, std::span(&receiver, 1), {},
+                            std::span(&receiver, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
+        assertExclusive();
+        const auto image = readPixels(renderer.GetColorTexture());
+        int darkest = 255;
+        for (int y = 48; y < 208; ++y)
+            for (int x = 48; x < 208; ++x)
+                darkest = std::min(darkest, int(static_cast<unsigned char>(image[(y * 256 + x) * 4])));
+        std::cout << "VSM grazing receiver at distance " << distance << ": minimum visibility " << darkest << '\n';
+        if (darkest < 245)
+            throw std::runtime_error("VSM level-dependent self-shadow bands on a flat receiver");
+    }
+    renderer.Resize(64, 64);
+    receiver.castsShadow = false;
+    lighting.directionalDirection = {0, 0, -1};
+    lighting.shadowDistance = 150;
+    lighting.shadowSoftness = 1;
+
+    // No opaque receivers: resident coarse VSM pages must also cover fog.
     BasicPostProcessEffect fog{BasicPostProcessEffectType::VolumetricFog};
     fog.quality = 32;
     fog.parameters[0] = {1, 1, 1, 0.2f};

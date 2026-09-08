@@ -59,6 +59,25 @@ Reintroducing the old dirty-page invalidation makes this test fail with a
 missing-shadow flash; the fixed shaders pass on Vulkan and OpenGL. The clipmap
 test also checks depth hysteresis and eventual recentering.
 
+The grazing-light regression renders a flat self-shadowing receiver at three
+shadow distances with the widest supported filter. Receiver-plane equations
+are normalised before testing their determinant: the former absolute cutoff
+disabled slope correction at small projected footprints, producing stripes
+that changed with virtual level. Before the fix the first case reached only
+142/255 visibility; after the fix all three cases remain fully lit at 255/255.
+Both Vulkan and OpenGL VSM-only tests pass, as do the existing Vulkan RHI,
+clipmap, VSM performance and separate OpenGL shadow checks. This changes no
+page budgets, atlas allocation or cascade activation.
+
+A second regression covers an oblique receiver with a cast shadow and ample
+page capacity. Previously residency estimated a constant-depth pixel footprint
+while surface shading used derivatives along the receiver plane. Shading could
+therefore select unrequested levels and fall back to the coarse root in broad
+bands. Both stages now use the same projected pixel-footprint helper; geometric
+derivatives are still used for receiver-plane bias correction. The regression
+checks the level debug output after warm-up and rejects unnecessary root
+fallback in the receiver interior (7,060 pixels before this correction).
+
 ```powershell
 cmake --build out/build/gcc-profile --target PlutoGEEditor PlutoGEVulkanRhiTests PlutoGEOpenGLRhiTests -j 6
 ctest --test-dir out/build/gcc-profile -R 'PlutoGE(VirtualShadowClipmap|OpenGLVsmOnly|VulkanRhi|VulkanVsmOnly|VulkanVsmPerformance|VulkanSsr|OpenGLSsr|VctWorldCacheRendering)Tests' --output-on-failure

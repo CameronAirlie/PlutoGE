@@ -65,8 +65,7 @@ void requestMain(uint3 id : SV_DispatchThreadID)
     float depth = receiverDepth.SampleLevel((float2(id.xy) + 0.5) / float2(vsm.viewport.xy), 0).r;
     if (depth <= 0.0) return;
     float3 world = reconstruct(id.xy, depth);
-    float footprint = max(length(reconstruct(id.xy + uint2(1, 0), depth) - world),
-                          length(reconstruct(id.xy + uint2(0, 1), depth) - world));
+    float footprint = virtualReceiverFootprint(vsm, world);
     int level = selectVirtualLevel(vsm, world, footprint);
     if (level >= 0) requestFootprint(world, level);
 }

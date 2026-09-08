@@ -32,6 +32,17 @@ float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
     float3 clip = mul(p.matrices[level], float4(world, 1)).xyz;
     return float3(clip.xy * 0.5 + 0.5, clip.z);
 }
+float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
+{
+    // Use the same constant-depth pixel footprint for residency and shading.
+    // Surface derivatives include receiver slope, unlike depth-request pixel
+    // offsets; mixing them selects unrequested levels on oblique surfaces.
+    float clipW = mul(p.viewProjection, float4(world, 1)).w;
+    float4 dx = mul(p.inverseViewProjection, float4(2.0 * clipW / p.viewport.x, 0, 0, 0));
+    float4 dy = mul(p.inverseViewProjection, float4(0, 2.0 * clipW / p.viewport.y, 0, 0));
+    return max(length((dx.xyz - world * dx.w) / (1.0 + dx.w)),
+               length((dy.xyz - world * dy.w) / (1.0 + dy.w)));
+}
 int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 {
     for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)

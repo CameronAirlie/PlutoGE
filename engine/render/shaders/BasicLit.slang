@@ -260,8 +260,13 @@ float2 computeReceiverPlaneDepthGradient(float3 shadowDx, float3 shadowDy)
 {
     // shadowCoord.xy is NDC here; the factor of two converts the solved
     // gradient to the [0, 1] texture coordinates used by the PCF offsets.
+    // Condition each equation before testing degeneracy. An absolute
+    // determinant cutoff drops slope correction as clipmap spans or screen
+    // resolution grow, creating level-dependent self-shadow stripes.
+    shadowDx /= max(max(abs(shadowDx.x), abs(shadowDx.y)), 1.e-20);
+    shadowDy /= max(max(abs(shadowDy.x), abs(shadowDy.y)), 1.e-20);
     const float determinant = shadowDx.x * shadowDy.y - shadowDx.y * shadowDy.x;
-    if (abs(determinant) < 0.00000001)
+    if (abs(determinant) < 0.000001)
         return float2(0.0);
     return 2.0 * float2(
         shadowDy.y * shadowDx.z - shadowDx.y * shadowDy.z,
@@ -272,7 +277,7 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                             float slope, out float rawVisibility, out float normalizedLevel)
 {
     rawVisibility = 1.0; normalizedLevel = 0.0;
-    int firstLevel = selectVirtualLevel(vsm, world, max(length(worldDx), length(worldDy)));
+    int firstLevel = selectVirtualLevel(vsm, world, virtualReceiverFootprint(vsm, world));
     if (firstLevel < 0) return -1.0;
     const float support = clamp(vsm.settings.x, 0.0, 4.0) + 1.0;
     for (int level = firstLevel; level < PLUTO_VSM_LEVELS; ++level)

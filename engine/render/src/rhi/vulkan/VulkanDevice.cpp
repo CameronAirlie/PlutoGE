@@ -2669,6 +2669,13 @@ namespace PlutoGE::render::rhi::vulkan
         auto *stored = m_impl->textures.Get(handle);
         if (!data.empty())
         {
+            VkFormatProperties formatProperties{};
+            vkGetPhysicalDeviceFormatProperties(m_impl->physicalDevice, image.format, &formatProperties);
+            constexpr VkFormatFeatureFlags blitFeatures = VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            const bool gpuMips = !descriptor.normalMap && descriptor.depth == 1 && stored->mipLevels > 1 &&
+                (descriptor.format == Format::R8G8B8A8Srgb || descriptor.format == Format::R8G8B8A8Unorm) &&
+                (formatProperties.optimalTilingFeatures & blitFeatures) == blitFeatures;
             std::vector<std::byte> mipData(data.begin(), data.end());
             const auto normalMips = descriptor.normalMap
                 ? BuildNormalMipmaps(data, descriptor.width, descriptor.height, stored->mipLevels)
@@ -2679,7 +2686,7 @@ namespace PlutoGE::render::rhi::vulkan
             std::uint32_t mipHeight = descriptor.height;
             std::size_t levelOffset = 0;
             copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {mipWidth, mipHeight, descriptor.depth}});
-            for (std::uint32_t level = 1; descriptor.depth == 1 && level < stored->mipLevels; ++level)
+            for (std::uint32_t level = 1; !gpuMips && descriptor.depth == 1 && level < stored->mipLevels; ++level)
             {
                 const std::uint32_t nextWidth = (std::max)(1u, mipWidth / 2u);
                 const std::uint32_t nextHeight = (std::max)(1u, mipHeight / 2u);
@@ -2726,7 +2733,44 @@ namespace PlutoGE::render::rhi::vulkan
             const BufferHandle stagingHandle = CreateBuffer({mipData.size(), BufferUsage::Vertex, "Texture staging"}, mipData);
             auto *staging = m_impl->buffers.Get(stagingHandle);
             m_impl->Immediate([&](VkCommandBuffer command)
-                              { m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT); vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(copies.size()), copies.data()); m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT); });
+            {
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    static_cast<std::uint32_t>(copies.size()), copies.data());
+                // Hardware filtering handles sRGB decode/encode and avoids
+                // millions of CPU colour conversions on first visibility.
+                for (std::uint32_t level = 1; gpuMips && level < stored->mipLevels; ++level)
+                {
+                    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = stored->image;
+                    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1};
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, 0, nullptr, 0, nullptr, 1, &barrier);
+                    VkImageBlit blit{};
+                    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
+                    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+                    blit.srcOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> (level - 1))),
+                                          static_cast<int>(std::max(1u, descriptor.height >> (level - 1))), 1};
+                    blit.dstOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> level)),
+                                          static_cast<int>(std::max(1u, descriptor.height >> level)), 1};
+                    vkCmdBlitImage(command, stored->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+                    // Restore a uniform layout for the existing whole-image
+                    // tracker and its final shader-read transition.
+                    std::swap(barrier.oldLayout, barrier.newLayout);
+                    std::swap(barrier.srcAccessMask, barrier.dstAccessMask);
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, 0, nullptr, 0, nullptr, 1, &barrier);
+                }
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            });
             DestroyBuffer(stagingHandle);
         }
         return handle;

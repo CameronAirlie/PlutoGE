@@ -776,6 +776,13 @@ namespace PlutoGE::render
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             m_virtualShadowShaders = shaders.virtualShadows;
+            // Compile VSM pipelines during renderer initialization, alongside
+            // the other pipelines, never on the first shadowed viewport frame.
+            if (m_virtualShadowShaders.Complete() && device.GetImmediateContext().SupportsGpuDrivenShadows())
+            {
+                m_virtualShadows = std::make_unique<VirtualShadowMaps>();
+                m_virtualShadows->Initialize(device, m_virtualShadowShaders);
+            }
             const VirtualShadowParameters emptyTable{};
             const float zero = 0;
             m_emptyVirtualShadowPageTable = rhi::Texture(device, device.CreateTexture(
@@ -1107,13 +1114,9 @@ namespace PlutoGE::render
 
         auto &commands = m_device->GetImmediateContext();
         bool virtualShadowsActive = UsesVirtualShadows(lighting, draws, shadowDraws);
-        if (virtualShadowsActive && !m_virtualShadows)
-        {
-            auto maps = std::make_unique<VirtualShadowMaps>();
-            maps->Initialize(*m_device, m_virtualShadowShaders);
-            m_virtualShadows = std::move(maps);
-        }
-        if (!virtualShadowsActive) m_virtualShadows.reset();
+        // Retain compiled pipelines and residency across temporary disablement
+        // or CSM selection. Inactive VSM records no GPU work; signatures and
+        // projection epochs validate cached depth when it resumes.
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         const auto beginFrameStart = std::chrono::steady_clock::now();
         commands.BeginFrame("Scene");

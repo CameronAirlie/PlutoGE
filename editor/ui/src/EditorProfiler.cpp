@@ -136,6 +136,17 @@ namespace PlutoGE::ui
         report << "Session peak waits: scene fence " << m_peakFrameTimingStats.rhiTimingStats.frameFenceWaitMs
                << " ms, presentation fence " << m_peakFrameTimingStats.presentationTimingStats.presentFenceWaitMs
                << " ms, acquire " << m_peakFrameTimingStats.presentationTimingStats.presentAcquireMs << " ms\n";
+        const auto &peakScene = m_peakFrameTimingStats.rhiSceneTimingStats;
+        report << "Session peak RHI: total " << peakScene.totalMs << " ms, command translation "
+               << peakScene.commandTranslationMs << " ms, setup " << peakScene.sceneSetupMs
+               << " ms, render recording " << peakScene.renderRecordingMs << " ms\n";
+        report << "Session peak RHI recording: begin " << peakScene.beginFrameMs << " ms, shadows "
+               << peakScene.shadowRecordingMs << " ms, geometry " << peakScene.geometryRecordingMs
+               << " ms, post-process " << peakScene.postProcessRecordingMs << " ms, upscaler "
+               << peakScene.temporalUpscalerMs << " ms, submit " << peakScene.submitMs << " ms\n";
+        for (const auto &scope : m_peakFrameTimingStats.rhiTimingStats.gpuScopes)
+            report << "Session peak scope / " << scope.name << ": " << scope.cpuMilliseconds
+                   << " ms CPU recording\n";
         report << "VSync: " << (frameTimingStats.vSyncEnabled ? "On" : "Off") << "\n";
         if (frameTimingStats.mainThreadCpuMs >= 0.0f)
         {

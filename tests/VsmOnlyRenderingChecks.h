@@ -61,6 +61,7 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     if (shadowed == readPixels(renderer.GetColorTexture()))
         throw std::runtime_error("VSM-only surface shadows disappeared");
 
+    const auto frameBeforeSwitch = renderer.GetFrameStats().virtualShadows.gpuFrame;
     lighting.shadowMethod = ShadowMethod::Cascaded;
     renderSurface();
     if (renderer.GetFrameStats().virtualShadowsActive || renderer.GetFrameStats().shadowCascadeTargets != 4 ||
@@ -68,6 +69,9 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
         throw std::runtime_error("Switching to CSM did not allocate and update cascades");
     lighting.shadowMethod = ShadowMethod::Virtual;
     renderSurface(); assertExclusive();
+    for (int frame = 0; frame < 3; ++frame) { renderSurface(); assertExclusive(); }
+    if (renderer.GetFrameStats().virtualShadows.gpuFrame <= frameBeforeSwitch)
+        throw std::runtime_error("Shadow-method switching recreated VSM pipelines and residency");
 
     caster.castsShadow = true;
     for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }

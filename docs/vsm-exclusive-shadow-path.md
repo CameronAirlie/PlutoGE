@@ -105,6 +105,37 @@ scene/presentation fence and acquire waits, so a later export preserves evidence
 from the slow frame. This pass does not establish the cause of that ten-second
 stall or claim to eliminate it.
 
+The next capture locates the 10,592 ms peak inside viewport rendering
+(10,575 ms), with zero recorded scene/presentation fence waits. VSM previously
+created ten pipelines synchronously in `BasicRenderer::Render`, before the
+scene frame timer, and destroyed them whenever VSM became inactive. Pipeline
+creation now happens during renderer initialization. The VSM object remains
+allocated across shadow disablement and CSM selection, recording no work while
+inactive; normal signatures and projection epochs validate depth on reactivation.
+This retains VSM memory until renderer shutdown and avoids repeated shader
+compilation and atlas allocation on mode changes. Renderer startup still pays
+initial compilation cost. The switching regression requires the VSM GPU frame
+sequence to continue rather than restart. The peak report now includes saved
+RHI translation/setup/recording timings and CPU recording scopes; this can
+distinguish other viewport stalls from pipeline initialization. The supplied
+capture alone does not prove that compilation caused its particular peak.
+
+The user subsequently confirmed that stalls occur on first camera movement.
+The first-visibility texture upload path reproduced a matching stall: a single
+4K sRGB texture took **7,118.25 ms** to create with the old CPU mip-generation
+path, versus **39.22 ms** using GPU mip generation on the same local device and
+`gcc-profile` build. The benchmark includes texture allocation, mip generation,
+upload and completion, with source pixels prepared before timing.
+
+Vulkan now uses filtered image blits for mip generation on supported RGBA8
+linear/sRGB formats, uploading only level zero. Format-feature checks retain the
+CPU fallback on unsupported devices; normal maps retain their existing
+normalization-aware CPU mip chain. The regression renders minified black/white
+textures to check linear-light averaging, plus one-pixel-wide and odd-sized
+textures to check coverage. Run `PlutoGEVulkanRhiTests.exe --texture-mips` for
+these checks and the 4K creation benchmark. This removes the reproduced CPU
+bottleneck rather than waiting for the original scene to expose it again.
+
 ```powershell
 cmake --build out/build/gcc-profile --target PlutoGEEditor PlutoGEVulkanRhiTests PlutoGEOpenGLRhiTests -j 6
 ctest --test-dir out/build/gcc-profile -R 'PlutoGE(VirtualShadowClipmap|OpenGLVsmOnly|VulkanRhi|VulkanVsmOnly|VulkanVsmPerformance|VulkanSsr|OpenGLSsr|VctWorldCacheRendering)Tests' --output-on-failure

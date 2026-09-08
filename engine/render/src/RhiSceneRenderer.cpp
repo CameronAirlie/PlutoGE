@@ -416,6 +416,8 @@ namespace PlutoGE::render
             const float casterDistance = effectiveLighting.shadowCasterDistance > 0.0f
                                              ? effectiveLighting.shadowCasterDistance
                                              : shadowDistance;
+            effectiveLighting.shadowDistance = shadowDistance;
+            effectiveLighting.shadowCasterDistance = casterDistance;
             const std::uint32_t cascadeCount = std::clamp(effectiveLighting.shadowCascadeCount, 1u, 4u);
             const float cameraNear = std::max(cameraData.nearPlane, 0.01f);
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
@@ -655,6 +657,8 @@ namespace PlutoGE::render
         m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;
         m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
         m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
+        m_timingStats.virtualShadows = frameStats.virtualShadows;
+        m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();

@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/RenderDebugView.h"
+#include "PlutoGE/render/ShadowMethod.h"
+#include "PlutoGE/render/VirtualShadowMaps.h"
 
 #include "PlutoGE/render/rhi/Resource.h"
 
@@ -167,6 +169,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode maskedShadowFragment;
+        VirtualShadowShaders virtualShadows;
         BasicPostProcessShaderPackage displayOutput;
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)>
@@ -188,12 +192,15 @@ namespace PlutoGE::render
         BasicMesh(const BasicMesh &) = delete;
         BasicMesh &operator=(const BasicMesh &) = delete;
         [[nodiscard]] bool IsValid() const noexcept { return m_vertexBuffer && m_indexBuffer && m_indexCount != 0; }
+        [[nodiscard]] std::uint32_t GetIndexCount() const noexcept { return m_indexCount; }
+        [[nodiscard]] std::uint64_t GetRevision() const noexcept { return m_revision; }
 
     private:
         friend class BasicRenderer;
         rhi::Buffer m_vertexBuffer;
         rhi::Buffer m_indexBuffer;
         std::uint32_t m_indexCount = 0;
+        std::uint64_t m_revision = 0;
     };
 
     struct BasicDraw
@@ -250,6 +257,9 @@ namespace PlutoGE::render
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};
         bool shadowsEnabled = false;
+        ShadowMethod shadowMethod = ShadowMethod::Cascaded;
+        std::uint32_t virtualShadowPageBudget = 64;
+        std::uint32_t virtualShadowTriangleBudget = 1000000;
         std::array<glm::mat4, 4> shadowMatrices{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         glm::vec4 shadowCascadeSplits{0.0f};
@@ -293,6 +303,8 @@ namespace PlutoGE::render
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         std::size_t shadowCandidates = 0;
+        VirtualShadowStats virtualShadows;
+        bool virtualShadowsActive = false;
         std::size_t shadowObjectUploads = 0;
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
@@ -304,7 +316,7 @@ namespace PlutoGE::render
             std::size_t total = 0;
             for (const auto count : shadowDrawsByCascade)
                 total += count;
-            return total;
+            return virtualShadows.submittedIndirectCommands + total;
         }
     };
 
@@ -383,6 +395,11 @@ namespace PlutoGE::render
                                                             std::uint32_t width,
                                                             std::uint32_t height);
         void EnsureShadowTargets(const BasicLighting &lighting);
+        std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
+        VirtualShadowShaders m_virtualShadowShaders;
+        rhi::Texture m_emptyVirtualShadowPageTable;
+        std::uint64_t m_nextMeshRevision = 1;
+        rhi::Buffer m_emptyVirtualShadowTable;
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_transparentPipeline;
@@ -393,6 +410,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_instancedPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;
+        rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;
+        std::vector<rhi::Buffer> m_shadowMaterialBuffers;
         rhi::GraphicsPipeline m_displayPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         rhi::Buffer m_cameraBuffer;
@@ -457,6 +476,7 @@ namespace PlutoGE::render
             glm::vec3 pendingOrigin{0.0f};
             float pendingSize = 0.0f;
             std::size_t nextDraw = 0;
+            std::uint32_t nextVoxelIndex = 0;
             std::uint64_t contentSignature = 0;
             std::uint64_t pendingSignature = 0;
             std::uint64_t lastUpdateFrame = 0;
@@ -464,6 +484,7 @@ namespace PlutoGE::render
             BasicLighting pendingLighting;
             glm::mat4 pendingShadowMatrix{1.0f};
             std::size_t nextShadowDraw = 0;
+            std::uint32_t nextShadowIndex = 0;
             bool shadowReady = false;
             bool valid = false;
             bool rebuilding = false;

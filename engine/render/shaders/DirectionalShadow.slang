@@ -1,10 +1,12 @@
 struct VertexInput
 {
     float3 position : POSITION;
+    float2 uv : TEXCOORD0;
 };
 struct VertexOutput
 {
     float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
 };
 
 [[vk::binding(0, 0)]]
@@ -29,6 +31,7 @@ VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     output.position = mul(lightViewProjection, mul(model, float4(input.position, 1.0)));
+    output.uv = input.uv;
     return output;
 }
 
@@ -38,11 +41,27 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 {
     VertexOutput output;
     output.position = mul(lightViewProjection, mul(instanceModels[instanceId], float4(input.position, 1.0)));
+    output.uv = input.uv;
     return output;
 }
 
 [shader("fragment")]
 float fragmentMain(VertexOutput input) : SV_Target
 {
+    return input.position.z;
+}
+
+[[vk::binding(0, 1)]]
+cbuffer ShadowMaterial : register(b0, space1)
+{
+    float4 shadowAlpha; // UV scale, alpha cutoff, base colour alpha
+};
+[[vk::binding(1, 1)]]
+Sampler2D shadowBaseColor : register(t1, space1);
+
+[shader("fragment")]
+float maskedFragmentMain(VertexOutput input) : SV_Target
+{
+    if (shadowBaseColor.Sample(input.uv * shadowAlpha.xy).a * shadowAlpha.w < shadowAlpha.z) discard;
     return input.position.z;
 }

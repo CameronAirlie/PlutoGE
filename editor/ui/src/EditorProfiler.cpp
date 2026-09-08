@@ -210,6 +210,19 @@ namespace PlutoGE::ui
                << rhiScene.shadowObjectUploadCount << " object uploads)\n";
         report << "RHI shadow cascade cache: " << rhiScene.shadowCascadeCacheHitCount << " hits, "
                << rhiScene.shadowCascadeUpdateCount << " updates\n";
+        if (rhiScene.virtualShadowsActive)
+        {
+            const auto &pages = rhiScene.virtualShadows;
+            report << "VSM submissions: " << pages.submittedIndirectCommands << " indirect commands, " << pages.receiverDraws
+                   << " receiver draws; " << pages.memoryBytes << " bytes (+ cascades)\n";
+            if (pages.gpuCountersAvailable)
+                report << "VSM GPU frame " << pages.gpuFrame << " (delayed): " << pages.requested << " requested, " << pages.resident
+                       << " resident, " << pages.cacheHits << " hits, " << pages.dirty << " dirty, " << pages.updated << " updated, "
+                       << pages.deferred << " deferred, " << pages.evicted << " evicted, " << pages.overflow << " overflow; "
+                       << pages.indirectDraws << " non-empty draws, " << pages.casterPagePairs << " caster/page pairs, "
+                       << pages.submittedTriangles << " triangles\n";
+            else report << "VSM GPU counters: pending asynchronous snapshot\n";
+        }
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
         report << "RHI begin active CPU: " << activeRhiBeginCpuMs << " ms\n";

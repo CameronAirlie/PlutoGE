@@ -2,6 +2,7 @@
 
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/ShadowMethod.h"
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -23,6 +24,9 @@ namespace PlutoGE::scene
 
     struct DirectionalShadowSettings
     {
+        render::ShadowMethod method = render::ShadowMethod::Cascaded;
+        int virtualPageBudget = 64;
+        int virtualTriangleBudget = 1000000;
         int cascadeCount = kDefaultDirectionalShadowCascades;
         int resolution = 2048;
         // 0.5 reduces a 2048 base map to 256 pixels by cascade four.

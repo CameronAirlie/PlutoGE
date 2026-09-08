@@ -171,6 +171,8 @@ namespace PlutoGE::render::rhi::vulkan
                 return VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
             case BufferUsage::Index:
                 return VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            case BufferUsage::Storage:
+                return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
             case BufferUsage::Uniform:
                 return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             }
@@ -1023,6 +1025,7 @@ namespace PlutoGE::render::rhi::vulkan
                         VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess)
         {
             VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            barrier.dstAccessMask = destinationAccess;
             barrier.oldLayout = texture.layout;
             barrier.newLayout = next;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1057,9 +1060,9 @@ namespace PlutoGE::render::rhi::vulkan
                 command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 command.commandBufferCount = 1;
                 Check(vkAllocateCommandBuffers(m_impl.device, &command, &frame.commandBuffer), "vkAllocateCommandBuffers(frame)");
-                std::array<VkDescriptorPoolSize, 3> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
+                std::array<VkDescriptorPoolSize, 4> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384},
-                                                           {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}}};
+                                                           {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16384}}};
                 VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 descriptors.maxSets = 32768;
                 descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
@@ -1080,6 +1083,8 @@ namespace PlutoGE::render::rhi::vulkan
         {
             for (auto &frame : m_frames)
             {
+                for (auto &readback : frame.readbacks)
+                    vmaDestroyBuffer(m_impl.allocator, readback.buffer, readback.allocation);
                 if (frame.fence)
                     vkDestroyFence(m_impl.device, frame.fence, nullptr);
                 if (frame.queryPool)
@@ -1101,6 +1106,14 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.frameFenceWaitMs = std::chrono::duration<float, std::milli>(
                                                       std::chrono::steady_clock::now() - waitStart)
                                                       .count();
+            for (auto &readback : frame.readbacks)
+            {
+                if (!readback.callback) continue;
+                vmaInvalidateAllocation(m_impl.allocator, readback.allocation, 0, readback.size);
+                readback.callback({static_cast<const std::byte *>(readback.mapped), readback.size});
+                readback.callback = {};
+            }
+            frame.readbackCursor = 0;
             ResolveTimestamps(frame);
             if (frame.submissionSerial != 0)
                 m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
@@ -1241,27 +1254,33 @@ namespace PlutoGE::render::rhi::vulkan
         void BeginGpuScope(std::string_view name) override
         {
             auto &frame = m_frames[m_frameIndex];
-            if (!m_recording || m_activeScope || frame.nextQuery + 1 >= MaxTimestampQueries)
+            if (!m_recording)
                 return;
-            m_activeScope = true;
-            m_activeScopeName.assign(name);
-            m_activeScopeStart = frame.nextQuery++;
-            m_activeScopeCpuStart = std::chrono::steady_clock::now();
-            vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, m_activeScopeStart);
+            // Reserve both queries now, so a nested scope cannot consume its parent's end query.
+            const bool available = frame.nextQuery + 1 < MaxTimestampQueries;
+            m_activeScopes.push_back({std::string(name), frame.nextQuery, frame.nextQuery + 1,
+                                      std::chrono::steady_clock::now(), available});
+            if (available)
+            {
+                vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.queryPool, frame.nextQuery);
+                frame.nextQuery += 2;
+            }
         }
 
         void EndGpuScope() override
         {
-            if (!m_activeScope)
+            if (m_activeScopes.empty())
+                return;
+            const auto scope = std::move(m_activeScopes.back());
+            m_activeScopes.pop_back();
+            if (!scope.available)
                 return;
             auto &frame = m_frames[m_frameIndex];
-            const auto end = frame.nextQuery++;
-            vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, end);
+            vkCmdWriteTimestamp(CommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, scope.end);
             const float cpuMs = std::chrono::duration<float, std::milli>(
-                                    std::chrono::steady_clock::now() - m_activeScopeCpuStart)
-                                    .count();
-            frame.scopes.push_back({m_activeScopeName, m_activeScopeStart, end, cpuMs});
-            m_activeScope = false;
+                                      std::chrono::steady_clock::now() - scope.cpuStart)
+                                      .count();
+            frame.scopes.push_back({scope.name, scope.start, scope.end, cpuMs});
         }
 
         void Submit() override
@@ -1271,7 +1290,7 @@ namespace PlutoGE::render::rhi::vulkan
             if (!m_recording)
                 return;
             auto &frame = m_frames[m_frameIndex];
-            if (m_activeScope)
+            while (!m_activeScopes.empty())
                 EndGpuScope();
             m_impl.FlushUniformArena();
             vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
@@ -1304,6 +1323,17 @@ namespace PlutoGE::render::rhi::vulkan
             VkRect2D scissor{{s.x, s.y}, {s.width, s.height}};
             vkCmdSetScissor(CommandBuffer(), 0, 1, &scissor);
         }
+        bool SupportsDepthRegionClear() const noexcept override { return true; }
+        void ClearDepthRegion(const Scissor &region, float depth) override
+        {
+            if (!m_rendering || !m_depth) throw std::logic_error("Depth region clear requires a depth attachment");
+            VkClearAttachment attachment{};
+            attachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            attachment.clearValue.depthStencil.depth = depth;
+            VkClearRect rect{{{region.x, region.y}, {region.width, region.height}}, 0, 1};
+            vkCmdClearAttachments(CommandBuffer(), 1, &attachment, 1, &rect);
+        }
+
         void BindPipeline(PipelineHandle handle) override
         {
             auto *pipeline = m_impl.pipelines.Get(handle);
@@ -1379,7 +1409,8 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::invalid_argument("Vulkan texture was not created with sampled usage");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 m_impl.Transition(CommandBuffer(), *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                                  m_pipeline->compute ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                  VK_ACCESS_SHADER_READ_BIT);
             if (m_sampledTextures[slot] != textureHandle || m_samplers[slot] != samplerHandle)
                 m_descriptorBindingsDirty = true;
             m_sampledTextures[slot] = textureHandle;
@@ -1420,6 +1451,66 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdDrawIndexed(CommandBuffer(), count, instanceCount, firstIndex, vertexOffset, 0);
             ++m_impl.timingStats.indexedDrawCalls;
         }
+        bool SupportsGpuDrivenShadows() const noexcept override
+        {
+            VkPhysicalDeviceFeatures features{};
+            vkGetPhysicalDeviceFeatures(m_impl.physicalDevice, &features);
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(m_impl.physicalDevice, &properties);
+            return features.shaderClipDistance == VK_TRUE && properties.limits.maxClipDistances >= 4 &&
+                   properties.limits.maxPerStageDescriptorStorageBuffers >= 6;
+        }
+        void BindStorageBuffer(std::uint32_t slot, BufferHandle handle) override
+        {
+            auto *buffer = m_impl.buffers.Get(handle);
+            if (!m_pipeline || slot >= MaxResourceSlots || !buffer || buffer->usage != BufferUsage::Storage)
+                throw std::invalid_argument("Invalid Vulkan storage buffer");
+            if (m_storageBuffers[slot] != handle) m_descriptorBindingsDirty = true;
+            m_storageBuffers[slot] = handle;
+        }
+        void DrawIndexedIndirect(BufferHandle handle, std::size_t offset) override
+        {
+            auto *buffer = m_impl.buffers.Get(handle);
+            if (!buffer || buffer->usage != BufferUsage::Storage || offset % 4 ||
+                offset > buffer->size || buffer->size - offset < sizeof(VkDrawIndexedIndirectCommand))
+                throw std::invalid_argument("Invalid Vulkan indexed indirect draw");
+            PrepareDraw();
+            vkCmdDrawIndexedIndirect(CommandBuffer(), buffer->buffer, offset, 1, sizeof(VkDrawIndexedIndirectCommand));
+            ++m_impl.timingStats.indexedDrawCalls;
+        }
+
+        bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
+        {
+            auto *buffer = m_impl.buffers.Get(source);
+            if (!m_recording || m_rendering || !buffer || buffer->usage != BufferUsage::Storage || size > buffer->size || !size)
+                return false;
+            auto &frame = m_frames[m_frameIndex];
+            if (frame.readbackCursor == frame.readbacks.size()) frame.readbacks.emplace_back();
+            auto &readback = frame.readbacks[frame.readbackCursor++];
+            if (readback.size != size)
+            {
+                if (readback.buffer) vmaDestroyBuffer(m_impl.allocator, readback.buffer, readback.allocation);
+                VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                info.size = size; info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                VmaAllocationCreateInfo allocation{};
+                allocation.usage = VMA_MEMORY_USAGE_AUTO;
+                allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo mapped{};
+                Check(vmaCreateBuffer(m_impl.allocator, &info, &allocation, &readback.buffer, &readback.allocation, &mapped),
+                      "vmaCreateBuffer(diagnostic readback)");
+                readback.mapped = mapped.pMappedData; readback.size = size;
+            }
+            readback.callback = std::move(callback);
+            VkBufferCopy copy{0, 0, size};
+            vkCmdCopyBuffer(CommandBuffer(), buffer->buffer, readback.buffer, 1, &copy);
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                                 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            return true;
+        }
+
         void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
         {
             if (m_rendering || !m_pipeline || !m_pipeline->compute)
@@ -1431,8 +1522,10 @@ namespace PlutoGE::render::rhi::vulkan
         void ShaderMemoryBarrier() override
         {
             VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                                    VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                                    VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
@@ -1449,7 +1542,8 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdClearColorImage(CommandBuffer(), texture->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
             VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                                    VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                  0, 1, &barrier, 0, nullptr, 0, nullptr);
@@ -1545,6 +1639,12 @@ namespace PlutoGE::render::rhi::vulkan
                         dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                         key.resources[key.resourceCount++] = buffer->size;
                     }
+                    else if (binding.type == ResourceBindingType::StorageBuffer)
+                    {
+                        if (binding.slot >= MaxResourceSlots || !m_storageBuffers[binding.slot])
+                            throw std::logic_error("Vulkan draw has an incomplete storage buffer binding");
+                        key.resources[key.resourceCount++] = EncodeHandle(m_storageBuffers[binding.slot]);
+                    }
                     else if (binding.type == ResourceBindingType::SampledTexture)
                     {
                         if (binding.slot >= MaxResourceSlots || !m_sampledTextures[binding.slot] || !m_samplers[binding.slot])
@@ -1621,6 +1721,13 @@ namespace PlutoGE::render::rhi::vulkan
                         auto *buffer = m_impl.buffers.Get(m_uniformBuffers[binding.slot]);
                         buffers[bufferCount] = {m_impl.uniformArenas[m_impl.activeFrameIndex].buffer, 0, buffer->size};
                         write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                        write.pBufferInfo = &buffers[bufferCount++];
+                    }
+                    else if (binding.type == ResourceBindingType::StorageBuffer)
+                    {
+                        auto *buffer = m_impl.buffers.Get(m_storageBuffers[binding.slot]);
+                        buffers[bufferCount] = {buffer->buffer, 0, buffer->size};
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                         write.pBufferInfo = &buffers[bufferCount++];
                     }
                     else if (binding.type == ResourceBindingType::SampledTexture)
@@ -1724,13 +1831,23 @@ namespace PlutoGE::render::rhi::vulkan
             bool hasTimestamps = false;
             std::string submissionLabel = "Unlabelled";
             std::uint64_t submissionSerial = 0;
+            struct Readback
+            {
+                VkBuffer buffer = VK_NULL_HANDLE;
+                VmaAllocation allocation = VK_NULL_HANDLE;
+                void *mapped = nullptr;
+                std::size_t size = 0;
+                BufferReadbackCallback callback;
+            };
+            std::vector<Readback> readbacks;
+            std::size_t readbackCursor = 0;
         };
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
         static constexpr std::size_t MaxDescriptorBindings = 32;
         static constexpr std::size_t MaxResourceSlots = 32;
         static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
-        static constexpr std::uint32_t MaxTimestampQueries = 32;
+        static constexpr std::uint32_t MaxTimestampQueries = 128;
         void ResolveTimestamps(FrameResources &frame)
         {
             if (!frame.hasTimestamps)
@@ -1761,6 +1878,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<BufferHandle, MaxResourceSlots> m_uniformBuffers{};
         std::array<std::uint32_t, MaxResourceSlots> m_uniformDynamicOffsets{};
         std::array<TextureHandle, MaxResourceSlots> m_sampledTextures{};
+        std::array<BufferHandle, MaxResourceSlots> m_storageBuffers{};
         std::array<TextureHandle, MaxResourceSlots> m_storageImages{};
         std::array<std::uint32_t, MaxResourceSlots> m_storageMipLevels{};
         std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
@@ -1784,10 +1902,14 @@ namespace PlutoGE::render::rhi::vulkan
         bool m_descriptorBindingsDirty = true;
         bool m_recording = false;
         bool m_rendering = false;
-        bool m_activeScope = false;
-        std::string m_activeScopeName;
-        std::uint32_t m_activeScopeStart = 0;
-        std::chrono::steady_clock::time_point m_activeScopeCpuStart{};
+        struct ActiveScope
+        {
+            std::string name;
+            std::uint32_t start, end;
+            std::chrono::steady_clock::time_point cpuStart;
+            bool available;
+        };
+        std::vector<ActiveScope> m_activeScopes;
     };
 
     class VulkanSwapchain final : public ISwapchain
@@ -2318,6 +2440,7 @@ namespace PlutoGE::render::rhi::vulkan
         vkGetPhysicalDeviceFeatures2(m_impl->physicalDevice, &supported);
         VkPhysicalDeviceFeatures enabledFeatures{};
         enabledFeatures.samplerAnisotropy = supported.features.samplerAnisotropy;
+        enabledFeatures.shaderClipDistance = supported.features.shaderClipDistance;
         m_impl->maxSamplerAnisotropy = enabledFeatures.samplerAnisotropy
             ? properties.limits.maxSamplerAnisotropy : 1.0f;
 #if PLUTO_HAS_STREAMLINE
@@ -2654,7 +2777,7 @@ namespace PlutoGE::render::rhi::vulkan
                                                       ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                                                       : binding.type == ResourceBindingType::SampledTexture
                                                             ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                   1, stages, nullptr});
         }
         resource.setLayouts.resize(bindingsBySet.size());
@@ -2797,7 +2920,7 @@ namespace PlutoGE::render::rhi::vulkan
                                             ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                                         : binding.type == ResourceBindingType::SampledTexture
                                             ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             nativeBindings[binding.set].push_back(
                 {binding.binding, descriptorType, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
             resource.bindingsBySet[binding.set].push_back(binding);
@@ -2861,6 +2984,28 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl->timingStats.uniformUploadCpuMs += std::chrono::duration<float, std::milli>(
                                                           std::chrono::steady_clock::now() - uploadStart)
                                                           .count();
+            return;
+        }
+        if (resource->usage == BufferUsage::Storage)
+        {
+            const auto commandBuffer = m_impl->context->NativeCommandBuffer();
+            if (!commandBuffer || offset % 4 || data.size() % 4)
+                throw std::logic_error("Storage uploads require frame recording outside rendering and four-byte alignment");
+            // vkCmdUpdateBuffer snapshots its source into the command stream;
+            // never overwrite host-visible data still read by an earlier frame.
+            VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 1, &before, 0, nullptr, 0, nullptr);
+            for (std::size_t cursor = 0; cursor < data.size(); cursor += 65536)
+                vkCmdUpdateBuffer(commandBuffer, resource->buffer, offset + cursor,
+                                  std::min(std::size_t{65536}, data.size() - cursor), data.data() + cursor);
+            VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                 0, 1, &after, 0, nullptr, 0, nullptr);
             return;
         }
         const auto allocation = resource->allocation;

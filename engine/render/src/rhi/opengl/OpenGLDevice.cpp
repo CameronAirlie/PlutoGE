@@ -47,6 +47,8 @@ namespace PlutoGE::render::rhi::opengl
                 return GL_ARRAY_BUFFER;
             case BufferUsage::Index:
                 return GL_ELEMENT_ARRAY_BUFFER;
+            case BufferUsage::Storage:
+                return GL_SHADER_STORAGE_BUFFER;
             case BufferUsage::Uniform:
                 return GL_UNIFORM_BUFFER;
             }
@@ -141,7 +143,59 @@ namespace PlutoGE::render::rhi::opengl
     class OpenGLCommandContext final : public ICommandContext
     {
     public:
-        explicit OpenGLCommandContext(OpenGLDevice::Impl &impl) : m_impl(impl) {}
+        explicit OpenGLCommandContext(OpenGLDevice::Impl &impl) : m_impl(impl)
+        {
+            if (glDispatchCompute && glBindBufferBase && glDrawElementsIndirect)
+            {
+                GLint computeBuffers = 0, vertexBuffers = 0, clipDistances = 0;
+                glGetIntegerv(GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS, &computeBuffers);
+                glGetIntegerv(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS, &vertexBuffers);
+                glGetIntegerv(GL_MAX_CLIP_DISTANCES, &clipDistances);
+                m_gpuDrivenShadows = computeBuffers >= 6 && vertexBuffers >= 2 && clipDistances >= 4;
+            }
+        }
+
+        ~OpenGLCommandContext() override
+        {
+            for (auto &readback : m_readbacks)
+            {
+                if (readback.fence) glDeleteSync(readback.fence);
+                if (readback.buffer) glDeleteBuffers(1, &readback.buffer);
+            }
+        }
+        void BeginFrame(std::string_view = {}) override
+        {
+            for (auto &readback : m_readbacks)
+            {
+                if (!readback.fence) continue;
+                const auto status = glClientWaitSync(readback.fence, 0, 0);
+                if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED) continue;
+                glDeleteSync(readback.fence); readback.fence = nullptr;
+                std::vector<std::byte> data(readback.size);
+                glBindBuffer(GL_COPY_READ_BUFFER, readback.buffer);
+                glGetBufferSubData(GL_COPY_READ_BUFFER, 0, readback.size, data.data());
+                readback.callback(data); readback.callback = {};
+            }
+        }
+        bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
+        {
+            auto *buffer = m_impl.buffers.Get(source);
+            if (m_rendering || !buffer || buffer->usage != BufferUsage::Storage || !size || size > buffer->size) return false;
+            for (auto &readback : m_readbacks)
+            {
+                if (readback.fence) continue;
+                if (!readback.buffer) glGenBuffers(1, &readback.buffer);
+                glBindBuffer(GL_COPY_WRITE_BUFFER, readback.buffer);
+                if (readback.size != size) glBufferData(GL_COPY_WRITE_BUFFER, size, nullptr, GL_STREAM_READ);
+                readback.size = size;
+                glBindBuffer(GL_COPY_READ_BUFFER, buffer->name);
+                glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, size);
+                readback.callback = std::move(callback);
+                readback.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+                return true;
+            }
+            return false;
+        }
 
         void BeginRendering(const RenderingInfo &info) override
         {
@@ -254,6 +308,23 @@ namespace PlutoGE::render::rhi::opengl
             glScissor(s.x, s.y, static_cast<GLsizei>(s.width), static_cast<GLsizei>(s.height));
         }
 
+        bool SupportsDepthRegionClear() const noexcept override { return true; }
+        void ClearDepthRegion(const Scissor &region, float depth) override
+        {
+            if (!m_rendering) throw std::logic_error("Depth region clear requires rendering");
+            GLint oldScissor[4];
+            glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
+            const auto scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+            GLboolean depthMask;
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+            SetScissor(region);
+            glDepthMask(GL_TRUE);
+            glClearBufferfv(GL_DEPTH, 0, &depth);
+            glDepthMask(depthMask);
+            glScissor(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]);
+            if (!scissorEnabled) glDisable(GL_SCISSOR_TEST);
+        }
+
         void BindPipeline(PipelineHandle handle) override
         {
             auto *pipeline = m_impl.pipelines.Get(handle);
@@ -264,6 +335,8 @@ namespace PlutoGE::render::rhi::opengl
             glBindVertexArray(pipeline->vertexArray);
             if (pipeline->compute)
                 return;
+            for (std::uint32_t index = 0; index < 4; ++index)
+                index < pipeline->descriptor.clipDistanceCount ? glEnable(GL_CLIP_DISTANCE0 + index) : glDisable(GL_CLIP_DISTANCE0 + index);
             pipeline->descriptor.depthTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
             glDepthMask(pipeline->descriptor.depthWrite ? GL_TRUE : GL_FALSE);
             pipeline->descriptor.blend.enabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
@@ -370,6 +443,27 @@ namespace PlutoGE::render::rhi::opengl
                                         indices, static_cast<GLsizei>(instanceCount));
         }
 
+        bool SupportsGpuDrivenShadows() const noexcept override
+        {
+            return m_gpuDrivenShadows;
+        }
+        void BindStorageBuffer(std::uint32_t slot, BufferHandle handle) override
+        {
+            auto *buffer = m_impl.buffers.Get(handle);
+            if (!buffer || buffer->usage != BufferUsage::Storage)
+                throw std::invalid_argument("Invalid OpenGL storage buffer");
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer->name);
+        }
+        void DrawIndexedIndirect(BufferHandle handle, std::size_t offset) override
+        {
+            auto *buffer = m_impl.buffers.Get(handle);
+            if (!m_rendering || !m_pipeline || !buffer || buffer->usage != BufferUsage::Storage || offset % 4 ||
+                offset > buffer->size || buffer->size - offset < 20 || m_indexOffset != 0)
+                throw std::invalid_argument("Invalid OpenGL indexed indirect draw");
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffer->name);
+            glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, reinterpret_cast<const void *>(offset));
+        }
+
         void Dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) override
         {
             if (m_rendering || !m_pipeline || !m_pipeline->compute)
@@ -379,7 +473,8 @@ namespace PlutoGE::render::rhi::opengl
 
         void ShaderMemoryBarrier() override
         {
-            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT |
+                            GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
         }
         void ClearStorageImageUint(TextureHandle textureHandle, std::uint32_t value) override
         {
@@ -414,6 +509,15 @@ namespace PlutoGE::render::rhi::opengl
         void Submit() override {}
 
     private:
+        struct Readback
+        {
+            GLuint buffer = 0;
+            GLsync fence = nullptr;
+            std::size_t size = 0;
+            BufferReadbackCallback callback;
+        };
+        std::array<Readback, 3> m_readbacks;
+        bool m_gpuDrivenShadows = false;
         OpenGLDevice::Impl &m_impl;
         PipelineResource *m_pipeline = nullptr;
         std::size_t m_indexOffset = 0;

@@ -1,41 +1,70 @@
-# Virtual shadow maps: feasibility and proposed architecture
+# Virtual shadow maps
 
-Status: investigation, not implemented. September 2026.
+Status: experimental GPU-driven directional VSM implementation. September 2026.
 
-## Recommendation
+## Selecting the shadow method
 
-Keep corrected cascaded shadows as the production path. Prototype a directional-light virtual shadow map behind a rendering option, using a bounded physical depth atlas and a coarse cascade fallback. Do not introduce Vulkan sparse-memory requirements for the first version: software page-table addressing can work on both existing backends.
+On a directional light, select **Shadow Method: Cascaded Shadow Maps** or **Virtual Shadow Maps (Experimental)**. Existing scenes default to cascades. The choice and update budgets are serialized as component properties and shared between editor and runtime through `scene::ApplyDirectionalShadowSettings`. Direct RHI callers use `BasicLighting::shadowMethod`.
 
-Virtual shadow maps improve where resolution is allocated; they do not remove the need for comparison filtering, receiver bias, or handling grazing light angles.
+The RHI implementation supports Vulkan and OpenGL through explicit storage-buffer, compute, indexed-indirect and shader-clip-distance capabilities. Unsupported devices use cascades. The legacy OpenGL render-pass pipeline retains its existing cascade implementation. Point and spot lights are unchanged.
 
-## Existing foundations and gaps
+## Architecture and frame sequence
 
-- `RhiSceneRenderer.cpp` computes directional projections; `BasicRenderer.cpp` owns RHI shadow targets, draw lists, caching and lighting bindings. Put backend-independent page residency and clipmap policy in a separate shadow resource manager rather than expanding these classes with an entire allocator.
-- `rhi/RenderDevice.h` exposes compute dispatch, storage images, shader barriers, viewport/scissor controls and instanced indexed draws. Storage-image-based request masks and page tables are possible with this interface.
-- The command interface has no general storage-buffer binding, indexed indirect drawing or indirect-count dispatch/drawing. Production GPU page compaction and caster binning need explicit capabilities and implementations in both device backends. Some existing compute methods default to no-ops; virtual shadows must check capabilities and fail over rather than silently assume support.
-- `ShadowPass.cpp` already tracks old/new caster bounds, skeletal motion, dirty regions and cascade scrolling. Reuse the invalidation concepts, not its OpenGL-specific resource operations. Cache keys must also cover topology, alpha-mask/material changes, LOD changes and animated vertex deformation.
-- RHI opaque shading currently generates depth while sampling shadows. Depth-driven page requests therefore require a receiver depth prepass (or previous-frame requests with a robust current-frame fallback). Transparent, volumetric and off-screen GI receivers also need explicit coverage or cascade fallback.
+`VirtualShadowMaps` owns clipmap policy, GPU resources and VSM pass recording. `BasicRenderer` supplies immutable mesh revisions, draw signatures and a mesh-submission callback. Scene properties are translated separately from renderer implementation. Shared constants and data layouts live in `VirtualShadowConfig.h` and `VirtualShadowCommon.slang`.
 
-## Proposed frame sequence
+1. Render current-frame receiver depth, including alpha-masked receivers. Reconstruct visible world positions in compute and select levels using pixel footprints. Atomically mark and compact unique page requests, including the shadow filter guard.
+2. Use four world-stable directional clipmaps, each representing a 16,384-square virtual map with 128-square pages. Absolute light-space page coordinates preserve cached content while the camera scrolls. Light rotation, scale or snapped depth-range changes alter the projection epoch and invalidate affected content.
+3. Retain requested resident pages in a fixed 256-page pool. Each level receives a fair share; unused capacity is lent to other levels. Allocate from unrequested slots without a CPU feedback round trip.
+4. Compute page content signatures from intersecting caster chunks. Signatures cover mesh revisions, transforms/instances, submesh ranges, bounds and alpha material inputs. Caster movement, removal and changed materials invalidate affected content. Unknown bounds conservatively intersect every page.
+5. Select dirty updates under both page and triangle budgets. Rotate update priority across the pool. Generate caster/page lists and indexed-indirect arguments on the GPU. Clear only dirty physical tiles with a generated depth-clear draw, then instance each caster chunk across its selected pages. Hardware clip distances confine geometry to each physical tile.
+6. Publish mappings after rendering and resource barriers. Lighting checks that the complete filter footprint is resident before sampling it. Missing fine pages try coarser resident levels, then use the conventional cascade filter. This avoids repeatedly evaluating cascade filtering inside every missing VSM tap.
 
-1. Generate receiver depth, reconstruct visible world positions and select clipmap levels from projected pixel footprints.
-2. Mark required virtual pages, including the filter footprint across page boundaries.
-3. Retain valid resident pages; allocate missing pages from a fixed-size physical pool, evicting unused pages under a documented budget. Track generation IDs to prevent stale mappings.
-4. Invalidate overlapping pages using both previous and current caster bounds. A sun-direction change invalidates the light's cache.
-5. Bin casters into dirty pages and render only those pages. Preserve valid atlas tiles: attachment clears must not wipe cached pages; use a scoped page clear or a dedicated depth-clear draw. A CPU-binned prototype is acceptable for feasibility, but CPU readback in the steady-state frame loop is not the production design.
-6. Publish valid mappings only after rendering and required resource synchronization. Translate every comparison tap through the page table so filtering never reads an unrelated physical neighbor. Missing pages sample a coarser resident level or the fallback cascade.
+Transparent receivers can sample resident pages and otherwise fall back to cascades. GI and volumetric shadow sampling retain conventional cascade coverage. Persistent maps and asynchronous diagnostics are independent: no CPU readback determines allocation or submission.
 
-## Initial budgets and evaluation
+## Performance controls and instrumentation
 
-An illustrative 4096-square D32 atlas uses 64 MiB before page tables, request masks, fallback maps and driver overhead. With 128-square pages it holds 1024 tiles, excluding any guard borders. A virtual 16K address space does not require a fully allocated 16K physical texture.
+Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1–256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1–16,000,000). These limit VSM atlas updates; receiver depth, fallback cascades and ordinary scene rendering are additional work. Pages too expensive to update within the budget remain on fallback instead of publishing stale depth. Large meshes should have accurate bounds and useful submesh or LOD granularity.
 
-Instrument requested/resident/dirty/evicted pages, overflow, cache-hit rate, caster-page pairs, submitted triangles, GPU timings and total memory. Compare against corrected cascades at equal GPU time and memory on both Vulkan and OpenGL. Include stationary scenes, camera cuts, sprint/FOV changes, a moving sun, skeletal characters, foliage alpha masks, disocclusion and terrain spanning many pages. Validate seams and missing-page behavior before adding softer-shadow algorithms.
+There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Each chunk contains at most 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks and falls back to cascades above this limit.
 
-The principal performance risk is repeatedly drawing large meshes into many pages. Existing mesh/submesh LODs and instancing help, but page-level geometry culling is a separate project. Start with one directional light; defer point-light faces and spotlights until cache and submission costs are measured.
+The physical D32 atlas and companion R32 attachment occupy 32 MiB in total. Request masks and page tables add approximately 512 KiB. Caster lists, indirect arguments, receiver targets, uniforms and fallback maps are additional; the profiler reports allocated VSM resource estimates. Disabling VSM releases its resources.
 
-## Reference and limits of the comparison
+GPU scopes distinguish receiver depth, GPU planning and atlas rendering. The profiler reports current CPU submission counts separately from delayed GPU statistics: requested/resident/dirty/updated/deferred pages, hits, evictions, overflow, nonempty indirect draws, caster/page pairs and triangles. Diagnostic readbacks reuse staging buffers and existing frame completion; unavailable readback slots skip a sample without adding a wait. Vulkan post-processing now exposes individual effect timings as well as inclusive parent scopes. Do not sum parent and child scopes.
 
-[Epic: Virtual Shadow Maps](https://dev.epicgames.com/documentation/en-us/unreal-engine/virtual-shadow-maps-in-unreal-engine) describes 16K virtual maps split into 128-square pages, requested from screen depth and cached across frames. Directional lights use clipmaps. Epic also documents invalidation from moving lights/geometry and the importance of Nanite for its implementation's performance. PlutoGE does not inherit those geometry-submission advantages merely by adding page tables; the architecture above is a proposal based on this repository, not a claim of Unreal-equivalent performance.
+### Supplied performance capture
+
+The supplied 582×507 capture reported 39.17 ms average frame time, 47.33 ms GPU frame time, 24.53 ms GPU VSM time, 7422 caster/page pairs, 21,887,083 VSM triangles, 7883 shadow draw calls, 256 dirty pages and zero cache hits. This motivated depth-based requests, stable clipmaps, GPU indirect submission, bounded updates and cheaper missing-page filtering. The same capture reported 19.96 ms post-processing GPU time, so optimizing VSM alone cannot establish an overall frame-time target. Presentation fence waits reflect outstanding GPU work and should not be treated as a separate additive rendering cost.
+
+These changes are not a measured before/after result for that scene. Use the same camera, content, debugger state, resolution and effects when comparing captures. Per-effect timings now make the post-processing contribution easier to isolate.
+
+The synthetic 120-caster Vulkan workload on AMD Radeon(TM) Graphics measured:
+
+| Workload | GPU frame | VSM planning | VSM atlas rendering | VSM triangles/frame | Total indexed commands/frame |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stationary | 1.60 ms | 0.72 ms | 0.008 ms | 0 | 122 |
+| Camera movement | 2.80 ms | 0.73 ms | 0.008 ms | 0 | 602 |
+| Animated caster | 3.61 ms | 0.75 ms | 0.79 ms | 768,000 | 602 |
+
+Values average 15 samples after warm-up per scenario. Stationary and camera-motion samples retained 64 cache hits; the intentionally unbounded animated caster invalidated all requested pages, with 62 deferred updates using cascade fallback. These results demonstrate cache reuse and bounded work, not target-scene shadow coverage or final performance. GPU timings vary by load and hardware.
+
+## Validation
+
+- `PlutoGEVirtualShadowClipmapTests` checks world-coordinate reuse under sub-page motion and page scrolling, and projection epoch changes under light rotation.
+- Shared GPU shadow checks exercise depth requests, residency, stationary cache reuse, scrolling, movement/removal, alpha masks, overflow and budget fallback, and runtime switching. Run either RHI executable with `--shadows-only`.
+- `PlutoGEVulkanRhiTests --vsm-performance` runs a synthetic 120-caster workload at 582×507 with deliberately unknown bounds. It checks stationary convergence and bounded page updates, triangle counts and CPU indexed submissions during camera and caster movement. It is a regression workload, not a reproduction of the supplied scene.
+- `PlutoGEVirtualShadowMapCacheTests` retains coverage of the standalone CPU reference allocator; the renderer uses GPU residency rather than that allocator.
+
+RelWithDebInfo builds passed for the editor, runtime and both RHI test executables; Slang compiled the VSM shaders for both APIs. The full Vulkan suite and all three focused VSM CTest cases passed on AMD Radeon(TM) Graphics. The Vulkan suite also checks nested GPU timing under query-budget exhaustion. OpenGL's focused executable still exits during window creation, so no OpenGL runtime pass is claimed.
+
+## Remaining limits
+
+VSM remains experimental and opt-in. Fallback cascades stay allocated and maintained, so VSM adds work and memory and does not guarantee a speedup. Geometry is culled at caster-chunk bounds, not at meshlet or triangle level; this implementation does not provide Nanite-style geometry virtualization. The fixed physical pool can overflow, and deliberately restrictive budgets can retain coarse fallback for expensive pages. More physical capacity, geometry clustering and additional light types are separate extensions, not prerequisites for the implemented directional path.
+
+OpenGL runtime acceptance and target-scene visual/performance acceptance must be completed on a working graphics context. No production default or Unreal-equivalent performance is claimed.
+
+## Reference
+
+[Epic: Virtual Shadow Maps](https://dev.epicgames.com/documentation/en-us/unreal-engine/virtual-shadow-maps-in-unreal-engine) describes screen-depth requests, 16K virtual maps, 128-square pages, directional clipmaps and cache invalidation. PlutoGE uses software page-table addressing and requires no sparse-memory support. VSM redistributes shadow resolution; it still needs filtering, receiver bias and handling of grazing light angles.
 
 ## Related cascade correction
 

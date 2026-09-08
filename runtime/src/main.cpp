@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
@@ -607,6 +608,7 @@ int RunRuntime(int argc, char **argv)
                         lighting.directionalColor = light->color;
                         lighting.directionalIntensity = light->intensity;
                         lighting.shadowsEnabled = light->castsShadows;
+                        PlutoGE::scene::ApplyDirectionalShadowSettings(lighting, light->directionalShadowSettings);
                         break;
                     }
                 const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)

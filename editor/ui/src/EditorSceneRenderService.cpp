@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 
 #include "PlutoGE/render/Graphics.h"
@@ -233,34 +234,7 @@ namespace PlutoGE::ui
                     lighting.directionalColor = light->color;
                     lighting.directionalIntensity = light->intensity;
                     lighting.shadowsEnabled = light->castsShadows;
-                    lighting.shadowResolution = static_cast<std::uint32_t>(std::clamp(
-                        light->directionalShadowSettings.resolution, 256, 8192));
-                    lighting.shadowCascadeCount = static_cast<std::uint32_t>(std::clamp(
-                        light->directionalShadowSettings.cascadeCount, 1, scene::kMaxDirectionalShadowCascades));
-                    lighting.shadowCascadeResolutionFalloff = std::clamp(
-                        light->directionalShadowSettings.cascadeResolutionFalloff, 0.25f, 1.0f);
-                    lighting.shadowNearCascadeDistance = std::max(
-                        light->directionalShadowSettings.nearCascadeDistance, 0.0f);
-                    lighting.shadowSplitLambda = std::clamp(
-                        light->directionalShadowSettings.splitLambda, 0.0f, 1.0f);
-                    lighting.shadowCascadeBlendDistance = std::max(
-                        light->directionalShadowSettings.cascadeBlendDistance, 0.0f);
-                    lighting.shadowSoftness = std::max(light->directionalShadowSettings.softness, 0.0f);
-                    lighting.shadowFilterEnabled = light->directionalShadowSettings.screenSpaceFilterEnabled;
-                    lighting.shadowFilterRenderScale = std::clamp(
-                        light->directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
-                    lighting.shadowFilterRadius = static_cast<std::uint32_t>(std::clamp(
-                        light->directionalShadowSettings.screenSpaceFilterRadius, 0, 4));
-                    lighting.shadowFilterDepthScale = std::clamp(
-                        light->directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f, 0.25f);
-                    lighting.shadowFilterMinDepthScale = std::clamp(
-                        light->directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f, 2.0f);
-                    lighting.shadowFilterNormalThreshold = std::clamp(
-                        light->directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f);
-                    lighting.shadowFilterNormalSoftness = std::max(
-                        light->directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f);
-                    lighting.shadowDistance = light->directionalShadowSettings.maxDistance;
-                    lighting.shadowCasterDistance = light->directionalShadowSettings.casterDistance;
+                    scene::ApplyDirectionalShadowSettings(lighting, light->directionalShadowSettings);
                     break;
                 }
 

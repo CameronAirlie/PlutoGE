@@ -233,6 +233,21 @@ namespace PlutoGE::ui
         ImGui::Text("  Shadow cache: %llu hits, %llu updates",
                     static_cast<unsigned long long>(rhiScene.shadowCascadeCacheHitCount),
                     static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount));
+        if (rhiScene.virtualShadowsActive)
+        {
+            const auto &pages = rhiScene.virtualShadows;
+            ImGui::Text("  VSM submissions: %u indirect commands, %u receiver draws; %.2f MiB (+ cascades)",
+                pages.submittedIndirectCommands, pages.receiverDraws, pages.memoryBytes / 1048576.0);
+            if (pages.gpuCountersAvailable)
+            {
+                ImGui::Text("  VSM GPU frame %u (delayed): %u requested, %u resident, %u hits", pages.gpuFrame, pages.requested, pages.resident, pages.cacheHits);
+                ImGui::Text("  VSM updates: %u dirty, %u rendered, %u deferred; %u evicted, %u overflow",
+                    pages.dirty, pages.updated, pages.deferred, pages.evicted, pages.overflow);
+                ImGui::Text("  VSM GPU: %u non-empty draws, %llu caster/page pairs, %llu triangles",
+                    pages.indirectDraws, static_cast<unsigned long long>(pages.casterPagePairs), static_cast<unsigned long long>(pages.submittedTriangles));
+            }
+            else ImGui::TextUnformatted("  VSM GPU counters: pending asynchronous snapshot");
+        }
         ImGui::Text("  Setup: %.2f ms, recording: %.2f ms",
                     rhiScene.sceneSetupMs, rhiScene.renderRecordingMs);
         ImGui::Text("  Begin active: %.2f ms, GPU wait: %.2f ms, shadows: %.2f ms, geometry: %.2f ms",

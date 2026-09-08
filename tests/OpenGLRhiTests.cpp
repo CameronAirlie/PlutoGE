@@ -130,6 +130,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
         shaders.shadowInstancedVertex.glsl = ReadText("DirectionalShadowInstanced.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");
+        shaders.maskedShadowFragment.glsl = ReadText("DirectionalShadowMasked.fragment.glsl");
+        const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
+        for (std::size_t index = 0; index < vsmCompute.size(); ++index)
+            shaders.virtualShadows.compute[index].glsl = ReadText((std::string(vsmCompute[index]) + ".compute.glsl").c_str());
+        const std::array<const char *, 3> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear"};
+        for (std::size_t index = 0; index < vsmRaster.size(); ++index)
+        {
+            shaders.virtualShadows.raster[index * 2].glsl = ReadText((std::string(vsmRaster[index]) + ".vertex.glsl").c_str());
+            shaders.virtualShadows.raster[index * 2 + 1].glsl = ReadText((std::string(vsmRaster[index]) + ".fragment.glsl").c_str());
+        }
         const auto loadPostProcess = [&](render::BasicPostProcessEffectType type, const char *module)
         {
             auto &shader = shaders.postProcess[static_cast<std::size_t>(type)];

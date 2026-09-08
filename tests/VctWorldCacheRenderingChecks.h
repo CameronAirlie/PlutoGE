@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 #include <glm/gtc/matrix_transform.hpp>
 
 // Rasterize and voxelize two facing surfaces. The ceiling emits red light;
@@ -60,6 +61,20 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         return readPixels(renderer.GetColorTexture());
     };
     const auto reference = renderFrames(4);
+    // Put the real surface beyond a frame's triangle budget. Its final GI
+    // must match the small mesh, proving that partial draws resume at the
+    // correct index and do not publish a volume before reaching the tail.
+    std::vector<std::uint32_t> paddedIndices(65537 * 3, 0);
+    paddedIndices.insert(paddedIndices.end(), indices.begin(), indices.end());
+    auto paddedMesh = renderer.CreateMesh({vertices, paddedIndices});
+    for (auto &draw : draws) draw.mesh = &paddedMesh;
+    const auto chunked = renderFrames(24);
+    double chunkError = 0;
+    for (std::size_t at = 0; at < reference.size(); at += 4)
+        chunkError += std::abs(int(chunked.at(at)) - int(reference.at(at)));
+    if (chunkError > 1.0)
+        throw std::runtime_error("Progressive VCT dropped triangles from a large mesh");
+    for (auto &draw : draws) draw.mesh = &mesh;
     effect.parameters[4].x = 1;
     const auto cold = renderFrames(4);
     const auto populated = renderFrames(128);
@@ -116,7 +131,10 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     effect.historyOwner = &projection;
     lighting.shadowMatrices.fill(glm::orthoRH_ZO(-20.0f,20.0f,-20.0f,20.0f,.01f,40.0f) *
         glm::lookAtRH(glm::vec3(0,20,0),glm::vec3(0),glm::vec3(0,0,1)));
+    // Also exercise the GI shadow pass with a mesh spanning several chunks.
+    for (auto &draw : draws) draw.mesh = &paddedMesh;
     const auto covered = renderFrames(160);
+    for (auto &draw : draws) draw.mesh = &mesh;
     double shadowCoverageError = 0;
     for (std::size_t at = 0; at < shadowed.size(); at += 4)
         shadowCoverageError += std::abs(int(shadowed.at(at)) - int(covered.at(at)));

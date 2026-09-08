@@ -46,6 +46,7 @@ namespace PlutoGE::render
             .shadowVertex = Load("DirectionalShadow", "vertex"),
             .shadowInstancedVertex = Load("DirectionalShadowInstanced", "vertex"),
             .shadowFragment = Load("DirectionalShadow", "fragment"),
+            .maskedShadowFragment = Load("DirectionalShadowMasked", "fragment"),
             .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
                               .fragment = Load("DisplayOutput", "fragment")}};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
@@ -83,6 +84,16 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
             result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
                                    .fragment = Load(ssaoModules[index], "fragment")};
+        constexpr std::array<std::string_view, 7> virtualCompute{
+            "VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
+        for (std::size_t index = 0; index < virtualCompute.size(); ++index)
+            result.virtualShadows.compute[index] = Load(virtualCompute[index], "compute");
+        constexpr std::array<std::string_view, 3> virtualRaster{"VSMReceiver", "VSMPage", "VSMClear"};
+        for (std::size_t index = 0; index < virtualRaster.size(); ++index)
+        {
+            result.virtualShadows.raster[index * 2] = Load(virtualRaster[index], "vertex");
+            result.virtualShadows.raster[index * 2 + 1] = Load(virtualRaster[index], "fragment");
+        }
         result.vctCompute[0] = Load("VCTResolve", "compute");
         result.vctCompute[1] = Load("VCTDirectionalMip", "compute");
         result.vctCompute[2] = Load("VCTProbeUpdate", "compute");

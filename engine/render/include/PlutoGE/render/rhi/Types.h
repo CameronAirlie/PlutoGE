@@ -30,7 +30,10 @@ namespace PlutoGE::render::rhi
     {
         Vertex,
         Index,
-        Uniform
+        Uniform,
+        // Shader storage with indirect-command and transfer usage. Updates are
+        // recorded outside render passes, so in-flight GPU reads remain valid.
+        Storage
     };
     enum class TextureUsage : std::uint8_t
     {
@@ -57,7 +60,8 @@ namespace PlutoGE::render::rhi
     {
         UniformBuffer,
         SampledTexture,
-        StorageImage
+        StorageImage,
+        StorageBuffer
     };
     enum class PrimitiveTopology : std::uint8_t
     {
@@ -263,6 +267,7 @@ namespace PlutoGE::render::rhi
         bool depthWrite = true;
         BlendState blend;
         std::string debugName;
+        std::uint32_t clipDistanceCount = 0;
     };
 
     struct ComputePipelineDescriptor

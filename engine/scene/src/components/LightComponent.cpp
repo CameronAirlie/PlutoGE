@@ -251,6 +251,11 @@ namespace PlutoGE::scene
 
         if (m_config.type == LightType::Directional)
         {
+            properties.push_back({"Shadow Method", PropertyType::Enum,
+                std::to_string(static_cast<int>(m_config.directionalShadowSettings.method)),
+                {"Cascaded Shadow Maps", "Virtual Shadow Maps (Experimental)"}});
+            properties.push_back({"VSM Page Updates per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualPageBudget)});
+            properties.push_back({"VSM Triangle Budget per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualTriangleBudget)});
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
             properties.push_back({"Shadow Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.resolution)});
             properties.push_back({"Shadow Cascade Resolution Falloff", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeResolutionFalloff)});
@@ -318,6 +323,19 @@ namespace PlutoGE::scene
             else if (property.name == "Near Shadow Distance (0 = Auto)")
             {
                 m_config.directionalShadowSettings.nearCascadeDistance = std::max(std::stof(property.value), 0.0f);
+            }
+            else if (property.name == "Shadow Method")
+            {
+                m_config.directionalShadowSettings.method = property.value == "1"
+                    ? render::ShadowMethod::Virtual : render::ShadowMethod::Cascaded;
+            }
+            else if (property.name == "VSM Page Updates per Frame")
+            {
+                m_config.directionalShadowSettings.virtualPageBudget = std::clamp(std::stoi(property.value), 1, 256);
+            }
+            else if (property.name == "VSM Triangle Budget per Frame")
+            {
+                m_config.directionalShadowSettings.virtualTriangleBudget = std::clamp(std::stoi(property.value), 1, 16000000);
             }
             else if (property.name == "Shadow Cascade Count")
             {

@@ -1,4 +1,11 @@
 add_executable(PlutoGERhiTypesTests RhiTypesTests.cpp)
+add_executable(PlutoGEVirtualShadowClipmapTests VirtualShadowClipmapTests.cpp)
+target_link_libraries(PlutoGEVirtualShadowClipmapTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGEVirtualShadowClipmapTests COMMAND PlutoGEVirtualShadowClipmapTests)
+add_executable(PlutoGEVirtualShadowMapCacheTests VirtualShadowMapCacheTests.cpp)
+target_include_directories(PlutoGEVirtualShadowMapCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include)
+target_compile_features(PlutoGEVirtualShadowMapCacheTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEVirtualShadowMapCacheTests COMMAND PlutoGEVirtualShadowMapCacheTests)
 add_executable(PlutoGENormalMipmapsTests NormalMipmapsTests.cpp)
 target_include_directories(PlutoGENormalMipmapsTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 target_compile_features(PlutoGENormalMipmapsTests PRIVATE cxx_std_20)
@@ -376,3 +383,5 @@ if (TARGET OpenAL)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEPrefabVariantTests>/$<TARGET_FILE_NAME:OpenAL>)
 endif()
+
+add_test(NAME PlutoGEVirtualShadowPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)

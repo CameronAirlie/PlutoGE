@@ -76,12 +76,28 @@ namespace PlutoGE::render::rhi
         virtual void EndRendering() = 0;
         virtual void SetViewport(const Viewport &viewport) = 0;
         virtual void SetScissor(const Scissor &scissor) = 0;
+        [[nodiscard]] virtual bool SupportsDepthRegionClear() const noexcept { return false; }
+        // Requires an active depth attachment. Clears only the given rectangle;
+        // used by cached atlases without discarding neighbouring tiles.
+        virtual void ClearDepthRegion(const Scissor &, float)
+        { throw std::logic_error("Depth region clear is unsupported"); }
         virtual void BindPipeline(PipelineHandle pipeline) = 0;
         virtual void BindVertexBuffer(BufferHandle buffer, std::size_t offset = 0) = 0;
         virtual void BindIndexBuffer(BufferHandle buffer, Format indexFormat = Format::R32Uint, std::size_t offset = 0) = 0;
         virtual void BindUniformBuffer(std::uint32_t slot, BufferHandle buffer) = 0;
         virtual void BindTexture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) = 0;
         virtual void BindStorageImage(std::uint32_t, TextureHandle, std::uint32_t mipLevel = 0) {}
+        [[nodiscard]] virtual bool SupportsGpuDrivenShadows() const noexcept { return false; }
+        virtual void BindStorageBuffer(std::uint32_t, BufferHandle)
+        { throw std::logic_error("Storage buffers are unsupported"); }
+        // Five 32-bit words: indexCount, instanceCount, firstIndex, signed
+        // vertexOffset, firstInstance. Byte offset must be four-byte aligned.
+        virtual void DrawIndexedIndirect(BufferHandle, std::size_t)
+        { throw std::logic_error("Indexed indirect drawing is unsupported"); }
+        // Diagnostic snapshots only. Delivery occurs at a later completed frame;
+        // this must never add a fence wait or participate in rendering decisions.
+        using BufferReadbackCallback = std::function<void(std::span<const std::byte>)>;
+        virtual bool QueueBufferReadback(BufferHandle, std::size_t, BufferReadbackCallback) { return false; }
         virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
         virtual void DrawIndexedInstanced(std::uint32_t indexCount, std::uint32_t instanceCount,

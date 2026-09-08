@@ -1,3 +1,4 @@
+#include "VirtualShadowPerformanceChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -44,6 +45,16 @@ int main(int argc, char **argv)
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
         shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
+        shaders.maskedShadowFragment.spirv = ReadSpirv("DirectionalShadowMasked.fragment.spv");
+        const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
+        for (std::size_t index = 0; index < vsmCompute.size(); ++index)
+            shaders.virtualShadows.compute[index].spirv = ReadSpirv((std::string(vsmCompute[index]) + ".compute.spv").c_str());
+        const std::array<const char *, 3> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear"};
+        for (std::size_t index = 0; index < vsmRaster.size(); ++index)
+        {
+            shaders.virtualShadows.raster[index * 2].spirv = ReadSpirv((std::string(vsmRaster[index]) + ".vertex.spv").c_str());
+            shaders.virtualShadows.raster[index * 2 + 1].spirv = ReadSpirv((std::string(vsmRaster[index]) + ".fragment.spv").c_str());
+        }
         shaders.displayOutput.vertex.spirv = ReadSpirv("DisplayOutput.vertex.spv");
         shaders.displayOutput.fragment.spirv = ReadSpirv("DisplayOutput.fragment.spv");
         const auto loadPostProcess = [&](BasicPostProcessEffectType type, const char *module)
@@ -103,6 +114,11 @@ int main(int argc, char **argv)
             return 0;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")
+        {
+            CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         CheckShadowFiltering(renderer, [&](rhi::TextureHandle texture)
         {
             return device.ReadTextureRgba8(texture);
@@ -110,6 +126,23 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 
+        // Nested effect timings must preserve parent end queries, including
+        // when deeply nested instrumentation exhausts the query budget.
+        {
+            auto &commands = device.GetImmediateContext();
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                commands.BeginFrame("NestedTimingTest");
+                commands.BeginGpuScope("parent");
+                for (int depth = 0; depth < 70; ++depth) commands.BeginGpuScope("child");
+                for (int depth = 0; depth < 70; ++depth) commands.EndGpuScope();
+                commands.EndGpuScope();
+                commands.Submit();
+            }
+            const auto timing = device.GetTimingStats("NestedTimingTest");
+            if (!timing.hasGpuResult || timing.gpuScopes.size() < 2 || timing.gpuScopes.back().name != "parent")
+                throw std::runtime_error("Nested GPU timing lost its parent or failed to resolve");
+        }
 
         CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
         {

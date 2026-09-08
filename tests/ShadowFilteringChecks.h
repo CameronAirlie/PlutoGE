@@ -88,6 +88,76 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     std::cout << "Shadow edge: longest intermediate plateau " << longestPlateau << " pixels\n";
     if (longestPlateau > 2)
         throw std::runtime_error("Shadow filtering contains sparse-sample coverage plateaus");
+    // GPU VSM uses light direction to construct world-stable clipmaps. The
+    // synthetic cascade above supplies its matrix explicitly; match that
+    // matrix's +Z shadow direction for the virtual path.
+    lighting.directionalDirection = {0, 0, 1};
+    lighting.shadowMethod = ShadowMethod::Virtual;
+    caster.shadowBoundsCenter = glm::vec3(caster.model[3]);
+    caster.shadowBoundsRadius = 2.0f;
+    const auto renderVirtual = [&]
+    {
+        renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {},
+                        std::span(&caster, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
+        return readPixels(renderer.GetColorTexture());
+    };
+    for (int frame = 0; frame < 8; ++frame) renderVirtual();
+    const auto virtualPixels = renderVirtual();
+    auto virtualStats = renderer.GetFrameStats().virtualShadows;
+    if (!renderer.GetFrameStats().virtualShadowsActive || !virtualStats.gpuCountersAvailable ||
+        virtualStats.requested == 0 || virtualStats.cacheHits == 0 || virtualStats.dirty != 0)
+        throw std::runtime_error("GPU virtual shadows did not allocate and retain visible pages");
+    for (int y = 32; y < 224; ++y)
+        if (static_cast<unsigned char>(virtualPixels[(y * 256 + 64) * 4]) > 10 ||
+            static_cast<unsigned char>(virtualPixels[(y * 256 + 192) * 4]) < 245)
+            throw std::runtime_error("GPU virtual shadow page boundaries lost coverage");
+    if (renderVirtual() != virtualPixels)
+        throw std::runtime_error("GPU virtual shadow static cache changed pixels");
+    // Moving the clipmap window by one page changes local addresses while
+    // preserving the depth identity of still-visible absolute world pages.
+    lighting.cameraPosition.x += VirtualShadowMaps::BuildClipmaps(lighting).metrics[1].z;
+    for (int frame = 0; frame < 5; ++frame) renderVirtual();
+    if (renderer.GetFrameStats().virtualShadows.cacheHits == 0)
+        throw std::runtime_error("Clipmap scrolling discarded all world-stable cached pages");
+    caster.model[3].x += 0.4f;
+    caster.shadowBoundsCenter = glm::vec3(caster.model[3]);
+    if (renderVirtual() == virtualPixels)
+        throw std::runtime_error("GPU caster movement did not invalidate old/new pages");
+    caster.castsShadow = false;
+    auto removed = renderVirtual();
+    if (static_cast<unsigned char>(removed[(128 * 256 + 64) * 4]) < 245)
+        throw std::runtime_error("GPU removed caster retained stale depth");
+    caster.castsShadow = true;
+    caster.alphaMode = 1; caster.baseColor.a = 0;
+    removed = renderVirtual();
+    if (static_cast<unsigned char>(removed[(128 * 256 + 64) * 4]) < 245)
+        throw std::runtime_error("GPU alpha mask did not discard transparent texels");
+    caster.alphaMode = 0; caster.baseColor.a = 1;
+    caster.model[3].x -= 0.4f;
+    caster.shadowBoundsCenter = glm::vec3(caster.model[3]);
+    lighting.virtualShadowPageBudget = 1;
+    lighting.virtualShadowTriangleBudget = 1; // A two-triangle caster cannot fit.
+    lighting.directionalDirection = {0.02f, 0, 1};
+    for (int frame = 0; frame < 6; ++frame) renderVirtual();
+    virtualStats = renderer.GetFrameStats().virtualShadows;
+    if (virtualStats.updated > 1 || virtualStats.submittedTriangles > 1 || virtualStats.deferred == 0)
+        throw std::runtime_error("GPU virtual shadow update budgets were exceeded or did not defer work");
+    const auto fallbackPixels = renderVirtual();
+    if (static_cast<unsigned char>(fallbackPixels[(128 * 256 + 64) * 4]) > 10)
+        throw std::runtime_error("Budget-deferred pages lost conventional fallback shadows");
+    lighting.shadowMethod = ShadowMethod::Cascaded;
+    lighting.directionalDirection = {0, 0, -1};
+    if (renderVirtual() != edge || renderer.GetFrameStats().virtualShadowsActive)
+        throw std::runtime_error("Switching to cascades changed their original output");
+    lighting.shadowMethod = ShadowMethod::Virtual;
+    lighting.directionalDirection = {0, 0, 1};
+    lighting.virtualShadowPageBudget = 64; lighting.virtualShadowTriangleBudget = 1000000;
+    for (int frame = 0; frame < 6; ++frame) renderVirtual();
+    lighting.shadowsEnabled = false;
+    renderVirtual();
+    if (renderer.GetFrameStats().virtualShadowsActive)
+        throw std::runtime_error("Disabled shadows retained the GPU virtual path");
+    std::cout << "GPU virtual shadows: depth requests, residency, scrolling, invalidation, masks, budgets and switching passed\n";
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

@@ -1,3 +1,9 @@
+#include "VirtualShadowCommon.slang"
+[[vk::binding(1, 0)]]
+cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
+[[vk::binding(11, 1)]] Sampler2D virtualShadowAtlas : register(t11, space1);
+[[vk::binding(12, 1)]] Sampler2D virtualShadowTable : register(t12, space1);
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -213,22 +219,18 @@ float3 samplePhysicalSkyIrradiance(float3 normal)
     return irradiance;
 }
 
-float sampleShadowCascade(int cascade, float2 uv)
+float sampleConventionalShadowCascade(int cascade, float2 uv)
 {
-    if (cascade == 0)
-        return directionalShadowTexture.Sample(uv).r;
-    if (cascade == 1)
-        return directionalShadowTexture1.Sample(uv).r;
-    if (cascade == 2)
-        return directionalShadowTexture2.Sample(uv).r;
+    if (cascade == 0) return directionalShadowTexture.Sample(uv).r;
+    if (cascade == 1) return directionalShadowTexture1.Sample(uv).r;
+    if (cascade == 2) return directionalShadowTexture2.Sample(uv).r;
     return directionalShadowTexture3.Sample(uv).r;
 }
 
 float compareShadowCascade(int cascade, float2 uv, float receiverDepth)
 {
-    if (!all(uv >= 0.0) || !all(uv <= 1.0))
-        return 1.0;
-    return receiverDepth <= sampleShadowCascade(cascade, uv) ? 1.0 : 0.0;
+    if (!all(uv >= 0.0) || !all(uv < 1.0)) return 1.0;
+    return receiverDepth <= sampleConventionalShadowCascade(cascade, uv) ? 1.0 : 0.0;
 }
 
 // Interpolate visibility, never depth. Sampling texel centres works with the
@@ -263,6 +265,63 @@ float2 computeReceiverPlaneDepthGradient(float3 shadowDx, float3 shadowDy)
     return 2.0 * float2(
         shadowDy.y * shadowDx.z - shadowDx.y * shadowDy.z,
         shadowDx.x * shadowDy.z - shadowDy.x * shadowDx.z) / determinant;
+}
+
+float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
+                            float slope, out float rawVisibility, out float normalizedLevel)
+{
+    rawVisibility = 1.0; normalizedLevel = 0.0;
+    int firstLevel = selectVirtualLevel(vsm, world, max(length(worldDx), length(worldDy)));
+    if (firstLevel < 0) return -1.0;
+    const float support = clamp(vsm.settings.x, 0.0, 4.0) + 1.0;
+    for (int level = firstLevel; level < PLUTO_VSM_LEVELS; ++level)
+    {
+        float3 receiver = world + normal * vsm.metrics[level].x * lerp(0.08, 0.60, slope);
+        float3 coordinate = virtualCoordinate(vsm, level, receiver);
+        float2 position = coordinate.xy * PLUTO_VSM_RESOLUTION - 0.5;
+        int2 first = int2(floor(position - support)) + 1;
+        int2 last = int2(ceil(position + support)) - 1;
+        if (any(first < 0) || any(last >= PLUTO_VSM_RESOLUTION) || coordinate.z < 0 || coordinate.z > 1) continue;
+        int2 lowPage = first / PLUTO_VSM_PAGE_SIZE, highPage = last / PLUTO_VSM_PAGE_SIZE;
+        uint mappings[4];
+        bool complete = true;
+        for (int corner = 0; corner < 4; ++corner)
+        {
+            int2 page = int2((corner & 1) != 0 ? highPage.x : lowPage.x, (corner & 2) != 0 ? highPage.y : lowPage.y);
+            float2 at = (float2(page + int2(0, level * PLUTO_VSM_GRID)) + 0.5) /
+                        float2(PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS);
+            mappings[corner] = uint(virtualShadowTable.SampleLevel(at, 0).r);
+            complete = complete && mappings[corner] != 0;
+        }
+        // Try a resident coarser clipmap before evaluating the CSM fallback
+        // once. Never nest a fallback PCF inside every fine-resolution tap.
+        if (!complete) continue;
+        float3 dx = mul(vsm.matrices[level], float4(worldDx, 0)).xyz;
+        float3 dy = mul(vsm.matrices[level], float4(worldDy, 0)).xyz;
+        float2 gradient = computeReceiverPlaneDepthGradient(dx, dy);
+        float depth = coordinate.z - max(0.0000005, vsm.metrics[level].x * lerp(0.25, 1.0, slope) / vsm.metrics[level].y);
+        float visibility = 0, weightSum = 0;
+        // All tent texels are visited once. At most four page-table fetches
+        // resolve the entire footprint; depth is sampled at texel centres.
+        for (int y = first.y; y <= last.y; ++y)
+            for (int x = first.x; x <= last.x; ++x)
+            {
+                int2 texel = int2(x, y), page = texel / PLUTO_VSM_PAGE_SIZE;
+                uint corner = (page.x != lowPage.x ? 1 : 0) + (page.y != lowPage.y ? 2 : 0);
+                uint slot = mappings[corner] - 1;
+                float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
+                                float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
+                float2 tapUv = (float2(texel) + 0.5) / PLUTO_VSM_RESOLUTION;
+                float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= virtualShadowAtlas.SampleLevel(atlas, 0).r ? 1.0 : 0.0;
+                float2 tent = max(support - abs(float2(texel) - position), 0.0);
+                float weight = tent.x * tent.y;
+                visibility += comparison * weight; weightSum += weight;
+                if (all(texel == int2(floor(position + 0.5)))) rawVisibility = comparison;
+            }
+        normalizedLevel = float(level) / (PLUTO_VSM_LEVELS - 1);
+        return visibility / max(weightSum, 0.000001);
+    }
+    return -1.0;
 }
 
 float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, float3 worldDy, float depthBias)
@@ -532,6 +591,18 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             shadowNormal = -shadowNormal;
         const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
         const float slope = 1.0 - shadowNdotl;
+        float virtualRaw, virtualLevel;
+        float virtualVisibility = shadowCascadeParameters.w > 0.5
+            ? evaluateVirtualShadow(input.worldPosition, shadowNormal, shadowWorldDx, shadowWorldDy, slope, virtualRaw, virtualLevel)
+            : -1.0;
+        if (virtualVisibility >= 0.0)
+        {
+            shadowVisibility = virtualVisibility;
+            rawShadowVisibility = virtualRaw;
+            normalizedCascade = virtualLevel;
+        }
+        else
+        {
         const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
         // A large caster range can make the world-space-derived bias approach
         // zero in the near cascade. Retain a texel-scaled floor to prevent
@@ -576,6 +647,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                 normalizedCascade = lerp(normalizedCascade,
                                          (float)(cascade + 1) / (float)(cascadeCount - 1), blend);
             }
+        }
         }
     }
     float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;

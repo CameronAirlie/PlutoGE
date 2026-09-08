@@ -2,6 +2,7 @@ add_library(PlutoGERender
     src/Renderer.cpp
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
+    src/VirtualShadowMaps.cpp
     src/RhiRenderService.cpp
     src/RhiSceneRenderer.cpp
     src/RhiPostProcessAdapter.cpp
@@ -82,7 +83,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -104,7 +105,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl.raw"
         COMMAND ${CMAKE_COMMAND} ${normalize_arguments} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang compute shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -130,7 +131,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang geometry pipeline for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -140,8 +141,16 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
     pluto_add_slang_graphics_shader(GlassSceneCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLitInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" instancedVertexMain fragmentMain)
+    foreach(stage Reset Request Allocate Signature Budget Bin Publish)
+        string(TOLOWER "${stage}" entry)
+        pluto_add_slang_compute_shader(VSM${stage} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCompute.slang" ${entry}Main)
+    endforeach()
+    pluto_add_slang_graphics_shader(VSMReceiver "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" receiverVertex receiverFragment)
+    pluto_add_slang_graphics_shader(VSMPage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" pageVertex pageFragment)
+    pluto_add_slang_graphics_shader(VSMClear "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" clearVertex clearFragment)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadowInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" instancedVertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(DirectionalShadowMasked "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain maskedFragmentMain)
     pluto_add_slang_graphics_shader(DisplayOutput "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DisplayOutput.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(RmlUi "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RmlUi.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ToneMapping "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ToneMapping.slang" vertexMain fragmentMain)

@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -95,7 +96,7 @@ namespace PlutoGE::ui
         void StopCapture() noexcept { m_recording = false; }
         void ClearCapture();
         [[nodiscard]] bool IsRecording() const noexcept { return m_recording; }
-        [[nodiscard]] const std::vector<EditorProfileFrame> &GetCapturedFrames() const noexcept { return m_capture; }
+        [[nodiscard]] const std::deque<EditorProfileFrame> &GetCapturedFrames() const noexcept { return m_capture; }
         // Called by the editor after panel submission and presentation, never by a panel.
         void CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,
                            const PanelManagerTimingStats &panels, const render::Renderer &renderer,
@@ -128,7 +129,7 @@ namespace PlutoGE::ui
                                                      float capturedDurationMs = -1.0f) const;
 
     private:
-        std::vector<EditorProfileFrame> m_capture;
+        std::deque<EditorProfileFrame> m_capture;
         std::size_t m_captureLimit = 240;
         std::uint64_t m_frameSequence = 0;
         bool m_recording = false;

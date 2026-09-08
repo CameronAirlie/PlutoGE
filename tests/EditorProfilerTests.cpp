@@ -34,10 +34,9 @@ int main()
         frame.durationMs = 12.0f;
         ++frame.sequence;
         profiler.RecordFrame(frame);
-        Require(!profiler.IsRecording(), "Capture must stop at its limit");
-        profiler.RecordFrame(frame);
+        Require(profiler.IsRecording(), "Recording must continue at its history limit");
         const auto &frames = profiler.GetCapturedFrames();
-        Require(frames.size() == 2, "Completed capture must remain bounded");
+        Require(frames.size() == 2, "Rolling history must remain bounded");
         Require(frames[0].sequence == 42 && frames[1].sequence == 43, "Frame order must be retained");
         Require(frames[0].timing.componentTimings[0].name == "Expensive component", "Snapshot must own dynamic data");
         Require(frames[0].timing.componentTimings[0].callCount == 17, "Capture must retain work counts");
@@ -49,13 +48,25 @@ int main()
         Require(report.find("Captured CPU frame: 80.00 ms") != std::string::npos, "Report must use captured duration");
         Require(report.find("Scene update: 60.00 ms") != std::string::npos, "Report must use captured metrics");
         Require(report.find("Session peak") == std::string::npos, "Capture report must not mix live session metrics");
+        for (std::uint64_t sequence = 44; sequence <= 50; ++sequence)
+        {
+            frame.sequence = sequence;
+            profiler.RecordFrame(frame);
+            Require(profiler.GetCapturedFrames().size() == 2, "Repeated rollover must stay bounded");
+            Require(profiler.GetCapturedFrames().front().sequence == sequence - 1 &&
+                    profiler.GetCapturedFrames().back().sequence == sequence, "Rollover must retain the newest frames in order");
+        }
+        Require(profiler.IsRecording(), "Repeated rollover must not stop recording");
         profiler.StartCapture(0);
         frame.durationMs = std::numeric_limits<float>::quiet_NaN();
         profiler.RecordFrame(frame);
         Require(profiler.GetCapturedFrames().empty(), "Invalid duration must be ignored");
         frame.durationMs = 1.0f;
         profiler.RecordFrame(frame);
-        Require(!profiler.IsRecording(), "Zero frame limit must clamp to one");
+        ++frame.sequence;
+        profiler.RecordFrame(frame);
+        Require(profiler.IsRecording() && profiler.GetCapturedFrames().size() == 1 &&
+                profiler.GetCapturedFrames().front().sequence == frame.sequence, "Zero limit must clamp to a rolling one-frame history");
         profiler.StartCapture(EditorProfiler::MaxCaptureFrames + 10);
         for (std::size_t i = 0; i < EditorProfiler::MaxCaptureFrames + 1; ++i)
             profiler.RecordFrame(frame);
@@ -81,8 +92,24 @@ int main()
         frame.samples.clear();
         frame.samples.reserve(EditorProfiler::MaxTraceBytes / sizeof(PlutoGE::core::CpuSample) + 1);
         profiler.RecordFrame(std::move(frame));
-        Require(profiler.IsCaptureMemoryLimited() && !profiler.IsRecording(), "Trace memory budget must stop recording");
+        Require(profiler.IsCaptureMemoryLimited() && profiler.IsRecording(), "Oversized traces must not stop recording");
         Require(profiler.GetCapturedFrames().empty(), "An oversized trace must not be retained");
+        profiler.StartCapture(10);
+        // Retained vector capacity counts toward the budget even for empty traces.
+        const auto largeCapacity = EditorProfiler::MaxTraceBytes / sizeof(PlutoGE::core::CpuSample) / 2 + 1;
+        for (std::uint64_t sequence = 1; sequence <= 4; ++sequence)
+        {
+            EditorProfileFrame large;
+            large.sequence = sequence;
+            large.durationMs = 1.0f;
+            large.samples.reserve(largeCapacity);
+            profiler.RecordFrame(std::move(large));
+            Require(profiler.IsRecording() && profiler.GetCapturedFrames().size() == 1 &&
+                    profiler.GetCapturedFrames().front().sequence == sequence, "Memory pressure must evict oldest frames and reclaim their budget");
+        }
+        Require(profiler.IsCaptureMemoryLimited(), "Memory-based eviction must be reported");
+        profiler.StopCapture();
+        Require(profiler.GetCapturedFrames().front().sequence == 4, "Manual stop must preserve the rolling history");
         std::cout << "Editor profiler tests passed\n";
         return 0;
     }

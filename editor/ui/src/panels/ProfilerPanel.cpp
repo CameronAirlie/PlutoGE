@@ -49,6 +49,7 @@ namespace PlutoGE::ui
             return;
         }
 
+        SynchronizeFrameSelection();
         const auto *selected = GetSelectedFrame();
         const auto &rmlTiming = (selected ? selected->runtimeUi : render::RmlUiRuntime::Get().GetCpuTiming());
         m_lastCopiedMetrics = m_profiler->BuildMetricsReport(

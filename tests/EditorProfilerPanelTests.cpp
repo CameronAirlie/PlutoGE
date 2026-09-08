@@ -119,6 +119,38 @@ int main(int argc, char **argv)
         for (int y = 849; y >= 0; --y) file.write(reinterpret_cast<const char *>(pixels.data() + y * 1280 * 3), 1280 * 3);
         valid = valid && file.good();
     }
+    // Verify frame identity survives rollover, including clipboard shortcuts that
+    // run before the next panel redraw. Keep the system clipboard untouched.
+    auto &platform = ImGui::GetPlatformIO();
+    const auto previousClipboardSetter = platform.Platform_SetClipboardTextFn;
+    void *previousClipboardData = platform.Platform_ClipboardUserData;
+    std::string clipboard;
+    platform.Platform_ClipboardUserData = &clipboard;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext *, const char *text)
+    { *static_cast<std::string *>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text; };
+    valid = renderPanel(1280) && renderPanel(1280) && valid;
+    click(700, 150);
+    panel.CopyMetricsToClipboard();
+    const auto selectedFrameLine = clipboard.substr(0, clipboard.find('\n'));
+    const auto append = [&](std::uint64_t sequence)
+    {
+        PlutoGE::ui::EditorProfileFrame frame;
+        frame.sequence = sequence;
+        frame.durationMs = 9.0f;
+        profiler.RecordFrame(std::move(frame));
+    };
+    append(1160);
+    panel.CopyMetricsToClipboard();
+    valid = valid && clipboard.substr(0, clipboard.find('\n')) == selectedFrameLine;
+    for (std::uint64_t sequence = 1161; sequence <= 1320; ++sequence) append(sequence);
+    panel.CopyMetricsToClipboard();
+    valid = valid && clipboard.starts_with("Frame sequence: 1161\n");
+    click(126, 37); // Re-enable Follow latest.
+    append(1321);
+    panel.CopyMetricsToClipboard();
+    valid = valid && clipboard.starts_with("Frame sequence: 1321\n");
+    platform.Platform_SetClipboardTextFn = previousClipboardSetter;
+    platform.Platform_ClipboardUserData = previousClipboardData;
     profiler.ClearCapture();
     valid = renderPanel(420) && valid;
     ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplGlfw_Shutdown(); ImGui::DestroyContext();

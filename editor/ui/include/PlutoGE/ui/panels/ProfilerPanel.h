@@ -33,6 +33,8 @@ namespace PlutoGE::ui
         void RenderCpuHierarchy(const EditorProfileFrame &frame);
         void RenderSampleDetails(const EditorProfileFrame &frame);
         void SelectFrame(int index);
+        void SynchronizeFrameSelection();
+        std::uint64_t m_selectedFrameSequence = 0;
         void FocusSample(const EditorProfileFrame &frame);
         bool m_followLatest = true;
         int m_selectedSample = -1;

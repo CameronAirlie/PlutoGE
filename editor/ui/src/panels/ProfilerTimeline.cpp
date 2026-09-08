@@ -46,17 +46,35 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::SelectFrame(int index)
     {
-        if (index != m_selectedFrame)
+        const auto &frames = m_profiler->GetCapturedFrames();
+        const bool valid = index >= 0 && static_cast<std::size_t>(index) < frames.size();
+        const auto sequence = valid ? frames[index].sequence : 0;
+        if (!valid || m_selectedFrame < 0 || sequence != m_selectedFrameSequence)
         {
             m_selectedSample = -1;
             m_timelineRangeMs = 0.0f;
             m_timelineStartMs = 0.0f;
         }
-        m_selectedFrame = index;
+        m_selectedFrame = valid ? index : -1;
+        m_selectedFrameSequence = sequence;
+    }
+
+    void ProfilerPanel::SynchronizeFrameSelection()
+    {
+        const auto &frames = m_profiler->GetCapturedFrames();
+        if (frames.empty()) { SelectFrame(-1); return; }
+        if (m_followLatest) { SelectFrame(static_cast<int>(frames.size()) - 1); return; }
+        if (m_selectedFrame < 0) return;
+        const auto found = std::find_if(frames.begin(), frames.end(), [&](const auto &frame)
+            { return frame.sequence == m_selectedFrameSequence; });
+        // Keep inspecting the same frame as its index shifts. Once evicted,
+        // move to the oldest retained frame and clear the old sample selection.
+        SelectFrame(found == frames.end() ? 0 : static_cast<int>(found - frames.begin()));
     }
 
     void ProfilerPanel::RenderCaptureControls()
     {
+        SynchronizeFrameSelection();
         const float availableWidth = ImGui::GetContentRegionAvail().x;
         const bool recording = m_profiler->IsRecording();
         ImGui::PushStyleColor(ImGuiCol_Button, recording ? ImVec4(0.65f, 0.19f, 0.20f, 1) : ImVec4(0.28f, 0.30f, 0.33f, 1));
@@ -77,7 +95,7 @@ namespace PlutoGE::ui
         ImGui::Checkbox("Follow latest", &m_followLatest);
         if (availableWidth >= 560) ImGui::SameLine();
         ImGui::SetNextItemWidth(100);
-        ImGui::InputInt("Frames", &m_captureFrameLimit);
+        ImGui::InputInt("History", &m_captureFrameLimit);
         m_captureFrameLimit = std::clamp(m_captureFrameLimit, 1, static_cast<int>(EditorProfiler::MaxCaptureFrames));
         ImGui::SameLine();
         if (ImGui::Button("Copy metrics")) CopyMetricsToClipboard();
@@ -88,7 +106,7 @@ namespace PlutoGE::ui
         if (availableWidth >= 560) ImGui::SameLine();
         ImGui::TextDisabled("|  live %.2f ms / %.1f FPS", m_profiler->GetCurrentFrameTimeMs(), m_profiler->GetAverageFPS());
         if (m_profiler->IsCaptureMemoryLimited())
-            ImGui::TextWrapped("Recording stopped at the 64 MiB CPU trace budget. Existing frames are preserved.");
+            ImGui::TextWrapped("Trace budget reached; retained history may be shorter than the configured capacity.");
         RenderFrameHistory();
         if (frames.empty())
         {

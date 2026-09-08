@@ -12,6 +12,14 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr float kMillisecondsPerSecond = 1000.0f;
+
+        std::size_t TraceStorageBytes(const EditorProfileFrame &frame)
+        {
+            std::size_t bytes = frame.samples.capacity() * sizeof(core::CpuSample);
+            for (const auto &sample : frame.samples)
+                bytes += sample.name.capacity() + sample.context.capacity();
+            return bytes;
+        }
     }
 
     void EditorProfiler::StartCapture(std::size_t frameLimit)
@@ -20,7 +28,6 @@ namespace PlutoGE::ui
         m_capture.clear();
         m_traceBytes = 0;
         m_memoryLimited = false;
-        m_capture.reserve(m_captureLimit);
         m_recording = true;
     }
 
@@ -36,14 +43,20 @@ namespace PlutoGE::ui
     {
         if (!m_recording || !std::isfinite(frame.durationMs) || frame.durationMs < 0.0f)
             return;
-        std::size_t traceBytes = frame.samples.capacity() * sizeof(core::CpuSample);
-        for (const auto &sample : frame.samples)
-            traceBytes += sample.name.capacity() + sample.context.capacity();
-        if (traceBytes > MaxTraceBytes - m_traceBytes)
+        const auto traceBytes = TraceStorageBytes(frame);
+        if (traceBytes > MaxTraceBytes)
         {
+            // A single oversized trace cannot fit, even after eviction. Skip it
+            // without losing existing history or interrupting future recording.
             m_memoryLimited = true;
-            StopCapture();
             return;
+        }
+        while (!m_capture.empty() &&
+               (m_capture.size() >= m_captureLimit || traceBytes > MaxTraceBytes - m_traceBytes))
+        {
+            if (traceBytes > MaxTraceBytes - m_traceBytes) m_memoryLimited = true;
+            m_traceBytes -= TraceStorageBytes(m_capture.front());
+            m_capture.pop_front();
         }
         m_traceBytes += traceBytes;
         frame.categoryMs.fill(0.0f);
@@ -56,8 +69,6 @@ namespace PlutoGE::ui
         else
             frame.categoryMs[static_cast<std::size_t>(core::CpuCategory::Other)] += frame.durationMs - measured;
         m_capture.push_back(std::move(frame));
-        if (m_capture.size() >= m_captureLimit)
-            StopCapture();
     }
 
     void EditorProfiler::CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,

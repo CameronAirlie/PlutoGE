@@ -1,11 +1,13 @@
 # CPU profiler
 
-Open the Profiler panel and press **Record**. Select a capture length (1–2000
-frames); recording stops at that limit, at the trace memory budget, or when you
-press **Stop**. **Record** replaces the previous capture; **Clear** discards it.
+Open the Profiler panel and press **Record**. Select a **History** capacity (1–2000
+frames, default 240). Recording continues until you press **Stop**, discarding
+the oldest frames as new ones arrive. The trace memory budget may shorten the
+retained history. **Record** replaces the previous capture; **Clear** discards it.
 Recording continues when the panel is hidden. **Follow latest** keeps the newest
 captured frame in view; selecting a frame or sample pauses following while
-recording continues.
+recording continues. The selected frame stays selected as its index shifts;
+if it is discarded, selection moves to the oldest retained frame.
 
 The stacked **CPU Usage** chart shows exclusive time by category: scripts,
 rendering, physics, animation, audio, UI, waits/presentation, and other work.
@@ -56,8 +58,9 @@ current instrumentation does not record one.
 
 Each frame retains at most 4096 CPU samples, with labels/context capped at 160
 bytes. Omitted samples are counted and displayed; their work remains included
-in recorded ancestors. A conservative 64 MiB trace-storage budget stops recording
-before retaining an oversized frame, preserving the preceding frames. The budget
+in recorded ancestors. A conservative 64 MiB trace-storage budget evicts older frames as needed.
+A single trace larger than the entire budget is skipped without stopping recording
+or discarding the existing history. The budget
 covers trace storage; existing aggregate metric storage is separately bounded by
 capture frame count. The first frame of a recording initiated mid-frame has
 aggregate metrics but no CPU trace. Tracing begins at the next frame boundary.

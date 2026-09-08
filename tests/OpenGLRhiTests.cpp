@@ -1,3 +1,4 @@
+#include "ShadowFilteringChecks.h"
 #include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <filesystem>
 #include <sstream>
+#include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <span>
@@ -185,6 +187,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             });
             return 0;
         }
+
+        CheckShadowFiltering(basicRenderer, [&](render::rhi::TextureHandle texture)
+        {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
+            return 0;
+
 
         CheckGlassRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
         {

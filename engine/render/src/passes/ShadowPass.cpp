@@ -595,22 +595,10 @@ namespace
         int shadowResolution)
     {
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        // Gameplay cameras commonly animate FOV while sprinting or aiming. A
-        // cascade fitted to that changing projection rescales its texel grid
-        // every frame, making stationary shadows swim. Fit shadows to a stable,
-        // conservative 90-degree vertical FOV while allowing wider cameras to
-        // retain their actual projection.
-        PlutoGE::render::CameraData shadowCameraData = cameraData;
-        constexpr float kStableProjectionY = 1.0f; // 1 / tan(90 degrees / 2)
-        const float projectionY = std::abs(shadowCameraData.projection[1][1]);
-        const float projectionX = std::abs(shadowCameraData.projection[0][0]);
-        if (projectionY > kStableProjectionY && projectionX > 0.000001f)
-        {
-            const float aspectRatio = projectionY / projectionX;
-            shadowCameraData.projection[1][1] = std::copysign(kStableProjectionY, shadowCameraData.projection[1][1]);
-            shadowCameraData.projection[0][0] = std::copysign(kStableProjectionY / aspectRatio, shadowCameraData.projection[0][0]);
-        }
-        const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(shadowCameraData, cascadeNear, cascadeFar);
+        // Fit the actual receiver frustum: a fixed 90-degree minimum wastes
+        // near-cascade texels for narrow cameras. The sphere and world-anchored
+        // snapping below retain stability at a fixed camera projection.
+        const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         glm::vec3 cameraRelativeCascadeCenter(0.0f);
         for (const glm::vec3 &corner : cameraRelativeCascadeCorners)
@@ -649,7 +637,8 @@ namespace
             glm::max(cascadeDepth * 2.0f, configuredCasterDistance) + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
 
-        const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
+        // Tent support plus half a texel for world-grid snapping.
+        const float pcfGuardTexels = glm::clamp(light.directionalShadowSettings.softness, 0.0f, 4.0f) + 1.5f;
 
         glm::vec3 eye = cascadeCenter;
 
@@ -666,7 +655,7 @@ namespace
 
             const glm::vec2 receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
             const glm::vec2 texelSize = receiverExtent / static_cast<float>(std::max(shadowResolution, 1));
-            const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(kDirectionalShadowPadding);
+            const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(0.01f);
             minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthGuard);
             maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthGuard);
         };

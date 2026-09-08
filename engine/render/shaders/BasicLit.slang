@@ -231,6 +231,28 @@ float compareShadowCascade(int cascade, float2 uv, float receiverDepth)
     return receiverDepth <= sampleShadowCascade(cascade, uv) ? 1.0 : 0.0;
 }
 
+// Interpolate visibility, never depth. Sampling texel centres works with the
+// existing point sampler on both backends, without a comparison-sampler ABI.
+float compareShadowCascadeBilinear(int cascade, float2 uv, float receiverDepth,
+                                  float2 receiverPlaneGradient)
+{
+    const float2 texelSize = shadowInverseResolutions[cascade].xy;
+    const float2 texelPosition = uv / texelSize - 0.5;
+    const float2 baseTexel = floor(texelPosition);
+    const float2 fraction = frac(texelPosition);
+    float visibility = 0.0;
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 2; ++x)
+        {
+            const float2 sampleUv = (baseTexel + float2(x, y) + 0.5) * texelSize;
+            const float2 weight = lerp(1.0 - fraction, fraction, float2(x, y));
+            visibility += weight.x * weight.y * compareShadowCascade(
+                cascade, sampleUv,
+                receiverDepth + dot(receiverPlaneGradient, sampleUv - uv));
+        }
+    return visibility;
+}
+
 float2 computeReceiverPlaneDepthGradient(float3 shadowDx, float3 shadowDy)
 {
     // shadowCoord.xy is NDC here; the factor of two converts the solved
@@ -262,23 +284,42 @@ float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, f
         shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
-    const float configuredFilterRadius = shadowFilterParameters.x > 0.5 ? shadowFilterParameters.y : 0.0;
-    const float2 texel = shadowInverseResolutions[cascade].xy *
-                         max(shadowCascadeParameters.z, configuredFilterRadius);
+    const float2 texelSize = shadowInverseResolutions[cascade].xy;
+    // Softness controls shadow-map filtering. Screen-space blur settings must
+    // not spread a sparse PCF grid apart and introduce plateaus in coverage.
+    const float support = clamp(shadowCascadeParameters.z, 0.0, 4.0) + 1.0;
+    const float2 position = shadowUv / texelSize - 0.5;
+    const float2 firstTexel = floor(position - support) + 1.0;
     const float receiverDepth = shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias;
     float2 receiverPlaneGradient = computeReceiverPlaneDepthGradient(shadowDx, shadowDy) * shadowDepthScale;
     if (shadowFlipY != 0)
         receiverPlaneGradient.y = -receiverPlaneGradient.y;
-    float visibleSamples = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
+    float visibility = 0.0;
+    float totalWeight = 0.0;
+    // Integrate a separable tent over consecutive texels. Pair adjacent weights
+    // into a bilinear comparison, retaining every texel in the footprint.
+    // Default softness needs at most 3x3 bilinear taps (36 depth reads).
+    for (int y = 0; y < 5; ++y)
+    {
+        const float row = firstTexel.y + float(y * 2);
+        const float2 wy = max(support - abs(float2(row, row + 1.0) - position.y), 0.0);
+        const float weightY = wy.x + wy.y;
+        if (weightY <= 0.0) break;
+        for (int x = 0; x < 5; ++x)
         {
-            const float2 tapOffset = float2(x, y) * texel;
-            visibleSamples += compareShadowCascade(
-                cascade, shadowUv + tapOffset,
-                receiverDepth + dot(receiverPlaneGradient, tapOffset));
+            const float column = firstTexel.x + float(x * 2);
+            const float2 wx = max(support - abs(float2(column, column + 1.0) - position.x), 0.0);
+            const float weightX = wx.x + wx.y;
+            if (weightX <= 0.0) break;
+            const float2 sampleUv = (float2(column + wx.y / weightX, row + wy.y / weightY) + 0.5) * texelSize;
+            const float weight = weightX * weightY;
+            visibility += weight * compareShadowCascadeBilinear(
+                cascade, sampleUv, receiverDepth + dot(receiverPlaneGradient, sampleUv - shadowUv),
+                receiverPlaneGradient);
+            totalWeight += weight;
         }
-    return visibleSamples / 9.0;
+    }
+    return visibility / max(totalWeight, 0.000001);
 }
 
 float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBias)

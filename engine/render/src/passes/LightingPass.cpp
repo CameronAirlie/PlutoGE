@@ -460,42 +460,32 @@ namespace PlutoGE::render
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float receiverDepth = projectedCoords.z - depthBias;
 
-                    if (softness <= 0.001)
-                    {
-                        return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
-                    }
-
-                    float kernelRadius = clamp(softness, 0.5, 3.0);
-                    vec2 probeStep = texelSize * kernelRadius;
-                    float center = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
-                    float probes = center;
-                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
-                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
-                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
-                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
-
-                    // Most pixels are nowhere near a visibility boundary. Keep
-                    // those at five taps and spend the denser disk only where it
-                    // can improve silhouette antialiasing.
-                    if (probes <= 0.0 || probes >= 5.0)
-                    {
-                        return center;
-                    }
-
-                    const vec2 poissonDisk[4] = vec2[](
-                        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
-                        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379)
-                    );
+                    // Match the RHI path: consecutive, tent-weighted texels
+                    // avoid the coverage gaps of widely spaced disk samples.
+                    float support = clamp(softness, 0.0, 4.0) + 1.0;
+                    vec2 position = projectedCoords.xy / texelSize - vec2(0.5);
+                    vec2 firstTexel = floor(position - vec2(support)) + vec2(1.0);
                     float shadow = 0.0;
-                    vec2 diskScale = texelSize * kernelRadius * 1.35;
-                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    float totalWeight = 0.0;
+                    for (int y = 0; y < 5; ++y)
                     {
-                        shadow += SampleShadowComparisonBilinear(
-                            shadowMap,
-                            projectedCoords.xy + poissonDisk[sampleIndex] * diskScale,
-                            receiverDepth);
+                        float row = firstTexel.y + float(y * 2);
+                        vec2 wy = max(vec2(support) - abs(vec2(row, row + 1.0) - vec2(position.y)), vec2(0.0));
+                        float weightY = wy.x + wy.y;
+                        if (weightY <= 0.0) break;
+                        for (int x = 0; x < 5; ++x)
+                        {
+                            float column = firstTexel.x + float(x * 2);
+                            vec2 wx = max(vec2(support) - abs(vec2(column, column + 1.0) - vec2(position.x)), vec2(0.0));
+                            float weightX = wx.x + wx.y;
+                            if (weightX <= 0.0) break;
+                            vec2 sampleUv = (vec2(column + wx.y / weightX, row + wy.y / weightY) + vec2(0.5)) * texelSize;
+                            float weight = weightX * weightY;
+                            shadow += weight * SampleShadowComparisonBilinear(shadowMap, sampleUv, receiverDepth);
+                            totalWeight += weight;
+                        }
                     }
-                    return shadow * 0.25;
+                    return shadow / max(totalWeight, 0.000001);
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

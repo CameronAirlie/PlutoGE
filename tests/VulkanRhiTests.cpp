@@ -1,3 +1,4 @@
+#include "ShadowFilteringChecks.h"
 #include "SsrRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
@@ -101,6 +102,14 @@ int main(int argc, char **argv)
             });
             return 0;
         }
+
+        CheckShadowFiltering(renderer, [&](rhi::TextureHandle texture)
+        {
+            return device.ReadTextureRgba8(texture);
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
+            return 0;
+
 
         CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
         {

@@ -67,11 +67,11 @@ namespace PlutoGE::render
             const float farDistance = std::max(shadowDistance, nearDistance + 0.01f);
             const float projectionX = std::max(std::abs(camera.projection[0][0]), 0.0001f);
             const float projectionY = std::max(std::abs(camera.projection[1][1]), 0.0001f);
-            const float aspect = projectionY / projectionX;
-            // Match the legacy path: narrow/FOV-animated cameras use a stable
-            // conservative 90-degree fit, while wider cameras keep their fit.
-            const float inverseProjectionY = 1.0f / std::min(projectionY, 1.0f);
-            const float inverseProjectionX = inverseProjectionY * aspect;
+            // Use actual camera coverage, matching the legacy cascade fit.
+            // Radius quantization and world-anchored snapping still stabilize
+            // camera translation and rotation at a fixed projection.
+            const float inverseProjectionY = 1.0f / projectionY;
+            const float inverseProjectionX = 1.0f / projectionX;
 
             std::array<glm::vec3, 8> corners{};
             std::size_t cornerIndex = 0;
@@ -104,9 +104,9 @@ namespace PlutoGE::render
             const float lightOffset = std::max(casterDistance, farDistance) + radius + 1.0f;
             const glm::mat4 lightView = glm::lookAtRH(center - lightDirection * lightOffset, center, lightUp);
             const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(center, 1.0f));
-            const float guard = (std::max(lighting.shadowSoftness, 1.0f) + 1.0f) *
-                                    (radius * 2.0f / std::max(shadowResolution, 1u)) +
-                                0.01f;
+            // Tent support plus half a texel for world-grid snapping.
+            const float guardTexels = std::clamp(lighting.shadowSoftness, 0.0f, 4.0f) + 1.5f;
+            const float guard = guardTexels * (radius * 2.0f / std::max(shadowResolution, 1u)) + 0.01f;
             glm::vec3 minimum = lightSpaceCenter - glm::vec3(radius + guard, radius + guard, radius);
             glm::vec3 maximum = lightSpaceCenter + glm::vec3(radius + guard, radius + guard, radius);
             // The receiver slice alone is not a sufficient shadow-caster

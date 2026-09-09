@@ -67,6 +67,22 @@
             }
         },
         {
+            "name": "msvc-nvidia",
+            "displayName": "Windows MSVC with NVIDIA DLSS",
+            "description": "Full editor, runtime, and tests build with FSR 2 and NVIDIA Streamline/DLSS",
+            "inherits": "msvc",
+            "cacheVariables": {
+                "PLUTO_BUILD_EDITOR": "ON",
+                "PLUTO_BUILD_RUNTIME": "ON",
+                "PLUTO_BUILD_SAMPLES": "OFF",
+                "BUILD_TESTING": "ON",
+                "PLUTO_ENABLE_FSR2": "ON",
+                "PLUTO_ENABLE_STREAMLINE": "ON",
+                "PLUTO_STREAMLINE_SDK_ROOT": "C:/SDKs/Streamline-2.12.0",
+                "PLUTO_STREAMLINE_PROJECT_ID": "cb4d8370-925d-4b0a-b4bc-30bbde158074"
+            }
+        },
+        {
             "name": "msvc-shipping",
             "displayName": "Windows Shipping Runtime",
             "description": "Release-only runtime used to export distributable games",
@@ -85,6 +101,27 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "msvc-nvidia",
+            "displayName": "Full Windows NVIDIA build (RelWithDebInfo, 8 jobs)",
+            "configurePreset": "msvc-nvidia",
+            "configuration": "RelWithDebInfo",
+            "jobs": 8
+        },
+        {
+            "name": "msvc-nvidia-debug",
+            "displayName": "Full Windows NVIDIA build (Debug, 8 jobs)",
+            "inherits": "msvc-nvidia",
+            "configuration": "Debug"
+        },
+        {
+            "name": "editor-debug",
+            "displayName": "Build editor only (Debug, 8 jobs)",
+            "configurePreset": "msvc",
+            "configuration": "Debug",
+            "targets": ["PlutoGEEditor"],
+            "jobs": 8
+        },
         {
             "name": "linux",
             "displayName": "Build Linux Debug",

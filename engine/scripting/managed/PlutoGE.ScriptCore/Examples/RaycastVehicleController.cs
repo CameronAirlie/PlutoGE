@@ -548,25 +548,26 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                         slidingLateralRetention,
                         lossBlend);
                 }
-                else if (lateralSlipAngle <= MathF.Max(
-                    wheel.Steering ? frontRegripLateralSlipAngle : regripLateralSlipAngle,
-                    0.0f))
+                else
                 {
-                    // Sliding tyres only recover after their heading is close
-                    // to their actual travel direction, and do so gradually.
-                    // Every wheel recovers from its own contact-patch state.
-                    // Front tyres can therefore bite again as soon as they are
-                    // aligned even while the rear axle is still sliding.
+                    // Follow the improving force curve even during a large
+                    // slide. A hard regrip gate traps the rear at its worst
+                    // retention while the front recovers and keeps adding yaw.
                     var recoveryRate = wheel.Steering
                         ? frontLateralGripRecoveryRate
                         : lateralGripRecoveryRate;
+                    var regripAngle = MathF.Max(wheel.Steering
+                        ? frontRegripLateralSlipAngle : regripLateralSlipAngle, 0.0f);
+                    recoveryRate *= Lerp(1.0f, 0.35f, SmoothStep(InverseLerp(
+                        regripAngle, MathF.Max(fullLateralSlipAngle * slipTolerance, regripAngle + 0.1f),
+                        lateralSlipAngle)));
                     var recoveryBlend = 1.0f - MathF.Exp(-MathF.Max(recoveryRate, 0.0f) * deltaTime);
                     wheel.LateralGripRetention = Lerp(
                         wheel.LateralGripRetention,
                         slidingLateralRetention,
                         recoveryBlend);
                 }
-                lateralForce *= MathF.Min(slidingLateralRetention, wheel.LateralGripRetention);
+                lateralForce *= wheel.LateralGripRetention;
             }
 
             var tireForce = lateralForce;

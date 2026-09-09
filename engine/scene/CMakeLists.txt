@@ -42,6 +42,8 @@ add_library(PlutoGEScene
 # Optimize only the baker while retaining Debug symbols and Debug behavior for
 # the rest of the scene module.
 if(MSVC)
+    # This file uses different optimization/runtime-check flags from the PCH.
+    set_source_files_properties(src/SceneBaker.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     set_property(SOURCE src/SceneBaker.cpp APPEND PROPERTY
         COMPILE_FLAGS "$<$<CONFIG:Debug>:/O2 /Ob2>")
     set_property(SOURCE src/SceneBaker.cpp APPEND PROPERTY

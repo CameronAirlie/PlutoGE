@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.20.0)
 project(PlutoGE VERSION 0.1.0 LANGUAGES C CXX)
 
 include(CTest)
@@ -16,6 +16,15 @@ option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
 option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
 option(PLUTO_EDITOR_WINDOWED "Build the Windows editor without a console window" OFF)
 option(PLUTO_RUNTIME_WINDOWED "Build the Windows runtime without a console window" OFF)
+option(PLUTO_ENABLE_PCH "Precompile stable headers for larger PlutoGE targets" ON)
+set(PLUTO_MSVC_COMPILE_JOBS 2 CACHE STRING "Concurrent MSVC compiles per PlutoGE target")
+
+function(pluto_optimize_build target)
+    if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+        target_compile_options(${target} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:/MP${PLUTO_MSVC_COMPILE_JOBS}>")
+    endif()
+endfunction()
 
 add_subdirectory(engine)
 
@@ -60,6 +69,23 @@ if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
+foreach(target PlutoGECore PlutoGEPlatform PlutoGEAudio PlutoGERender
+        PlutoGEAssets PlutoGEImport PlutoGEScripting PlutoGEScene
+        PlutoGEEditorUI PlutoGEEditor PlutoGERuntime)
+    if (TARGET ${target})
+        pluto_optimize_build(${target})
+    endif()
+endforeach()
+if (PLUTO_ENABLE_PCH)
+    foreach(target PlutoGERender PlutoGEScene PlutoGEEditorUI)
+        if (TARGET ${target})
+            target_precompile_headers(${target} PRIVATE
+                <algorithm> <array> <cstdint> <memory> <string>
+                <unordered_map> <utility> <vector>)
+        endif()
+    endforeach()
+endif()
+
 # if (PLUTO_BUILD_SAMPLES)
 #     add_subdirectory(samples)
 # endif()
@@ -84,16 +110,30 @@ set(PLUTO_SCRIPT_CORE_OUTPUT
     "${CMAKE_SOURCE_DIR}/engine/scripting/managed/PlutoGE.ScriptCore/bin/Release/net8.0")
 
 if (PLUTO_DOTNET_EXECUTABLE)
-    add_custom_target(PlutoGEScriptCore ALL
+    file(GLOB_RECURSE PLUTO_SCRIPT_CORE_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/engine/scripting/managed/PlutoGE.ScriptCore/*.cs")
+    list(FILTER PLUTO_SCRIPT_CORE_INPUTS EXCLUDE REGEX "/(bin|obj)/")
+    # Depend on the generated input list too, so removing a source rebuilds SDK.
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ScriptCoreInputs.txt"
+        CONTENT "${PLUTO_SCRIPT_CORE_INPUTS}\n")
+    set(PLUTO_SCRIPT_CORE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/ScriptCore.stamp")
+    set(PLUTO_SCRIPT_CORE_ARTIFACTS
+        "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.dll"
+        "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.deps.json"
+        "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.runtimeconfig.json")
+    add_custom_command(OUTPUT "${PLUTO_SCRIPT_CORE_STAMP}" ${PLUTO_SCRIPT_CORE_ARTIFACTS}
         COMMAND "${PLUTO_DOTNET_EXECUTABLE}" build "${PLUTO_SCRIPT_CORE_PROJECT}"
                 --configuration Release --framework net8.0
-        BYPRODUCTS
-            "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.dll"
-            "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.deps.json"
-            "${PLUTO_SCRIPT_CORE_OUTPUT}/PlutoGE.ScriptCore.runtimeconfig.json"
+        # dotnet may leave unchanged artifacts older than an edited source.
+        COMMAND ${CMAKE_COMMAND} -E touch ${PLUTO_SCRIPT_CORE_ARTIFACTS}
+                "${PLUTO_SCRIPT_CORE_STAMP}"
+        DEPENDS ${PLUTO_SCRIPT_CORE_INPUTS} "${PLUTO_SCRIPT_CORE_PROJECT}"
+                "${CMAKE_CURRENT_BINARY_DIR}/ScriptCoreInputs.txt"
         COMMENT "Building the PlutoGE managed scripting SDK"
         VERBATIM
     )
+    add_custom_target(PlutoGEScriptCore ALL
+        DEPENDS "${PLUTO_SCRIPT_CORE_STAMP}" ${PLUTO_SCRIPT_CORE_ARTIFACTS})
     if (TARGET PlutoGEEditor)
         add_dependencies(PlutoGEEditor PlutoGEScriptCore)
     endif()

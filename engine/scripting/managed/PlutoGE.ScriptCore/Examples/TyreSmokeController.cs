@@ -4,7 +4,7 @@ using PlutoGE.ScriptCore;
 namespace PlutoGE.ScriptCore.Examples;
 
 /// <summary>
-/// Plays a particle system when the driven tyres are slipping while grounded.
+/// Plays a particle system for grounded wheelspin and traction-loss skids.
 /// </summary>
 public sealed class TyreSmokeController : ScriptBehaviour
 {
@@ -53,9 +53,19 @@ public sealed class TyreSmokeController : ScriptBehaviour
         var wheelSpinSpeed = MathF.Abs(telemetry.DrivenWheelSpeed);
         var vehicleSpeed = MathF.Abs(telemetry.ForwardSpeed);
         var spinningFasterThanMoving = wheelSpinSpeed > vehicleSpeed + MathF.Max(wheelSpinSpeedThreshold, 0.0f);
+        var planarSpeed = MathF.Sqrt(telemetry.ForwardSpeed * telemetry.ForwardSpeed +
+                                    telemetry.LateralSpeed * telemetry.LateralSpeed);
+        var skidSmoke = Math.Clamp((telemetry.LateralSlip - 0.25f) / 0.75f, 0.0f, 1.0f) *
+                        Math.Clamp((planarSpeed - 1.0f) / 3.0f, 0.0f, 1.0f);
+        if (telemetry.Handbrake || telemetry.Brake >= 0.95f)
+        {
+            skidSmoke = MathF.Max(skidSmoke, Math.Clamp((planarSpeed - 2.0f) / 10.0f, 0.0f, 1.0f));
+        }
+        var smoke01 = MathF.Max(skidSmoke,
+            spinningFasterThanMoving ? Math.Clamp(telemetry.TyreSmoke, 0.0f, 1.0f) : 0.0f);
         var shouldSmoke = telemetry.IsGrounded &&
-                          spinningFasterThanMoving &&
-                          telemetry.TyreSmoke >= MathF.Max(minimumSmokeAmount, 0.0f);
+                          smoke01 > 0.0f &&
+                          smoke01 >= MathF.Max(minimumSmokeAmount, 0.0f);
 
         if (!shouldSmoke)
         {
@@ -63,7 +73,6 @@ public sealed class TyreSmokeController : ScriptBehaviour
             return;
         }
 
-        var smoke01 = Math.Clamp(telemetry.TyreSmoke, 0.0f, 1.0f);
         _particles.EmissionRateOverTime = MathF.Max(_baseEmissionRate, emissionRateAtFullSmoke) * smoke01;
         if (!_particles.Playing)
         {

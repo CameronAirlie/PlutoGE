@@ -48,11 +48,28 @@ endif()
 
 set(PLUTO_EDITOR_RESOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources)
 if (EXISTS ${PLUTO_EDITOR_RESOURCES_DIR})
-    add_custom_command(TARGET PlutoGEEditor POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${PLUTO_EDITOR_RESOURCES_DIR}
-            $<TARGET_FILE_DIR:PlutoGEEditor>/resources
-    )
+    file(GLOB_RECURSE PLUTO_EDITOR_RESOURCE_FILES CONFIGURE_DEPENDS
+        LIST_DIRECTORIES false RELATIVE "${PLUTO_EDITOR_RESOURCES_DIR}"
+        "${PLUTO_EDITOR_RESOURCES_DIR}/*")
+    set(PLUTO_EDITOR_RESOURCE_OUTPUTS)
+    set(PLUTO_EDITOR_RESOURCE_DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+    if (CMAKE_CONFIGURATION_TYPES)
+        string(APPEND PLUTO_EDITOR_RESOURCE_DESTINATION "/$<CONFIG>")
+    endif()
+    foreach(resource IN LISTS PLUTO_EDITOR_RESOURCE_FILES)
+        # Match the executable layout without depending on the executable itself.
+        set(resource_output "${PLUTO_EDITOR_RESOURCE_DESTINATION}/resources/${resource}")
+        get_filename_component(resource_directory "${resource_output}" DIRECTORY)
+        add_custom_command(OUTPUT "${resource_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${resource_directory}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PLUTO_EDITOR_RESOURCES_DIR}/${resource}" "${resource_output}"
+            DEPENDS "${PLUTO_EDITOR_RESOURCES_DIR}/${resource}"
+            VERBATIM)
+        list(APPEND PLUTO_EDITOR_RESOURCE_OUTPUTS "${resource_output}")
+    endforeach()
+    add_custom_target(PlutoGEEditorResources DEPENDS ${PLUTO_EDITOR_RESOURCE_OUTPUTS})
+    add_dependencies(PlutoGEEditor PlutoGEEditorResources)
 
     install(DIRECTORY ${PLUTO_EDITOR_RESOURCES_DIR}/
         DESTINATION resources

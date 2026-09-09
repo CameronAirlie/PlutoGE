@@ -150,7 +150,40 @@ cmake --build --preset msvc-debug
 
 The first configure downloads and configures the dependencies declared in [`third_party/CMakeLists.txt`](third_party/CMakeLists.txt), so it can take longer than later builds.
 
-Run the editor:
+For day-to-day editor development, build the editor and its dependencies with
+eight parallel project jobs (override the count with `--parallel N`):
+
+```powershell
+cmake --build --preset editor-debug
+```
+
+The `msvc-debug` preset still builds the runtime and tests as well. PlutoGE's
+own Visual Studio targets also compile up to two source files concurrently per
+project; configure `-DPLUTO_MSVC_COMPILE_JOBS=1` to reduce memory pressure.
+The larger render, scene, and editor UI targets use private precompiled standard
+library headers. Configure with `-DPLUTO_ENABLE_PCH=OFF` to compare build times
+or troubleshoot compiler compatibility. Changing this option rebuilds those
+targets. ScriptCore builds only when its tracked inputs change, and editor
+resources are copied individually when changed, including resource-only edits.
+
+For a full Windows build with NVIDIA DLSS and FSR 2 enabled, use the MSVC
+NVIDIA presets. These build the editor, runtime, and tests with eight parallel
+project jobs. The SDK path and project GUID match the existing `gcc-nvidia`
+preset and expect Streamline at `C:/SDKs/Streamline-2.12.0`.
+
+```powershell
+cmake --preset msvc-nvidia
+cmake --build --preset msvc-nvidia
+.\out\build\msvc-nvidia\editor\RelWithDebInfo\PlutoGEEditor.exe
+```
+
+This uses `RelWithDebInfo` for optimized execution with debug symbols. For
+unoptimized debugging, use `cmake --build --preset msvc-nvidia-debug` with the
+same configure preset; its executables are in the `Debug` directories.
+Building tests does not run them; run
+`ctest --test-dir out/build/msvc-nvidia -C RelWithDebInfo --output-on-failure`.
+
+Run the editor from the standard `msvc-debug` build:
 
 ```powershell
 .\out\build\msvc\editor\Debug\PlutoGEEditor.exe

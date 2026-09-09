@@ -13,6 +13,8 @@ struct TemporalParameters
     uint hasHistory;
     uint debugView;
     uint zeroToOneDepth;
+    uint indirectOnly;
+    uint modulateIndirect;
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TemporalParameters pass; };
 [[vk::binding(1, 0)]] Sampler2D currentIndirect : register(t1, space0);
@@ -21,6 +23,9 @@ struct TemporalParameters
 [[vk::binding(5, 0)]] Sampler2D motionTexture : register(t5, space0);
 [[vk::binding(6, 0)]] Sampler2D historyColor : register(t6, space0);
 [[vk::binding(7, 0)]] Sampler2D historyMetadata : register(t7, space0);
+[[vk::binding(8, 0)]] Sampler2D sceneTexture : register(t8, space0);
+[[vk::binding(4, 0)]] Sampler2D materialTexture : register(t4, space0);
+[[vk::binding(9, 0)]] Sampler2D albedoTexture : register(t9, space0);
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 float2 signNotZero(float2 value) { return float2(value.x >= 0 ? 1 : -1, value.y >= 0 ? 1 : -1); }
 float3 decodeOctahedron(float2 encoded)
@@ -30,10 +35,8 @@ float3 decodeOctahedron(float2 encoded)
     if (normal.z < 0) normal.xy = (1.0 - abs(normal.yx)) * signNotZero(normal.xy);
     return normalize(normal);
 }
-[shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+float4 resolveIndirect(float2 uv)
 {
-    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     float3 current = currentIndirect.Sample(uv).rgb;
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return float4(current, 0.0);
@@ -65,4 +68,26 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 resolved = lerp(current, history, weight);
     if (pass.debugView != 0) return float4(valid ? float3(0, weight, 0) : float3(1,0,0), currentViewDepth);
     return float4(max(resolved, 0.0), currentViewDepth);
+}
+
+struct TemporalOutput
+{
+    float4 history : SV_Target0;
+    float4 composite : SV_Target1;
+};
+
+[shader("fragment")]
+TemporalOutput fragmentMain(FullscreenVertexOutput input)
+{
+    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    TemporalOutput output;
+    output.history = resolveIndirect(uv);
+    const float4 scene = sceneTexture.Sample(uv);
+    float3 indirect = output.history.rgb;
+    if (pass.modulateIndirect != 0)
+        indirect *= albedoTexture.Sample(uv).rgb * (1.0 - saturate(materialTexture.Sample(uv).r));
+    output.composite = pass.indirectOnly != 0
+        ? float4(indirect, 1.0)
+        : float4(scene.rgb + indirect, scene.a);
+    return output;
 }

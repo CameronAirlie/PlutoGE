@@ -612,8 +612,12 @@ namespace PlutoGE::render
             const std::uint64_t jitterPhaseCount = static_cast<std::uint64_t>(
                 std::max(1l, std::lround(8.0f * upscaleRatio * upscaleRatio)));
             const std::uint64_t sample = m_temporalFrameIndex++ % jitterPhaseCount + 1u;
-            const bool jitterDebug = taa != basicEffects.end() && taa->parameters[3].x > 0.5f;
-            const float strength = taa != basicEffects.end()
+            // FSR/DLSS replace native TAA and require their full subpixel
+            // sequence. Native TAA controls must not disable, shrink, or
+            // replace that sequence with the four-pixel diagnostic pattern.
+            const bool useNativeTaaJitter = !useTemporalUpscaler && taa != basicEffects.end();
+            const bool jitterDebug = useNativeTaaJitter && taa->parameters[3].x > 0.5f;
+            const float strength = useNativeTaaJitter
                                        ? std::clamp(taa->parameters[1].w, 0.0f, 2.0f)
                                        : 1.0f;
             if (jitterDebug)

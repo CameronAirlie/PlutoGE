@@ -218,12 +218,13 @@ float3 samplePhysicalSkyIrradiance(float3 normal)
     const float3 up = abs(normal.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
     const float3 tangent = normalize(cross(up, normal));
     const float3 bitangent = cross(normal, tangent);
-    // Compact cosine-weighted convolution of the procedural cubemap.
-    float3 irradiance = samplePhysicalSkyEnvironment(normal) * 0.4;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent + bitangent)) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent + bitangent)) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent - bitangent)) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent - bitangent)) * 0.15;
+    // Compact cosine-weighted convolution of the procedural cubemap. The sun
+    // disc belongs to shadowed direct lighting, not unoccluded ambient light.
+    float3 irradiance = samplePhysicalSkyEnvironment(normal, 0.0) * 0.4;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent + bitangent), 0.0) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent + bitangent), 0.0) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent - bitangent), 0.0) * 0.15;
+    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent - bitangent), 0.0) * 0.15;
     return irradiance;
 }
 
@@ -278,6 +279,72 @@ float2 computeReceiverPlaneDepthGradient(float3 shadowDx, float3 shadowDy)
     return 2.0 * float2(
         shadowDy.y * shadowDx.z - shadowDx.y * shadowDy.z,
         shadowDx.x * shadowDy.z - shadowDy.x * shadowDx.z) / determinant;
+}
+
+uint pointShadowFace(float3 ray)
+{
+    float3 axis = abs(ray);
+    return axis.x >= axis.y && axis.x >= axis.z ? (ray.x >= 0 ? 0 : 1) :
+        (axis.y >= axis.z ? (ray.y >= 0 ? 2 : 3) : (ray.z >= 0 ? 4 : 5));
+}
+float3 pointShadowRay(uint face, float2 uv)
+{
+    if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
+    float2 p = uv * 2.0 - 1.0;
+    if (face == 0) return float3(1, -p.y, -p.x);
+    if (face == 1) return float3(-1, -p.y, p.x);
+    if (face == 2) return float3(p.x, 1, p.y);
+    if (face == 3) return float3(p.x, -1, -p.y);
+    if (face == 4) return float3(p.x, -p.y, 1);
+    return float3(-p.x, -p.y, -1);
+}
+float2 pointShadowUv(uint face, float3 ray)
+{
+    float2 p;
+    if (face == 0) p = float2(-ray.z, -ray.y) / ray.x;
+    else if (face == 1) p = float2(ray.z, -ray.y) / -ray.x;
+    else if (face == 2) p = float2(ray.x, ray.z) / ray.y;
+    else if (face == 3) p = float2(ray.x, -ray.z) / -ray.y;
+    else if (face == 4) p = float2(ray.x, -ray.y) / ray.z;
+    else p = float2(-ray.x, -ray.y) / -ray.z;
+    float2 uv = p * 0.5 + 0.5;
+    if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
+    return uv;
+}
+float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 receiverNormal)
+{
+    float3 ray = world - lightPosition;
+    if (dot(ray, ray) < 1.e-12) return 1.0;
+    uint face = pointShadowFace(ray);
+    float2 uv = pointShadowUv(face, ray);
+    float resolution = pointParameters.z;
+    float2 center = floor(uv * resolution) + 0.5;
+    float planeDistance = dot(receiverNormal, ray);
+    float visibility = 0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            float3 tapRay = pointShadowRay(face, (center + float2(x,y)) / resolution);
+            uint tapFace = pointShadowFace(tapRay);
+            float2 tapUv = pointShadowUv(tapFace, tapRay);
+            tapUv = (clamp(floor(tapUv * resolution), 0.0, resolution - 1.0) + 0.5) / resolution;
+            tapRay = pointShadowRay(tapFace, tapUv);
+            // Compare against the plane at the actual sampled texel, not the
+            // fragment's depth. This remains valid across perspective cube
+            // faces and avoids slope-dependent self-shadowing on side faces.
+            float denominator = dot(receiverNormal, tapRay);
+            if (abs(denominator) < 1.e-6 || planeDistance / denominator <= 0)
+            {
+                visibility += 1.0 / 9.0;
+                continue;
+            }
+            float3 tapWorld = lightPosition + tapRay * (planeDistance / denominator);
+            float4 clip = mul(pointShadowMatrices[row * 6 + tapFace], float4(tapWorld, 1));
+            float depth = pointShadowAtlas.SampleLevel((tapUv + float2(tapFace,row)) / float2(6,4), 0).r;
+            // Only floating-point/raster precision bias remains necessary.
+            visibility += clip.z / clip.w - 0.000001 <= depth ? 1.0 / 9.0 : 0.0;
+        }
+    return visibility;
 }
 
 float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
@@ -583,6 +650,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                           directionalDirectionIntensity.w * ndotl;
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
+    // Evaluate geometry derivatives before divergent per-light/face selection.
+    float3 pointReceiverNormal = cross(ddx(input.worldPosition), ddy(input.worldPosition));
+    float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
+    pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
     for (uint light = 0; light < uint(pointParameters.x); ++light)
     {
         const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
@@ -603,25 +674,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         float visibility = 1.0;
         if (pointSettings[light].x >= 0.0)
         {
-            const float3 ray = -offset;
-            const float3 axis = abs(ray);
-            const uint face = axis.x >= axis.y && axis.x >= axis.z ? (ray.x >= 0.0 ? 0 : 1) :
-                (axis.y >= axis.z ? (ray.y >= 0.0 ? 2 : 3) : (ray.z >= 0.0 ? 4 : 5));
             const uint row = uint(pointSettings[light].x);
-            const float4 clip = mul(pointShadowMatrices[row * 6 + face], float4(input.worldPosition, 1.0));
-            const float3 projected = clip.xyz / clip.w;
-            float2 uv = projected.xy * 0.5 + 0.5;
-            if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
-            const float bias = max(0.00002, 0.0002 * (1.0 - nl));
-            visibility = 0.0;
-            for (int y = -1; y <= 1; ++y)
-                for (int x = -1; x <= 1; ++x)
-                {
-                    const float2 tap = clamp(uv + float2(x,y) / pointParameters.z,
-                        0.5 / pointParameters.z, 1.0 - 0.5 / pointParameters.z);
-                    const float depth = pointShadowAtlas.Sample((tap + float2(face,row)) / float2(6,4)).r;
-                    visibility += projected.z - bias <= depth ? 1.0 / 9.0 : 0.0;
-                }
+            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal);
         }
         const float attenuation = pow(saturate(1.0 - distance / range), 2.0);
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
@@ -736,15 +790,17 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     if (physicalSkySettings.x > 0.5)
     {
         const float3 environmentIrradiance = samplePhysicalSkyIrradiance(normal);
-        const float3 ambientFresnel = f0 + (1.0 - f0) * pow(1.0 - ndotv, 5.0);
+        const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) *
+                                         pow(1.0 - ndotv, 5.0);
         const float3 environmentDiffuse = environmentIrradiance * sampledColor.rgb *
                                           (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
         const float3 reflectionDirection = reflect(-viewDirection, normal);
-        // Roughness selects progressively broader directions, matching the
-        // perceptual result of sampling lower prefiltered cubemap mip levels.
-        const float3 broadReflection = normalize(lerp(reflectionDirection, normal,
-                                                       materialRoughness * materialRoughness));
-        const float3 environmentSpecular = samplePhysicalSkyEnvironment(broadReflection) *
+        // Approximate rough environment filtering by blending radiance toward
+        // the broad convolution. Rotating a single lookup leaves sharp sky
+        // features intact even on rough surfaces. Direct lighting owns the sun.
+        const float3 filteredEnvironment = lerp(samplePhysicalSkyEnvironment(reflectionDirection, 0.0),
+                                               environmentIrradiance, materialRoughness * materialRoughness);
+        const float3 environmentSpecular = filteredEnvironment *
                                            ambientFresnel * materialMetallic *
                                            (1.0 - materialRoughness * 0.45);
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;

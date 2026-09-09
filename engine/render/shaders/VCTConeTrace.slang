@@ -196,7 +196,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // radiance also contains the source surface's 1 / PI BRDF. Dividing here by
     // PI again would remove roughly two thirds of the energy from every bounce.
     indirect *= coverageAt(position) * pass.traceSettings.x / float(coneCount);
-    const float3 receiverAlbedo = albedoTexture.Sample(uv).rgb;
-    indirect *= receiverAlbedo * (1.0 - receiverMetallic);
+    // Filter irradiance before applying the current receiver material, so GI
+    // history cannot average away jittered albedo detail either.
     return pass.indirectOnly != 0 ? float4(indirect, 1.0) : float4(scene.rgb + indirect, scene.a);
 }

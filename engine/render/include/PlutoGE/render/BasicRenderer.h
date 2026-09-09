@@ -533,6 +533,7 @@ namespace PlutoGE::render
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
         rhi::Texture m_vctShadowDepth, m_vctShadowColor;
         rhi::Texture m_vctTraceTarget;
+        rhi::Texture m_vctCompositeTarget;
         std::array<rhi::Texture, 2> m_vctHistoryTargets;
         std::array<rhi::Texture, 2> m_vctMetadataTargets;
         std::vector<rhi::Buffer> m_vctBuffers;

@@ -1,6 +1,8 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
 #include <array>
+#include <algorithm>
+#include <iostream>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -69,6 +71,49 @@ void CheckParticlePointRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         require(center()[0]>shadow[0]+30,"Transparent masked caster blocked a point light");
     }
     lighting.cameraPosition={0,0,2}; lighting.pointLights[0].position={0,0,1.2f};
+    // A plane extending beyond the downward cube face must stay fully lit
+    // when it is its own only caster. Compare shadows on/off across the square
+    // face boundary, including the oblique side faces and rotated setups.
+    const auto previousWidth = renderer.GetWidth(), previousHeight = renderer.GetHeight();
+    renderer.Resize(192, 192);
+    for (float scale : {0.1f, 1.0f})
+    for (const auto &rotation : rotations)
+    {
+        auto plane = receiver;
+        plane.model = rotation * glm::scale(glm::mat4(1), glm::vec3(8*scale,8*scale,scale));
+        lighting.cameraPosition = glm::vec3(rotation * glm::vec4(0,0,10*scale,1));
+        lighting.pointLights[0] = {glm::vec3(rotation * glm::vec4(0,0,scale,1)), 30*scale, {1,1,1}, 3, false};
+        const auto viewProjection = glm::scale(glm::mat4(1), glm::vec3(0.125f/scale,0.125f/scale,1)) * glm::inverse(rotation);
+        // Keep the receiver within the synthetic camera's reverse-depth range.
+        auto projection = viewProjection;
+        projection[3][2] = .5f;
+        renderer.Render(projection, lighting, {&plane,1}, {}, {&plane,1});
+        const auto clear = readPixels(renderer.GetColorTexture());
+        lighting.pointLights[0].castsShadows = true;
+        renderer.Render(projection, lighting, {&plane,1}, {}, {&plane,1});
+        const auto self = readPixels(renderer.GetColorTexture());
+        int worst = 0;
+        int worstX = 0, worstY = 0;
+        for (int y=20; y<172; ++y)
+            for (int x=20; x<172; ++x)
+                if (const int difference = int(clear[(y*192+x)*4])-int(self[(y*192+x)*4]); difference > worst)
+                { worst = difference; worstX = x; worstY = y; }
+        std::cout << "Point shadow plane at scale " << scale << ": maximum darkening " << worst
+                  << " at " << worstX << ',' << worstY << '\n';
+        require(worst <= 3, ("Point shadow self-acne across cube faces: difference=" + std::to_string(worst)).c_str());
+        auto seamBlocker = receiver;
+        seamBlocker.model = rotation * glm::translate(glm::mat4(1), glm::vec3(.5f*scale,0,.5f*scale)) *
+            glm::scale(glm::mat4(1), glm::vec3(.25f*scale));
+        const std::array seamCasters{plane, seamBlocker};
+        renderer.Render(projection, lighting, {&plane,1}, {}, seamCasters);
+        const auto seam = readPixels(renderer.GetColorTexture());
+        for (int y=94; y<=98; ++y)
+            for (int x=106; x<=110; ++x)
+                require(int(seam[(y*192+x)*4]) + 20 < int(clear[(y*192+x)*4]),
+                        "Point shadow lost occlusion across a cube-face boundary");
+    }
+    renderer.Resize(previousWidth, previousHeight);
+    lighting.cameraPosition={0,0,2}; lighting.pointLights[0]={{0,0,1.2f},4,{1,0,0},4,true};
     auto instances=std::make_shared<std::vector<glm::mat4>>(); instances->push_back(blocker.model);
     blocker.instanceModels=instances;
     renderer.Render(glm::mat4(1),lighting,{&receiver,1},{},{&blocker,1});

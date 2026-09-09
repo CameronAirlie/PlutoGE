@@ -52,6 +52,15 @@ full-resolution RGBA16F output. The Vulkan adapter converts PlutoGE's motion
 and jitter conventions to AMD's expected coordinate system and recreates its
 device-owned context after a resolution or initialization-option change.
 
+Temporal upscalers always use the full-strength subpixel jitter sequence.
+Native TAA's Jitter Enabled, Jitter Strength, and Jitter Debug settings apply
+only to native TAA; they do not alter FSR2's reconstruction samples.
+
+VCT temporal history stores indirect irradiance separately from scene color
+and receiver albedo. The current material and scene are composited after GI
+filtering, so stationary jittered detail reaches FSR2 without being
+accumulated twice.
+
 FSR2 RCAS sharpening uses `RUNTIME_UPSCALE_SHARPNESS`. The renderer also applies
 the temporal mip bias `log2(render width / output width) - 1` through its
 backend-neutral material sampler, keeping texture detail available at reduced

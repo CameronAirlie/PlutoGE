@@ -1,4 +1,5 @@
 #include "GlassRenderingChecks.h"
+#include "Fsr2RenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
@@ -108,6 +109,11 @@ int main(int argc, char **argv)
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")
+        {
+            CheckFsr2Rendering(renderer, device);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
         {
             CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {

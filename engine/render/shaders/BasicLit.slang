@@ -215,17 +215,33 @@ float3 samplePhysicalSkyEnvironment(float3 direction, float sunVisibility = 1.0)
 
 float3 samplePhysicalSkyIrradiance(float3 normal)
 {
-    const float3 up = abs(normal.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
-    const float3 tangent = normalize(cross(up, normal));
-    const float3 bitangent = cross(normal, tangent);
-    // Compact cosine-weighted convolution of the procedural cubemap. The sun
-    // disc belongs to shadowed direct lighting, not unoccluded ambient light.
-    float3 irradiance = samplePhysicalSkyEnvironment(normal, 0.0) * 0.4;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent + bitangent), 0.0) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent + bitangent), 0.0) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal + tangent - bitangent), 0.0) * 0.15;
-    irradiance += samplePhysicalSkyEnvironment(normalize(normal - tangent - bitangent), 0.0) * 0.15;
-    return irradiance;
+    // Integrate a fixed world-space quadrature, rather than rotating five
+    // radiance lookups with the receiver normal. Rotating sparse lookups sweeps
+    // sharp horizon/Mie features over curved diffuse surfaces like reflections
+    // and introduces a seam where the tangent-frame reference axis changes.
+    // The 14-point sphere rule uses axis weights 1/15 and corner weights 3/40.
+    const float corner = 0.57735026919;
+    const float3 directions[14] = {
+        float3(1,0,0), float3(-1,0,0), float3(0,1,0),
+        float3(0,-1,0), float3(0,0,1), float3(0,0,-1),
+        float3(1,1,1) * corner, float3(1,1,-1) * corner,
+        float3(1,-1,1) * corner, float3(1,-1,-1) * corner,
+        float3(-1,1,1) * corner, float3(-1,1,-1) * corner,
+        float3(-1,-1,1) * corner, float3(-1,-1,-1) * corner
+    };
+    float3 irradiance = 0.0;
+    float weightSum = 0.0;
+    for (int tap = 0; tap < 14; ++tap)
+    {
+        const float weight = max(dot(normal, directions[tap]), 0.0) *
+                             (tap < 6 ? 1.0 / 15.0 : 3.0 / 40.0);
+        // Direct lighting owns the sun disc and its shadow visibility.
+        irradiance += samplePhysicalSkyEnvironment(directions[tap], 0.0) * weight;
+        weightSum += weight;
+    }
+    // Preserve the existing cosine-weighted mean-radiance convention, including
+    // constant environments, independently of quadrature orientation.
+    return irradiance / max(weightSum, 0.000001);
 }
 
 float sampleConventionalShadowCascade(int cascade, float2 uv)

@@ -102,6 +102,7 @@ int main(int argc, char **argv)
         }
         std::cout << "Scene commands=" << commands.size() << " triangles=" << triangles << " emitters=" << emitters << std::endl;
         auto &device = static_cast<render::rhi::vulkan::VulkanDevice &>(*engine.GetRenderDevice());
+        device.GetImmediateContext().SetGpuProfilingEnabled(true);
         CaptureSwapchain output; output.extentWidth=320; output.extentHeight=180;
         render::RhiRenderService service;
         if (!service.Initialize(device, output)) return 31;
@@ -127,17 +128,18 @@ int main(int argc, char **argv)
         std::filesystem::create_directories(argv[4]);
         const int frames=std::stoi(argv[5]);
         std::vector<std::byte> off;
-        for (int gain : {0,1})
+        int phase = 0;
+        for (int gain : {0,1,0,1})
         {
             gi.ApplyParameters({{"Secondary Bounce",render::PostProcessParameterType::Float,std::to_string(gain)}});
             const auto begin=std::chrono::steady_clock::now();
             for (int frame=0;frame<frames;++frame)
             {
                 if (!service.RenderSceneAndPresent(camera,lighting,commands,{},scene.get(),effects)) return 32;
-                if ((frame+1)%100==0 || frame+1==frames)
+                if (frame < 20 || (frame+1)%100==0 || frame+1==frames)
                 {
                     const auto pixels=device.ReadTextureRgba8(output.texture);
-                    const auto path=std::filesystem::path(argv[4])/(std::to_string(gain)+"-"+std::to_string(frame+1)+".ppm");
+                    const auto path=std::filesystem::path(argv[4])/(std::to_string(phase)+"-"+std::to_string(gain)+"-"+std::to_string(frame+1)+".ppm");
                     std::ofstream file(path,std::ios::binary); file << "P6\n320 180\n255\n";
                     double energy=0,difference=0;
                     for (std::size_t i=0;i<pixels.size();i+=4)
@@ -148,9 +150,14 @@ int main(int argc, char **argv)
                     }
                     std::cout << "gain=" << gain << " frame=" << frame+1 << " energy=" << energy << " diff=" << difference
                         << " elapsed=" << std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count() << std::endl;
+                    const auto timings = device.GetTimingStats("Scene");
+                    for (const auto &scope : timings.gpuScopes)
+                        if (scope.name.find("VCT") != std::string::npos)
+                            std::cout << "  " << scope.name << " gpu_ms=" << scope.milliseconds << std::endl;
                     if (gain==0 && frame+1==frames) off=pixels;
                 }
             }
+            ++phase;
         }
         service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
     }

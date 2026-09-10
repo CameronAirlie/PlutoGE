@@ -34,6 +34,9 @@ if (VSM_IMAGE_BINDINGS)
     string(REPLACE "binding = 8)" "binding = 0)" shader_source "${shader_source}")
     string(REPLACE "binding = 9)" "binding = 1)" shader_source "${shader_source}")
 endif()
+if (INPUT MATCHES "VCTVoxelize")
+    string(REPLACE "binding = 8)" "binding = 0)" shader_source "${shader_source}")
+endif()
 # Slang uses the SPIR-V/Vulkan builtin spelling for SV_VertexID when emitting
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.
 string(REPLACE "gl_VertexIndex" "gl_VertexID" shader_source "${shader_source}")

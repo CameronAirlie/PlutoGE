@@ -2,7 +2,8 @@ struct ResolveParameters
 {
     uint resolution;
     uint destinationZOffset;
-    uint2 padding;
+    float secondaryGain;
+    uint padding;
 };
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { ResolveParameters pass; };
@@ -14,6 +15,8 @@ struct ResolveParameters
 // the API performs the store conversion without requiring optional GLSL
 // explicit-arithmetic-types extensions on OpenGL drivers.
 [[vk::binding(5, 0)]] RWTexture3D<float4> resolvedVolume : register(u5, space0);
+
+[[vk::binding(6, 0)]] RWTexture3D<float4> secondaryVolume : register(u6, space0);
 
 float opacityAt(int3 coordinate, int3 size)
 {
@@ -35,6 +38,7 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (weight > 0)
         radiance = float3(accumulationR[coordinate], accumulationG[coordinate],
                           accumulationB[coordinate]) * (1.0 / max(float(weight), 4095.0));
+    if (pass.secondaryGain > 0.0) radiance += secondaryVolume[coordinate].rgb * pass.secondaryGain;
     float opacity = opacityAt(coordinate, size);
     const int3 offsets[6] = {int3(1,0,0), int3(-1,0,0), int3(0,1,0),
                              int3(0,-1,0), int3(0,0,1), int3(0,0,-1)};

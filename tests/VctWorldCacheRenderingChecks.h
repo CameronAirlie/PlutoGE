@@ -306,12 +306,22 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     };
     const auto off = render(8);
     effect.parameters[5].y = 1;
-    const auto on = render(12);
+    const auto on = render(8);
     const auto settled = render(24);
     std::cout << "VCT secondary deposited radiance: off=" << off.r << ", on=" << on.r
               << ", green=" << on.g << ", settled=" << settled.r << '\n';
     if (off.r > 1 || on.r < 8 || on.r < on.g*1.4f || glm::length(on-settled)>1)
         throw std::runtime_error("Secondary GI did not deposit stable material-coloured radiance");
+    effect.parameters[5].y = 0;
+    if (glm::length(render(1) - off) > 1)
+        throw std::runtime_error("Cached secondary disable took more than one frame");
+    effect.parameters[5].y = .5f;
+    const auto half = render(1);
+    if (half.r <= off.r + 1 || half.r >= on.r - 1 || glm::length(render(1) - half) > 1)
+        throw std::runtime_error("Cached secondary strength was not linear or immediate");
+    effect.parameters[5].y = 1;
+    if (glm::length(render(1) - on) > 1)
+        throw std::runtime_error("Cached secondary enable replayed geometry");
     // Read final received GI on a third wall, not radiance stored on the
     // first receiving floor. This exercises both legs of the secondary bounce.
     BasicDraw wall=receiver; wall.baseColor={.8f,.8f,.8f,1};

@@ -344,7 +344,6 @@ namespace PlutoGE::render
                 if (next != m_secondaryBounce)
                 {
                     m_secondaryBounce = next;
-                    ReleaseVolume();
                     ResetHistory();
                 }
             }
@@ -504,6 +503,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         const auto probeFunctions = trace.fragmentSource.find("bool containsCascade");
         trace.fragmentSource.insert(probeFunctions, kVctProbeSampling);
         m_coneTraceShader = Shader::Create(trace);
+        const auto bounceCode = ShaderArtifactLibrary().Load("VCTBounceUpdate", "compute");
+        if (!bounceCode.glsl.empty())
+        {
+            ShaderSource update; update.computeSource = bounceCode.glsl;
+            m_bounceUpdateShader = Shader::Create(update);
+        }
         const auto probeCode = ShaderArtifactLibrary().Load("VCTProbeUpdate", "compute");
         if (!probeCode.glsl.empty())
         {
@@ -631,8 +636,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             cascade.framebuffer = 0;
             const unsigned int transientTextures[] = {
                 cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
-                cascade.accumulationCount, cascade.accumulationOpacity};
+                cascade.accumulationCount, cascade.accumulationOpacity, cascade.surfaceRecord};
             deleteTextures(transientTextures);
+            const unsigned int secondaryTextures[] = {cascade.secondaryVolume};
+            deleteTextures(secondaryTextures);
+            cascade.surfaceRecord = cascade.secondaryVolume = 0;
             // pendingShadowMaps are persistent staging textures reused by
             // progressive voxel rebuilds.
             deleteTextures(cascade.pendingShadowMaps);
@@ -658,6 +666,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         const unsigned int probeTextures[] = {m_probeRadiance, m_probeVisibility};
         deleteTextures(probeTextures); m_probeRadiance = m_probeVisibility = 0;
         if (m_probeParameters) glDeleteBuffers(1, &m_probeParameters);
+        if (m_bounceParameters) glDeleteBuffers(1, &m_bounceParameters);
+        m_bounceParameters = 0;
         m_probeParameters = 0; m_cacheOriginSize = glm::vec4(0.0f); m_probeSchedule.Reset();
         m_allocatedResolution = 0;
         m_allocatedCascadeCount = 0;
@@ -698,13 +708,14 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             {
                 auto &cascade = m_cascades[cascadeIndex];
                 cascade.size = m_volumeSize * std::pow(3.0f, static_cast<float>(cascadeIndex));
-                unsigned int accumulationVolumes[5]{};
-                glGenTextures(5, accumulationVolumes);
+                unsigned int accumulationVolumes[6]{};
+                glGenTextures(6, accumulationVolumes);
                 cascade.accumulationR = accumulationVolumes[0];
                 cascade.accumulationG = accumulationVolumes[1];
                 cascade.accumulationB = accumulationVolumes[2];
                 cascade.accumulationCount = accumulationVolumes[3];
                 cascade.accumulationOpacity = accumulationVolumes[4];
+                cascade.surfaceRecord = accumulationVolumes[5];
                 for (const unsigned int volume : accumulationVolumes)
                 {
                     Graphics::BindTexture(GL_TEXTURE_3D, volume);
@@ -712,6 +723,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                 }
+                glGenTextures(1, &cascade.secondaryVolume);
+                Graphics::BindTexture(GL_TEXTURE_3D, cascade.secondaryVolume);
+                glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA16F, m_resolution, m_resolution, m_resolution);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                 glGenFramebuffers(1, &cascade.framebuffer);
             }
             Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -725,6 +741,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             }
+            glGenBuffers(1, &m_bounceParameters);
+            glBindBuffer(GL_UNIFORM_BUFFER, m_bounceParameters);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::uvec4), nullptr, GL_DYNAMIC_DRAW);
             glGenBuffers(1, &m_probeParameters);
             glBindBuffer(GL_UNIFORM_BUFFER, m_probeParameters);
             glBufferData(GL_UNIFORM_BUFFER, sizeof(VctProbeParameters), nullptr, GL_DYNAMIC_DRAW);
@@ -944,6 +963,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         }
         cascade.rebuildInProgress = true;
         cascade.secondaryPass = false;
+        cascade.secondaryReady = false;
+        cascade.nextBounceSlice = 0;
         ClearAccumulation(cascade);
     }
 
@@ -953,7 +974,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         Graphics::BindFramebuffer(GL_FRAMEBUFFER, cascade.framebuffer);
         const unsigned int accumulationVolumes[] = {
             cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
-            cascade.accumulationCount, cascade.accumulationOpacity};
+            cascade.accumulationCount, cascade.accumulationOpacity, cascade.surfaceRecord};
         for (const unsigned int volume : accumulationVolumes)
         {
             glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, volume, 0);
@@ -1006,241 +1027,261 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
     bool VoxelConeTracingEffect::VoxelizeChunk(std::size_t cascadeIndex, const PostProcessContext &context)
     {
         auto &cascade = m_cascades[cascadeIndex];
-        if (!m_voxelizationShader || !m_voxelResolveShader)
+        if (!m_voxelizationShader || !m_voxelResolveShader || !m_bounceUpdateShader)
             return false;
-        // Shadow cascades are several million pixels in this project. Copy at
-        // most one per frame so beginning a rebuild cannot create a large,
-        // unbudgeted GPU transfer spike before voxel draw budgeting starts.
-        while (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount &&
-               !cascade.pendingShadowSourceMaps[cascade.pendingShadowCopyIndex])
-            ++cascade.pendingShadowCopyIndex;
-        if (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount)
+        if (!cascade.secondaryPass)
         {
-            const int shadowCascade = cascade.pendingShadowCopyIndex++;
-            glCopyImageSubData(
-                cascade.pendingShadowSourceMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
-                cascade.pendingShadowMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
-                cascade.pendingShadowWidths[shadowCascade],
-                cascade.pendingShadowHeights[shadowCascade], 1);
-            glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-            return false;
-        }
-        // Progressive rebuilds continue on a later frame. Shader-image writes
-        // from the previous chunk must be visible before issuing more atomics.
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-        Graphics::SetViewport(0, 0, m_resolution, m_resolution);
-        Graphics::Disable(GL_DEPTH_TEST);
-        Graphics::Disable(GL_CULL_FACE);
-        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(3, cascade.accumulationCount, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(4, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        m_voxelizationShader->Bind();
-        m_voxelizationShader->SetUniform("uVolumeOrigin", cascade.pendingOrigin);
-        m_voxelizationShader->SetUniform("uVolumeSize", cascade.size);
-        m_voxelizationShader->SetUniform("uVoxelResolution", m_resolution);
-        m_voxelizationShader->SetUniform("uHasInjectionLight", cascade.pendingHasInjectionLight ? 1 : 0);
-        m_voxelizationShader->SetUniform("uLightDirection", cascade.pendingLightDirection);
-        m_voxelizationShader->SetUniform("uLightColor", cascade.pendingLightColor);
-        m_voxelizationShader->SetUniform("uLightIntensity", cascade.pendingLightIntensity);
-        m_voxelizationShader->SetUniform("uLocalLightCount", cascade.pendingLocalLightCount);
-        static const auto localLightTypeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightType");
-        static const auto localLightPositionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightPosition");
-        static const auto localLightDirectionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightDirection");
-        static const auto localLightColorNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightColor");
-        static const auto localLightIntensityNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightIntensity");
-        static const auto localLightRangeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightRange");
-        for (int lightIndex = 0; lightIndex < cascade.pendingLocalLightCount; ++lightIndex)
-        {
-            m_voxelizationShader->SetUniform(localLightTypeNames[lightIndex], cascade.pendingLocalLightTypes[lightIndex]);
-            m_voxelizationShader->SetUniform(localLightPositionNames[lightIndex], cascade.pendingLocalLightPositions[lightIndex]);
-            m_voxelizationShader->SetUniform(localLightDirectionNames[lightIndex], cascade.pendingLocalLightDirections[lightIndex]);
-            m_voxelizationShader->SetUniform(localLightColorNames[lightIndex], cascade.pendingLocalLightColors[lightIndex]);
-            m_voxelizationShader->SetUniform(localLightIntensityNames[lightIndex], cascade.pendingLocalLightIntensities[lightIndex]);
-            m_voxelizationShader->SetUniform(localLightRangeNames[lightIndex], cascade.pendingLocalLightRanges[lightIndex]);
-        }
-        m_voxelizationShader->SetUniform("uViewMatrix", cascade.pendingView);
-        m_voxelizationShader->SetUniform("uInjectionLightHasShadow", cascade.pendingShadowCascadeCount > 0 ? 1 : 0);
-        m_voxelizationShader->SetUniform("uShadowCascadeCount", cascade.pendingShadowCascadeCount);
-        static const auto shadowNames = MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadow");
-        static const auto shadowMatrixNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowMatrix");
-        static const auto shadowOriginNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowOrigin");
-        static const auto shadowSplitNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowSplit");
-        for (int shadowCascade = 0; shadowCascade < scene::kMaxDirectionalShadowCascades; ++shadowCascade)
-        {
-            const int slot = 6 + shadowCascade;
-            Graphics::ActiveTexture(GL_TEXTURE0 + slot);
-            Graphics::BindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
-            m_voxelizationShader->SetUniform(shadowNames[shadowCascade], slot);
-            m_voxelizationShader->SetUniform(shadowMatrixNames[shadowCascade], cascade.pendingShadowMatrices[shadowCascade]);
-            m_voxelizationShader->SetUniform(shadowOriginNames[shadowCascade], cascade.pendingShadowOrigins[shadowCascade]);
-            m_voxelizationShader->SetUniform(shadowSplitNames[shadowCascade], cascade.pendingShadowSplits[shadowCascade]);
-        }
-        m_voxelizationShader->SetUniform("uSecondaryBounce", cascade.secondaryPass ? m_secondaryBounce : 0.0f);
-        m_voxelizationShader->SetUniform("uBounceCascade", static_cast<int>(cascadeIndex));
-        m_voxelizationShader->SetUniform("uBounceCascadeCount", static_cast<int>(m_activeCascadeCount));
-        static const auto bounceNames = MakeNumberedUniformNames<kDirectionCount>("uBounce");
-        for (std::size_t direction = 0; direction < kDirectionCount; ++direction)
-        {
-            const int slot = 10 + static_cast<int>(direction);
-            Graphics::ActiveTexture(GL_TEXTURE0 + slot);
-            Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
-            m_voxelizationShader->SetUniform(bounceNames[direction], slot);
-        }
-        const std::size_t triangleBudget = cascade.secondaryPass ? 32768 : kMaxVoxelTrianglesPerFrame;
-        int submittedDraws = 0;
-        std::size_t submittedTriangles = 0;
-        while (cascade.jobIndex < cascade.jobs.size() &&
-               submittedDraws < m_voxelizationCommandBudget &&
-               submittedTriangles < triangleBudget)
-        {
-            auto &job = cascade.jobs[cascade.jobIndex];
-            const auto &c = job.command;
-            if (!c.mesh)
+            // Shadow cascades are several million pixels in this project. Copy at
+            // most one per frame so beginning a rebuild cannot create a large,
+            // unbudgeted GPU transfer spike before voxel draw budgeting starts.
+            while (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount &&
+                   !cascade.pendingShadowSourceMaps[cascade.pendingShadowCopyIndex])
+                ++cascade.pendingShadowCopyIndex;
+            if (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount)
             {
-                ++cascade.jobIndex;
-                continue;
+                const int shadowCascade = cascade.pendingShadowCopyIndex++;
+                glCopyImageSubData(
+                    cascade.pendingShadowSourceMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
+                    cascade.pendingShadowMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
+                    cascade.pendingShadowWidths[shadowCascade],
+                    cascade.pendingShadowHeights[shadowCascade], 1);
+                glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+                return false;
             }
-
-            m_voxelizationShader->SetUniform("uColor", job.material.color);
-            m_voxelizationShader->SetUniform("uUVScale", job.material.uvScale);
-            m_voxelizationShader->SetUniform("uEmission", glm::max(job.material.emission, glm::vec3(0.0f)));
-            m_voxelizationShader->SetUniform("uSurfaceType", static_cast<int>(job.material.surfaceType));
-            m_voxelizationShader->SetUniform("uAlphaMode", static_cast<int>(job.material.alphaMode));
-            m_voxelizationShader->SetUniform("uAlphaCutoff", job.material.alphaCutoff);
-            m_voxelizationShader->SetUniform("uMetallicFactor", job.material.metallic);
-            m_voxelizationShader->SetUniform(
-                "uMetallicTextureChannel",
-                static_cast<int>(job.material.metallicTextureChannel));
-            m_voxelizationShader->TrySetUniform(
-                "uHasAlbedoTexture",
-                job.material.albedoTexture ? 1.0f : 0.0f);
-            if (job.material.albedoTexture)
-            {
-                m_voxelizationShader->TrySetUniform(
-                    "uAlbedoTexture", job.material.albedoTexture, 0);
-            }
-            m_voxelizationShader->TrySetUniform(
-                "uHasMetallicTexture",
-                job.material.metallicTexture ? 1.0f : 0.0f);
-            if (job.material.metallicTexture)
-            {
-                m_voxelizationShader->TrySetUniform(
-                    "uMetallicTexture", job.material.metallicTexture, 2);
-            }
-            const bool skinned = job.jointMatrices && !job.jointMatrices->empty();
-            m_voxelizationShader->SetUniform("uUseSkinning", skinned ? 1 : 0);
-            if (skinned)
-            {
-                const std::size_t jointCount = std::min<std::size_t>(job.jointMatrices->size(), 128);
-                m_voxelizationShader->SetUniformMatrixArray(
-                    "uJointMatrices[0]", job.jointMatrices->data(), jointCount);
-            }
-
-            const auto range = c.mesh->GetSubmeshLodRange(c.submeshIndex, job.voxelLod);
-            const std::size_t remainingTriangles = triangleBudget - submittedTriangles;
-            if (job.nextIndex != 0 || range.indexCount / 3 > remainingTriangles)
-            {
-                // Split large meshes too: one draw must not defeat the smaller
-                // secondary-pass budget. Advance instances only after all indices.
-                const bool instanced = c.instanceModels && !c.instanceModels->empty();
-                const auto indexCount = range.indexCount - range.indexCount % 3;
-                const auto chunk = static_cast<std::uint32_t>(std::min<std::size_t>(
-                    indexCount - job.nextIndex, remainingTriangles * 3));
-                m_voxelizationShader->SetUniform("uUseInstancing", 0);
-                m_voxelizationShader->SetUniform("uModel", instanced ? (*c.instanceModels)[job.nextInstance] : c.model);
-                c.mesh->Bind();
-                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(chunk), GL_UNSIGNED_INT,
-                    reinterpret_cast<const void *>(std::uintptr_t(range.indexOffset + job.nextIndex) * sizeof(unsigned int)));
-                job.nextIndex += chunk;
-                submittedTriangles += chunk / 3;
-                ++submittedDraws;
-                if (job.nextIndex == indexCount)
-                {
-                    job.nextIndex = 0;
-                    ++job.nextInstance;
-                    if (!instanced || job.nextInstance == c.instanceModels->size()) ++cascade.jobIndex;
-                }
-            }
-            else if (c.instanceModels && !c.instanceModels->empty())
-            {
-                const std::size_t instanceCount = c.instanceModels->size();
-                const std::size_t indexCount = c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod);
-                const std::size_t trianglesPerInstance = std::max<std::size_t>(indexCount / 3, 1);
-                const std::size_t instancesForTriangleBudget =
-                    std::max<std::size_t>(kMaxVoxelTrianglesPerDraw / trianglesPerInstance, 1);
-                const std::size_t remainingTriangleBudget =
-                    triangleBudget - submittedTriangles;
-                const std::size_t instancesForFrameBudget =
-                    std::max<std::size_t>(remainingTriangleBudget / trianglesPerInstance, 1);
-                const std::size_t remainingInstances = instanceCount - job.nextInstance;
-                const std::size_t batchInstanceCount = std::min(
-                    remainingInstances,
-                    std::min(kMaxVoxelInstancesPerDraw,
-                             std::min(instancesForTriangleBudget, instancesForFrameBudget)));
-                if (!m_voxelInstanceBuffer)
-                    glGenBuffers(1, &m_voxelInstanceBuffer);
-                glBindBuffer(GL_ARRAY_BUFFER, m_voxelInstanceBuffer);
-                if (m_voxelInstanceCapacity < batchInstanceCount)
-                {
-                    m_voxelInstanceCapacity = std::max(
-                        batchInstanceCount,
-                        m_voxelInstanceCapacity == 0 ? batchInstanceCount : m_voxelInstanceCapacity * 2);
-                }
-                glBufferData(
-                    GL_ARRAY_BUFFER,
-                    static_cast<GLsizeiptr>(m_voxelInstanceCapacity * sizeof(glm::mat4)),
-                    nullptr,
-                    GL_STREAM_DRAW);
-                glBufferSubData(
-                    GL_ARRAY_BUFFER, 0,
-                    static_cast<GLsizeiptr>(batchInstanceCount * sizeof(glm::mat4)),
-                    c.instanceModels->data() + job.nextInstance);
-                glBindVertexArray(c.mesh->GetVAO());
-                for (unsigned int column = 0; column < 4; ++column)
-                {
-                    const unsigned int location = 5 + column;
-                    glEnableVertexAttribArray(location);
-                    glVertexAttribPointer(
-                        location, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
-                        reinterpret_cast<const void *>(sizeof(glm::vec4) * column));
-                    glVertexAttribDivisor(location, 1);
-                }
-                glBindBuffer(GL_ARRAY_BUFFER, 0);
-                m_voxelizationShader->SetUniform("uUseInstancing", 1);
-                c.mesh->DrawSubmeshInstancedBound(c.submeshIndex, batchInstanceCount, job.voxelLod);
-                job.nextInstance += batchInstanceCount;
-                submittedTriangles += trianglesPerInstance * batchInstanceCount;
-                ++submittedDraws;
-                if (job.nextInstance >= instanceCount)
-                    ++cascade.jobIndex;
-            }
-            else
-            {
-                m_voxelizationShader->SetUniform("uUseInstancing", 0);
-                m_voxelizationShader->SetUniform("uModel", c.model);
-                c.mesh->DrawSubmesh(c.submeshIndex, job.voxelLod);
-                submittedTriangles +=
-                    std::max<std::size_t>(
-                        c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod) / 3,
-                        1);
-                job.nextInstance = 1;
-                ++submittedDraws;
-                ++cascade.jobIndex;
-            }
-        }
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        if (cascade.jobIndex < cascade.jobs.size())
-        {
-            // Publish this chunk's atomic sums/counts to the next frame.
+            // Progressive rebuilds continue on a later frame. Shader-image writes
+            // from the previous chunk must be visible before issuing more atomics.
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-            return false;
-        }
+            Graphics::SetViewport(0, 0, m_resolution, m_resolution);
+            Graphics::Disable(GL_DEPTH_TEST);
+            Graphics::Disable(GL_CULL_FACE);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindImageTexture(3, cascade.accumulationCount, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindImageTexture(4, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            m_voxelizationShader->Bind();
+            m_voxelizationShader->SetUniform("uVolumeOrigin", cascade.pendingOrigin);
+            m_voxelizationShader->SetUniform("uVolumeSize", cascade.size);
+            m_voxelizationShader->SetUniform("uVoxelResolution", m_resolution);
+            m_voxelizationShader->SetUniform("uHasInjectionLight", cascade.pendingHasInjectionLight ? 1 : 0);
+            m_voxelizationShader->SetUniform("uLightDirection", cascade.pendingLightDirection);
+            m_voxelizationShader->SetUniform("uLightColor", cascade.pendingLightColor);
+            m_voxelizationShader->SetUniform("uLightIntensity", cascade.pendingLightIntensity);
+            m_voxelizationShader->SetUniform("uLocalLightCount", cascade.pendingLocalLightCount);
+            static const auto localLightTypeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightType");
+            static const auto localLightPositionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightPosition");
+            static const auto localLightDirectionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightDirection");
+            static const auto localLightColorNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightColor");
+            static const auto localLightIntensityNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightIntensity");
+            static const auto localLightRangeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightRange");
+            for (int lightIndex = 0; lightIndex < cascade.pendingLocalLightCount; ++lightIndex)
+            {
+                m_voxelizationShader->SetUniform(localLightTypeNames[lightIndex], cascade.pendingLocalLightTypes[lightIndex]);
+                m_voxelizationShader->SetUniform(localLightPositionNames[lightIndex], cascade.pendingLocalLightPositions[lightIndex]);
+                m_voxelizationShader->SetUniform(localLightDirectionNames[lightIndex], cascade.pendingLocalLightDirections[lightIndex]);
+                m_voxelizationShader->SetUniform(localLightColorNames[lightIndex], cascade.pendingLocalLightColors[lightIndex]);
+                m_voxelizationShader->SetUniform(localLightIntensityNames[lightIndex], cascade.pendingLocalLightIntensities[lightIndex]);
+                m_voxelizationShader->SetUniform(localLightRangeNames[lightIndex], cascade.pendingLocalLightRanges[lightIndex]);
+            }
+            m_voxelizationShader->SetUniform("uViewMatrix", cascade.pendingView);
+            m_voxelizationShader->SetUniform("uInjectionLightHasShadow", cascade.pendingShadowCascadeCount > 0 ? 1 : 0);
+            m_voxelizationShader->SetUniform("uShadowCascadeCount", cascade.pendingShadowCascadeCount);
+            static const auto shadowNames = MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadow");
+            static const auto shadowMatrixNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowMatrix");
+            static const auto shadowOriginNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowOrigin");
+            static const auto shadowSplitNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowSplit");
+            for (int shadowCascade = 0; shadowCascade < scene::kMaxDirectionalShadowCascades; ++shadowCascade)
+            {
+                const int slot = 6 + shadowCascade;
+                Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+                Graphics::BindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
+                m_voxelizationShader->SetUniform(shadowNames[shadowCascade], slot);
+                m_voxelizationShader->SetUniform(shadowMatrixNames[shadowCascade], cascade.pendingShadowMatrices[shadowCascade]);
+                m_voxelizationShader->SetUniform(shadowOriginNames[shadowCascade], cascade.pendingShadowOrigins[shadowCascade]);
+                m_voxelizationShader->SetUniform(shadowSplitNames[shadowCascade], cascade.pendingShadowSplits[shadowCascade]);
+            }
+            m_voxelizationShader->SetUniform("uCaptureSurface", 1);
+            glBindImageTexture(5, cascade.surfaceRecord, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+            const std::size_t triangleBudget = kMaxVoxelTrianglesPerFrame;
+            int submittedDraws = 0;
+            std::size_t submittedTriangles = 0;
+            while (cascade.jobIndex < cascade.jobs.size() &&
+                   submittedDraws < m_voxelizationCommandBudget &&
+                   submittedTriangles < triangleBudget)
+            {
+                auto &job = cascade.jobs[cascade.jobIndex];
+                const auto &c = job.command;
+                if (!c.mesh)
+                {
+                    ++cascade.jobIndex;
+                    continue;
+                }
 
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                m_voxelizationShader->SetUniform("uColor", job.material.color);
+                m_voxelizationShader->SetUniform("uUVScale", job.material.uvScale);
+                m_voxelizationShader->SetUniform("uEmission", glm::max(job.material.emission, glm::vec3(0.0f)));
+                m_voxelizationShader->SetUniform("uSurfaceType", static_cast<int>(job.material.surfaceType));
+                m_voxelizationShader->SetUniform("uAlphaMode", static_cast<int>(job.material.alphaMode));
+                m_voxelizationShader->SetUniform("uAlphaCutoff", job.material.alphaCutoff);
+                m_voxelizationShader->SetUniform("uMetallicFactor", job.material.metallic);
+                m_voxelizationShader->SetUniform(
+                    "uMetallicTextureChannel",
+                    static_cast<int>(job.material.metallicTextureChannel));
+                m_voxelizationShader->TrySetUniform(
+                    "uHasAlbedoTexture",
+                    job.material.albedoTexture ? 1.0f : 0.0f);
+                if (job.material.albedoTexture)
+                {
+                    m_voxelizationShader->TrySetUniform(
+                        "uAlbedoTexture", job.material.albedoTexture, 0);
+                }
+                m_voxelizationShader->TrySetUniform(
+                    "uHasMetallicTexture",
+                    job.material.metallicTexture ? 1.0f : 0.0f);
+                if (job.material.metallicTexture)
+                {
+                    m_voxelizationShader->TrySetUniform(
+                        "uMetallicTexture", job.material.metallicTexture, 2);
+                }
+                const bool skinned = job.jointMatrices && !job.jointMatrices->empty();
+                m_voxelizationShader->SetUniform("uUseSkinning", skinned ? 1 : 0);
+                if (skinned)
+                {
+                    const std::size_t jointCount = std::min<std::size_t>(job.jointMatrices->size(), 128);
+                    m_voxelizationShader->SetUniformMatrixArray(
+                        "uJointMatrices[0]", job.jointMatrices->data(), jointCount);
+                }
+
+                const auto range = c.mesh->GetSubmeshLodRange(c.submeshIndex, job.voxelLod);
+                const std::size_t remainingTriangles = triangleBudget - submittedTriangles;
+                if (job.nextIndex != 0 || range.indexCount / 3 > remainingTriangles)
+                {
+                    // Split large meshes too: one draw must not defeat the smaller
+                    // secondary-pass budget. Advance instances only after all indices.
+                    const bool instanced = c.instanceModels && !c.instanceModels->empty();
+                    const auto indexCount = range.indexCount - range.indexCount % 3;
+                    const auto chunk = static_cast<std::uint32_t>(std::min<std::size_t>(
+                        indexCount - job.nextIndex, remainingTriangles * 3));
+                    m_voxelizationShader->SetUniform("uUseInstancing", 0);
+                    m_voxelizationShader->SetUniform("uModel", instanced ? (*c.instanceModels)[job.nextInstance] : c.model);
+                    c.mesh->Bind();
+                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(chunk), GL_UNSIGNED_INT,
+                        reinterpret_cast<const void *>(std::uintptr_t(range.indexOffset + job.nextIndex) * sizeof(unsigned int)));
+                    job.nextIndex += chunk;
+                    submittedTriangles += chunk / 3;
+                    ++submittedDraws;
+                    if (job.nextIndex == indexCount)
+                    {
+                        job.nextIndex = 0;
+                        ++job.nextInstance;
+                        if (!instanced || job.nextInstance == c.instanceModels->size()) ++cascade.jobIndex;
+                    }
+                }
+                else if (c.instanceModels && !c.instanceModels->empty())
+                {
+                    const std::size_t instanceCount = c.instanceModels->size();
+                    const std::size_t indexCount = c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod);
+                    const std::size_t trianglesPerInstance = std::max<std::size_t>(indexCount / 3, 1);
+                    const std::size_t instancesForTriangleBudget =
+                        std::max<std::size_t>(kMaxVoxelTrianglesPerDraw / trianglesPerInstance, 1);
+                    const std::size_t remainingTriangleBudget =
+                        triangleBudget - submittedTriangles;
+                    const std::size_t instancesForFrameBudget =
+                        std::max<std::size_t>(remainingTriangleBudget / trianglesPerInstance, 1);
+                    const std::size_t remainingInstances = instanceCount - job.nextInstance;
+                    const std::size_t batchInstanceCount = std::min(
+                        remainingInstances,
+                        std::min(kMaxVoxelInstancesPerDraw,
+                                 std::min(instancesForTriangleBudget, instancesForFrameBudget)));
+                    if (!m_voxelInstanceBuffer)
+                        glGenBuffers(1, &m_voxelInstanceBuffer);
+                    glBindBuffer(GL_ARRAY_BUFFER, m_voxelInstanceBuffer);
+                    if (m_voxelInstanceCapacity < batchInstanceCount)
+                    {
+                        m_voxelInstanceCapacity = std::max(
+                            batchInstanceCount,
+                            m_voxelInstanceCapacity == 0 ? batchInstanceCount : m_voxelInstanceCapacity * 2);
+                    }
+                    glBufferData(
+                        GL_ARRAY_BUFFER,
+                        static_cast<GLsizeiptr>(m_voxelInstanceCapacity * sizeof(glm::mat4)),
+                        nullptr,
+                        GL_STREAM_DRAW);
+                    glBufferSubData(
+                        GL_ARRAY_BUFFER, 0,
+                        static_cast<GLsizeiptr>(batchInstanceCount * sizeof(glm::mat4)),
+                        c.instanceModels->data() + job.nextInstance);
+                    glBindVertexArray(c.mesh->GetVAO());
+                    for (unsigned int column = 0; column < 4; ++column)
+                    {
+                        const unsigned int location = 5 + column;
+                        glEnableVertexAttribArray(location);
+                        glVertexAttribPointer(
+                            location, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
+                            reinterpret_cast<const void *>(sizeof(glm::vec4) * column));
+                        glVertexAttribDivisor(location, 1);
+                    }
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    m_voxelizationShader->SetUniform("uUseInstancing", 1);
+                    c.mesh->DrawSubmeshInstancedBound(c.submeshIndex, batchInstanceCount, job.voxelLod);
+                    job.nextInstance += batchInstanceCount;
+                    submittedTriangles += trianglesPerInstance * batchInstanceCount;
+                    ++submittedDraws;
+                    if (job.nextInstance >= instanceCount)
+                        ++cascade.jobIndex;
+                }
+                else
+                {
+                    m_voxelizationShader->SetUniform("uUseInstancing", 0);
+                    m_voxelizationShader->SetUniform("uModel", c.model);
+                    c.mesh->DrawSubmesh(c.submeshIndex, job.voxelLod);
+                    submittedTriangles +=
+                        std::max<std::size_t>(
+                            c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod) / 3,
+                            1);
+                    job.nextInstance = 1;
+                    ++submittedDraws;
+                    ++cascade.jobIndex;
+                }
+            }
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            if (cascade.jobIndex < cascade.jobs.size())
+            {
+                // Publish this chunk's atomic sums/counts to the next frame.
+                glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                return false;
+            }
+
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        }
+        if (cascade.secondaryPass && !cascade.secondaryReady && m_secondaryBounce > 0.0f)
+        {
+            const auto slices = std::max(4u, (32768u / (unsigned(m_resolution) * unsigned(m_resolution)) / 4u) * 4u);
+            const glm::uvec4 params(unsigned(m_resolution), unsigned(cascadeIndex),
+                                    unsigned(m_activeCascadeCount), cascade.nextBounceSlice);
+            m_bounceUpdateShader->Bind();
+            glBindBuffer(GL_UNIFORM_BUFFER, m_bounceParameters);
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(params), &params);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0, m_bounceParameters);
+            glBindImageTexture(1, cascade.surfaceRecord, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+            glBindImageTexture(2, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+            glBindImageTexture(3, cascade.secondaryVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+            for (std::size_t direction = 0; direction < 6; ++direction)
+            {
+                Graphics::ActiveTexture(GL_TEXTURE7 + unsigned(direction));
+                Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+            }
+            glDispatchCompute((m_resolution + 3) / 4, (m_resolution + 3) / 4, slices / 4);
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            cascade.nextBounceSlice += slices;
+            cascade.secondaryReady = cascade.nextBounceSlice >= unsigned(m_resolution);
+            if (!cascade.secondaryReady) return false;
+        }
         m_voxelResolveShader->Bind();
+        const float gain = cascade.secondaryReady ? m_secondaryBounce : 0.0f;
+        m_voxelResolveShader->SetUniform("uSecondaryGain", gain);
+        glBindImageTexture(6, cascade.secondaryVolume, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA16F);
         glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
         glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
         glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
@@ -1262,14 +1303,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.lastSceneSignature = cascade.pendingSceneSignature;
         cascade.lastLightSignature = cascade.pendingLightSignature;
         cascade.hasVolume = true;
-        if (!cascade.secondaryPass && m_secondaryBounce > 0.0f)
+        cascade.appliedSecondaryBounce = gain;
+        ResetHistory();
+        if (!cascade.secondaryReady && m_secondaryBounce > 0.0f)
         {
-            // Keep the first-pass atlas immutable while the second pass writes
-            // only to accumulation images. Never accumulate previous-frame GI.
+            // Gather from the immutable direct atlas into a separate unit bounce.
             cascade.secondaryPass = true;
-            cascade.jobIndex = 0;
-            for (auto &job : cascade.jobs) { job.nextInstance = 0; job.nextIndex = 0; }
-            ClearAccumulation(cascade);
+            cascade.jobs.clear();
             return false;
         }
         cascade.rebuildInProgress = false;
@@ -1407,6 +1447,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                                               m_cachedLightSignature != cascade.lastLightSignature));
                 const bool updateDue = cascade.lastVoxelizedFrame == ~0ull ||
                                        renderContext.frameSequence - cascade.lastVoxelizedFrame >= static_cast<unsigned>(m_updateInterval);
+                if (!originChanged && !contentChanged && cascade.appliedSecondaryBounce != m_secondaryBounce)
+                {
+                    cascade.secondaryPass = true;
+                    cascade.rebuildInProgress = true;
+                    activeRebuild = cascadeIndex;
+                    break;
+                }
                 if ((originChanged || contentChanged) && updateDue)
                 {
                     BeginVoxelization(

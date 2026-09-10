@@ -179,7 +179,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
-        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 3> vctCompute;
+        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 4> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
@@ -513,12 +513,17 @@ namespace PlutoGE::render
         std::uint32_t m_vctNextCascade = 0;
         const void *m_vctHistoryOwner = nullptr;
         rhi::GraphicsPipeline m_vctResolvePipeline;
+        rhi::GraphicsPipeline m_vctBouncePipeline;
         rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
         rhi::GraphicsPipeline m_vctVoxelizationPipeline;
         std::array<rhi::GraphicsPipeline, 3> m_vctPostProcessPipelines;
         struct VctCascade
         {
             std::array<rhi::Texture, 4> accumulation;
+            rhi::Texture surfaceRecord, secondaryVolume;
+            std::uint32_t nextBounceSlice = 0;
+            bool secondaryReady = false;
+            float appliedSecondaryBounce = 0.0f;
             glm::vec3 origin{0.0f};
             float size = 0.0f;
             glm::vec3 pendingOrigin{0.0f};

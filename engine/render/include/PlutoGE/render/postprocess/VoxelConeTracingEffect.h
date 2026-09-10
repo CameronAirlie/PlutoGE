@@ -99,6 +99,10 @@ namespace PlutoGE::render
             unsigned int accumulationB = 0;
             unsigned int accumulationCount = 0;
             unsigned int accumulationOpacity = 0;
+            unsigned int surfaceRecord = 0, secondaryVolume = 0;
+            unsigned int nextBounceSlice = 0;
+            bool secondaryReady = false;
+            float appliedSecondaryBounce = 0.0f;
             unsigned int framebuffer = 0;
             std::array<unsigned int, 4> pendingShadowMaps{};
             std::array<unsigned int, 4> pendingShadowSourceMaps{};
@@ -158,6 +162,8 @@ namespace PlutoGE::render
         int m_cacheUpdates = 64;
         Shader *m_voxelizationShader = nullptr;
         Shader *m_voxelResolveShader = nullptr;
+        Shader *m_bounceUpdateShader = nullptr;
+        unsigned int m_bounceParameters = 0;
         Shader *m_directionalMipShader = nullptr;
         Shader *m_coneTraceShader = nullptr;
         Shader *m_temporalResolveShader = nullptr;

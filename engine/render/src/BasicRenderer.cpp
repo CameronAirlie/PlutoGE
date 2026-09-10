@@ -168,7 +168,7 @@ namespace PlutoGE::render
             std::uint32_t metallicChannel = 0, padding = 0;
         };
         struct alignas(16) VctResolveParameters
-        { std::uint32_t resolution = 1, destinationZOffset = 0; glm::uvec2 padding{}; };
+        { std::uint32_t resolution = 1, destinationZOffset = 0; float secondaryGain = 0.0f; std::uint32_t padding = 0; };
         struct alignas(16) VctMipParameters
         {
             std::uint32_t axis = 0; std::int32_t sign = 1;
@@ -714,8 +714,23 @@ namespace PlutoGE::render
                     {3, 0, 3, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
                     {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
                     {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                compute.resourceBindings.push_back({6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute});
                 compute.debugName = "VCT accumulation resolve";
                 m_vctResolvePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
+            }
+            if (!shaders.vctCompute[3].glsl.empty() || !shaders.vctCompute[3].spirv.empty())
+            {
+                rhi::ComputePipelineDescriptor compute;
+                compute.computeShader = shaders.vctCompute[3];
+                compute.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Compute},
+                    {1, 0, 1, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {2, 0, 2, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute},
+                    {3, 0, 3, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
+                for (std::uint32_t slot = 7; slot <= 12; ++slot)
+                    compute.resourceBindings.push_back({slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Compute});
+                compute.debugName = "VCT voxel secondary bounce";
+                m_vctBouncePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
             }
             if (!shaders.vctCompute[1].glsl.empty() || !shaders.vctCompute[1].spirv.empty())
             {
@@ -765,8 +780,7 @@ namespace PlutoGE::render
                     {11, 0, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {12, 0, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
-                for (std::uint32_t slot = 14; slot < 20; ++slot)
-                    voxelization.resourceBindings.push_back({slot, 1, slot - 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                voxelization.resourceBindings.push_back({0, 0, 8, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment});
                 voxelization.vertexLayout = {
                     .stride = sizeof(BasicVertex),
                     .attributes = {
@@ -2318,7 +2332,7 @@ namespace PlutoGE::render
                                                   rhi::ICommandContext &commands)
     {
         if (!source || !m_vctVoxelizationPipeline || !m_vctResolvePipeline ||
-            !m_vctDirectionalMipPipeline ||
+            !m_vctDirectionalMipPipeline || !m_vctBouncePipeline ||
             std::ranges::any_of(m_vctPostProcessPipelines, [](const auto &pipeline) { return !pipeline; }))
             return source;
         const auto resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
@@ -2342,6 +2356,18 @@ namespace PlutoGE::render
                             .format = rhi::Format::R32Uint, .usage = rhi::TextureUsage::Sampled,
                             .debugName = "VCT accumulation", .sampled = true, .depth = resolution,
                             .storage = true, .mipLevels = 1}));
+            for (std::uint32_t index = 0; index < cascadeCount; ++index)
+            {
+                auto &cascade = m_vctCascades[index];
+                cascade.surfaceRecord = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {.width = resolution, .height = resolution, .format = rhi::Format::R32Uint,
+                     .usage = rhi::TextureUsage::Sampled, .debugName = "VCT surface record",
+                     .sampled = true, .depth = resolution, .storage = true}));
+                cascade.secondaryVolume = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {.width = resolution, .height = resolution, .format = rhi::Format::R16G16B16A16Float,
+                     .usage = rhi::TextureUsage::Sampled, .debugName = "VCT cached secondary bounce",
+                     .sampled = true, .depth = resolution, .storage = true}));
+            }
             const auto mipLevels = 1u + static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
             for (std::size_t direction = 0; direction < m_vctRadianceAtlases.size(); ++direction)
                 m_vctRadianceAtlases[direction] = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -2393,7 +2419,7 @@ namespace PlutoGE::render
         const float localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
         const float secondaryBounce = std::clamp(effect.parameters[5].y, 0.0f, 1.0f);
         auto contentSignature = VctContentSignature(draws, lighting, effect.parameters[4].w > 0.5f, localLightBounce);
-        HashVctValue(contentSignature, secondaryBounce);
+        // Strength changes reuse the original injection and cached unit bounce.
         const auto updateInterval = static_cast<std::uint64_t>(
             std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
         std::size_t rebuildIndex = cascadeCount;
@@ -2436,12 +2462,21 @@ namespace PlutoGE::render
                 cascade.pendingInjectLocalLights = effect.parameters[4].w > 0.5f;
                 cascade.pendingSecondaryBounce = secondaryBounce;
                 cascade.secondaryPass = false;
+                cascade.secondaryReady = false;
+                cascade.nextBounceSlice = 0;
+                commands.ClearStorageImageUint(cascade.surfaceRecord.Get());
                 cascade.nextShadowDraw = 0;
                 cascade.nextShadowIndex = 0;
                 cascade.shadowReady = !lighting.shadowsEnabled || lighting.directionalIntensity <= 0.0f;
                 cascade.rebuilding = true;
                 for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
             }
+            if (!cascade.rebuilding && cascade.valid && cascade.appliedSecondaryBounce != secondaryBounce)
+            {
+                cascade.secondaryPass = true;
+                cascade.rebuilding = true;
+            }
+            cascade.pendingSecondaryBounce = secondaryBounce;
         }
         // Round-robin publication prevents a moving near field starving the cache source.
         for (std::uint32_t offset = 0; offset < cascadeCount; ++offset)
@@ -2456,8 +2491,7 @@ namespace PlutoGE::render
         // triangle budget between shadow injection and voxelization, and retain
         // an index cursor so every triangle is eventually submitted exactly once.
         constexpr std::uint32_t maxIndicesPerDraw = 32768 * 3;
-        std::uint32_t remainingIndices =
-            rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].secondaryPass ? 32768 * 3 : 65536 * 3;
+        std::uint32_t remainingIndices = 65536 * 3;
         if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
@@ -2530,114 +2564,142 @@ namespace PlutoGE::render
         if (rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].shadowReady)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
-            VctVoxelParameters voxel;
-            voxel.secondaryBounce = cascade.secondaryPass ? cascade.pendingSecondaryBounce : 0.0f;
-            voxel.bounceCascade = static_cast<std::uint32_t>(rebuildIndex);
-            voxel.localLightCount.y = cascadeCount;
-            voxel.volumeOrigin = cascade.pendingOrigin;
-            voxel.volumeSize = cascade.pendingSize;
-            voxel.resolution = resolution;
-            const auto &injectionLight = cascade.pendingLighting;
-            voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
-            voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
-            voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
-            if (cascade.pendingInjectLocalLights)
+            if (!cascade.secondaryPass)
             {
-                const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot) {
-                    const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
-                        cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
-                    if (light.intensity <= 0 || light.range <= 0 ||
-                        glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
-                    voxel.localLights[voxel.localLightCount.x++] = {
-                        glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot};
-                };
-                for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
-                for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1));
+                VctVoxelParameters voxel;
+                voxel.secondaryBounce = 0.0f;
+                voxel.bounceCascade = static_cast<std::uint32_t>(rebuildIndex);
+                voxel.localLightCount.y = cascadeCount;
+                voxel.volumeOrigin = cascade.pendingOrigin;
+                voxel.volumeSize = cascade.pendingSize;
+                voxel.resolution = resolution;
+                const auto &injectionLight = cascade.pendingLighting;
+                voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
+                voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
+                voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
+                if (cascade.pendingInjectLocalLights)
+                {
+                    const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot) {
+                        const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
+                            cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                        if (light.intensity <= 0 || light.range <= 0 ||
+                            glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
+                        voxel.localLights[voxel.localLightCount.x++] = {
+                            glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot};
+                    };
+                    for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
+                    for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1));
+                }
+                voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
+                voxel.view = glm::mat4(1.0f);
+                voxel.shadowCascadeSplits = glm::vec4(1e10f);
+                voxel.shadowsEnabled = injectionLight.shadowsEnabled ? 1u : 0u;
+                voxel.shadowFlipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+                voxel.shadowDepthScale = m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f;
+                voxel.shadowDepthBias = m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f;
+                voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / giShadowResolution));
+                voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
+                auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
+                rhi::RenderingInfo raster;
+                raster.width = raster.height = resolution; raster.clearColor = raster.clearDepth = false;
+                raster.attachmentless = true;
+                commands.BeginRendering(raster);
+                commands.BindPipeline(m_vctVoxelizationPipeline.Get());
+                commands.BindUniformBuffer(0, voxelBuffer.Get());
+                commands.BindStorageImage(0, cascade.surfaceRecord.Get());
+                for (std::size_t channel = 0; channel < 4; ++channel)
+                    commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
+                const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+                std::size_t submitted = 0;
+                while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
+                {
+                    const auto &draw = cascade.pendingDraws[cascade.nextDraw];
+                    const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
+                                                         cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                    if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
+                        (draw.shadowBoundsRadius >= 0.0f &&
+                         glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
+                            draw.shadowBoundsRadius * draw.shadowBoundsRadius))
+                    {
+                        ++cascade.nextDraw;
+                        cascade.nextVoxelIndex = 0;
+                        continue;
+                    }
+                    const auto objectBufferIndex = m_vctBufferCursor++;
+                    auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
+                    m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
+                    const auto materialBufferIndex = m_vctBufferCursor++;
+                    auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
+                    const VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
+                        draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
+                        draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
+                        draw.metallicChannel, 1u};
+                    m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
+                    commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
+                    commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
+                    commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                                         m_fallbackSampler.Get());
+                    commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
+                                         m_fallbackSampler.Get());
+                    const auto fallbackShadow = m_fallbackDataTexture.Get();
+                    for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
+                        commands.BindTexture(10 + shadowCascade,
+                            m_vctShadowDepth ? m_vctShadowDepth.Get() : fallbackShadow,
+                            m_shadowSampler.Get());
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const auto available = draw.firstIndex < draw.mesh->m_indexCount
+                                               ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
+                    const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
+                    const auto triangleIndices = count - count % 3;
+                    const auto chunk = std::min({triangleIndices - cascade.nextVoxelIndex, maxIndicesPerDraw, remainingIndices});
+                    if (chunk)
+                    {
+                        commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextVoxelIndex);
+                        cascade.nextVoxelIndex += chunk;
+                        remainingIndices -= chunk;
+                        ++submitted;
+                    }
+                    if (cascade.nextVoxelIndex == triangleIndices)
+                    {
+                        ++cascade.nextDraw;
+                        cascade.nextVoxelIndex = 0;
+                    }
+                }
+                commands.EndRendering();
+                commands.ShaderMemoryBarrier();
             }
-            voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
-            voxel.view = glm::mat4(1.0f);
-            voxel.shadowCascadeSplits = glm::vec4(1e10f);
-            voxel.shadowsEnabled = injectionLight.shadowsEnabled ? 1u : 0u;
-            voxel.shadowFlipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
-            voxel.shadowDepthScale = m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f;
-            voxel.shadowDepthBias = m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f;
-            voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / giShadowResolution));
-            voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
-            auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-            m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
-            rhi::RenderingInfo raster;
-            raster.width = raster.height = resolution; raster.clearColor = raster.clearDepth = false;
-            raster.attachmentless = true;
-            commands.BeginRendering(raster);
-            commands.BindPipeline(m_vctVoxelizationPipeline.Get());
-            commands.BindUniformBuffer(0, voxelBuffer.Get());
-            for (std::uint32_t direction = 0; direction < 6; ++direction)
-                commands.BindTexture(14 + direction, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
-            for (std::size_t channel = 0; channel < 4; ++channel)
-                commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
-            const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
-            std::size_t submitted = 0;
-            while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
+            if (cascade.secondaryPass && !cascade.secondaryReady && cascade.pendingSecondaryBounce > 0.0f)
             {
-                const auto &draw = cascade.pendingDraws[cascade.nextDraw];
-                const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
-                                                     cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
-                if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
-                    (draw.shadowBoundsRadius >= 0.0f &&
-                     glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
-                        draw.shadowBoundsRadius * draw.shadowBoundsRadius))
-                {
-                    ++cascade.nextDraw;
-                    cascade.nextVoxelIndex = 0;
-                    continue;
-                }
-                const auto objectBufferIndex = m_vctBufferCursor++;
-                auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
-                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
-                const auto materialBufferIndex = m_vctBufferCursor++;
-                auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
-                const VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
-                    draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
-                    draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
-                    draw.metallicChannel, 0u};
-                m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
-                commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
-                commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
-                commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
-                                     m_fallbackSampler.Get());
-                commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
-                                     m_fallbackSampler.Get());
-                const auto fallbackShadow = m_fallbackDataTexture.Get();
-                for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
-                    commands.BindTexture(10 + shadowCascade,
-                        m_vctShadowDepth ? m_vctShadowDepth.Get() : fallbackShadow,
-                        m_shadowSampler.Get());
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const auto available = draw.firstIndex < draw.mesh->m_indexCount
-                                           ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
-                const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
-                const auto triangleIndices = count - count % 3;
-                const auto chunk = std::min({triangleIndices - cascade.nextVoxelIndex, maxIndicesPerDraw, remainingIndices});
-                if (chunk)
-                {
-                    commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextVoxelIndex);
-                    cascade.nextVoxelIndex += chunk;
-                    remainingIndices -= chunk;
-                    ++submitted;
-                }
-                if (cascade.nextVoxelIndex == triangleIndices)
-                {
-                    ++cascade.nextDraw;
-                    cascade.nextVoxelIndex = 0;
-                }
+                const ScopedGpuTiming bounceTiming(commands, "RHI VCT Secondary Gather");
+                // Fixed voxel work, independent of scene triangles/draws. Skip empty cells in the shader.
+                const auto slices = std::max(4u, (32768u / (resolution * resolution) / 4u) * 4u);
+                const glm::uvec4 params(resolution, static_cast<std::uint32_t>(rebuildIndex),
+                                        cascadeCount, cascade.nextBounceSlice);
+                auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
+                commands.BindPipeline(m_vctBouncePipeline.Get());
+                commands.BindUniformBuffer(0, buffer.Get());
+                commands.BindStorageImage(1, cascade.surfaceRecord.Get());
+                commands.BindStorageImage(2, cascade.accumulation[3].Get());
+                commands.BindStorageImage(3, cascade.secondaryVolume.Get());
+                for (std::uint32_t direction = 0; direction < 6; ++direction)
+                    commands.BindTexture(7 + direction, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+                commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, slices / 4);
+                commands.ShaderMemoryBarrier();
+                cascade.nextBounceSlice += slices;
+                cascade.secondaryReady = cascade.nextBounceSlice >= resolution;
             }
-            commands.EndRendering();
-            commands.ShaderMemoryBarrier();
-            if (cascade.nextDraw >= cascade.pendingDraws.size())
+            const bool publish = cascade.secondaryPass
+                ? (cascade.secondaryReady || cascade.pendingSecondaryBounce == 0.0f)
+                : cascade.nextDraw >= cascade.pendingDraws.size();
+            if (publish)
             {
+                const ScopedGpuTiming publishTiming(commands, "RHI VCT Volume Publish");
+                const float gain = cascade.secondaryReady ? cascade.pendingSecondaryBounce : 0.0f;
                 const VctResolveParameters resolve{
-                    resolution, static_cast<std::uint32_t>(rebuildIndex) * resolution, {}};
+                    resolution, static_cast<std::uint32_t>(rebuildIndex) * resolution, gain, 0};
                 auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
                 for (auto &atlas : m_vctRadianceAtlases)
@@ -2647,6 +2709,7 @@ namespace PlutoGE::render
                     for (std::size_t channel = 0; channel < 4; ++channel)
                         commands.BindStorageImage(static_cast<std::uint32_t>(1 + channel), cascade.accumulation[channel].Get());
                     commands.BindStorageImage(5, atlas.Get());
+                    commands.BindStorageImage(6, cascade.secondaryVolume.Get());
                     commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, (resolution + 3) / 4);
                     commands.ShaderMemoryBarrier();
                 }
@@ -2672,15 +2735,14 @@ namespace PlutoGE::render
                 cascade.size = cascade.pendingSize;
                 cascade.lastUpdateFrame = m_frameIndex;
                 cascade.valid = true;
-                const bool startSecondary = !cascade.secondaryPass && cascade.pendingSecondaryBounce > 0.0f;
+                cascade.appliedSecondaryBounce = gain;
+                const bool startSecondary = !cascade.secondaryReady && cascade.pendingSecondaryBounce > 0.0f;
                 cascade.rebuilding = startSecondary;
                 if (startSecondary)
                 {
                     cascade.secondaryPass = true;
                     m_vctNextCascade = static_cast<std::uint32_t>(rebuildIndex);
-                    cascade.nextDraw = 0;
-                    cascade.nextVoxelIndex = 0;
-                    for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
+                    cascade.pendingDraws.clear();
                 }
                 else cascade.pendingDraws.clear();
                 m_vctHistoryValid = false;

@@ -97,6 +97,7 @@ int main(int argc, char **argv)
         shaders.vctCompute[0].spirv = ReadSpirv("VCTResolve.compute.spv");
         shaders.vctCompute[1].spirv = ReadSpirv("VCTDirectionalMip.compute.spv");
         shaders.vctCompute[2].spirv = ReadSpirv("VCTProbeUpdate.compute.spv");
+        shaders.vctCompute[3].spirv = ReadSpirv("VCTBounceUpdate.compute.spv");
         shaders.vctVoxelization.vertexShader.spirv = ReadSpirv("VCTVoxelize.vertex.spv");
         shaders.vctVoxelization.geometryShader.spirv = ReadSpirv("VCTVoxelize.geometry.spv");
         shaders.vctVoxelization.fragmentShader.spirv = ReadSpirv("VCTVoxelize.fragment.spv");

@@ -195,6 +195,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.vctCompute[0].glsl = ReadText("VCTResolve.compute.glsl");
         shaders.vctCompute[1].glsl = ReadText("VCTDirectionalMip.compute.glsl");
         shaders.vctCompute[2].glsl = ReadText("VCTProbeUpdate.compute.glsl");
+        shaders.vctCompute[3].glsl = ReadText("VCTBounceUpdate.compute.glsl");
         shaders.vctVoxelization.vertexShader.glsl = ReadText("VCTVoxelize.vertex.glsl");
         shaders.vctVoxelization.geometryShader.glsl = ReadText("VCTVoxelize.geometry.glsl");
         shaders.vctVoxelization.fragmentShader.glsl = ReadText("VCTVoxelize.fragment.glsl");

@@ -16,7 +16,8 @@ inline bool CheckVctEmissionCoverage()
     bool passed = true;
     for (const bool legacy : {false, true})
     {
-        ShaderSource voxelSource, resolveSource, mipSource;
+        ShaderSource voxelSource, resolveSource, mipSource, bounceSource;
+        bounceSource.computeSource = ShaderArtifactLibrary().Load("VCTBounceUpdate", "compute").glsl;
         mipSource.computeSource = ShaderArtifactLibrary().Load("VCTDirectionalMip", "compute").glsl;
         if (legacy)
         {
@@ -33,7 +34,8 @@ inline bool CheckVctEmissionCoverage()
             resolveSource.computeSource = artifacts.Load("VCTResolve", "compute").glsl;
         }
         std::unique_ptr<Shader> voxel(Shader::Create(voxelSource)), resolve(Shader::Create(resolveSource)), mip(Shader::Create(mipSource));
-        if (!voxel || !resolve || !mip) return false;
+        std::unique_ptr<Shader> bounceShader(Shader::Create(bounceSource));
+        if (!voxel || !resolve || !mip || !bounceShader) return false;
         for (auto* shader : {voxel.get(), resolve.get(), mip.get()})
         {
             shader->Bind(); GLint program = 0, linked = 0;
@@ -43,7 +45,7 @@ inline bool CheckVctEmissionCoverage()
         }
         GLuint vao = 0, vbo = 0, framebuffer = 0;
         std::array<GLuint, 3> buffers{};
-        std::array<GLuint, 8> textures{};
+        std::array<GLuint, 10> textures{};
         glGenVertexArrays(1, &vao); glBindVertexArray(vao);
         glGenBuffers(1, &vbo); glBindBuffer(GL_ARRAY_BUFFER, vbo);
         struct Vertex { glm::vec3 position, normal; glm::vec2 uv; };
@@ -104,6 +106,17 @@ inline bool CheckVctEmissionCoverage()
                 glTexImage3D(GL_TEXTURE_3D,0,GL_R32UI,resolution,resolution,resolution,0,GL_RED_INTEGER,GL_UNSIGNED_INT,zeros.data());
                 if (legacy || i<4) glBindImageTexture(legacy?i:i+4,textures[i],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
             }
+            glBindTexture(GL_TEXTURE_3D,textures[8]);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+            glTexImage3D(GL_TEXTURE_3D,0,GL_R32UI,resolution,resolution,resolution,0,GL_RED_INTEGER,GL_UNSIGNED_INT,zeros.data());
+            glBindImageTexture(legacy?5:0,textures[8],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
+            glBindTexture(GL_TEXTURE_3D,textures[9]);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
             glBindTexture(GL_TEXTURE_3D,textures[5]);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -115,7 +128,7 @@ inline bool CheckVctEmissionCoverage()
             std::vector<glm::vec4> incident(count,glm::vec4(sourceRadiance,sourceRadiance,sourceRadiance,1));
             for (unsigned direction=0;direction<6;++direction)
             {
-                glActiveTexture(GL_TEXTURE0+(legacy?10:14)+direction);
+                glActiveTexture(GL_TEXTURE7+direction);
                 glBindTexture(GL_TEXTURE_3D,textures[7]);
             }
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
@@ -130,31 +143,44 @@ inline bool CheckVctEmissionCoverage()
                 voxel->SetUniform("uVolumeOrigin",glm::vec3(0)); voxel->SetUniform("uVolumeSize",volumeSize);
                 voxel->SetUniform("uVoxelResolution",resolution); voxel->SetUniform("uColor",glm::vec4(1));
                 voxel->SetUniform("uEmission",glm::vec3(emission,emission*.5f,emission*.25f));
-                voxel->SetUniform("uSecondaryBounce",bounce);
+                voxel->SetUniform("uCaptureSurface",1);
                 voxel->SetUniform("uMetallicFactor",metallic);
             }
             else
             {
-                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,std::bit_cast<unsigned>(bounce),0}};
+                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
                 struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; } material;
                 static_assert(sizeof(MaterialPass)==64);
                 material.emission = {emission,emission*.5f,emission*.25f};
-                material.metallic = metallic;
+                material.metallic = metallic; material.flags.w = 1;
                 glm::mat4 model(1);
                 upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
             }
             glViewport(0,0,resolution,resolution);
             glDrawArraysInstanced(GL_TRIANGLES,0,GLsizei(vertices.size()),repetitions);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            if (bounce > 0)
+            {
+                bounceShader->Bind();
+                const glm::uvec4 pass(resolution,0,1,0); upload(0,&pass,sizeof(pass));
+                glBindImageTexture(1,textures[8],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+                glBindImageTexture(2,textures[legacy?4:3],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+                glBindImageTexture(3,textures[9],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
+                glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
+                glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            }
+            glBindImageTexture(6,textures[9],0,GL_TRUE,0,GL_READ_ONLY,GL_RGBA16F);
             resolve->Bind();
             if (legacy)
             {
+                for (unsigned i=0;i<5;++i) glBindImageTexture(i,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+                resolve->SetUniform("uSecondaryGain",bounce);
                 resolve->SetUniform("uResolution",resolution); resolve->SetUniform("uDestinationZOffset",0);
             }
             else
             {
                 for (unsigned i=0;i<4;++i) glBindImageTexture(i+1,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                const glm::uvec4 pass(resolution,0,0,0); upload(0,&pass,sizeof(pass));
+                const glm::uvec4 pass(resolution,0,std::bit_cast<unsigned>(bounce),0); upload(0,&pass,sizeof(pass));
             }
             glBindImageTexture(5,textures[5],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
             glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
@@ -239,7 +265,7 @@ inline bool CheckVctEmissionCoverage()
         for (const float gain : {0.0f,0.5f,1.0f})
         {
             const double actual=measure(2,.13f,1,32,2,false,0,gain);
-            const double expected=4.0*2.0*.95*gain;
+            const double expected=4.0*2.0*(29.0/31.0)*gain;
             if (std::abs(actual-expected)>.15)
             {
                 std::cerr << "VCT " << (legacy?"legacy":"Slang") << " secondary material integral: expected=" << expected << " actual=" << actual << '\n';

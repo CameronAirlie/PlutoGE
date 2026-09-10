@@ -1,3 +1,5 @@
+#include <RmlUi/Core/FileInterface.h>
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
@@ -40,6 +42,38 @@
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+
+namespace
+{
+    class ContentFileInterface final : public Rml::FileInterface
+    {
+        Rml::FileHandle Open(const Rml::String &path) override
+        {
+            auto stream = std::make_unique<PlutoGE::content::InputFile>(path, std::ios::binary);
+            if (!*stream) return {};
+            return reinterpret_cast<Rml::FileHandle>(stream.release());
+        }
+        void Close(Rml::FileHandle file) override { delete reinterpret_cast<PlutoGE::content::InputFile *>(file); }
+        size_t Read(void *buffer, size_t size, Rml::FileHandle file) override
+        {
+            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file);
+            stream.read(static_cast<char *>(buffer), static_cast<std::streamsize>(size));
+            return static_cast<size_t>(stream.gcount());
+        }
+        bool Seek(Rml::FileHandle file, long offset, int origin) override
+        {
+            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file); stream.clear();
+            stream.seekg(offset, origin == SEEK_SET ? std::ios::beg : origin == SEEK_CUR ? std::ios::cur : std::ios::end);
+            return bool(stream);
+        }
+        size_t Tell(Rml::FileHandle file) override
+        {
+            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file);
+            stream.clear(); return static_cast<size_t>(stream.tellg());
+        }
+    };
+    ContentFileInterface ContentFiles;
+}
 
 namespace PlutoGE::render
 {
@@ -91,14 +125,14 @@ namespace PlutoGE::render
         std::filesystem::file_time_type DocumentSourceWriteTime(const std::filesystem::path &document,
                                                                 std::error_code &error)
         {
-            auto newest = std::filesystem::last_write_time(document, error);
+            auto newest = content::LastWriteTime(document, error);
             if (error) return {};
             for (std::filesystem::directory_iterator it(document.parent_path(), error), end; !error && it != end; it.increment(error))
             {
                 if (it->is_regular_file() && it->path().extension() == ".rcss")
                 {
                     std::error_code timeError;
-                    newest = std::max(newest, std::filesystem::last_write_time(it->path(), timeError));
+                    newest = std::max(newest, content::LastWriteTime(it->path(), timeError));
                 }
             }
             return newest;
@@ -141,7 +175,7 @@ namespace PlutoGE::render
             {
                 const std::string resolved = ResolveDocumentPath(assets, requestedFontPath);
                 std::error_code error;
-                if (!resolved.empty() && std::filesystem::is_regular_file(resolved, error))
+                if (!resolved.empty() && content::IsRegularFile(resolved, error))
                     return resolved;
             }
 
@@ -156,7 +190,7 @@ namespace PlutoGE::render
             for (const auto &candidate : candidates)
             {
                 std::error_code error;
-                if (std::filesystem::is_regular_file(candidate, error))
+                if (content::IsRegularFile(candidate, error))
                     return candidate.lexically_normal().string();
             }
             return {};
@@ -192,7 +226,7 @@ namespace PlutoGE::render
                 if (!it->is_regular_file() || it->path().extension() != ".rcss")
                     continue;
                 std::error_code timeError;
-                const auto writeTime = std::filesystem::last_write_time(it->path(), timeError);
+                const auto writeTime = content::LastWriteTime(it->path(), timeError);
                 if (!timeError)
                     newest = std::max(newest, writeTime);
             }
@@ -203,7 +237,7 @@ namespace PlutoGE::render
         {
             const auto readText = [](const std::filesystem::path &path)
             {
-                std::ifstream input(path, std::ios::binary);
+                PlutoGE::content::InputFile input(path, std::ios::binary);
                 return input ? std::string(std::istreambuf_iterator<char>(input),
                                            std::istreambuf_iterator<char>())
                              : std::string{};
@@ -535,6 +569,7 @@ namespace PlutoGE::render
         m_system->SetWindow(static_cast<GLFWwindow *>(window.GetWindow()));
         Rml::SetRenderInterface(renderInterface);
         Rml::SetSystemInterface(m_system.get());
+        Rml::SetFileInterface(&ContentFiles);
         if (!Rml::Initialise())
         {
             m_system.reset();
@@ -787,7 +822,7 @@ namespace PlutoGE::render
                     const std::string fontKey = resolvedFont + "\x1f" + fontFamily;
                     if (!resolvedFont.empty() && !m_loadedFontFaces.contains(fontKey))
                     {
-                        std::ifstream fontStream(resolvedFont, std::ios::binary);
+                        PlutoGE::content::InputFile fontStream(resolvedFont, std::ios::binary);
                         std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(fontStream)),
                                                          std::istreambuf_iterator<char>());
                         bool loaded = false;
@@ -845,7 +880,7 @@ namespace PlutoGE::render
                         sourceIt->second.path = ResolveDocumentPath(assets, reference);
                         std::error_code error;
                         const std::filesystem::path sourcePath(sourceIt->second.path);
-                        sourceIt->second.writeTime = std::filesystem::last_write_time(sourcePath, error);
+                        sourceIt->second.writeTime = content::LastWriteTime(sourcePath, error);
                         if (!error)
                         {
                             const std::string directoryKey = sourcePath.parent_path().lexically_normal().string();
@@ -942,7 +977,7 @@ namespace PlutoGE::render
             }
 
             std::error_code existsError;
-            if (!std::filesystem::is_regular_file(path, existsError))
+            if (!content::IsRegularFile(path, existsError))
             {
                 if (m_reportedLoadFailures.insert(reference).second)
                     std::cerr << "[RmlUi] Canvas document '" << reference
@@ -982,7 +1017,7 @@ namespace PlutoGE::render
         // RmlUi requires fonts to be registered through LoadFontFace; RCSS
         // @font-face rules are a PlutoGE authoring convenience parsed here.
         // Keep the byte buffers alive until Rml::Shutdown as required by RmlUi.
-        std::ifstream documentStream(documentPath, std::ios::binary);
+        PlutoGE::content::InputFile documentStream(documentPath, std::ios::binary);
         if (!documentStream)
             return;
         const std::string documentSource(
@@ -1007,7 +1042,7 @@ namespace PlutoGE::render
 
         for (const auto &styleSheetPath : styleSheets)
         {
-            std::ifstream stream(styleSheetPath, std::ios::binary);
+            PlutoGE::content::InputFile stream(styleSheetPath, std::ios::binary);
             if (!stream)
                 continue;
             const std::string source((std::istreambuf_iterator<char>(stream)),
@@ -1053,7 +1088,7 @@ namespace PlutoGE::render
                 if (m_loadedFontFaces.contains(key))
                     continue;
 
-                std::ifstream fontStream(fontPath, std::ios::binary);
+                PlutoGE::content::InputFile fontStream(fontPath, std::ios::binary);
                 if (!fontStream)
                 {
                     std::cerr << "[RmlUi] Font '" << family << "' was not found at '"

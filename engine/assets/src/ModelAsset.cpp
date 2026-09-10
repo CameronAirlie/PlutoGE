@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/assets/ModelAsset.h"
 
 #include <fstream>
@@ -50,14 +51,14 @@ namespace PlutoGE::assets
     {
         const auto canonicalPath = GetModelManifestPath(project, sourceReference);
         std::error_code error;
-        if (std::filesystem::is_regular_file(canonicalPath, error)) return canonicalPath;
+        if (content::IsRegularFile(canonicalPath, error)) return canonicalPath;
 
         const auto sourcePath = project.ResolveAssetReference(sourceReference);
         if (sourcePath.empty()) return canonicalPath;
         const auto legacyPath = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
                                 (sourcePath.stem().string() + ".plutomodel");
         error.clear();
-        return std::filesystem::is_regular_file(legacyPath, error) ? legacyPath : canonicalPath;
+        return content::IsRegularFile(legacyPath, error) ? legacyPath : canonicalPath;
     }
 
     bool SaveModelAsset(const std::string &path, const ModelAsset &asset, std::string *errorMessage)
@@ -84,7 +85,7 @@ namespace PlutoGE::assets
 
     bool LoadModelAsset(const std::string &path, ModelAsset &asset, std::string *errorMessage)
     {
-        std::ifstream input(path);
+        PlutoGE::content::InputFile input(path);
         std::string line;
         if (!input || !std::getline(input, line) || line != kHeader)
         {

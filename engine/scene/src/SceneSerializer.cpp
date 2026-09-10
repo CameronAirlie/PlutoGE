@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 
@@ -982,7 +983,7 @@ namespace PlutoGE::scene
                                                  std::string *errorMessage,
                                                  const LoadTraceCallback &trace)
     {
-        std::ifstream input(filePath);
+        PlutoGE::content::InputFile input(filePath);
         if (!input.is_open())
         {
             if (errorMessage)

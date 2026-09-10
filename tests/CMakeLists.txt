@@ -1,3 +1,7 @@
+add_executable(PlutoGEContentPackTests ContentPackTests.cpp)
+target_link_libraries(PlutoGEContentPackTests PRIVATE PlutoGE::Content)
+add_test(NAME PlutoGEContentPackTests COMMAND PlutoGEContentPackTests)
+
 add_executable(PlutoGERhiTypesTests RhiTypesTests.cpp)
 add_executable(PlutoGEVirtualShadowClipmapTests VirtualShadowClipmapTests.cpp)
 target_link_libraries(PlutoGEVirtualShadowClipmapTests PRIVATE PlutoGE::Render)

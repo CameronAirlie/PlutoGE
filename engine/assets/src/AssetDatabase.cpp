@@ -106,7 +106,18 @@ namespace PlutoGE::assets
     {
         m_records.clear(); m_byId.clear(); m_byReference.clear();
         project.RefreshAssetRegistry();
-        for (const auto &entry : project.GetManifest().assetEntries)
+        auto entries = project.GetManifest().assetEntries;
+        // Model manifests are hidden from the editor registry, but runtime
+        // stable-object resolution still needs them after source models are stripped.
+        std::error_code scanError;
+        for (std::filesystem::recursive_directory_iterator it(project.GetAssetDirectoryPath(), scanError), end;
+             !scanError && it != end; it.increment(scanError))
+        {
+            if (it->is_regular_file() && it->path().extension() == ".plutomodel")
+                entries.push_back({project.MakeAssetReference(it->path()), it->file_size(), ProjectAssetType::Unknown});
+        }
+        if (scanError) { SetError(errorMessage, "Cannot enumerate model manifests: " + scanError.message()); return false; }
+        for (const auto &entry : entries)
         {
             if (!Project::IsProjectAssetReference(entry.reference)) continue;
             const auto path = project.ResolveAssetReference(entry.reference);
@@ -133,6 +144,13 @@ namespace PlutoGE::assets
                 if (!WriteMetadata(metadataPath, record)) return false;
             }
             record.dependencies = DiscoverDependencies(path, project.GetAssetDirectoryPath(), record.dependencyScanErrors);
+            if (record.type == ProjectAssetType::Model)
+            {
+                auto modelManifest = path.parent_path() / (path.stem().string() + ".plutomodel");
+                if (!std::filesystem::is_regular_file(modelManifest))
+                    modelManifest = project.GetAssetDirectoryPath() / "Imported" / path.stem() / (path.stem().string() + ".plutomodel");
+                if (std::filesystem::is_regular_file(modelManifest)) record.dependencies.push_back(project.MakeAssetReference(modelManifest));
+            }
             m_byId[record.id] = m_records.size();
             m_byReference[record.reference] = m_records.size();
             m_records.push_back(std::move(record));
@@ -161,10 +179,19 @@ namespace PlutoGE::assets
     {
         AssetDatabase database;
         if (!database.Scan(project, errorMessage)) return false;
+        for (const auto &reference : options.alwaysInclude)
+        {
+            if (!Project::IsProjectAssetReference(reference) || !database.FindByReference(reference))
+            {
+                SetError(errorMessage, "Always-include asset was not found: " + reference);
+                return false;
+            }
+        }
         std::set<std::string> reachable;
         if (!options.includeUnreferencedAssets)
         {
             std::vector<std::string> pending{project.GetManifest().startupScene, project.GetManifest().scriptAssembly};
+            pending.insert(pending.end(), options.alwaysInclude.begin(), options.alwaysInclude.end());
             while (!pending.empty())
             {
                 auto reference = std::move(pending.back());
@@ -179,19 +206,36 @@ namespace PlutoGE::assets
                     }
                     pending.insert(pending.end(), record->dependencies.begin(), record->dependencies.end());
                 }
+                else if (Project::IsProjectAssetReference(reference))
+                {
+                    SetError(errorMessage, "Missing cook dependency: " + reference);
+                    return false;
+                }
             }
         }
         std::error_code error;
         std::filesystem::create_directories(destination, error);
         if (error) { SetError(errorMessage, "Failed to create cooked asset directory: " + error.message()); return false; }
 
+        // Preserve source-model IDs even when source bytes are not shipped.
+        std::ofstream identities(destination.parent_path() / "PlutoAssetIds.manifest", std::ios::trunc);
+        if (!identities) { SetError(errorMessage, "Cannot write asset identity manifest."); return false; }
+        for (const auto &record : database.GetRecords()) identities << record.id << '\t' << record.reference << '\n';
+        identities.close();
+        if (!identities) { SetError(errorMessage, "Cannot finish asset identity manifest."); return false; }
         std::ofstream manifest(destination.parent_path() / "PlutoCook.manifest", std::ios::trunc);
         if (!manifest) { SetError(errorMessage, "Failed to create cook manifest."); return false; }
         manifest << kCookHeader << '\n';
         for (const auto &record : database.GetRecords())
         {
             if (!ShouldCook(record.type, options)) continue;
-            if (!options.includeUnreferencedAssets && !reachable.contains(record.reference)) continue;
+            const auto assembly = project.ResolveAssetReference(project.GetManifest().scriptAssembly);
+            const auto recordPath = project.ResolveAssetReference(record.reference);
+            const auto extension = recordPath.extension().string();
+            const bool managedCompanion = !project.GetManifest().scriptAssembly.empty() &&
+                recordPath.parent_path() == assembly.parent_path() &&
+                (extension == ".dll" || extension == ".json" || extension == ".pdb");
+            if (!options.includeUnreferencedAssets && !reachable.contains(record.reference) && !managedCompanion) continue;
             auto relative = std::filesystem::path(record.reference.substr(Project::kProjectAssetScheme.size()));
             const auto source = project.ResolveAssetReference(record.reference);
             const auto target = destination / relative;

@@ -1,3 +1,5 @@
+#include <climits>
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
@@ -19,6 +21,27 @@ namespace PlutoGE::render
 {
     namespace
     {
+        unsigned char *LoadImage(const char *path, int *w, int *h, int *channels, int desired)
+        {
+            if (!content::IsMounted(path)) return stbi_load(path, w, h, channels, desired);
+            std::string bytes;
+            if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return nullptr;
+            return stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size()), w, h, channels, desired);
+        }
+        float *LoadFloatImage(const char *path, int *w, int *h, int *channels, int desired)
+        {
+            if (!content::IsMounted(path)) return stbi_loadf(path, w, h, channels, desired);
+            std::string bytes;
+            if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return nullptr;
+            return stbi_loadf_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size()), w, h, channels, desired);
+        }
+        bool IsHdrImage(const char *path)
+        {
+            if (!content::IsMounted(path)) return stbi_is_hdr(path) != 0;
+            std::string bytes;
+            if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return false;
+            return stbi_is_hdr_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size())) != 0;
+        }
         constexpr float kMaxHalfFloatValue = 65504.0f;
 
         GLenum ResolveTextureFormat(int channels)
@@ -48,7 +71,7 @@ namespace PlutoGE::render
 
         bool LoadPfm(const char *filePath, PfmImageData &outImage)
         {
-            std::ifstream input(filePath, std::ios::binary);
+            PlutoGE::content::InputFile input(filePath, std::ios::binary);
             if (!input.is_open())
             {
                 return false;
@@ -354,7 +377,7 @@ namespace PlutoGE::render
         // Load the texture
         // Load image data
         int width, height, channels;
-        unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
+        unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
         if (data)
         {
             if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
@@ -510,12 +533,12 @@ namespace PlutoGE::render
             return texture;
         }
 
-        if (isHdr || stbi_is_hdr(filePath))
+        if (isHdr || IsHdrImage(filePath))
         {
             int width = 0;
             int height = 0;
             int channels = 0;
-            float *data = stbi_loadf(filePath, &width, &height, &channels, 0);
+            float *data = LoadFloatImage(filePath, &width, &height, &channels, 0);
             if (!data)
             {
                 return nullptr;
@@ -566,7 +589,7 @@ namespace PlutoGE::render
         int width = 0;
         int height = 0;
         int channels = 0;
-        unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
+        unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
         if (!data)
         {
             return nullptr;
@@ -659,7 +682,7 @@ namespace PlutoGE::render
         int width = 0;
         int height = 0;
         int channels = 0;
-        unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
+        unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
         if (!data)
         {
             return nullptr;

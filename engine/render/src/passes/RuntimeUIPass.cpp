@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -400,7 +401,7 @@ namespace PlutoGE::render
 
         std::vector<unsigned char> ReadBinaryFile(const std::filesystem::path &filePath)
         {
-            std::ifstream input(filePath, std::ios::binary);
+            PlutoGE::content::InputFile input(filePath, std::ios::binary);
             if (!input.is_open())
             {
                 return {};
@@ -429,7 +430,7 @@ namespace PlutoGE::render
             if (!requestedFontPath.empty())
             {
                 std::filesystem::path requestedPath(requestedFontPath);
-                if (std::filesystem::exists(requestedPath))
+                if (PlutoGE::content::Exists(requestedPath))
                 {
                     return requestedPath;
                 }
@@ -446,7 +447,7 @@ namespace PlutoGE::render
 
             for (const auto &candidate : candidates)
             {
-                if (std::filesystem::exists(candidate))
+                if (PlutoGE::content::Exists(candidate))
                 {
                     return candidate;
                 }

@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include <PlutoGE/assets/AssetManager.h>
 #include <PlutoGE/assets/ModelAsset.h>
 #include <PlutoGE/render/Mesh.h>
@@ -25,10 +26,15 @@ namespace PlutoGE::assets
         {
             return {};
         }
+        if (content::IsMounted(m_projectRootDirectory))
+        {
+            for (const auto &[id, reference] : m_stableIdReferenceCache) if (reference == assetReference) return id;
+            return {};
+        }
         const auto relative = assetReference.substr(Project::kProjectAssetScheme.size());
         const auto metadataPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory /
                                   std::filesystem::path(relative + ".plutometa");
-        std::ifstream input(metadataPath);
+        PlutoGE::content::InputFile input(metadataPath);
         std::string line;
         while (std::getline(input, line))
         {
@@ -42,6 +48,11 @@ namespace PlutoGE::assets
     {
         if (assetId.empty() || m_projectRootDirectory.empty())
             return fallbackReference;
+        if (content::IsMounted(m_projectRootDirectory))
+        {
+            const auto found = m_stableIdReferenceCache.find(assetId);
+            return found == m_stableIdReferenceCache.end() ? fallbackReference : found->second;
+        }
         if (const auto cached = m_stableIdReferenceCache.find(assetId); cached != m_stableIdReferenceCache.end())
         {
             // Validate the sidecar so renames and replaced identities still resolve.
@@ -59,7 +70,7 @@ namespace PlutoGE::assets
                 error.clear();
                 continue;
             }
-            std::ifstream input(iterator->path());
+            PlutoGE::content::InputFile input(iterator->path());
             std::string line;
             while (std::getline(input, line))
             {
@@ -90,7 +101,7 @@ namespace PlutoGE::assets
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
         auto manifestPath = sourcePath.parent_path() / (sourcePath.stem().string() + ".plutomodel");
         std::error_code manifestError;
-        if (!std::filesystem::is_regular_file(manifestPath, manifestError))
+        if (!content::IsRegularFile(manifestPath, manifestError))
         {
             // Compatibility for projects imported before model artifacts were
             // co-located with their source package.
@@ -98,13 +109,13 @@ namespace PlutoGE::assets
                            sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
         }
         const auto cacheKey = manifestPath.generic_string();
-        const auto modified = std::filesystem::last_write_time(manifestPath, manifestError);
+        const auto modified = content::LastWriteTime(manifestPath, manifestError);
         if (manifestError)
         {
             m_modelResolutionCache.erase(cacheKey);
             return {};
         }
-        const auto size = std::filesystem::file_size(manifestPath, manifestError);
+        const auto size = content::FileSize(manifestPath, manifestError);
         if (manifestError)
             return {};
         if (const auto cached = m_modelResolutionCache.find(cacheKey);
@@ -357,7 +368,7 @@ namespace PlutoGE::assets
             const std::string meshPath = ResolveAssetPath(assetReference);
             if (std::filesystem::path(meshPath).extension() == ".plutomesh")
             {
-                std::ifstream input(meshPath, std::ios::binary);
+                PlutoGE::content::InputFile input(meshPath, std::ios::binary);
                 if (input.is_open())
                 {
                     render::MeshConfig config;
@@ -366,7 +377,7 @@ namespace PlutoGE::assets
                     if (ReadGeneratedMeshAsset(input, config, materialReferences, metadata))
                     {
                         const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
-                        std::ifstream overrideInput(overridePath);
+                        PlutoGE::content::InputFile overrideInput(overridePath);
                         if (overrideInput.is_open())
                         {
                             std::vector<std::string> overrides;
@@ -458,7 +469,7 @@ namespace PlutoGE::assets
         if (m_meshMetadataCache.find(assetReference) == m_meshMetadataCache.end())
         {
             const std::string meshPath = ResolveAssetPath(assetReference);
-            std::ifstream input(meshPath, std::ios::binary);
+            PlutoGE::content::InputFile input(meshPath, std::ios::binary);
             if (input.is_open())
             {
                 render::MeshConfig ignoredConfig;
@@ -467,7 +478,7 @@ namespace PlutoGE::assets
                 if (ReadGeneratedMeshAsset(input, ignoredConfig, ignoredMaterialReferences, metadata))
                 {
                     const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
-                    std::ifstream overrideInput(overridePath);
+                    PlutoGE::content::InputFile overrideInput(overridePath);
                     if (overrideInput.is_open())
                     {
                         std::vector<std::string> overrides;
@@ -562,7 +573,7 @@ namespace PlutoGE::assets
             return true;
         }
 
-        std::ifstream input(animationPath, std::ios::binary);
+        PlutoGE::content::InputFile input(animationPath, std::ios::binary);
         if (!input.is_open())
         {
             return false;
@@ -615,7 +626,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        std::ifstream input(clipPath, std::ios::binary);
+        PlutoGE::content::InputFile input(clipPath, std::ios::binary);
         if (!input.is_open())
         {
             return false;
@@ -646,7 +657,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        std::ifstream input(animationPath);
+        PlutoGE::content::InputFile input(animationPath);
         if (!input.is_open())
         {
             return false;
@@ -1475,7 +1486,7 @@ namespace PlutoGE::assets
         }
 
         const std::string graphPath = ResolveAssetPath(assetReference);
-        std::ifstream input(graphPath);
+        PlutoGE::content::InputFile input(graphPath);
         if (!input.is_open())
         {
             return render::CreateDefaultShaderGraph();
@@ -1729,7 +1740,7 @@ namespace PlutoGE::assets
         }
 
         const std::string graphPath = ResolveAssetPath(assetReference);
-        std::ifstream input(graphPath);
+        PlutoGE::content::InputFile input(graphPath);
         if (!input.is_open())
         {
             return CreateDefaultAnimationGraphAsset();
@@ -2169,7 +2180,7 @@ namespace PlutoGE::assets
         else
         {
             const std::string materialPath = ResolveAssetPath(assetReference);
-            std::ifstream input(materialPath);
+            PlutoGE::content::InputFile input(materialPath);
             if (input.is_open())
             {
                 render::MaterialConfig config;
@@ -2487,7 +2498,7 @@ namespace PlutoGE::assets
             return CreateDefaultParticleSystemAsset();
         }
 
-        std::ifstream input(particlePath);
+        PlutoGE::content::InputFile input(particlePath);
         if (!input.is_open())
         {
             return CreateDefaultParticleSystemAsset();
@@ -2803,7 +2814,7 @@ namespace PlutoGE::assets
         const std::string path = ResolveAssetPath(assetReference);
         if (path.empty() || std::filesystem::path(path).extension() != ".plutopostprocess")
             return {};
-        std::ifstream input(path);
+        PlutoGE::content::InputFile input(path);
         std::string header;
         int version = 0;
         std::size_t effectCount = 0;
@@ -2894,7 +2905,7 @@ namespace PlutoGE::assets
     {
         // Load vertex shader source
         std::string vertexSource;
-        std::ifstream vertexFile(GetAssetPath(vertexPath));
+        PlutoGE::content::InputFile vertexFile(GetAssetPath(vertexPath));
         if (vertexFile.is_open())
         {
             std::stringstream buffer;
@@ -2910,7 +2921,7 @@ namespace PlutoGE::assets
 
         // Load fragment shader source
         std::string fragmentSource;
-        std::ifstream fragmentFile(GetAssetPath(fragmentPath));
+        PlutoGE::content::InputFile fragmentFile(GetAssetPath(fragmentPath));
         if (fragmentFile.is_open())
         {
             std::stringstream buffer;
@@ -2978,7 +2989,7 @@ namespace PlutoGE::assets
 
         // Legacy text assets stored Source= directly. Binary versions 1-3 did
         // not persist source metadata and fall through to the editor's stem lookup.
-        std::ifstream input(meshAssetPath);
+        PlutoGE::content::InputFile input(meshAssetPath);
         if (!input.is_open())
         {
             return {};
@@ -3079,6 +3090,16 @@ namespace PlutoGE::assets
         m_surfaceResponseCache.clear();
         m_projectRootDirectory = NormalizePath(projectRootDirectory);
         m_projectAssetDirectory = projectAssetDirectory.empty() ? "Assets" : projectAssetDirectory;
+        if (content::IsMounted(m_projectRootDirectory))
+        {
+            content::InputFile identities(std::filesystem::path(m_projectRootDirectory) / "PlutoAssetIds.manifest");
+            std::string line;
+            while (std::getline(identities, line))
+            {
+                const auto tab = line.find('\t');
+                if (tab != std::string::npos) m_stableIdReferenceCache[line.substr(0, tab)] = line.substr(tab + 1);
+            }
+        }
     }
 
     void AssetManager::ClearProjectContext()

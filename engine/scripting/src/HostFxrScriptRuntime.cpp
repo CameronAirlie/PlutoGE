@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
@@ -1273,7 +1274,7 @@ namespace PlutoGE::scripting
             }
 
             const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference);
-            std::ifstream input(path, std::ios::in | std::ios::binary);
+            PlutoGE::content::InputFile input(path, std::ios::in | std::ios::binary);
             if (!input.is_open())
             {
                 return assetData.c_str();

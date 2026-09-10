@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/audio/AudioSystem.h"
 
 #include <algorithm>
@@ -78,7 +79,7 @@ namespace PlutoGE::audio
 
         bool LoadWaveFile(const std::string &filePath, DecodedClip &clip)
         {
-            std::ifstream input(filePath, std::ios::binary);
+            PlutoGE::content::InputFile input(filePath, std::ios::binary);
             if (!input.is_open())
             {
                 return false;

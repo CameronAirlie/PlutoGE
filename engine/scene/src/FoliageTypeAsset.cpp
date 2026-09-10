@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/FoliageTypeAsset.h"
 
 #include <algorithm>
@@ -27,7 +28,7 @@ namespace PlutoGE::scene
 
     bool LoadFoliageTypeAsset(const std::string &path, FoliageTypeAsset &asset, std::string *errorMessage)
     {
-        std::ifstream input(path);
+        PlutoGE::content::InputFile input(path);
         std::string line;
         if (!input || !std::getline(input, line) || line != kHeader)
         {

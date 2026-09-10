@@ -8,6 +8,12 @@ param(
 
     [string] $RuntimePath,
 
+    [switch] $PruneUnused,
+
+    [string[]] $AlwaysInclude = @(),
+
+    [switch] $NoCompression,
+
     [switch] $RebuildRuntime
 )
 
@@ -60,7 +66,11 @@ if ($scriptProjectCandidates.Count -eq 1) {
 }
 
 Write-Host 'Cooking assets and assembling the game...'
-& $runtimePath --export $projectPath $outputPath
+$exportArguments = @('--export', $projectPath, $outputPath)
+if ($PruneUnused) { $exportArguments += '--prune' }
+if ($NoCompression) { $exportArguments += '--no-compression' }
+foreach ($reference in $AlwaysInclude) { $exportArguments += @('--include', $reference) }
+& $runtimePath @exportArguments
 if ($LASTEXITCODE -ne 0) { throw 'Game export failed.' }
 
 Write-Host "Game export is ready: $outputPath"

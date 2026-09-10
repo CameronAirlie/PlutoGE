@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -38,6 +40,7 @@ namespace PlutoGE
 
             ~TemporaryContentDirectory()
             {
+                content::UnmountAll();
                 if (!path.empty())
                 {
                     std::error_code errorCode;
@@ -182,7 +185,7 @@ namespace PlutoGE
 
             g_runtimeDiagnostics.Log("Scene light count: " + std::to_string(scene->GetLights().size()));
             g_runtimeDiagnostics.Log(std::string("Scene environment map: ") + (scene->GetEnvironmentMapPath().empty() ? "<none>" : scene->GetEnvironmentMapPath()));
-            g_runtimeDiagnostics.Log(std::string("Scene environment path exists: ") + (scene->GetEnvironmentMapPath().empty() ? "no" : (std::filesystem::exists(scene->GetEnvironmentMapPath()) ? "yes" : "no")));
+            g_runtimeDiagnostics.Log(std::string("Scene environment path exists: ") + (scene->GetEnvironmentMapPath().empty() ? "no" : (PlutoGE::content::Exists(scene->GetEnvironmentMapPath()) ? "yes" : "no")));
             g_runtimeDiagnostics.Log(std::string("Scene environment texture loaded: ") + (scene->GetEnvironmentMapTexture() ? "yes" : "no"));
             g_runtimeDiagnostics.Log("Scene environment intensity: " + std::to_string(scene->GetEnvironmentIntensity()));
 
@@ -237,14 +240,44 @@ namespace PlutoGE
 
 int RunRuntime(int argc, char **argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--pack-version")
+    {
+        std::cout << PlutoGE::assets::kRuntimeContentPackMarker << '\n';
+        return 0;
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--pack")
+    {
+        if (argc != 4) { std::cerr << "Usage: --pack <content directory> <output.plutopack>\n"; return 2; }
+        std::string error;
+        if (!PlutoGE::content::WritePack(argv[2], argv[3], {}, &error)) { std::cerr << error << '\n'; return 1; }
+        return 0;
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--verify-pack")
+    {
+        if (argc != 3) { std::cerr << "Usage: --verify-pack <file.plutopack>\n"; return 2; }
+        std::string error;
+        auto pack = PlutoGE::content::Pack::Open(argv[2], &error);
+        if (!pack || !pack->Verify(&error)) { std::cerr << error << '\n'; return 1; }
+        std::cout << "Verified " << pack->Files().size() << " packed files.\n";
+        return 0;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--export")
     {
-        if (argc != 4)
+        if (argc < 4)
         {
-            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable>" << std::endl;
+            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable> [--prune] [--include project://asset] [--no-compression]" << std::endl;
             return 2;
         }
 
+        PlutoGE::assets::ExportOptions exportOptions;
+        for (int i = 4; i < argc; ++i)
+        {
+            const std::string_view option(argv[i]);
+            if (option == "--prune") exportOptions.pruneUnused = true;
+            else if (option == "--no-compression") exportOptions.compress = false;
+            else if (option == "--include" && i + 1 < argc) exportOptions.alwaysInclude.emplace_back(argv[++i]);
+            else { std::cerr << "Unknown or incomplete export option: " << option << '\n'; return 2; }
+        }
         std::string exportError;
         const auto sourceProject = PlutoGE::assets::Project::Load(std::filesystem::path(argv[2]), &exportError);
         if (!sourceProject)
@@ -257,7 +290,7 @@ int RunRuntime(int argc, char **argv)
         if (!PlutoGE::assets::ExportStandaloneProject(*sourceProject,
                                                        std::filesystem::path(argv[3]),
                                                        exporterExecutable,
-                                                       &exportError))
+                                                       &exportError, exportOptions))
         {
             std::cerr << (exportError.empty() ? "Failed to export the game." : exportError) << std::endl;
             return 1;
@@ -352,12 +385,40 @@ int RunRuntime(int argc, char **argv)
             const auto temporaryRoot = std::filesystem::temp_directory_path(temporaryError);
             const auto uniqueName = executablePath.stem().string() + "-" +
                                     std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
-            temporaryContent.path = temporaryRoot / "PlutoGE" / "Content" / uniqueName;
+            const auto candidate = temporaryRoot / "PlutoGE" / "Content" / uniqueName;
+            if (!temporaryError) std::filesystem::create_directories(candidate.parent_path(), temporaryError);
+            if (temporaryError || !std::filesystem::create_directory(candidate, temporaryError))
+            {
+                std::cerr << "Cannot reserve runtime content directory: " << temporaryError.message() << '\n';
+                return 1;
+            }
+            temporaryContent.path = candidate;
             std::string unpackError;
-            if (temporaryError || !PlutoGE::assets::ExtractStandaloneProjectContent(contentPackPath, temporaryContent.path, &unpackError))
+            if (temporaryError || !PlutoGE::content::Mount(contentPackPath, temporaryContent.path, &unpackError))
             {
                 std::cerr << (unpackError.empty() ? "Failed to mount the game content pack." : unpackError) << std::endl;
                 return 1;
+            }
+            // Explicit ordered list avoids silently mounting arbitrary sidecar archives.
+            auto mountsPath = executablePath; mountsPath.replace_extension(".plutomounts");
+            std::ifstream mounts(mountsPath);
+            std::string packName;
+            while (std::getline(mounts, packName))
+            {
+                if (!packName.empty() && packName.back() == '\r') packName.pop_back();
+                if (packName.empty() || packName.front() == '#') continue;
+                const auto relative = std::filesystem::u8path(packName);
+                if (relative.has_parent_path() || relative.is_absolute() || relative.extension() != ".plutopack" ||
+                    !PlutoGE::content::Mount(executablePath.parent_path() / relative, temporaryContent.path, &unpackError))
+                { std::cerr << "Cannot mount patch pack " << packName << ": " << unpackError << '\n'; return 1; }
+            }
+            // Managed runtime dependencies require disk paths; normal game assets do not.
+            for (const auto &path : PlutoGE::content::Files(temporaryContent.path))
+            {
+                auto extension = path.extension().string();
+                std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (extension == ".dll" || extension == ".pdb" || path.filename().string().ends_with(".deps.json") || path.filename().string().ends_with(".runtimeconfig.json"))
+                    if (!PlutoGE::content::Materialize(path, &unpackError)) { std::cerr << unpackError << '\n'; return 1; }
             }
             manifestPath = temporaryContent.path / PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath).filename();
         }

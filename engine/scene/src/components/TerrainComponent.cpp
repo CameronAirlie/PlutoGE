@@ -1,3 +1,5 @@
+#include "PlutoGE/platform/ContentPack.h"
+#include <climits>
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/render/Texture.h"
 
@@ -333,7 +335,14 @@ namespace PlutoGE::scene
         int width = 0;
         int height = 0;
         int channels = 0;
-        unsigned char *pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 1);
+        std::string packedBytes;
+        unsigned char *pixels = nullptr;
+        if (content::IsMounted(resolvedPath))
+        {
+            if (content::ReadFile(resolvedPath, packedBytes) && packedBytes.size() <= INT_MAX)
+                pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(packedBytes.data()), static_cast<int>(packedBytes.size()), &width, &height, &channels, 1);
+        }
+        else pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 1);
         if (!pixels || width <= 1 || height <= 1)
         {
             if (pixels)

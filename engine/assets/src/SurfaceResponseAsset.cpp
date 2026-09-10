@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/assets/AssetManager.h"
 
@@ -97,7 +98,7 @@ namespace PlutoGE::assets
             if (loaded) *loaded = found->second.first;
             return found->second.second;
         }
-        std::ifstream input(ResolveAssetPath(reference));
+        PlutoGE::content::InputFile input(ResolveAssetPath(reference));
         SurfaceResponseAsset asset;
         const bool success = ReadSurfaceResponseAsset(input, asset);
         m_surfaceResponseCache[reference] = {success, asset};

@@ -9,6 +9,7 @@ target_include_directories(PlutoGEAudio PUBLIC
 )
 
 target_link_libraries(PlutoGEAudio PUBLIC
+    PlutoGE::Content
     PlutoGE::glm
     PlutoGE::openal_soft
 )

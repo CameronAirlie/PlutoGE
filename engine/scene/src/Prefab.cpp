@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 
@@ -504,7 +505,7 @@ namespace PlutoGE::scene
         }
         bool ReadVariant(const std::string &path, VariantData &data)
         {
-            std::ifstream input(path);
+            PlutoGE::content::InputFile input(path);
             std::string header;
             std::getline(input, header);
             if (!header.empty() && header.back() == '\r') header.pop_back();

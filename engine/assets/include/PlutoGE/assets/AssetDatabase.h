@@ -45,6 +45,8 @@ namespace PlutoGE::assets
     {
         bool includeSourceAssets = false;
         bool includeUnreferencedAssets = true;
+        // Additional dependency roots for scenes/content selected by script.
+        std::vector<std::string> alwaysInclude;
     };
 
     bool CookProjectContent(Project &project,

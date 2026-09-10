@@ -158,8 +158,18 @@ namespace PlutoGE::assets
                                          const std::filesystem::path &destinationDirectory,
                                          std::string *errorMessage = nullptr);
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot);
+    // Embedded capability metadata: require a matching reader before exporting.
+    inline constexpr std::string_view kRuntimeContentPackMarker = "PLUTOGE_RUNTIME_CONTENT_PACK_VERSION=2";
+    bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath);
+    struct ExportOptions
+    {
+        bool compress = true;
+        bool pruneUnused = false;
+        std::vector<std::string> alwaysInclude;
+    };
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,
                                  const std::filesystem::path &runtimeExecutablePath,
-                                 std::string *errorMessage = nullptr);
+                                 std::string *errorMessage = nullptr,
+                                 const ExportOptions &options = {});
 }

@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 
@@ -35,9 +36,6 @@ namespace PlutoGE::assets
         constexpr int kProjectVersion = 1;
         constexpr int kRuntimeSearchAncestorLimit = 8;
         constexpr std::string_view kBundledDotnetRuntimeDirectory = "DotnetRuntime";
-        constexpr std::string_view kContentPackMagic = "PLUTOPK1";
-        constexpr std::uint32_t kContentPackVersion = 1;
-        constexpr std::uint8_t kContentPackXorKey = 0xA7;
 
         std::filesystem::path NormalizeAbsolutePath(const std::filesystem::path &path)
         {
@@ -241,7 +239,7 @@ namespace PlutoGE::assets
                 }
 
                 const auto path = iterator->path();
-                if (path.filename() != runtimeFilePath)
+                if (path.filename() != runtimeFilePath || !IsRuntimeContentPackCompatible(path))
                 {
                     continue;
                 }
@@ -535,109 +533,6 @@ namespace PlutoGE::assets
             return true;
         }
 
-        template <typename Value>
-        bool WritePackValue(std::ostream &output, Value value)
-        {
-            output.write(reinterpret_cast<const char *>(&value), sizeof(Value));
-            return output.good();
-        }
-
-        template <typename Value>
-        bool ReadPackValue(std::istream &input, Value &value)
-        {
-            input.read(reinterpret_cast<char *>(&value), sizeof(Value));
-            return input.good();
-        }
-
-        bool TransferPackBytes(std::istream &input, std::ostream &output, std::uint64_t byteCount)
-        {
-            std::array<char, 64 * 1024> buffer{};
-            while (byteCount > 0)
-            {
-                const auto chunkSize = static_cast<std::streamsize>((std::min)(byteCount, static_cast<std::uint64_t>(buffer.size())));
-                input.read(buffer.data(), chunkSize);
-                if (input.gcount() != chunkSize)
-                {
-                    return false;
-                }
-                for (std::streamsize index = 0; index < chunkSize; ++index)
-                {
-                    buffer[static_cast<std::size_t>(index)] = static_cast<char>(
-                        static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(index)]) ^ kContentPackXorKey);
-                }
-                output.write(buffer.data(), chunkSize);
-                if (!output.good())
-                {
-                    return false;
-                }
-                byteCount -= static_cast<std::uint64_t>(chunkSize);
-            }
-            return true;
-        }
-
-        bool CreateContentPack(const std::filesystem::path &sourceDirectory,
-                               const std::filesystem::path &contentPackPath,
-                               std::string *errorMessage)
-        {
-            std::vector<std::filesystem::path> files;
-            std::error_code errorCode;
-            for (std::filesystem::recursive_directory_iterator iterator(sourceDirectory, errorCode), end; iterator != end; iterator.increment(errorCode))
-            {
-                if (errorCode)
-                {
-                    SetError(errorMessage, "Failed to enumerate cooked content for packing.");
-                    return false;
-                }
-                if (iterator->is_regular_file())
-                {
-                    files.push_back(iterator->path());
-                }
-            }
-            std::sort(files.begin(), files.end());
-            if (files.size() > (std::numeric_limits<std::uint32_t>::max)())
-            {
-                SetError(errorMessage, "The project contains too many files for the content pack.");
-                return false;
-            }
-
-            std::ofstream output(contentPackPath, std::ios::binary | std::ios::trunc);
-            output.write(kContentPackMagic.data(), static_cast<std::streamsize>(kContentPackMagic.size()));
-            if (!WritePackValue(output, kContentPackVersion) || !WritePackValue(output, static_cast<std::uint32_t>(files.size())))
-            {
-                SetError(errorMessage, "Failed to create the content pack header.");
-                return false;
-            }
-
-            for (const auto &file : files)
-            {
-                const auto relativePath = PathToGenericUtf8String(std::filesystem::relative(file, sourceDirectory));
-                const auto fileSize = std::filesystem::file_size(file, errorCode);
-                if (errorCode || relativePath.empty() || relativePath.size() > (std::numeric_limits<std::uint32_t>::max)())
-                {
-                    SetError(errorMessage, "Failed to index cooked content: " + PathToUtf8String(file));
-                    return false;
-                }
-                const auto pathLength = static_cast<std::uint32_t>(relativePath.size());
-                if (!WritePackValue(output, pathLength) || !WritePackValue(output, static_cast<std::uint64_t>(fileSize)))
-                {
-                    SetError(errorMessage, "Failed to write the content pack index.");
-                    return false;
-                }
-                std::string encodedPath = relativePath;
-                for (char &character : encodedPath)
-                {
-                    character = static_cast<char>(static_cast<std::uint8_t>(character) ^ kContentPackXorKey);
-                }
-                output.write(encodedPath.data(), static_cast<std::streamsize>(encodedPath.size()));
-                std::ifstream input(file, std::ios::binary);
-                if (!input.is_open() || !TransferPackBytes(input, output, fileSize))
-                {
-                    SetError(errorMessage, "Failed to pack cooked content: " + PathToUtf8String(file));
-                    return false;
-                }
-            }
-            return output.good();
-        }
     }
 
     Project::Project(std::filesystem::path manifestPath, ProjectManifest manifest)
@@ -709,7 +604,7 @@ namespace PlutoGE::assets
                                            std::string *errorMessage)
     {
         const auto normalizedManifestPath = NormalizeAbsolutePath(manifestPath);
-        std::ifstream input(normalizedManifestPath);
+        content::InputFile input(normalizedManifestPath);
         if (!input.is_open())
         {
             SetError(errorMessage, "Failed to open project manifest for reading.");
@@ -1333,10 +1228,10 @@ namespace PlutoGE::assets
         if (GetAssetTypeForReference(requested) == ProjectAssetType::Scene)
         {
             if (IsProjectAssetReference(requested))
-                return std::filesystem::exists(ResolveAssetReference(requested)) ? requested : std::string{};
+                return content::Exists(ResolveAssetReference(requested)) ? requested : std::string{};
             const std::filesystem::path requestedPath(requested);
             if (requestedPath.is_absolute())
-                return std::filesystem::exists(requestedPath) ? requestedPath.lexically_normal().string() : std::string{};
+                return content::Exists(requestedPath) ? requestedPath.lexically_normal().string() : std::string{};
         }
 
         std::filesystem::path requestedPath(requested);
@@ -1389,52 +1284,24 @@ namespace PlutoGE::assets
                                          const std::filesystem::path &destinationDirectory,
                                          std::string *errorMessage)
     {
-        std::ifstream input(contentPackPath, std::ios::binary);
-        std::array<char, 8> magic{};
-        input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
-        std::uint32_t version = 0;
-        std::uint32_t fileCount = 0;
-        if (!input.good() || std::string_view(magic.data(), magic.size()) != kContentPackMagic ||
-            !ReadPackValue(input, version) || version != kContentPackVersion || !ReadPackValue(input, fileCount))
-        {
-            SetError(errorMessage, "The game content pack is invalid or unsupported.");
-            return false;
-        }
+        const auto pack = content::Pack::Open(contentPackPath, errorMessage);
+        return pack && pack->ExtractTo(destinationDirectory, errorMessage);
+    }
 
-        const auto normalizedDestination = NormalizeAbsolutePath(destinationDirectory);
-        for (std::uint32_t fileIndex = 0; fileIndex < fileCount; ++fileIndex)
+    bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath)
+    {
+        std::ifstream input(runtimeExecutablePath, std::ios::binary);
+        std::array<char, 64 * 1024> buffer{};
+        std::string window;
+        while (input)
         {
-            std::uint32_t pathLength = 0;
-            std::uint64_t fileSize = 0;
-            if (!ReadPackValue(input, pathLength) || !ReadPackValue(input, fileSize) || pathLength == 0 || pathLength > 1024 * 1024)
-            {
-                SetError(errorMessage, "The game content pack index is damaged.");
-                return false;
-            }
-            std::string relativePath(pathLength, '\0');
-            input.read(relativePath.data(), static_cast<std::streamsize>(pathLength));
-            for (char &character : relativePath)
-            {
-                character = static_cast<char>(static_cast<std::uint8_t>(character) ^ kContentPackXorKey);
-            }
-            const std::filesystem::path relative(relativePath);
-            const auto normalizedRelativePath = relative.lexically_normal().generic_string();
-            if (!input.good() || relative.is_absolute() || normalizedRelativePath == ".." || normalizedRelativePath.rfind("../", 0) == 0)
-            {
-                SetError(errorMessage, "The game content pack contains an unsafe path.");
-                return false;
-            }
-            const auto outputPath = (normalizedDestination / relative).lexically_normal();
-            std::error_code errorCode;
-            std::filesystem::create_directories(outputPath.parent_path(), errorCode);
-            std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
-            if (errorCode || !output.is_open() || !TransferPackBytes(input, output, fileSize))
-            {
-                SetError(errorMessage, "Failed to unpack game content: " + PathToUtf8String(outputPath));
-                return false;
-            }
+            input.read(buffer.data(), buffer.size());
+            window.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
+            if (window.find(kRuntimeContentPackMarker) != std::string::npos) return true;
+            if (window.size() >= kRuntimeContentPackMarker.size())
+                window.erase(0, window.size() - (kRuntimeContentPackMarker.size() - 1));
         }
-        return true;
+        return false;
     }
 
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot)
@@ -1463,12 +1330,20 @@ namespace PlutoGE::assets
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,
                                  const std::filesystem::path &runtimeExecutablePath,
-                                 std::string *errorMessage)
+                                 std::string *errorMessage,
+                                 const ExportOptions &options)
     {
         const auto normalizedRuntimeExecutablePath = NormalizeAbsolutePath(runtimeExecutablePath);
         if (!std::filesystem::exists(normalizedRuntimeExecutablePath))
         {
             SetError(errorMessage, "Runtime executable was not found: " + PathToUtf8String(normalizedRuntimeExecutablePath));
+            return false;
+        }
+
+        if (!IsRuntimeContentPackCompatible(normalizedRuntimeExecutablePath))
+        {
+            SetError(errorMessage, "The selected runtime does not advertise support for this content pack version. Rebuild PlutoGERuntime and export again: " +
+                                   PathToUtf8String(normalizedRuntimeExecutablePath));
             return false;
         }
 
@@ -1534,7 +1409,10 @@ namespace PlutoGE::assets
         }
         const auto exportedAssetDirectory = stagingDirectory / project.GetManifest().assetDirectory;
         Project cookProject(project.GetManifestPath(), project.GetManifest());
-        if (!CookProjectContent(cookProject, exportedAssetDirectory, {}, errorMessage))
+        CookOptions cookOptions;
+        cookOptions.includeUnreferencedAssets = !options.pruneUnused;
+        cookOptions.alwaysInclude = options.alwaysInclude;
+        if (!CookProjectContent(cookProject, exportedAssetDirectory, cookOptions, errorMessage))
         {
             return false;
         }
@@ -1547,7 +1425,7 @@ namespace PlutoGE::assets
         }
 
         const auto contentPackPath = GetRuntimeContentPackPathForExecutable(normalizedDestinationExecutablePath);
-        if (!CreateContentPack(stagingDirectory, contentPackPath, errorMessage))
+        if (!content::WritePack(stagingDirectory, contentPackPath, {.compress = options.compress}, errorMessage))
         {
             std::filesystem::remove_all(stagingDirectory, errorCode);
             return false;

@@ -110,3 +110,24 @@ deserializer would corrupt those scenes. New screen-space UI should use RmlUi.
 - The official GL3 backend supports RmlUi's advanced rendering features, but
   visual regression coverage still needs to be added.
 - Input consumption is not yet fed back into PlutoGE gameplay controls.
+
+## RHI UI antialiasing
+
+The shared Vulkan/OpenGL RHI RmlUi renderer defaults to 2x supersampling per
+axis. It renders native borders, backgrounds, images and text into a transparent
+RGBA8 target, then bilinearly downsamples and composites with premultiplied alpha.
+RCSS dimensions, hit testing and the scene rendering resolution stay unchanged.
+The clip rectangles scale with the offscreen viewport. The target is reused
+between frames and recreated on resize; it is cleared every frame.
+
+This is four-sample SSAA, not hardware MSAA. It uses four times the UI pixel
+work plus one fullscreen composite, and one extra RGBA8 target (about 32 MiB at
+1920x1080). Dimensions above 4096 on either output axis use the original native
+resolution path to bound allocations. `RmlUiRhiRenderer::SetAntialiasingEnabled`
+can disable supersampling for profiling or low-memory integrations. This does
+not change the separate legacy GL3 backend or add RHI multisample/resolve APIs.
+
+`PlutoGERmlUiAntialiasingTests` exercises a native RCSS rounded border on Vulkan
+and, with `--opengl`, OpenGL. Pixel readbacks check increased fractional edge
+coverage, transparent compositing, clipping, resize, shared submissions and
+clearing hidden UI.

@@ -97,6 +97,12 @@ namespace PlutoGE::render
         m_whiteTexture->resource = rhi::Texture(device, device.CreateTexture(
             {1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "RmlUi white", true, 1, false, 1},
             white));
+        const std::array<RhiVertex, 6> quad{{
+            {{0,0}, {1,1,1,1}, {0,1}}, {{1,0}, {1,1,1,1}, {1,1}},
+            {{1,1}, {1,1,1,1}, {1,0}}, {{0,0}, {1,1,1,1}, {0,1}},
+            {{1,1}, {1,1,1,1}, {1,0}}, {{0,1}, {1,1,1,1}, {0,0}}}};
+        m_compositeVertices = rhi::Buffer(device, device.CreateBuffer(
+            {sizeof(quad), rhi::BufferUsage::Vertex, "RmlUi composite vertices"}, Bytes(quad)));
         SetTransform(nullptr);
     }
 
@@ -116,14 +122,32 @@ namespace PlutoGE::render
         auto &commands = m_device->GetImmediateContext();
         if (beginSubmission)
             commands.BeginFrame("Runtime UI");
+        m_outputTarget = target;
+        m_renderScale = 1;
+        // Bound the allocation at very large display sizes. Target reuse avoids
+        // allocating UI textures every frame; the device retires resized targets.
+        if (m_antialiasingEnabled && m_compositeVertices && m_width <= 4096 && m_height <= 4096)
+        {
+            if (!m_uiTarget || m_targetWidth != m_width * 2 || m_targetHeight != m_height * 2)
+            {
+                m_uiTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {static_cast<std::uint32_t>(m_width * 2), static_cast<std::uint32_t>(m_height * 2),
+                     rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment,
+                     "RmlUi antialiasing", true, 1, false, 1}));
+                m_targetWidth = m_width * 2;
+                m_targetHeight = m_height * 2;
+            }
+            if (m_uiTarget) m_renderScale = 2;
+        }
         rhi::RenderingInfo info;
-        info.colorAttachments = {target};
-        info.width = static_cast<std::uint32_t>(m_width);
-        info.height = static_cast<std::uint32_t>(m_height);
-        info.clearColor = false;
+        info.colorAttachments = {m_renderScale == 2 ? m_uiTarget.Get() : target};
+        info.width = static_cast<std::uint32_t>(m_width * m_renderScale);
+        info.height = static_cast<std::uint32_t>(m_height * m_renderScale);
+        info.clearColor = m_renderScale == 2;
+        info.clearColorValue[3] = 0;
         info.clearDepth = false;
         commands.BeginRendering(info);
-        commands.SetViewport({0, 0, static_cast<float>(m_width), static_cast<float>(m_height), 0, 1});
+        commands.SetViewport({0, 0, static_cast<float>(info.width), static_cast<float>(info.height), 0, 1});
         m_parameterCursor = 0;
         m_frameActive = true;
         ApplyScissor();
@@ -135,6 +159,33 @@ namespace PlutoGE::render
             return;
         auto &commands = m_device->GetImmediateContext();
         commands.EndRendering();
+        if (m_renderScale == 2)
+        {
+            rhi::RenderingInfo composite;
+            composite.colorAttachments = {m_outputTarget};
+            composite.width = static_cast<std::uint32_t>(m_width);
+            composite.height = static_cast<std::uint32_t>(m_height);
+            composite.clearColor = composite.clearDepth = false;
+            // Binding performs the attachment-to-sampled layout transition on
+            // Vulkan, so it must happen outside the dynamic rendering scope.
+            commands.BindPipeline(m_pipeline.Get());
+            commands.BindTexture(8, m_uiTarget.Get(), m_sampler.Get());
+            commands.BeginRendering(composite);
+            commands.SetViewport({0, 0, static_cast<float>(m_width), static_cast<float>(m_height), 0, 1});
+            commands.SetScissor({0, 0, composite.width, composite.height});
+            Parameters parameters{Rml::Matrix4f::ProjectOrtho(0, 1, 1, 0, -1, 1), {0,0},
+                                  m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f, 0};
+            auto &buffer = AcquireParameterBuffer();
+            m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
+            commands.BindPipeline(m_pipeline.Get());
+            commands.BindVertexBuffer(m_compositeVertices.Get());
+            commands.BindUniformBuffer(0, buffer.Get());
+            // Bilinear sampling at each output pixel averages exactly 2x2
+            // source samples. Both source and blend state are premultiplied,
+            // preserving transparent edges without dark fringes or scene blur.
+            commands.Draw(6);
+            commands.EndRendering();
+        }
         if (submit)
             commands.Submit();
         m_frameActive = false;
@@ -304,6 +355,10 @@ namespace PlutoGE::render
             scissor = {left, m_height - bottom, static_cast<std::uint32_t>(right - left),
                        static_cast<std::uint32_t>(bottom - top)};
         }
+        scissor.x *= m_renderScale;
+        scissor.y *= m_renderScale;
+        scissor.width *= m_renderScale;
+        scissor.height *= m_renderScale;
         m_device->GetImmediateContext().SetScissor(scissor);
     }
 }

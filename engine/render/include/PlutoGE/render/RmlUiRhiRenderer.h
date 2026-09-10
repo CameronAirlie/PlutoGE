@@ -24,6 +24,9 @@ namespace PlutoGE::render
 
         explicit operator bool() const noexcept { return static_cast<bool>(m_pipeline); }
         void SetViewport(int width, int height);
+        // 2x per axis (four coverage samples), filtered back to native size.
+        // Layout, input coordinates and scene resolution remain unchanged.
+        void SetAntialiasingEnabled(bool enabled) { m_antialiasingEnabled = enabled; }
         // The flags are false when UI is appended to an already active scene frame.
         void BeginFrame(rhi::TextureHandle target, bool beginSubmission = true);
         void EndFrame(bool submit = true);
@@ -51,6 +54,12 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::Sampler m_sampler;
+        rhi::Texture m_uiTarget;
+        rhi::Buffer m_compositeVertices;
+        rhi::TextureHandle m_outputTarget;
+        int m_targetWidth = 0, m_targetHeight = 0;
+        int m_renderScale = 1;
+        bool m_antialiasingEnabled = true;
         std::unique_ptr<Texture> m_whiteTexture;
         std::vector<rhi::Buffer> m_parameterBuffers;
         std::size_t m_parameterCursor = 0;

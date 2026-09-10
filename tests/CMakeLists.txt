@@ -456,3 +456,14 @@ add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --t
 
 add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
+
+add_executable(PlutoGERmlUiAntialiasingTests RmlUiAntialiasingTests.cpp)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>" PlutoGE::Platform)
+else()
+    target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+endif()
+target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+add_test(NAME PlutoGEVulkanUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests)
+add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests --opengl)

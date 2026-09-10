@@ -462,10 +462,17 @@ namespace PlutoGE::render
         if (scene)
         {
             effectiveLighting.pointLights.clear();
+            effectiveLighting.spotLights.clear();
             for (const auto *light : scene->GetLights())
-                if (light && light->type == scene::LightType::Point && light->intensity > 0 && light->range > 0)
-                    effectiveLighting.pointLights.push_back(
-                        {light->position, light->range, light->color, light->intensity, light->castsShadows});
+            {
+                if (!light || light->intensity <= 0 || light->range <= 0) continue;
+                const BasicPointLight local{light->position, light->range, light->color,
+                                            light->intensity, light->castsShadows};
+                if (light->type == scene::LightType::Point)
+                    effectiveLighting.pointLights.push_back(local);
+                else if (light->type == scene::LightType::Spot)
+                    effectiveLighting.spotLights.push_back({local, light->direction});
+            }
         }
         // Camera-relative lighting consumers (surface cascade selection,
         // volumetric fog, and voxel injection) must use the camera passed to

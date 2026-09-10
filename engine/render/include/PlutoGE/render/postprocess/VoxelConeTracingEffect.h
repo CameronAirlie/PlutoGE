@@ -39,6 +39,7 @@ namespace PlutoGE::render
             float historyDepthThreshold = 0.25f;
             float historyNormalThreshold = 0.9f;
             bool injectLocalLights = false;
+            float localLightBounce = 1.0f;
             bool indirectOnly = false;
             bool worldCache = true;
             float cacheSize = 432.0f;
@@ -199,6 +200,7 @@ namespace PlutoGE::render
         bool m_hasPreviousCameraPosition = false;
         bool m_volumeChangedThisFrame = false;
         bool m_injectLocalLights = false;
+        float m_localLightBounce = 1.0f;
         bool m_indirectOnly = false;
     };
 }

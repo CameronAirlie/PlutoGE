@@ -280,6 +280,9 @@ namespace PlutoGE::render
     struct BasicLighting
     {
         std::vector<BasicPointLight> pointLights;
+        // Spot sources for voxel GI; direct surface lighting has its own light path.
+        struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; };
+        std::vector<SpotLight> spotLights;
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
@@ -331,6 +334,7 @@ namespace PlutoGE::render
         // This keeps the GPU ABI stable while new single-input passes are added.
         // SSR reserves lane 4.xyz for its internal trace/resolve passes; set
         // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
+        // VCT uses lane 2.z for trace divisor and lane 4.w for local injection.
         std::array<glm::vec4, 6> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
@@ -522,6 +526,7 @@ namespace PlutoGE::render
             std::uint64_t lastUpdateFrame = 0;
             std::vector<BasicDraw> pendingDraws;
             BasicLighting pendingLighting;
+            bool pendingInjectLocalLights = false;
             glm::mat4 pendingShadowMatrix{1.0f};
             std::size_t nextShadowDraw = 0;
             std::uint32_t nextShadowIndex = 0;
@@ -533,6 +538,7 @@ namespace PlutoGE::render
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
         rhi::Texture m_vctShadowDepth, m_vctShadowColor;
         rhi::Texture m_vctTraceTarget;
+        std::uint32_t m_vctTraceWidth = 0, m_vctTraceHeight = 0;
         rhi::Texture m_vctCompositeTarget;
         std::array<rhi::Texture, 2> m_vctHistoryTargets;
         std::array<rhi::Texture, 2> m_vctMetadataTargets;

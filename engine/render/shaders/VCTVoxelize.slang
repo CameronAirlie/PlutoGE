@@ -1,5 +1,6 @@
 #include "VCTCoverage.slang"
 
+struct LocalLight { float4 positionRange; float4 colorIntensity; float4 directionSpot; };
 struct VoxelParameters
 {
     float3 volumeOrigin;
@@ -18,6 +19,8 @@ struct VoxelParameters
     float shadowDepthBias;
     float4 shadowInverseResolutions[4];
     float4 shadowCascadeParameters;
+    uint4 localLightCount;
+    LocalLight localLights[16];
 };
 struct ObjectParameters { column_major float4x4 model; };
 struct MaterialParameters
@@ -201,6 +204,19 @@ void fragmentMain(GeometryOutput input)
         direct = voxel.lightColor.rgb * voxel.lightDirectionIntensity.w *
                  max(dot(normal, normalize(-voxel.lightDirectionIntensity.xyz)), 0.0) *
                  evaluateShadow(input.worldPosition);
+    for (uint i = 0; i < min(voxel.localLightCount.x, 16u); ++i)
+    {
+        const LocalLight light = voxel.localLights[i];
+        const float3 toLight = light.positionRange.xyz - input.worldPosition;
+        const float distance = length(toLight);
+        if (distance >= light.positionRange.w) continue;
+        const float3 direction = toLight / max(distance, 0.0001);
+        float attenuation = saturate(1.0 - distance / max(light.positionRange.w, 0.0001));
+        attenuation *= attenuation;
+        if (light.directionSpot.w > 0.5)
+            attenuation *= smoothstep(0.9, 0.975, dot(-direction, normalize(light.directionSpot.xyz)));
+        direct += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * max(dot(normal, direction), 0.0);
+    }
     float metallic = saturate(material.metallic);
     if (material.hasMetallicTexture != 0)
     {

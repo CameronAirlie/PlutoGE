@@ -35,9 +35,45 @@ float3 decodeOctahedron(float2 encoded)
     if (normal.z < 0) normal.xy = (1.0 - abs(normal.yx)) * signNotZero(normal.xy);
     return normalize(normal);
 }
+// Reconstruct low-resolution irradiance using the geometry at each trace texel.
+float3 sampleCurrent(float2 uv)
+{
+    uint width, height;
+    currentIndirect.GetDimensions(width, height);
+    const float2 size = float2(width, height);
+    if (all(abs(size * pass.inverseResolution - 1.0) < 0.001))
+        return currentIndirect.Sample(uv).rgb;
+    const float depth = depthTexture.Sample(uv).r;
+    if (depth <= 0.000001) return 0.0;
+    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
+    const float viewDepth = max(-mul(pass.view, float4(position, 1)).z, 0.0);
+    const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
+    const float2 pixel = uv * size - 0.5;
+    const float2 base = floor(pixel), fraction = frac(pixel);
+    float3 sum = 0.0;
+    float weights = 0.0;
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
+    {
+        const float2 tap = clamp((base + float2(x,y) + 0.5) / size, 0.5 / size, 1.0 - 0.5 / size);
+        const float tapDepth = depthTexture.Sample(tap).r;
+        if (tapDepth <= 0.000001) continue;
+        const float3 tapPosition = reconstructWorldPosition(tap, tapDepth, pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
+        // Plane distance accepts sloped surfaces whose view depth changes
+        // rapidly across a coarse texel, while rejecting separate surfaces.
+        const float planeDistance = abs(dot(tapPosition - position, normal));
+        const float similarity = pow(saturate(dot(normal, decodeNormal(normalTexture.Sample(tap).xyz))), 16.0);
+        const float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) *
+            (y == 0 ? 1.0 - fraction.y : fraction.y) * similarity *
+            exp(-planeDistance / max(0.05, viewDepth * 0.02));
+        sum += currentIndirect.Sample(tap).rgb * weight;
+        weights += weight;
+    }
+    return weights > 0.00001 ? sum / weights : 0.0;
+}
 float4 resolveIndirect(float2 uv)
 {
-    float3 current = currentIndirect.Sample(uv).rgb;
+    float3 current = sampleCurrent(uv);
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return float4(current, 0.0);
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,

@@ -4157,7 +4157,8 @@ namespace PlutoGE::ui
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 
-            core::CpuScope presentScope("Present / VSync", core::CpuCategory::Wait);
+            // Presentation includes GPU submission-fence waits even with VSync off.
+            core::CpuScope presentScope("Present / swap", core::CpuCategory::Wait);
             const auto presentStart = std::chrono::high_resolution_clock::now();
             frameTimingStats.vSyncEnabled = m_engine.IsVSyncEnabled();
             if (vulkanEditorHost)

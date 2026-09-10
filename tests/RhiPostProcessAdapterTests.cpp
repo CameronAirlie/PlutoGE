@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
@@ -27,6 +28,21 @@ namespace
 int main()
 {
     using namespace PlutoGE::render;
+
+    VoxelConeTracingEffect vct;
+    for (const bool enabled : {false, true})
+    {
+        vct.ApplyParameters({{.name = "Inject Local Lights", .type = PostProcessParameterType::Bool,
+                              .value = enabled ? "true" : "false"}});
+        const auto packet = AdaptPostProcessEffect(vct);
+        if (!packet || !Near(packet->parameters[4].w, enabled ? 1.0f : 0.0f) ||
+            !Near(packet->parameters[2].z, float(vct.GetSettings().traceResolutionDivisor)))
+            return 99;
+    }
+
+    vct.ApplyParameters({{.name = "Local Light Bounce", .type = PostProcessParameterType::Float, .value = "3"}});
+    if (!Near(AdaptPostProcessEffect(vct)->parameters[5].x, 2.0f) ||
+        !Near(vct.GetSettings().localLightBounce, 3.0f)) return 100;
 
     ToneMappingEffect toneMapping(1.7f, 2.0f);
     const auto tonePacket = AdaptPostProcessEffect(toneMapping);

@@ -230,6 +230,7 @@ namespace PlutoGE::render
             {"Cone Count", PostProcessParameterType::Int, std::to_string(m_coneCount)},
             {"Trace Quality", PostProcessParameterType::Enum, std::to_string(m_traceResolutionDivisor == 4 ? 0 : 1), {"Balanced", "High"}},
             {"Inject Local Lights", PostProcessParameterType::Bool, m_injectLocalLights ? "true" : "false"},
+            {"Local Light Bounce", PostProcessParameterType::Float, std::to_string(m_localLightBounce)},
             {"Voxelization LOD Bias", PostProcessParameterType::Int, std::to_string(m_voxelizationLodBias)},
             {"Voxelization Command Budget", PostProcessParameterType::Int, std::to_string(m_voxelizationCommandBudget)},
             {"Cone Aperture", PostProcessParameterType::Float, std::to_string(m_aperture)},
@@ -263,6 +264,7 @@ namespace PlutoGE::render
                 .historyDepthThreshold = m_historyDepthThreshold,
                 .historyNormalThreshold = m_historyNormalThreshold,
                 .injectLocalLights = m_injectLocalLights,
+                .localLightBounce = m_localLightBounce,
                 .indirectOnly = m_indirectOnly,
                 .worldCache = m_worldCache, .cacheSize = m_cacheSize, .cacheUpdates = m_cacheUpdates};
     }
@@ -331,6 +333,23 @@ namespace PlutoGE::render
                 if (nextDivisor != m_traceResolutionDivisor)
                 {
                     m_traceResolutionDivisor = nextDivisor;
+                    ResetHistory();
+                }
+            }
+            else if (p.name == "Local Light Bounce")
+            {
+                const float next = std::clamp(std::stof(p.value), 0.0f, 16.0f);
+                if (next != m_localLightBounce)
+                {
+                    m_localLightBounce = next;
+                    for (auto &cascade : m_cascades)
+                    {
+                        cascade.hasVolume = false;
+                        cascade.rebuildInProgress = false;
+                        cascade.lastVoxelizedFrame = ~0ull;
+                        cascade.jobs.clear();
+                    }
+                    m_lastContentCheckFrame = ~0ull;
                     ResetHistory();
                 }
             }
@@ -803,7 +822,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.pendingLocalLightPositions[lightIndex] = light->position;
                 cascade.pendingLocalLightDirections[lightIndex] = light->direction;
                 cascade.pendingLocalLightColors[lightIndex] = light->color;
-                cascade.pendingLocalLightIntensities[lightIndex] = light->intensity;
+                cascade.pendingLocalLightIntensities[lightIndex] = light->intensity * m_localLightBounce;
                 cascade.pendingLocalLightRanges[lightIndex] = light->range;
             }
         }

@@ -138,6 +138,7 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicPostProcessParameters) == 400);
 
+        struct VctLocalLight { glm::vec4 positionRange{}, colorIntensity{}, directionSpot{}; };
         struct alignas(16) VctVoxelParameters
         {
             glm::vec3 volumeOrigin{0.0f}; float volumeSize = 1.0f;
@@ -153,6 +154,8 @@ namespace PlutoGE::render
             float shadowDepthScale = 1.0f, shadowDepthBias = 0.0f;
             std::array<glm::vec4, 4> shadowInverseResolutions{};
             glm::vec4 shadowCascadeParameters{0.0f}; // count, blend distance, softness, padding
+            glm::uvec4 localLightCount{};
+            std::array<VctLocalLight, 16> localLights{};
         };
         struct alignas(16) VctObjectParameters { glm::mat4 model{1.0f}; };
         struct alignas(16) VctMaterialParameters
@@ -190,7 +193,7 @@ namespace PlutoGE::render
         };
         struct alignas(16) VctMetadataParameters
         { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
-        static_assert(sizeof(VctVoxelParameters) == 496);
+        static_assert(sizeof(VctVoxelParameters) == 1280);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64);
         static_assert(sizeof(VctResolveParameters) == 16);
@@ -212,9 +215,22 @@ namespace PlutoGE::render
         }
 
         std::uint64_t VctContentSignature(std::span<const BasicDraw> draws,
-                                          const BasicLighting &lighting)
+                                          const BasicLighting &lighting, bool injectLocalLights, float localLightBounce)
         {
             std::uint64_t hash = 14695981039346656037ull;
+            HashVctValue(hash, injectLocalLights);
+            if (injectLocalLights) HashVctValue(hash, localLightBounce);
+            if (injectLocalLights)
+            {
+                const auto hashLight = [&](const BasicPointLight &light) {
+                    HashVctValue(hash, light.position); HashVctValue(hash, light.range);
+                    HashVctValue(hash, light.color); HashVctValue(hash, light.intensity);
+                };
+                HashVctValue(hash, lighting.pointLights.size());
+                for (const auto &light : lighting.pointLights) hashLight(light);
+                HashVctValue(hash, lighting.spotLights.size());
+                for (const auto &spot : lighting.spotLights) { hashLight(spot.light); HashVctValue(hash, spot.direction); }
+            }
             HashVctValue(hash, lighting.directionalDirection);
             HashVctValue(hash, lighting.directionalColor);
             HashVctValue(hash, lighting.directionalIntensity);
@@ -2254,7 +2270,7 @@ namespace PlutoGE::render
 
     rhi::Buffer &BasicRenderer::AcquireVctBuffer(std::size_t index)
     {
-        constexpr std::size_t vctParameterBufferSize = 512;
+        constexpr std::size_t vctParameterBufferSize = 1280;
         static_assert(sizeof(VctVoxelParameters) <= vctParameterBufferSize);
         static_assert(sizeof(VctTraceParameters) <= vctParameterBufferSize);
         static_assert(sizeof(VctTemporalParameters) <= vctParameterBufferSize);
@@ -2329,13 +2345,22 @@ namespace PlutoGE::render
                      .usage = rhi::TextureUsage::Sampled, .debugName = "VCT stationary probes",
                      .sampled = true, .depth = 96, .storage = true}));
         }
+        const auto traceDivisor = effect.parameters[3].x != 0.0f ? 1u :
+            static_cast<std::uint32_t>(std::clamp(effect.parameters[2].z, 1.0f, 4.0f));
+        const auto traceWidth = std::max(1u, (m_width + traceDivisor - 1) / traceDivisor);
+        const auto traceHeight = std::max(1u, (m_height + traceDivisor - 1) / traceDivisor);
+        if (traceWidth != m_vctTraceWidth || traceHeight != m_vctTraceHeight)
+        {
+            m_vctTraceTarget.Reset(); m_vctHistoryValid = false;
+            m_vctTraceWidth = traceWidth; m_vctTraceHeight = traceHeight;
+        }
         if (!m_vctTraceTarget)
         {
             m_vctCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                 {m_width, m_height, rhi::Format::R16G16B16A16Float,
                  rhi::TextureUsage::ColorAttachment, "VCT scene composite", true}));
             m_vctTraceTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {m_width, m_height, rhi::Format::R16G16B16A16Float,
+                {traceWidth, traceHeight, rhi::Format::R16G16B16A16Float,
                  rhi::TextureUsage::ColorAttachment, "VCT cone trace", true}));
             for (std::size_t index = 0; index < 2; ++index)
             {
@@ -2355,7 +2380,8 @@ namespace PlutoGE::render
             const float snap = size / 16.0f;
             m_vctCacheOriginSize = glm::vec4(glm::floor(lighting.cameraPosition / snap) * snap - glm::vec3(size * 0.5f), size);
         }
-        const auto contentSignature = VctContentSignature(draws, lighting);
+        const float localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
+        const auto contentSignature = VctContentSignature(draws, lighting, effect.parameters[4].w > 0.5f, localLightBounce);
         const auto updateInterval = static_cast<std::uint64_t>(
             std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
         std::size_t rebuildIndex = cascadeCount;
@@ -2393,9 +2419,12 @@ namespace PlutoGE::render
                     else cascade.pendingDraws.push_back(draw);
                 }
                 cascade.pendingLighting = lighting;
+                for (auto &light : cascade.pendingLighting.pointLights) light.intensity *= localLightBounce;
+                for (auto &spot : cascade.pendingLighting.spotLights) spot.light.intensity *= localLightBounce;
+                cascade.pendingInjectLocalLights = effect.parameters[4].w > 0.5f;
                 cascade.nextShadowDraw = 0;
                 cascade.nextShadowIndex = 0;
-                cascade.shadowReady = !lighting.shadowsEnabled;
+                cascade.shadowReady = !lighting.shadowsEnabled || lighting.directionalIntensity <= 0.0f;
                 cascade.rebuilding = true;
                 for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
             }
@@ -2494,6 +2523,19 @@ namespace PlutoGE::render
             voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
             voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
             voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
+            if (cascade.pendingInjectLocalLights)
+            {
+                const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot) {
+                    const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
+                        cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                    if (light.intensity <= 0 || light.range <= 0 ||
+                        glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
+                    voxel.localLights[voxel.localLightCount.x++] = {
+                        glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot};
+                };
+                for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
+                for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1));
+            }
             voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
             voxel.view = glm::mat4(1.0f);
             voxel.shadowCascadeSplits = glm::vec4(1e10f);
@@ -2662,7 +2704,7 @@ namespace PlutoGE::render
         auto &traceBuffer = AcquireVctBuffer(m_vctBufferCursor++);
         m_device->UpdateBuffer(traceBuffer.Get(), 0, Bytes(trace));
         rhi::RenderingInfo traceInfo; traceInfo.colorAttachments = {m_vctTraceTarget.Get()};
-        traceInfo.width = m_width; traceInfo.height = m_height; traceInfo.clearDepth = false;
+        traceInfo.width = traceWidth; traceInfo.height = traceHeight; traceInfo.clearDepth = false;
         commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
         commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());

@@ -155,6 +155,55 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     }
     if (openEnergy < std::max(100.0, blockedEnergy * 1.5))
         throw std::runtime_error("World shadow map suppressed unoccluded directional GI");
+
+    // Local lights must inject bounce, invalidate a stationary cache on edits,
+    // and obey the injection toggle without resetting the effect owner.
+    lighting.directionalIntensity = 0;
+    lighting.shadowsEnabled = false;
+    effect.parameters[4].w = 1;
+    lighting.pointLights = {{{0,1.5f,0}, 12, {1,0,0}, 16}};
+    const auto channelEnergy = [](const auto &pixels, int channel) {
+        double result = 0;
+        for (std::size_t at = channel; at < pixels.size(); at += 4) result += int(pixels.at(at));
+        return result;
+    };
+    const auto point = renderFrames(160);
+    if (channelEnergy(point, 0) < 100) throw std::runtime_error("Point lights did not inject VCT radiance");
+    effect.parameters[5].x = 1; // 2x local bounce, preserving direct-light intensity.
+    const auto boosted = renderFrames(160);
+    if (channelEnergy(boosted, 0) < channelEnergy(point, 0) * 1.5)
+        throw std::runtime_error("Local bounce gain did not refresh and strengthen VCT");
+    effect.parameters[5].x = -1; // Zero local bounce.
+    const auto muted = renderFrames(160);
+    if (channelEnergy(muted, 0) > channelEnergy(point, 0) * .1)
+        throw std::runtime_error("Zero local bounce retained stale radiance");
+    effect.parameters[5].x = 0;
+    lighting.pointLights[0].color = {0,1,0};
+    const auto edited = renderFrames(160);
+    if (channelEnergy(edited, 1) < 100 || channelEnergy(edited, 0) > channelEnergy(point, 0) * .1)
+        throw std::runtime_error("Local light edits did not refresh VCT");
+    effect.parameters[4].w = 0;
+    const auto disabled = renderFrames(160);
+    if (channelEnergy(disabled, 1) > channelEnergy(edited, 1) * .1)
+        throw std::runtime_error("VCT ignored the local injection toggle");
+    lighting.pointLights.clear();
+    lighting.spotLights = {{{{0,1.5f,0},12,{1,0,0},16},{0,1,0}}};
+    effect.parameters[4].w = 1;
+    const auto spot = renderFrames(160);
+    if (channelEnergy(spot, 0) < 100) throw std::runtime_error("Spot lights did not inject VCT radiance");
+    lighting.spotLights.clear();
+    lighting.pointLights = {{{0,1.5f,0},12,{1,0,0},16}};
+    const auto fullResolution = renderFrames(160);
+    for (const float divisor : {2.0f, 4.0f, 1.0f})
+    {
+        effect.parameters[2].z = divisor;
+        const auto reduced = renderFrames(2);
+        const auto ratio = channelEnergy(reduced, 0) / std::max(channelEnergy(fullResolution, 0), 1.0);
+        std::cout << "VCT trace divisor=" << divisor << ", energy ratio=" << ratio << std::endl;
+        if (ratio < .5 || ratio > 1.5)
+            throw std::runtime_error("VCT trace resolution change lost indirect lighting");
+    }
+
 }
 
 // A tiny emissive submesh of a larger mesh must deposit radiance regardless of

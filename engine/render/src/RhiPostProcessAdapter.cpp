@@ -270,7 +270,8 @@ namespace PlutoGE::render
                                         static_cast<float>(settings.cascadeCount),
                                         static_cast<float>(settings.traceResolutionDivisor),
                                         static_cast<float>(settings.updateInterval)};
-                result.parameters[4] = {settings.worldCache ? 1.0f : 0.0f, settings.cacheSize, float(settings.cacheUpdates), 0.0f};
+                result.parameters[5].x = settings.localLightBounce - 1.0f; // Zero-initialized packets retain unit gain.
+                result.parameters[4] = {settings.worldCache ? 1.0f : 0.0f, settings.cacheSize, float(settings.cacheUpdates), settings.injectLocalLights ? 1.0f : 0.0f};
                 result.parameters[3] = {static_cast<float>(settings.debugView),
                                         static_cast<float>(settings.voxelizationLodBias),
                                         settings.indirectOnly ? 1.0f : 0.0f,

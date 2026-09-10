@@ -117,7 +117,7 @@ inline bool CheckVctEmissionCoverage()
             }
             else
             {
-                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,32> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
+                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
                 struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; } material;
                 static_assert(sizeof(MaterialPass)==64);
                 material.emission = {emission,emission*.5f,emission*.25f};

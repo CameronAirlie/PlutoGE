@@ -36,18 +36,11 @@ float3 reconstructWorldRay(float2 uv, float4x4 view, float4x4 projection, uint f
     // some OpenGL GLSL drivers after Slang's matrix-layout translation.
     const float2 projectionScale = max(abs(float2(projection[0][0], projection[1][1])), 0.000001);
     const float3 viewDirection = normalize(float3(ndc / projectionScale, -1.0));
-    // Slang lowers column-major uniform matrices to row-major GLSL blocks.
-    // Keep the multiplication side explicit per target: Vulkan consumes the
-    // native Slang convention, while OpenGL consumes the transposed block.
-    return normalize(flipY != 0
-        ? mul(viewDirection, (float3x3)view)
-        : mul((float3x3)view, viewDirection));
+    return normalize(mul(viewDirection, (float3x3)view));
 }
 
 float3 transformWorldToLocalPosition(float3 position, float4x4 worldToLocal, uint flipY)
 {
-    // Slang preserves this transform when lowering column-major uniforms to
-    // row-major GLSL; reversing mul here would discard the translation.
     return mul(worldToLocal, float4(position, 1.0)).xyz;
 }
 

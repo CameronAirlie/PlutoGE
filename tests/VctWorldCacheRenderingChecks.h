@@ -187,9 +187,13 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     if (channelEnergy(disabled, 1) > channelEnergy(edited, 1) * .1)
         throw std::runtime_error("VCT ignored the local injection toggle");
     lighting.pointLights.clear();
-    lighting.spotLights = {{{{0,1.5f,0},12,{1,0,0},16},{0,1,0}}};
+    // Illuminate the visible floor. The narrow ceiling patch injects radiance,
+    // but its bounce falls below the 8-bit readback threshold in this view.
+    lighting.spotLights = {{{{0,1.5f,0},12,{1,0,0},16},{0,-1,0}}};
     effect.parameters[4].w = 1;
     const auto spot = renderFrames(160);
+    std::cout << "VCT local light energy: point=" << channelEnergy(point, 0)
+              << ", spot=" << channelEnergy(spot, 0) << '\n';
     if (channelEnergy(spot, 0) < 100) throw std::runtime_error("Spot lights did not inject VCT radiance");
     lighting.spotLights.clear();
     lighting.pointLights = {{{0,1.5f,0},12,{1,0,0},16}};

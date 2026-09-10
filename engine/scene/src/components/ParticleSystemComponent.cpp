@@ -708,6 +708,9 @@ namespace PlutoGE::scene
         }
         m_pendingEmitAtRequests.clear();
 
+        if (m_particleCountEstimate == 0)
+            return;
+
         auto *owner = GetOwner();
         auto *scene = owner ? owner->GetScene() : nullptr;
         const auto ignoredEntityId = owner ? owner->GetID() : 0;
@@ -729,6 +732,8 @@ namespace PlutoGE::scene
         std::vector<CollisionCandidate> collisionCandidates;
         std::vector<PhysicsRaycastRequest> collisionRequests;
         std::vector<PendingSubEmitter> pendingSubEmitters;
+        const glm::vec3 baseAcceleration = glm::vec3(0.0f, m_buoyancy - 9.81f * m_gravityModifier, 0.0f) + m_windVelocity;
+        const float velocityDamping = std::exp(-m_drag * deltaTime);
         if (m_collisionEnabled && scene && m_collisionMaxChecksPerFrame > 0)
         {
             collisionCandidates.reserve(static_cast<std::size_t>(std::min(m_collisionMaxChecksPerFrame, m_maxParticles)));
@@ -754,10 +759,11 @@ namespace PlutoGE::scene
                                   m_trails[index].end());
 
             const glm::vec3 previousPosition = particle.position;
-            const glm::vec3 acceleration = glm::vec3(0.0f, m_buoyancy - 9.81f * m_gravityModifier, 0.0f) +
-                                           m_windVelocity + TurbulenceField(particle.position, m_turbulenceFrequency, particle.seed) * m_turbulenceStrength;
+            const glm::vec3 acceleration = baseAcceleration + (m_turbulenceStrength > 0.0f
+                ? TurbulenceField(particle.position, m_turbulenceFrequency, particle.seed) * m_turbulenceStrength
+                : glm::vec3(0.0f));
             particle.velocity += acceleration * deltaTime;
-            particle.velocity *= std::exp(-m_drag * deltaTime);
+            particle.velocity *= velocityDamping;
             glm::vec3 nextPosition = particle.position + particle.velocity * deltaTime;
             particle.age += deltaTime;
             nextPositions[index] = nextPosition;

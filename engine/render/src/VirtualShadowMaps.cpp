@@ -97,7 +97,7 @@ namespace PlutoGE::render
         for (std::uint32_t slot = 2; slot <= 7; ++slot)
             bindings.push_back({slot, 0, slot, ResourceBindingType::StorageBuffer, ShaderStageMask::Compute});
         for (std::uint32_t slot = 8; slot <= 9; ++slot)
-            bindings.push_back({slot, 0, slot, ResourceBindingType::StorageImage, ShaderStageMask::Compute});
+            bindings.push_back({slot - 8, 0, slot, ResourceBindingType::StorageImage, ShaderStageMask::Compute});
         constexpr std::array<const char *, 7> names{"VSM reset", "VSM depth requests", "VSM residency", "VSM signatures", "VSM update budget", "VSM caster binning", "VSM publish"};
         for (std::size_t index = 0; index < m_compute.size(); ++index)
             m_compute[index] = GraphicsPipeline(device, device.CreateComputePipeline({shaders.compute[index], bindings, names[index]}));
@@ -270,8 +270,8 @@ namespace PlutoGE::render
         commands.BindTexture(1, m_receiverDepth.Get(), m_sampler.Get());
         const std::array buffers{m_pages.Get(), m_casters.Get(), m_lists.Get(), m_indirect.Get(), m_requestList.Get(), m_counters.Get()};
         for (std::uint32_t index = 0; index < buffers.size(); ++index) commands.BindStorageBuffer(index + 2, buffers[index]);
-        commands.BindStorageImage(8, m_requests.Get());
-        commands.BindStorageImage(9, m_table.Get());
+        commands.BindStorageImage(0, m_requests.Get());
+        commands.BindStorageImage(1, m_table.Get());
     }
     void VirtualShadowMaps::Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
     {

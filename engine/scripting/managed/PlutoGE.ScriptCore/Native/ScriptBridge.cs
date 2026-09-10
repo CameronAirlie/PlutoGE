@@ -413,6 +413,7 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int, int> _getGamepadButtonDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getGamepadButtonPressed;
     private static delegate* unmanaged[Cdecl]<int, float> _getGamepadAxis;
+    private static delegate* unmanaged[Cdecl]<int, float> _getPreviousGamepadAxis;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
@@ -1267,6 +1268,14 @@ internal static unsafe partial class ScriptBridge
         _setRmlWidgetSource = setRmlWidgetSource;
         _getRmlWidgetVisible = getRmlWidgetVisible;
         _setRmlWidgetVisible = setRmlWidgetVisible;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterInputHistoryApi")]
+    public static int RegisterInputHistoryApi(delegate* unmanaged[Cdecl]<int, float> getPreviousGamepadAxis)
+    {
+        if (getPreviousGamepadAxis == null) return 0;
+        _getPreviousGamepadAxis = getPreviousGamepadAxis;
         return 1;
     }
 
@@ -2679,6 +2688,8 @@ internal static unsafe partial class ScriptBridge
         _getGamepadButtonPressed != null && _getGamepadButtonPressed((gamepad << 16) | (button & 0xffff)) != 0;
     internal static float GetGamepadAxis(int gamepad, int axis) =>
         _getGamepadAxis != null ? _getGamepadAxis((gamepad << 16) | (axis & 0xffff)) : 0.0f;
+    internal static float GetPreviousGamepadAxis(int gamepad, int axis) =>
+        _getPreviousGamepadAxis != null ? _getPreviousGamepadAxis((gamepad << 16) | (axis & 0xffff)) : GetGamepadAxis(gamepad, axis);
 
     internal static bool GetKeyPressed(int keyCode)
     {

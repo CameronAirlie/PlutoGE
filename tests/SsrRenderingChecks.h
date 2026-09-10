@@ -78,6 +78,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     const auto smooth = measure(.04f,1);
     const auto rough = measure(1,1);
     const auto dielectric = measure(.5f,0);
+    std::cout << "SSR energy: " << smooth.energy[0] << ", " << rough.energy[0] << ", " << dielectric.energy[0] << std::endl;
     if (smooth.energy[0] < 100 || rough.energy[0] < 100 || dielectric.energy[0] < 10)
         throw std::runtime_error("SSR lost smooth, fully rough, or dielectric reflections");
     std::size_t spread = 0;

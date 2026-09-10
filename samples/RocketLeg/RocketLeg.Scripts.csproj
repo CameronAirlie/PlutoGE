@@ -15,14 +15,14 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="PlutoGE.ScriptCore">
-      <HintPath>../../engine/scripting/managed/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.dll</HintPath>
+      <HintPath>../../../../../../Program Files/PlutoGE/SDK/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>
   <Target Name="CopyScriptCoreRuntimeFiles" AfterTargets="Build">
     <ItemGroup>
-      <ScriptCoreRuntimeFiles Include="../../engine/scripting/managed/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.runtimeconfig.json" />
-      <ScriptCoreRuntimeFiles Include="../../engine/scripting/managed/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.deps.json" Condition="Exists('../../engine/scripting/managed/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.deps.json')" />
+      <ScriptCoreRuntimeFiles Include="../../../../../../Program Files/PlutoGE/SDK/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.runtimeconfig.json" />
+      <ScriptCoreRuntimeFiles Include="../../../../../../Program Files/PlutoGE/SDK/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.deps.json" Condition="Exists('../../../../../../Program Files/PlutoGE/SDK/PlutoGE.ScriptCore/bin/Release/net8.0/PlutoGE.ScriptCore.deps.json')" />
     </ItemGroup>
     <Copy SourceFiles="@(ScriptCoreRuntimeFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="@(ScriptCoreRuntimeFiles) != ''" />
   </Target>

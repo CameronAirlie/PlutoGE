@@ -13,6 +13,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "rhi/NormalMipmaps.h"
+#include "BasicDrawBatching.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -416,6 +417,7 @@ namespace PlutoGE::render
             }
         };
         appendDraws(commands, draws, false);
+        BatchOpaqueDraws(draws);
         std::vector<BasicDraw> shadowDraws;
         if (lighting.shadowsEnabled)
         {
@@ -708,7 +710,10 @@ namespace PlutoGE::render
         std::vector<BasicParticleDraw> particleDraws;
         if (scene)
         {
+            core::CpuScope particleScope("Particle render preparation", core::CpuCategory::Rendering);
             const auto inverseView = glm::inverse(cameraData.view);
+            const auto inverseProjection = glm::inverse(cameraData.projection);
+            const auto particleViewProjection = projection * cameraData.view;
             const glm::vec3 right = glm::normalize(glm::vec3(inverseView[0]));
             const glm::vec3 up = glm::normalize(glm::vec3(inverseView[1]));
             const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
@@ -720,10 +725,12 @@ namespace PlutoGE::render
             {
                 if (!system || !system->IsEnabled() || !system->GetOwner() || !system->GetOwner()->IsActive())
                     continue;
+                if (system->GetParticleCount() == 0 && !system->GetTrailsEnabled())
+                    continue;
                 BasicParticleDraw draw;
                 auto &parameters = draw.parameters;
-                parameters.viewProjection = projection * cameraData.view;
-                parameters.inverseProjection = glm::inverse(cameraData.projection);
+                parameters.viewProjection = particleViewProjection;
+                parameters.inverseProjection = inverseProjection;
                 parameters.view = cameraData.view;
                 auto &v = parameters.values;
                 v[0] = glm::vec4(1);
@@ -752,9 +759,10 @@ namespace PlutoGE::render
                         system->GetVolumeEdgeSoftness()};
                 v[8].x = system->GetVolumeSelfShadow();
                 std::vector<const scene::Light *> smokeLights;
-                for (const auto *light : scene->GetLights())
-                    if (light && light->type != scene::LightType::Directional && light->GetRange() > 0 && light->intensity > 0)
-                        smokeLights.push_back(light);
+                if (system->GetSmokeLightingEnabled())
+                    for (const auto *light : scene->GetLights())
+                        if (light && light->type != scene::LightType::Directional && light->GetRange() > 0 && light->intensity > 0)
+                            smokeLights.push_back(light);
                 const auto emitterPosition = system->GetOwner()->GetWorldPosition();
                 const auto lightScore = [&](const scene::Light *light)
                 {
@@ -772,6 +780,7 @@ namespace PlutoGE::render
                     v[17 + light] = {glm::mat3(cameraData.view) * local.direction, 0};
                 }
                 std::vector<const scene::ParticleCpuData *> sorted;
+                sorted.reserve(system->GetParticleCount());
                 for (const auto &particle : system->GetCpuParticles())
                     if (particle.active && particle.age < particle.lifetime)
                         sorted.push_back(&particle);
@@ -803,14 +812,16 @@ namespace PlutoGE::render
                         glm::radians(system->GetRotationSpeed()) *
                             (1 + (hash(particle->seed + 24) * 2 - 1) * system->GetRotationSpeedVariation()) *
                             particle->age;
+                    const float cosine = std::cos(angle), sine = std::sin(angle);
+                    const glm::vec4 ageLifetimeRandomSize{particle->age, particle->lifetime, hash(particle->seed), size};
                     for (const auto corner : corners)
                     {
-                        const glm::vec2 rotated{std::cos(angle) * corner.x + std::sin(angle) * corner.y,
-                                                -std::sin(angle) * corner.x + std::cos(angle) * corner.y};
+                        const glm::vec2 rotated{cosine * corner.x + sine * corner.y,
+                                                -sine * corner.x + cosine * corner.y};
                         draw.vertices.push_back({particle->position + (right * rotated.x + up * rotated.y) * size,
                                                  color,
                                                  corner + 0.5f,
-                                                 {particle->age, particle->lifetime, hash(particle->seed), size},
+                                                 ageLifetimeRandomSize,
                                                  particle->position});
                     }
                 }
@@ -819,8 +830,8 @@ namespace PlutoGE::render
                 if (system->GetTrailsEnabled())
                 {
                     BasicParticleDraw trail;
-                    trail.parameters.viewProjection = projection * cameraData.view;
-                    trail.parameters.inverseProjection = glm::inverse(cameraData.projection);
+                    trail.parameters.viewProjection = particleViewProjection;
+                    trail.parameters.inverseProjection = inverseProjection;
                     trail.parameters.view = cameraData.view;
                     trail.parameters.values[0] = glm::vec4(1);
                     trail.parameters.values[21].x = 1;

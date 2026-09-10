@@ -2630,6 +2630,8 @@ namespace PlutoGE::scripting
         { return GetInputState().IsGamepadButtonPressed(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)) ? 1 : 0; }
         float GetGamepadAxis(int32_t packed)
         { return GetInputState().GetGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
+        float GetPreviousGamepadAxis(int32_t packed)
+        { return GetInputState().GetPreviousGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
 
         NativeVector3 GetMousePosition()
         {
@@ -3222,6 +3224,7 @@ namespace PlutoGE::scripting
         register_advanced_ui_api_fn registerAdvancedUIApi = nullptr;
         register_rml_ui_api_fn registerRmlUiApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
+        int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
@@ -3673,6 +3676,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterAdvancedUIApi"), impl.registerAdvancedUIApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlUiApi"), impl.registerRmlUiApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
@@ -4282,6 +4286,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetGamepadAxis))) == 0)
         {
             setManagedBridgeFailure("RegisterInputApi");
+            return false;
+        }
+
+        if (!m_impl->registerInputHistoryApi ||
+            m_impl->registerInputHistoryApi(reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetPreviousGamepadAxis))) == 0)
+        {
+            setManagedBridgeFailure("RegisterInputHistoryApi");
             return false;
         }
 

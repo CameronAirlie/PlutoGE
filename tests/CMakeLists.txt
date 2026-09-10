@@ -1,4 +1,8 @@
 add_executable(PlutoGEContentPackTests ContentPackTests.cpp)
+add_executable(PlutoGEInputAxisHistoryTests InputAxisHistoryTests.cpp)
+target_include_directories(PlutoGEInputAxisHistoryTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/platform/include)
+target_compile_features(PlutoGEInputAxisHistoryTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEInputAxisHistoryTests COMMAND PlutoGEInputAxisHistoryTests)
 target_link_libraries(PlutoGEContentPackTests PRIVATE PlutoGE::Content)
 add_test(NAME PlutoGEContentPackTests COMMAND PlutoGEContentPackTests)
 
@@ -229,6 +233,10 @@ target_link_libraries(PlutoGEDebugDrawTests PRIVATE glm::glm)
 add_test(NAME PlutoGEDebugDrawTests COMMAND PlutoGEDebugDrawTests)
 find_program(PLUTOGE_TEST_DOTNET dotnet)
 if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEInputActionMapSmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.InputActionMapSmokeTests/PlutoGE.InputActionMapSmokeTests.csproj --configuration Release)
+endif()
+if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEDebugDrawManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.DebugDrawSmokeTests/PlutoGE.DebugDrawSmokeTests.csproj
         --configuration Release)
@@ -445,3 +453,6 @@ add_test(NAME PlutoGEOpenGLParticlePointTests COMMAND PlutoGEOpenGLRhiTests --pa
 
 add_test(NAME PlutoGEVulkanTemporalMotionTests COMMAND PlutoGEVulkanRhiTests --temporal-motion)
 add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --temporal-motion)
+
+add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
+add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)

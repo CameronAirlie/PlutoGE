@@ -1,3 +1,4 @@
+#include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "Fsr2RenderingChecks.h"
@@ -111,6 +112,11 @@ int main(int argc, char **argv)
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")
+        {
+            CheckOpaqueBatching(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")
         {
             CheckFsr2Rendering(renderer, device);

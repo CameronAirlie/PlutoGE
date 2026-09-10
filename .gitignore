@@ -3,3 +3,4 @@ out/
 build/
 .plutoge-cache/
 **/.plutoge-cache/
+tests/managed/

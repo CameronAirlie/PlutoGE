@@ -97,6 +97,10 @@ public sealed class InputActionMap
     }
 
     public bool IsDown(string action) => MathF.Abs(GetAxis(action)) > 0.5f;
+    /// <summary>
+    /// True on a button press or when a gamepad axis becomes nonzero outside its
+    /// binding dead zone. Holding an axis does not repeat; reads do not consume presses.
+    /// </summary>
     public bool WasPressed(string action)
     {
         var definition = Find(action);
@@ -105,8 +109,20 @@ public sealed class InputActionMap
             InputBindingKind.Key => Input.IsKeyPressed(binding.Key),
             InputBindingKind.GamepadButton => Input.IsGamepadButtonPressed(binding.Button, binding.Gamepad),
             InputBindingKind.MouseButton => Input.IsMouseButtonPressed(binding.MouseButton),
+            InputBindingKind.GamepadAxis => AxisWasPressed(binding),
             _ => false
         });
+    }
+
+    // Compare frame snapshots, not query history: multiple consumers get the same
+    // edge, and actions do not need to be polled while menus/gameplay are inactive.
+    private static bool AxisWasPressed(InputBinding binding)
+    {
+        if (binding.Scale == 0.0f) return false;
+        float deadZone = Math.Clamp(binding.DeadZone, 0.0f, 0.99f);
+        static bool Active(float value, float threshold) => value != 0.0f && MathF.Abs(value) >= threshold;
+        return Active(Input.GetGamepadAxis(binding.Axis, binding.Gamepad), deadZone) &&
+            !Active(Native.ScriptBridge.GetPreviousGamepadAxis(binding.Gamepad, (int)binding.Axis), deadZone);
     }
 
     private InputActionDefinition? Find(string action)

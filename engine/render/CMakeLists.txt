@@ -103,6 +103,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (ARGV3)
             list(APPEND normalize_arguments -DIMAGE_FORMAT=${ARGV3})
         endif()
+        if (MODULE MATCHES "^VSM")
+            list(APPEND normalize_arguments -DVSM_IMAGE_BINDINGS=ON)
+        endif()
         set(outputs
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl"
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.spv")

@@ -3,6 +3,10 @@ if (NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
 endif()
 
 file(READ "${INPUT}" shader_source)
+# Some OpenGL drivers do not propagate Slang's global row-major default into
+# matrices nested in uniform structs. Declare it on each block so their layout
+# matches the generated row-vector operations and our column-major CPU data.
+string(REPLACE "layout(std140) uniform" "layout(std140, row_major) uniform" shader_source "${shader_source}")
 # Slang emits Vulkan descriptor-set qualifiers for resources carrying
 # [[vk::binding]]. OpenGL has one namespace per resource class, so the source
 # uses deliberately flattened register indices and this removes only `set`.
@@ -23,6 +27,13 @@ string(REGEX REPLACE "binding[ \t]*=[ \t]*11,[ \t]*set[ \t]*=[ \t]*1" "binding =
 string(REGEX REPLACE "binding[ \t]*=[ \t]*12,[ \t]*set[ \t]*=[ \t]*1" "binding = 20" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*13,[ \t]*set[ \t]*=[ \t]*1" "binding = 21" shader_source "${shader_source}")
 string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_source}")
+# VSM's Vulkan descriptors 8/9 share a descriptor namespace with its buffers.
+# OpenGL images have a separate namespace with only eight guaranteed units.
+# Keep these in sync with the storage-image slots in VirtualShadowMaps.
+if (VSM_IMAGE_BINDINGS)
+    string(REPLACE "binding = 8)" "binding = 0)" shader_source "${shader_source}")
+    string(REPLACE "binding = 9)" "binding = 1)" shader_source "${shader_source}")
+endif()
 # Slang uses the SPIR-V/Vulkan builtin spelling for SV_VertexID when emitting
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.
 string(REPLACE "gl_VertexIndex" "gl_VertexID" shader_source "${shader_source}")

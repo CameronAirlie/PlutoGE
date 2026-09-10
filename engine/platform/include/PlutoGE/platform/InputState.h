@@ -73,6 +73,7 @@ namespace PlutoGE::platform
         std::array<bool, MaxGamepadButtons> buttons{};
         std::array<bool, MaxGamepadButtons> previousButtons{};
         std::array<float, MaxGamepadAxes> axes{};
+        std::array<float, MaxGamepadAxes> previousAxes{};
     };
 
     struct MouseState
@@ -106,6 +107,8 @@ namespace PlutoGE::platform
         { return gamepad < gamepads.size() && button < MaxGamepadButtons && gamepads[gamepad].connected && !gamepads[gamepad].buttons[button] && gamepads[gamepad].previousButtons[button]; }
         [[nodiscard]] float GetGamepadAxis(std::uint16_t gamepad, std::uint16_t axis) const
         { return gamepad < gamepads.size() && axis < MaxGamepadAxes && gamepads[gamepad].connected ? gamepads[gamepad].axes[axis] : 0.0f; }
+        [[nodiscard]] float GetPreviousGamepadAxis(std::uint16_t gamepad, std::uint16_t axis) const
+        { return gamepad < gamepads.size() && axis < MaxGamepadAxes && gamepads[gamepad].connected ? gamepads[gamepad].previousAxes[axis] : 0.0f; }
 
         [[nodiscard]] bool IsKeyDown(KeyCode key) const
         {
@@ -147,7 +150,11 @@ namespace PlutoGE::platform
         void BeginFrame()
         {
             previousKeys = keys;
-            for (auto &gamepad : gamepads) gamepad.previousButtons = gamepad.buttons;
+            for (auto &gamepad : gamepads)
+            {
+                gamepad.previousButtons = gamepad.buttons;
+                gamepad.previousAxes = gamepad.axes;
+            }
             for (std::uint16_t button = 0; button < 8; ++button)
             {
                 mouseState.previousButtons[button] = mouseState.buttons[button];

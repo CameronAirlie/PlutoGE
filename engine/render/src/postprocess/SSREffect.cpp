@@ -135,7 +135,7 @@ namespace PlutoGE::render
                 vec3 viewNormal = normalize(mat3(uView) * normalize(worldNormal));
                 vec3 viewDirection = normalize(viewPosition);
                 float roughness = clamp(normalRoughness.a, 0.04, 1.0);
-                if (uIntensity <= 0.0) { FragColor = vec4(0.0); return; }
+                if (uIntensity <= 0.0 || roughness >= 1.0) { FragColor = vec4(0.0); return; }
                 float alpha = roughness * roughness;
                 float a2 = alpha * alpha;
                 vec3 view = -viewDirection;
@@ -263,9 +263,11 @@ namespace PlutoGE::render
             {
                 vec4 scene = texture(uSceneTexture, UV);
                 float centerDepth = texture(uSceneDepthTexture, UV).r;
-                vec3 rawCenterNormal = texture(uSceneNormalTexture, UV).xyz;
+                vec4 centerNormalRoughness = texture(uSceneNormalTexture, UV);
+                vec3 rawCenterNormal = centerNormalRoughness.xyz;
+                float roughnessFade = 1.0 - clamp(centerNormalRoughness.a, 0.04, 1.0);
                 float centerNormalLengthSq = dot(rawCenterNormal, rawCenterNormal);
-                if (centerDepth <= 0.0 || centerNormalLengthSq < 0.01)
+                if (centerDepth <= 0.0 || centerNormalLengthSq < 0.01 || roughnessFade <= 0.0)
                 {
                     FragColor = scene;
                     return;
@@ -285,7 +287,9 @@ namespace PlutoGE::render
                     totalWeight += weight;
                 }
                 reflection /= max(totalWeight, 0.0001);
-                FragColor = vec4(scene.rgb + reflection.rgb, scene.a);
+                // Fade at the receiving pixel to prevent upsampled reflections
+                // from spilling onto fully rough surfaces.
+                FragColor = vec4(scene.rgb + reflection.rgb * roughnessFade, scene.a);
             }
         )";
         m_compositeShader = Shader::Create(compositeSource);

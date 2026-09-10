@@ -76,24 +76,36 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         return result;
     };
     const auto smooth = measure(.04f,1);
-    const auto rough = measure(1,1);
+    const auto rough = measure(.6f,1);
     const auto dielectric = measure(.5f,0);
     std::cout << "SSR energy: " << smooth.energy[0] << ", " << rough.energy[0] << ", " << dielectric.energy[0] << std::endl;
     if (smooth.energy[0] < 100 || rough.energy[0] < 100 || dielectric.energy[0] < 10)
-        throw std::runtime_error("SSR lost smooth, fully rough, or dielectric reflections");
+        throw std::runtime_error("SSR lost smooth, moderately rough, or dielectric reflections");
     std::size_t spread = 0;
     for (std::size_t i=0; i<rough.red.size(); ++i)
         if (smooth.red[i] <= 1 && rough.red[i] >= 3) ++spread;
     if (spread < 5)
-        throw std::runtime_error("Roughness faded SSR instead of broadening its lobe");
+        throw std::runtime_error("Rough SSR lost its broader lobe");
     if (rough.energy[0] < rough.energy[1]*2)
         throw std::runtime_error("SSR ignored metallic albedo tint");
     ssr.parameters[4].w = 1.0f;
-    const auto reference = measure(1, 1);
+    const auto reference = measure(.6f, 1);
     if (rough.energy[0] < reference.energy[0] * 0.65 ||
         rough.energy[0] > reference.energy[0] * 1.35)
         throw std::runtime_error("Half-resolution SSR changed rough reflection energy excessively");
     ssr.parameters[4].w = 0.0f;
+    // With direct and ambient lighting disabled, fully rough receivers must
+    // preserve their baseline even when a bright reflected source is visible.
+    for (const bool fullResolution : {false, true})
+        for (const float metallic : {0.0f, 1.0f})
+        {
+            ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
+            const auto fullyRough = measure(1.0f, metallic);
+            if (fullyRough.energy != std::array<std::uint64_t, 3>{})
+                throw std::runtime_error("SSR contributed to a fully rough unlit surface");
+        }
+    ssr.parameters[4].w = 0.0f;
+    draws[0].roughness = .6f;
     if (performanceDevice)
     {
         for (const bool fullResolution : {true, false})

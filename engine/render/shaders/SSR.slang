@@ -69,6 +69,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float4 material = materialTexture.SampleLevel(uv, 0.0);
     const float metallic = saturate(material.r);
     const float roughness = clamp(material.g, 0.04, 1.0);
+    const float roughnessFade = 1.0 - roughness;
+    if (roughnessFade <= 0.0) return scene;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);
     if (pass.parameters[4].x == 2.0)
@@ -103,7 +105,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
                 weightSum += weight;
             }
-        return float4(scene.rgb + sum / max(weightSum, 0.000001), scene.a);
+        return float4(scene.rgb + roughnessFade * sum / max(weightSum, 0.000001), scene.a);
     }
     const float3 view = normalize(pass.cameraPosition.xyz - position);
     const float ndotv = dot(normal, view);
@@ -184,5 +186,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         }
     }
     // Indirect specular adds to existing diffuse and direct lighting.
-    return float4(scene.rgb + reflection * (pass.parameters[0].x / float(samples)), scene.a);
+    // Apply the artistic roughness fade once, at full resolution, so the
+    // half-resolution resolve cannot leak SSR onto fully rough receivers.
+    return float4(scene.rgb + reflection * (pass.parameters[0].x / float(samples)) *
+                  (traceOnly ? 1.0 : roughnessFade), scene.a);
 }

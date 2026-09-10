@@ -5,7 +5,10 @@ SSR integrates a single-scattering isotropic GGX microfacet reflection lobe with
 pixel in the legacy renderer). Perceptual roughness maps to alpha = roughness^2.
 Each sample is weighted by BRDF * N.L / PDF, including Smith masking and Schlick
 Fresnel. Metal F0 comes from albedo; dielectric F0 is 0.04. Roughness changes the
-angular distribution, with no roughness cutoff or opacity multiplier.
+angular distribution. An artistic multiplier of (1 - roughness) fades SSR to
+zero at roughness 1, independently of direct-light shadows. It is applied at
+the full-resolution receiving pixel so upsampling cannot add reflections to
+fully rough surfaces.
 
 The RHI shader reconstructs world positions from reverse-Z depth and projects
 world-space rays using the actual camera matrices. Thickness and binary
@@ -15,7 +18,7 @@ lighting. Edge fading remains a screen-coverage heuristic.
 Fresnel Power and Metallic Boost are accepted when reading older presets for
 compatibility, but are no longer exposed or applied: Fresnel uses exponent 5 and
 metallic comes from the material. Intensity remains an artistic multiplier;
-use 1 for the unscaled BRDF estimate.
+use 1 for the BRDF estimate with the roughness fade applied.
 
 This is still screen-space, finite-sample, single-bounce reflection, not full
 light transport. Off-screen and occluded geometry cannot contribute, thin
@@ -27,6 +30,7 @@ probe contributions instead of adding them.
 
 Reference: [PBRT microfacet reflection and sampling](https://pbr-book.org/3ed-2018/Light_Transport_I_Surface_Reflection/Sampling_Reflection_Functions).
 
-GPU regressions in `tests/SsrRenderingChecks.h` check nonzero fully rough and
-dielectric reflection, broadening beyond the smooth footprint, metallic tint,
-and preservation of existing lighting on OpenGL and Vulkan.
+GPU regressions in `tests/SsrRenderingChecks.h` check zero fully rough reflection
+on unlit metallic and dielectric receivers in both resolution modes, nonzero
+moderately rough and dielectric reflection, broadening beyond the smooth
+footprint, metallic tint, and preservation of existing lighting on OpenGL and Vulkan.

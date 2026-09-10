@@ -191,7 +191,7 @@ namespace PlutoGE::render
                     hash = HashBytes(glm::value_ptr(candidate->direction), sizeof(glm::vec3), hash);
                     hash = HashBytes(glm::value_ptr(candidate->color), sizeof(glm::vec3), hash);
                     hash = HashValue(candidate->intensity, hash);
-                    hash = HashValue(candidate->range, hash);
+                    hash = HashValue(candidate->GetRange(), hash);
                 }
             }
             return hash;
@@ -798,19 +798,19 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             for (const auto *light : *renderContext.lights)
             {
                 if (!light || light->type == scene::LightType::Directional ||
-                    light->intensity <= 0.0f || light->range <= 0.0f)
+                    light->intensity <= 0.0f || light->GetRange() <= 0.0f)
                     continue;
                 const glm::vec3 closest = glm::clamp(light->position, volumeOrigin, volumeMax);
                 const glm::vec3 offset = light->position - closest;
-                if (glm::dot(offset, offset) <= light->range * light->range)
+                if (glm::dot(offset, offset) <= light->GetRange() * light->GetRange())
                     localLights.push_back(light);
             }
             std::sort(
                 localLights.begin(), localLights.end(),
                 [](const scene::Light *a, const scene::Light *b)
                 {
-                    return a->intensity * a->range * a->range >
-                           b->intensity * b->range * b->range;
+                    return a->intensity * a->GetRange() * a->GetRange() >
+                           b->intensity * b->GetRange() * b->GetRange();
                 });
             cascade.pendingLocalLightCount = std::min<int>(
                 static_cast<int>(localLights.size()),
@@ -823,7 +823,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.pendingLocalLightDirections[lightIndex] = light->direction;
                 cascade.pendingLocalLightColors[lightIndex] = light->color;
                 cascade.pendingLocalLightIntensities[lightIndex] = light->intensity * m_localLightBounce;
-                cascade.pendingLocalLightRanges[lightIndex] = light->range;
+                cascade.pendingLocalLightRanges[lightIndex] = light->GetRange();
             }
         }
         cascade.pendingShadowCascadeCount = directionalLight && directionalLight->castsShadows

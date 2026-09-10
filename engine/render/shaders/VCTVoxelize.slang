@@ -211,8 +211,8 @@ void fragmentMain(GeometryOutput input)
         const float distance = length(toLight);
         if (distance >= light.positionRange.w) continue;
         const float3 direction = toLight / max(distance, 0.0001);
-        float attenuation = saturate(1.0 - distance / max(light.positionRange.w, 0.0001));
-        attenuation *= attenuation;
+        float attenuation = (1.0 - smoothstep(light.positionRange.w * 0.9, light.positionRange.w, distance)) /
+                            max(distance * distance, 0.0001);
         if (light.directionSpot.w > 0.5)
             attenuation *= smoothstep(0.9, 0.975, dot(-direction, normalize(light.directionSpot.xyz)));
         direct += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * max(dot(normal, direction), 0.0);

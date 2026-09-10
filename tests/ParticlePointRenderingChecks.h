@@ -37,7 +37,20 @@ void CheckParticlePointRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     };
     renderer.Render(glm::mat4(1), lighting, {&receiver, 1});
     const auto dark = center();
-    lighting.pointLights.push_back({{0, 0, 1.2f}, 4, {1, 0, 0}, 4, false});
+    // Hold receiver/material/view fixed. Linear HDR values (below clipping)
+    // must fall by four at twice the distance, and double with intensity.
+    lighting.pointLights.push_back({{0, 0, 1.2f}, 20, {1, 0, 0}, 1, false});
+    receiver.roughness = 1;
+    renderer.Render(glm::mat4(1), lighting, {&receiver, 1});
+    const int nearLight = center()[0];
+    lighting.pointLights[0].position.z = 2.2f;
+    renderer.Render(glm::mat4(1), lighting, {&receiver, 1});
+    const int farLight = center()[0];
+    require(nearLight > 30 && std::abs(nearLight - farLight * 4) <= 5, "Point lighting is not inverse-square");
+    lighting.pointLights[0].intensity = 2;
+    renderer.Render(glm::mat4(1), lighting, {&receiver, 1});
+    require(std::abs(center()[0] - farLight * 2) <= 3, "Point intensity is not linear");
+    lighting.pointLights[0] = {{0, 0, 1.2f}, 4, {1, 0, 0}, 4, false};
     renderer.Render(glm::mat4(1), lighting, {&receiver, 1});
     const auto lit = center();
     require(lit[0] > dark[0] + 40 && lit[1] < 10, "Point light did not illuminate with its color");
@@ -82,7 +95,7 @@ void CheckParticlePointRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         auto plane = receiver;
         plane.model = rotation * glm::scale(glm::mat4(1), glm::vec3(8*scale,8*scale,scale));
         lighting.cameraPosition = glm::vec3(rotation * glm::vec4(0,0,10*scale,1));
-        lighting.pointLights[0] = {glm::vec3(rotation * glm::vec4(0,0,scale,1)), 30*scale, {1,1,1}, 3, false};
+        lighting.pointLights[0] = {glm::vec3(rotation * glm::vec4(0,0,scale,1)), 30*scale, {1,1,1}, 3*scale*scale, false};
         const auto viewProjection = glm::scale(glm::mat4(1), glm::vec3(0.125f/scale,0.125f/scale,1)) * glm::inverse(rotation);
         // Keep the receiver within the synthetic camera's reverse-depth range.
         auto projection = viewProjection;

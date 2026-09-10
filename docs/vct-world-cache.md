@@ -52,7 +52,7 @@ A Vulkan voxel-radiance check renders a 0.02-unit emissive submesh at seven alig
 
 ## RHI local injection and trace resolution
 
-The RHI voxelizer injects up to 16 point/spot lights whose ranges intersect each cascade when Inject Local Lights is enabled. Spot cones and range falloff match the legacy injector. These local sources are unshadowed during injection; voxel occlusion still affects subsequent cone tracing. Light position, range, color, intensity, spot direction, and the injection toggle invalidate the field. Progressive jobs retain their starting light snapshot.
+The RHI voxelizer injects up to 16 point/spot lights whose ranges intersect each cascade when Inject Local Lights is enabled. Spot cones and inverse-square distance falloff match the legacy injector; scene-light cutoffs are derived from intensity. These local sources are unshadowed during injection; voxel occlusion still affects subsequent cone tracing. Light position, range, color, intensity, spot direction, and the injection toggle invalidate the field. Progressive jobs retain their starting light snapshot.
 
 Trace Quality now controls RHI cone-trace dimensions: High traces at half width/height, Balanced at quarter width/height. Depth/normal-aware reconstruction feeds full-resolution temporal history and compositing. Debug views retain full-resolution tracing. This reduces cone-trace invocations by four or sixteen respectively, without reducing voxel resolution; total GPU savings depend on scene and rebuild costs. Directional shadow staging is skipped when directional intensity is zero.
 

@@ -617,9 +617,9 @@ vec3 ComputeEnvironmentSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float r
 float ComputePointAttenuation(vec3 fragPos, Light light)
 {
     float distanceToLight = length(light.Position - fragPos);
-    float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
-    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
-    return attenuation * attenuation;
+    float range = light.Range;
+                    if (range <= 0.0 || distanceToLight >= range) return 0.0;
+                    return (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
 }
 
 float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, Light light)
@@ -996,7 +996,7 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
         attenuation = ComputeSpotAttenuation(fragPos, lightDir, light);
     }
 
-    if (attenuation <= 0.0001)
+    if (attenuation <= 0.0)
     {
         return vec3(0.0);
     }
@@ -1663,9 +1663,9 @@ void main()
             float ComputePointAttenuation(vec3 fragPos, int lightIndex)
             {
                 float distanceToLight = length(uLightPositions[lightIndex] - fragPos);
-                float normalizedDistance = uLightRanges[lightIndex] > 0.0001 ? distanceToLight / uLightRanges[lightIndex] : 1.0;
-                float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
-                return attenuation * attenuation;
+                float range = uLightRanges[lightIndex];
+                    if (range <= 0.0 || distanceToLight >= range) return 0.0;
+                    return (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
             }
 
             float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, int lightIndex)
@@ -1851,7 +1851,7 @@ void main()
                     }
 
                     float ndotl = max(dot(normal, lightDir), 0.0);
-                    if (ndotl <= 0.0001 || attenuation <= 0.0001)
+                    if (ndotl <= 0.0001 || attenuation <= 0.0)
                     {
                         continue;
                     }
@@ -1943,7 +1943,7 @@ void main()
                     }
 
                     float ndotl = max(dot(normal, lightDir), 0.0);
-                    if (ndotl <= 0.0001 || attenuation <= 0.0001)
+                    if (ndotl <= 0.0001 || attenuation <= 0.0)
                     {
                         continue;
                     }

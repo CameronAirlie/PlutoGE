@@ -1,3 +1,4 @@
+#include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
@@ -170,6 +171,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shader.vertex.glsl = ReadText((std::string(module) + ".vertex.glsl").c_str());
             shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
         };
+        loadPostProcess(render::BasicPostProcessEffectType::TAA, "TAA");
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
@@ -204,7 +206,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             // This focused path does not use VSM. Keep unrelated compute binding
             // limits on older OpenGL drivers from blocking particle/point checks.
-            if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
+            if (argc > 1 && (std::string_view(argv[1]) == "--temporal-motion" ||
+                             std::string_view(argv[1]) == "--particles-points-only"))
                 shaders.virtualShadows = {};
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
                 return 6;
@@ -215,6 +218,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--temporal-motion")
+        {
+            CheckTemporalMotionRendering(basicRenderer, device, false, [&](auto texture) {
+                std::vector<std::byte> pixels(basicRenderer.GetOutputWidth() * basicRenderer.GetOutputHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
         {
             try

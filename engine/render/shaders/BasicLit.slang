@@ -693,7 +693,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             const uint row = uint(pointSettings[light].x);
             visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal);
         }
-        const float attenuation = pow(saturate(1.0 - distance / range), 2.0);
+        const float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
         pointLighting += brdf * pointRadiance;
         pointSpecularLighting += distributionPoint * geometryView * geometryPoint * f /

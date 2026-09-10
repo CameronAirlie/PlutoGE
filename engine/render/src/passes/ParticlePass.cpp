@@ -359,7 +359,7 @@ namespace PlutoGE::render
                             if (distanceToLight >= range)
                                 continue;
                             vec3 lightDirection = toLight / max(distanceToLight, 0.0001);
-                            float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
+                            float attenuation = (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
                             if (uLocalSmokeLightTypes[lightIndex] == 2)
                             {
                                 float cone = dot(-lightDirection, normalize(uLocalSmokeLightDirectionsView[lightIndex]));
@@ -950,7 +950,7 @@ namespace PlutoGE::render
             {
                 for (const auto *light : *ctx.lights)
                 {
-                    if (light && light->type != scene::LightType::Directional && light->range > 0.0f && light->intensity > 0.0f)
+                    if (light && light->type != scene::LightType::Directional && light->GetRange() > 0.0f && light->intensity > 0.0f)
                     {
                         localSmokeLights.push_back(light);
                     }
@@ -961,8 +961,7 @@ namespace PlutoGE::render
                     const auto score = [&emitterPosition](const scene::Light *light)
                     {
                         const float distance = glm::length(light->position - emitterPosition);
-                        const float attenuation = std::max(1.0f - distance / std::max(light->range, 0.0001f), 0.0f);
-                        return light->intensity * attenuation * attenuation;
+                        return light->intensity * LocalLightAttenuation(distance, light->GetRange());
                     };
                     return score(a) > score(b);
                 });
@@ -981,7 +980,7 @@ namespace PlutoGE::render
                                            glm::normalize(glm::mat3(ctx.cameraData.view) * light->direction));
                 m_renderShader->SetUniform("uLocalSmokeLightColors" + suffix,
                                            glm::max(light->color * light->intensity, glm::vec3(0.0f)));
-                m_renderShader->SetUniform("uLocalSmokeLightRanges" + suffix, light->range);
+                m_renderShader->SetUniform("uLocalSmokeLightRanges" + suffix, light->GetRange());
             }
 
             if (!particleSystem->GetMaterialAssetReference().empty())

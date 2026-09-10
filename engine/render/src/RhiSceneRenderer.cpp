@@ -409,6 +409,7 @@ namespace PlutoGE::render
                                                               m_linearTextures, "Scene roughness");
                     }
                 }
+                draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
                 destination.push_back(std::move(draw));
@@ -465,8 +466,8 @@ namespace PlutoGE::render
             effectiveLighting.spotLights.clear();
             for (const auto *light : scene->GetLights())
             {
-                if (!light || light->intensity <= 0 || light->range <= 0) continue;
-                const BasicPointLight local{light->position, light->range, light->color,
+                if (!light || light->intensity <= 0 || light->GetRange() <= 0) continue;
+                const BasicPointLight local{light->position, light->GetRange(), light->color,
                                             light->intensity, light->castsShadows};
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
@@ -752,13 +753,12 @@ namespace PlutoGE::render
                 v[8].x = system->GetVolumeSelfShadow();
                 std::vector<const scene::Light *> smokeLights;
                 for (const auto *light : scene->GetLights())
-                    if (light && light->type != scene::LightType::Directional && light->range > 0 && light->intensity > 0)
+                    if (light && light->type != scene::LightType::Directional && light->GetRange() > 0 && light->intensity > 0)
                         smokeLights.push_back(light);
                 const auto emitterPosition = system->GetOwner()->GetWorldPosition();
                 const auto lightScore = [&](const scene::Light *light)
                 {
-                    const float attenuation = std::max(1.0f - glm::length(light->position - emitterPosition) / light->range, 0.0f);
-                    return light->intensity * attenuation * attenuation;
+                    return light->intensity * LocalLightAttenuation(glm::length(light->position - emitterPosition), light->GetRange());
                 };
                 std::stable_sort(smokeLights.begin(), smokeLights.end(), [&](const auto *a, const auto *b)
                     { return lightScore(a) > lightScore(b); });
@@ -767,7 +767,7 @@ namespace PlutoGE::render
                 for (std::size_t light = 0; light < localCount; ++light)
                 {
                     const auto &local = *smokeLights[light];
-                    v[9 + light] = {glm::vec3(cameraData.view * glm::vec4(local.position, 1)), local.range};
+                    v[9 + light] = {glm::vec3(cameraData.view * glm::vec4(local.position, 1)), local.GetRange()};
                     v[13 + light] = {local.color * local.intensity, static_cast<float>(local.type)};
                     v[17 + light] = {glm::mat3(cameraData.view) * local.direction, 0};
                 }

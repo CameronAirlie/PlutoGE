@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
@@ -28,6 +29,26 @@ namespace
 int main()
 {
     using namespace PlutoGE::render;
+
+    // Physical units and derived bounds, independent of a graphics context.
+    PlutoGE::scene::LightComponent physicalLight;
+    physicalLight.SetIntensity(1);
+    const float radius = physicalLight.GetLight().GetRange();
+    if (!Near(radius, 10) || !Near(LocalLightAttenuation(1, radius), 1) ||
+        !Near(LocalLightAttenuation(2, radius), .25f) ||
+        LocalLightAttenuation(radius, radius) != 0 || !std::isfinite(LocalLightAttenuation(0, radius))) return 101;
+    physicalLight.ClearDirty();
+    physicalLight.SetIntensity(4);
+    if (!physicalLight.IsDirty() || !Near(physicalLight.GetLight().GetRange(), radius * 2)) return 102;
+    physicalLight.ClearDirty();
+    physicalLight.SetColor({.25f, .25f, .25f});
+    if (!physicalLight.IsDirty() || !Near(physicalLight.GetLight().GetRange(), radius)) return 103;
+    physicalLight.Deserialize({{.name = "Range", .type = PlutoGE::scene::PropertyType::Float, .value = "999"}});
+    if (!Near(physicalLight.GetLight().GetRange(), radius)) return 104;
+    const auto lightProperties = physicalLight.Serialize();
+    if (std::any_of(lightProperties.begin(), lightProperties.end(), [](const auto &p) { return p.name == "Range"; })) return 105;
+    physicalLight.SetIntensity(-1);
+    if (physicalLight.GetLight().GetRange() != 0) return 106;
 
     VoxelConeTracingEffect vct;
     for (const bool enabled : {false, true})

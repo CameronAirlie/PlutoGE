@@ -40,15 +40,15 @@ namespace
         const auto id = entity->GetID();
         auto *light = entity->CreateComponent<LightComponent>();
         light->SetIntensity(2.0f);
-        light->SetRange(12.0f);
+        light->SetColor({1, 0, 0});
         entity->SetPosition({0.12345678f, 2.0f, 3.0f});
         const auto baseline = PlayModeChanges::Capture(scene);
         const auto beforeText = Save(scene);
         light->SetIntensity(6.0f);
-        light->SetRange(24.0f);
+        light->SetColor({0, 1, 0});
         entity->SetPosition({4, 5, 6});
         auto changes = PlayModeChanges::Compare(baseline, PlayModeChanges::Capture(scene));
-        Require(changes.size() == 3, "Expected position, intensity and range changes");
+        Require(changes.size() == 3, "Expected position, intensity and color changes");
         Require(std::none_of(changes.begin(), changes.end(), [](const auto &c) { return c.selected; }),
                 "Changes must default to unselected");
         auto cancelled = Load(beforeText);
@@ -61,7 +61,7 @@ namespace
         Require(PlayModeChanges::Apply(*restored, changes, error), error);
         Require(restored->FindEntityByID(id)->GetPosition() == glm::vec3(4, 5, 6), "Transform was not retained");
         const auto &retained = restored->FindEntityByID(id)->GetComponent<LightComponent>()->GetLight();
-        Require(retained.intensity == 6 && retained.range == 12, "Unselected component property changed");
+        Require(retained.intensity == 6 && retained.color == glm::vec3(1, 0, 0), "Unselected component property changed");
         // Exercise the same serialized before/after states used by editor history.
         const auto afterText = Save(*restored);
         auto undo = Load(beforeText);

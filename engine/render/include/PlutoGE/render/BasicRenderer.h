@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/RenderDebugView.h"
@@ -241,6 +242,8 @@ namespace PlutoGE::render
         float normalizedLod = 0.0f;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
+        // Authoritative object history survives visibility and draw-order changes.
+        std::optional<glm::mat4> previousModel;
     };
 
     struct BasicParticleVertex
@@ -271,7 +274,7 @@ namespace PlutoGE::render
     struct BasicPointLight
     {
         glm::vec3 position{0.0f};
-        float range = 10.0f;
+        float range = 10.0f; // Internal culling/shadow cutoff; scene lights derive this from intensity.
         glm::vec3 color{1.0f};
         float intensity = 1.0f;
         bool castsShadows = false;

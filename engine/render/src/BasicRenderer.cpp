@@ -1625,9 +1625,16 @@ namespace PlutoGE::render
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             if (!instanced)
             {
+                const bool singleInstance = draw.instanceModels && draw.instanceModels->size() == 1;
+                const glm::mat4 &model = singleInstance ? draw.instanceModels->front() : draw.model;
+                const glm::mat4 previousModel = singleInstance
+                    ? (draw.previousInstanceModels && !draw.previousInstanceModels->empty()
+                        ? draw.previousInstanceModels->front() : model)
+                    : draw.previousModel.value_or(m_hasPreviousFrame && historyIndex < m_previousModels.size()
+                        ? m_previousModels[historyIndex] : model);
                 const BasicObjectParameters objectParameters{
-                    draw.model,
-                    m_hasPreviousFrame && historyIndex < m_previousModels.size() ? m_previousModels[historyIndex] : draw.model,
+                    model,
+                    m_hasPreviousFrame ? previousModel : model,
                     glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
@@ -2019,7 +2026,7 @@ namespace PlutoGE::render
                 m_postProcessView,
                 m_postProcessProjection,
                 m_postProcessCameraPosition,
-                effect.worldToLocal,
+                effect.type == BasicPostProcessEffectType::TAA ? m_previousMotionViewProjection : effect.worldToLocal,
             };
             if (effect.type == BasicPostProcessEffectType::SSR)
             {

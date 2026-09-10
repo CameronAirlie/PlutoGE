@@ -657,7 +657,6 @@ namespace PlutoGE::ui
                                                             {
                                                                 lightComponent->SetLightType(scene::LightType::Point);
                                                                 lightComponent->SetIntensity(8.0f);
-                                                                lightComponent->SetRange(12.0f);
                                                             }
                                                             break;
                                                         }

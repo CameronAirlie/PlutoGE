@@ -274,7 +274,7 @@ namespace PlutoGE::render
                 hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
                 hash = HashValue(light->intensity, hash);
-                hash = HashValue(light->range, hash);
+                hash = HashValue(light->GetRange(), hash);
                 hash = HashValue(light->castsShadows, hash);
             }
 
@@ -298,9 +298,7 @@ namespace PlutoGE::render
         float ComputePointAttenuation(const glm::vec3 &fragPos, const scene::Light &light)
         {
             const float distanceToLight = glm::length(light.position - fragPos);
-            const float normalizedDistance = light.range > 0.0001f ? distanceToLight / light.range : 1.0f;
-            const float attenuation = glm::clamp(1.0f - normalizedDistance, 0.0f, 1.0f);
-            return attenuation * attenuation;
+            return LocalLightAttenuation(distanceToLight, light.GetRange());
         }
 
         float ComputeSpotAttenuation(const glm::vec3 &fragPos, const glm::vec3 &lightDir, const scene::Light &light)
@@ -500,9 +498,9 @@ namespace PlutoGE::render
                 float PointAttenuation(vec3 fragPos, int lightIndex)
                 {
                     float distanceToLight = length(uLightPosition[lightIndex] - fragPos);
-                    float normalizedDistance = uLightRange[lightIndex] > 0.0001 ? distanceToLight / uLightRange[lightIndex] : 1.0;
-                    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
-                    return attenuation * attenuation;
+                    float range = uLightRange[lightIndex];
+                    if (range <= 0.0 || distanceToLight >= range) return 0.0;
+                    return (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
                 }
 
                 vec3 InjectedRadiance(vec3 fragPos, vec3 normal, vec3 albedo, float metallic)
@@ -842,7 +840,7 @@ namespace PlutoGE::render
             m_injectionShader->SetUniform(lightDirectionNames[lightIndex], light ? light->direction : glm::vec3(0.0f, -1.0f, 0.0f));
             m_injectionShader->SetUniform(lightColorNames[lightIndex], light ? light->color : glm::vec3(0.0f));
             m_injectionShader->SetUniform(lightIntensityNames[lightIndex], light ? light->intensity : 0.0f);
-            m_injectionShader->SetUniform(lightRangeNames[lightIndex], light ? light->range : 1.0f);
+            m_injectionShader->SetUniform(lightRangeNames[lightIndex], light ? light->GetRange() : 1.0f);
         }
 
         Graphics::Enable(GL_BLEND);

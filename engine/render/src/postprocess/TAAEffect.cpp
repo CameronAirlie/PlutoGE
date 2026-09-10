@@ -191,9 +191,9 @@ namespace PlutoGE::render
                 vec2 offset12 = w2 / max(w12, vec2(0.0001));
                 vec2 invSize = 1.0 / textureSizeValue;
 
-                vec2 uv0 = (texel - 1.0) * invSize;
-                vec2 uv12 = (texel + offset12) * invSize;
-                vec2 uv3 = (texel + 2.0) * invSize;
+                vec2 uv0 = (texel - 0.5) * invSize;
+                vec2 uv12 = (texel + 0.5 + offset12) * invSize;
+                vec2 uv3 = (texel + 2.5) * invSize;
 
                 vec4 result = vec4(0.0);
                 result += texture(tex, vec2(uv0.x, uv0.y)) * w0.x * w0.y;
@@ -349,11 +349,12 @@ namespace PlutoGE::render
                 float normalValidity = smoothstep(uNormalRejectionThreshold - 0.12, uNormalRejectionThreshold, normalAgreement);
                 float disocclusionWeight = smoothstep(0.35, 2.0, unjitteredMotionPixels);
                 historyValidity *= mix(1.0, depthValidity * normalValidity, disocclusionWeight);
-                historyValidity *= clamp(1.0 - length(unjitteredMotion) * uVelocityRejectionScale, 0.0, 1.0);
+                historyValidity *= 1.0 / (1.0 + length(unjitteredMotion) * max(uVelocityRejectionScale, 0.0));
                 // Lighting is not represented by geometry motion vectors. Reject
                 // history when a hard shadow edge no longer agrees with the
                 // current frame instead of dragging that edge with the camera.
-                float historyLumaDelta = abs(Luma(clippedHistory) - centerLuma) / max(centerLuma, 0.05);
+                float historyLuma = Luma(history);
+                float historyLumaDelta = max(max(minLuma - historyLuma, historyLuma - maxLuma), 0.0) / max(maxLuma, 0.05);
                 float lightingValidity = 1.0 - smoothstep(0.08, 0.30, historyLumaDelta);
                 // Alternating jitter samples naturally differ on stationary
                 // sub-pixel edges. Rejecting those samples defeats TAA's spatial

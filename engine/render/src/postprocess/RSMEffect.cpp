@@ -106,7 +106,7 @@ namespace PlutoGE::render
                 hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
                 hash = HashValue(light->intensity, hash);
-                hash = HashValue(light->range, hash);
+                hash = HashValue(light->GetRange(), hash);
                 hash = HashValue(light->castsShadows, hash);
             }
 

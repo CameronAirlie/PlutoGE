@@ -162,7 +162,7 @@ float viewDepth(float2 uv, float depth)
             if (distanceToLight >= range)
                 continue;
             float3 lightDirection = toLight / max(distanceToLight, 0.0001);
-            float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
+            float attenuation = (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
             if (values[13 + lightIndex].w == 2.0)
             {
                 const float cone = dot(-lightDirection, normalize(values[17 + lightIndex].xyz));

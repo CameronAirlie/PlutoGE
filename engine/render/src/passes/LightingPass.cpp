@@ -68,7 +68,7 @@ namespace PlutoGE::render
 
         BoundingSphere ComputeLocalLightBoundingSphere(const scene::Light &light)
         {
-            const float range = std::max(light.range, 0.0f);
+            const float range = std::max(light.GetRange(), 0.0f);
             if (light.type != scene::LightType::Spot || range <= 0.0f)
             {
                 return BoundingSphere{light.position, range};
@@ -407,9 +407,9 @@ namespace PlutoGE::render
                 float ComputePointAttenuation(vec3 fragPos, Light light)
                 {
                     float distanceToLight = length(light.Position - fragPos);
-                    float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
-                    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
-                    return attenuation * attenuation;
+                    float range = light.Range;
+                    if (range <= 0.0 || distanceToLight >= range) return 0.0;
+                    return (1.0 - smoothstep(range * 0.9, range, distanceToLight)) / max(distanceToLight * distanceToLight, 0.0001);
                 }
 
                 float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, Light light)
@@ -765,7 +765,7 @@ namespace PlutoGE::render
                         attenuation = ComputeSpotAttenuation(fragPos, lightDir, light);
                     }
 
-                    if (attenuation <= 0.0001)
+                    if (attenuation <= 0.0)
                     {
                         return vec3(0.0);
                     }
@@ -894,7 +894,7 @@ namespace PlutoGE::render
                     // fetches but before reading the material G-buffer.
                     if (uLight.Type == LIGHT_TYPE_POINT)
                     {
-                        if (ComputePointAttenuation(fragPos, uLight) <= 0.0001)
+                        if (ComputePointAttenuation(fragPos, uLight) <= 0.0)
                         {
                             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                             return;
@@ -903,7 +903,7 @@ namespace PlutoGE::render
                     else if (uLight.Type == LIGHT_TYPE_SPOT)
                     {
                         vec3 earlyLightDir = normalize(uLight.Position - fragPos);
-                        if (ComputeSpotAttenuation(fragPos, earlyLightDir, uLight) <= 0.0001)
+                        if (ComputeSpotAttenuation(fragPos, earlyLightDir, uLight) <= 0.0)
                         {
                             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                             return;
@@ -1371,7 +1371,7 @@ namespace PlutoGE::render
             shader->SetUniform("uLight.Position", light.position);
             shader->SetUniform("uLight.Color", light.color);
             shader->SetUniform("uLight.Intensity", light.intensity * intensityScale);
-            shader->SetUniform("uLight.Range", light.range);
+            shader->SetUniform("uLight.Range", light.GetRange());
             shader->SetUniform("uLight.Direction", light.direction);
             shader->SetUniform("uLight.Type", static_cast<int>(light.type));
             shader->SetUniform("uLight.IsStatic", light.isStatic ? 1 : 0);

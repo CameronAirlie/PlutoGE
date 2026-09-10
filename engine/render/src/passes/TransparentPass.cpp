@@ -213,7 +213,7 @@ namespace PlutoGE::render
                 shader->SetUniform(lightColorNames[lightIndex], light->color);
                 const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
                 shader->SetUniform(lightIntensityNames[lightIndex], light->intensity * skyVisibility);
-                shader->SetUniform(lightRangeNames[lightIndex], light->range);
+                shader->SetUniform(lightRangeNames[lightIndex], light->GetRange());
                 shader->SetUniform(lightDirectionNames[lightIndex], light->direction);
                 shader->SetUniform(lightTypeNames[lightIndex], static_cast<int>(light->type));
                 shader->SetUniform(lightCastsShadowNames[lightIndex], 0);

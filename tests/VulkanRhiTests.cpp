@@ -1,3 +1,4 @@
+#include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
@@ -68,6 +69,7 @@ int main(int argc, char **argv)
             shader.vertex.spirv = ReadSpirv((std::string(module) + ".vertex.spv").c_str());
             shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
         };
+        loadPostProcess(BasicPostProcessEffectType::TAA, "TAA");
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
@@ -112,6 +114,13 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")
         {
             CheckFsr2Rendering(renderer, device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--temporal-motion")
+        {
+            CheckTemporalMotionRendering(renderer, device, false, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            if (device.GetTemporalUpscalerSupport(rhi::TemporalUpscaler::Fsr2).supported)
+                CheckTemporalMotionRendering(renderer, device, true, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")

@@ -125,17 +125,6 @@ namespace PlutoGE::scene
         Initialize();
     }
 
-    void LightComponent::SetRange(float range)
-    {
-        if (m_config.range == range)
-        {
-            return;
-        }
-
-        m_config.range = range;
-        MarkDirty();
-    }
-
     void LightComponent::SetIntensity(float intensity)
     {
         if (m_config.intensity == intensity)
@@ -143,7 +132,9 @@ namespace PlutoGE::scene
             return;
         }
 
-        m_config.intensity = intensity;
+        m_config.intensity = std::isfinite(intensity) ? std::max(intensity, 0.0f) : 0.0f;
+        if (m_config.type != LightType::Directional)
+            MarkDirty(); // Local intensity changes the derived shadow/culling radius.
     }
 
     void LightComponent::SetColor(const glm::vec3 &color)
@@ -153,7 +144,8 @@ namespace PlutoGE::scene
             return;
         }
 
-        m_config.color = color;
+        m_config.color = glm::max(color, glm::vec3(0.0f));
+        if (m_config.type != LightType::Directional) MarkDirty();
     }
 
     void LightComponent::SetDirection(const glm::vec3 &direction)
@@ -242,7 +234,6 @@ namespace PlutoGE::scene
         std::vector<Property> properties{
             {"Color", PropertyType::Vec3, std::to_string(m_config.color.x) + "," + std::to_string(m_config.color.y) + "," + std::to_string(m_config.color.z)},
             {"Intensity", PropertyType::Float, std::to_string(m_config.intensity)},
-            {"Range", PropertyType::Float, std::to_string(m_config.range)},
             {"CastsShadows", PropertyType::Bool, m_config.castsShadows ? "true" : "false"},
             {"Direction", PropertyType::Vec3, std::to_string(m_config.direction.x) + "," + std::to_string(m_config.direction.y) + "," + std::to_string(m_config.direction.z)},
             {"LightType", PropertyType::Enum, std::to_string(static_cast<int>(m_config.type)), {"Point", "Directional", "Spot"}},
@@ -288,11 +279,12 @@ namespace PlutoGE::scene
             }
             else if (property.name == "Intensity")
             {
-                m_config.intensity = std::stof(property.value);
+                const float intensity = std::stof(property.value);
+                m_config.intensity = std::isfinite(intensity) ? std::max(intensity, 0.0f) : 0.0f;
             }
             else if (property.name == "Range")
             {
-                m_config.range = std::stof(property.value);
+                // Legacy scenes may contain Range; intensity now determines the cutoff.
             }
             else if (property.name == "CastsShadows")
             {

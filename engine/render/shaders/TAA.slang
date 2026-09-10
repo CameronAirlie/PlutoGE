@@ -1,5 +1,6 @@
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
+#include "ScreenSpaceCommon.slang"
 
 [[vk::binding(0, 0)]]
 cbuffer Parameters : register(b0, space0)
@@ -66,9 +67,9 @@ float4 sampleCatmullRom(Sampler2D source, float2 uv)
     const float2 w12 = w1 + w2;
     const float2 offset12 = w2 / max(w12, float2(0.0001));
     const float2 inverseSize = 1.0 / size;
-    const float2 uv0 = (texel - 1.0) * inverseSize;
-    const float2 uv12 = (texel + offset12) * inverseSize;
-    const float2 uv3 = (texel + 2.0) * inverseSize;
+    const float2 uv0 = (texel - 0.5) * inverseSize;
+    const float2 uv12 = (texel + 0.5 + offset12) * inverseSize;
+    const float2 uv3 = (texel + 2.5) * inverseSize;
 
     float4 result = 0.0;
     result += source.Sample(float2(uv0.x, uv0.y)) * w0.x * w0.y;
@@ -206,20 +207,37 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         tonemap(historySample.rgb), minColor, maxColor);
     const float3 history = inverseTonemap(clippedHistoryMapped);
 
-    const float3 currentNormal = centerNormal;
-    const float3 historyNormal = normalize(normalTexture.Sample(historyUv).rgb * 2.0 - 1.0);
-    const float historyDepth = depthTexture.Sample(historyUv).r;
+    // History alpha contains last frame's depth. Sampling this frame's depth
+    // and normals at historyUv compares different surfaces during a pan.
+    const float3 world = reconstructWorldPosition(currentUv + currentJitterUv, currentDepth,
+        pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
+    const float4 previousClip = mul(pass.worldToLocal, float4(world, 1.0));
+    const float previousNdcDepth = previousClip.z / max(previousClip.w, 0.000001);
+    const float expectedDepth = pass.zeroToOneDepth != 0 ? previousNdcDepth : previousNdcDepth * 0.5 + 0.5;
+    // A bilinear alpha sample invents intermediate depths at silhouettes.
+    // Test the contributing history texels' depth interval instead, preserving
+    // legitimate fractional edge coverage while rejecting uncovered surfaces.
+    const float2 historyBase = floor(historyUv / pass.inverseResolution - 0.5);
+    float historyMinDepth = 1.0, historyMaxDepth = 0.0;
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
+    {
+        const float2 tap = (historyBase + float2(x,y) + 0.5) * pass.inverseResolution;
+        const float sampleDepth = historyTexture.Sample(saturate(tap)).a;
+        historyMinDepth = min(historyMinDepth, sampleDepth);
+        historyMaxDepth = max(historyMaxDepth, sampleDepth);
+    }
+    const float depthDelta = max(max(historyMinDepth - expectedDepth, expectedDepth - historyMaxDepth), 0.0);
     const float depthValidity = 1.0 - smoothstep(pass.parameters[1].x,
-                                                 pass.parameters[1].x * 2.0,
-                                                 abs(currentDepth - historyDepth));
-    const float normalAgreement = dot(currentNormal, historyNormal);
-    const float normalValidity = smoothstep(pass.parameters[1].y - 0.12,
-                                            pass.parameters[1].y, normalAgreement);
+        pass.parameters[1].x * 2.0, depthDelta);
     const float motionPixels = length(motion / max(pass.inverseResolution, float2(0.000001)));
     const float disocclusionWeight = smoothstep(0.35, 2.0, motionPixels);
-    float validity = lerp(1.0, depthValidity * normalValidity, disocclusionWeight);
-    validity *= saturate(1.0 - length(motion) * pass.parameters[1].z);
-    const float lightingDelta = abs(luma(history) - luma(current.rgb)) / max(luma(current.rgb), 0.05);
+    float validity = lerp(1.0, depthValidity, disocclusionWeight);
+    validity *= 1.0 / (1.0 + length(motion) * max(pass.parameters[1].z, 0.0));
+    // Coverage at an edge naturally differs from the current jitter sample.
+    // Reject lighting changes only outside the entire current neighborhood.
+    const float historyLuma = luma(historySample.rgb);
+    const float lightingDelta = max(max(minLuma - historyLuma, historyLuma - maxLuma), 0.0) / max(maxLuma, 0.05);
     const float lightingValidity = 1.0 - smoothstep(0.08, 0.30, lightingDelta);
     validity *= lerp(1.0, lightingValidity, disocclusionWeight);
 

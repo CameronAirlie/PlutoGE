@@ -690,7 +690,7 @@ namespace
 
     glm::mat4 BuildSpotShadowMatrix(const PlutoGE::scene::Light &light)
     {
-        const float farPlane = glm::max(light.range, 0.1f);
+        const float farPlane = glm::max(light.GetRange(), 0.1f);
         const glm::vec3 lightDirection = glm::normalize(light.direction);
         const glm::mat4 view = glm::lookAt(light.position, light.position + lightDirection, ResolveUpVector(lightDirection));
         const glm::mat4 projection = glm::perspective(glm::radians(50.0f), 1.0f, 0.1f, farPlane);
@@ -751,7 +751,7 @@ namespace
 
     bool IsBoundsRelevantForPointLight(const PlutoGE::render::MeshBounds &bounds, const PlutoGE::scene::Light &light)
     {
-        const float maxDistance = glm::max(light.range, 0.1f) + bounds.radius;
+        const float maxDistance = glm::max(light.GetRange(), 0.1f) + bounds.radius;
         const glm::vec3 offset = bounds.center - light.position;
         return glm::dot(offset, offset) <= maxDistance * maxDistance;
     }
@@ -2019,7 +2019,7 @@ namespace PlutoGE::render
                     }
                     else
                     {
-                        const float farPlane = glm::max(light->range, 0.1f);
+                        const float farPlane = glm::max(light->GetRange(), 0.1f);
                         const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
                         for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                         {
@@ -2099,7 +2099,7 @@ namespace PlutoGE::render
                 }
 
                 Graphics::Disable(GL_POLYGON_OFFSET_FILL);
-                const float farPlane = glm::max(light->range, 0.1f);
+                const float farPlane = glm::max(light->GetRange(), 0.1f);
                 light->shadowFarPlane = farPlane;
                 const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
                 if (!light->isDirty && light->shadowRefreshPending && light->pendingPointShadowFaceMask == 0)
@@ -2835,7 +2835,7 @@ namespace PlutoGE::render
             }
 
             light->shadowMatrix = shadowMatrix;
-            light->shadowFarPlane = glm::max(light->range, 0.1f);
+            light->shadowFarPlane = glm::max(light->GetRange(), 0.1f);
             Graphics::SetViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
 
             Graphics::Enable(GL_POLYGON_OFFSET_FILL);

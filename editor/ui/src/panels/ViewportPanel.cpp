@@ -737,7 +737,7 @@ namespace PlutoGE::ui
             const ImU32 color = IM_COL32(255, 216, 92, 230);
             if (light.type == scene::LightType::Point)
             {
-                const float radius = std::max(light.range, 0.1f);
+                const float radius = std::max(light.GetRange(), 0.1f);
                 DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, radius, 0.0f), cameraData, viewportMin, viewportSize, color);
                 DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
                 DrawWorldCircle(drawList, center, glm::vec3(0.0f, radius, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
@@ -754,7 +754,7 @@ namespace PlutoGE::ui
             const glm::vec3 referenceUp = std::abs(direction.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
             const glm::vec3 tangent = glm::normalize(glm::cross(referenceUp, direction));
             const glm::vec3 bitangent = glm::normalize(glm::cross(direction, tangent));
-            const float range = std::max(light.range, 0.1f);
+            const float range = std::max(light.GetRange(), 0.1f);
             const float radius = range * 0.28f;
             const glm::vec3 coneCenter = center + direction * range;
             DrawWorldCircle(drawList, coneCenter, tangent * radius, bitangent * radius, cameraData, viewportMin, viewportSize, color);

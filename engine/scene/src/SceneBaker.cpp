@@ -212,7 +212,7 @@ namespace PlutoGE::scene
                         .position = entity->GetWorldPosition(),
                         .color = glm::max(light.color, glm::vec3(0.0f)),
                         .intensity = std::max(light.intensity, 0.0f),
-                        .range = std::max(light.range, 0.0f),
+                        .range = light.GetRange(),
                         .direction = directionLengthSq > 1e-10f
                                          ? direction / std::sqrt(directionLengthSq)
                                          : glm::vec3(0.0f, -1.0f, 0.0f),
@@ -1318,8 +1318,7 @@ namespace PlutoGE::scene
                             if (lightDistance <= 0.0001 || lightRange <= 0.0001 || lightDistance >= lightRange) continue;
                             lightDirection = toLight / lightDistance;
                             maxDistance = max(lightDistance - epsilon, epsilon);
-                            float falloff = clamp(1.0 - lightDistance / lightRange, 0.0, 1.0);
-                            attenuation = falloff * falloff;
+                            attenuation = (1.0 - smoothstep(lightRange * 0.9, lightRange, lightDistance)) / max(lightDistance * lightDistance, 0.0001);
                             if (lightType == 2)
                             {
                                 float coneFactor = dot(-lightDirection, normalize(light.DirectionRange.xyz));
@@ -2023,9 +2022,7 @@ namespace PlutoGE::scene
 
                     lightDirection = toLight / lightDistance;
                     maxDistance = std::max(lightDistance - rayEpsilon, rayEpsilon);
-                    const float normalizedDistance = lightDistance / light.range;
-                    attenuation = std::clamp(1.0f - normalizedDistance, 0.0f, 1.0f);
-                    attenuation *= attenuation;
+                    attenuation = render::LocalLightAttenuation(lightDistance, light.range);
 
                     if (light.type == LightType::Spot)
                     {

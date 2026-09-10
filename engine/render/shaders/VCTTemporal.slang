@@ -85,22 +85,36 @@ float4 resolveIndirect(float2 uv)
     const float2 motion = motionTexture.Sample(uv).xy * orientation;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0)) return float4(current, currentViewDepth);
-    const float4 metadata = historyMetadata.Sample(historyUv);
     const float expectedDepth = max(-mul(pass.previousView, float4(position, 1.0)).z, 0.0);
     const float allowedDepth = max(0.01, min(pass.depthThreshold, expectedDepth * 0.01));
-    const bool valid = metadata.w > 0.5 && abs(metadata.z - expectedDepth) <= allowedDepth &&
-                       dot(decodeOctahedron(metadata.xy), normal) >= pass.normalThreshold;
-    float3 history = historyColor.Sample(historyUv).rgb;
-    float3 minimum = current, maximum = current;
-    for (int y = -1; y <= 1; ++y)
-    for (int x = -1; x <= 1; ++x)
+    uint historyWidth, historyHeight;
+    historyMetadata.GetDimensions(historyWidth, historyHeight);
+    const int2 historySize = int2(historyWidth, historyHeight);
+    const float2 historyPixel = historyUv * float2(historySize) - 0.5;
+    const int2 base = int2(floor(historyPixel));
+    const float2 fraction = frac(historyPixel);
+    float3 history = 0.0;
+    float historyWeights = 0.0;
+    // Validate each exact metadata/colour pair before interpolating. Filtering
+    // metadata first can invent a surface between a wall and the background.
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
     {
-        const float3 sample = currentIndirect.Sample(saturate(uv + float2(x,y) * pass.inverseResolution)).rgb;
-        minimum = min(minimum, sample); maximum = max(maximum, sample);
+        const int2 tap = clamp(base + int2(x,y), int2(0), historySize - 1);
+        const float4 metadata = historyMetadata.Load(int3(tap, 0));
+        if (metadata.w <= 0.5 || abs(metadata.z - expectedDepth) > allowedDepth ||
+            dot(decodeOctahedron(metadata.xy), normal) < pass.normalThreshold) continue;
+        const float tapWeight = (x == 0 ? 1.0 - fraction.x : fraction.x) *
+                                (y == 0 ? 1.0 - fraction.y : fraction.y);
+        history += historyColor.Load(int3(tap, 0)).rgb * tapWeight;
+        historyWeights += tapWeight;
     }
-    history = clamp(history, minimum - 0.03, maximum + 0.03);
-    const float motionRejection = saturate(length(motion / max(pass.inverseResolution, 0.000001)) * 0.125);
-    const float weight = valid ? pass.temporalBlend * (1.0 - motionRejection) : 0.0;
+    const bool valid = historyWeights > 0.00001;
+    history = valid ? history / historyWeights : current;
+    // Depth/normal validation rejects disocclusions. Camera speed alone must
+    // not discard history, nor should a freshly published lighting field clamp
+    // validated history to its new brightness before temporal blending occurs.
+    const float weight = valid ? pass.temporalBlend : 0.0;
     const float3 resolved = lerp(current, history, weight);
     if (pass.debugView != 0) return float4(valid ? float3(0, weight, 0) : float3(1,0,0), currentViewDepth);
     return float4(max(resolved, 0.0), currentViewDepth);

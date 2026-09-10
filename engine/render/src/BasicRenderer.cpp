@@ -1,5 +1,6 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/VctVolumePlacement.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 #include "PlutoGE/render/PostProcessResourcePool.h"
 
@@ -2312,6 +2313,7 @@ namespace PlutoGE::render
             cascade = {};
         }
         for (auto &texture : m_vctRadianceAtlases) texture.Reset();
+        for (auto &texture : m_vctInjectionAtlases) texture.Reset();
         m_vctShadowDepth.Reset(); m_vctShadowColor.Reset();
         m_vctProbeRadiance.Reset(); m_vctProbeVisibility.Reset();
         m_vctCacheOriginSize = glm::vec4(0.0f); m_vctCacheConfiguration = glm::vec4(0.0f);
@@ -2375,6 +2377,13 @@ namespace PlutoGE::render
                      .format = rhi::Format::R16G16B16A16Float, .usage = rhi::TextureUsage::Sampled,
                      .debugName = "VCT directional radiance atlas", .sampled = true,
                      .depth = resolution * cascadeCount, .storage = true, .mipLevels = mipLevels}));
+            // One shared staging field: only one cascade gathers at a time.
+            for (auto &texture : m_vctInjectionAtlases)
+                texture = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {.width = resolution, .height = resolution,
+                     .format = rhi::Format::R16G16B16A16Float, .usage = rhi::TextureUsage::Sampled,
+                     .debugName = "VCT pending direct radiance", .sampled = true,
+                     .depth = resolution, .storage = true, .mipLevels = mipLevels}));
             for (auto *texture : {&m_vctProbeRadiance, &m_vctProbeVisibility})
                 *texture = rhi::Texture(*m_device, m_device->CreateTexture(
                     {.width = 16, .height = 16, .format = rhi::Format::R16G16B16A16Float,
@@ -2428,8 +2437,9 @@ namespace PlutoGE::render
             auto &cascade = m_vctCascades[index];
             const bool stationary = useCache && index + 1 == cascadeCount;
             const float size = stationary ? m_vctCacheOriginSize.w : baseSize * std::pow(3.0f, static_cast<float>(index));
-            const float snap = size / static_cast<float>(resolution) * 8.0f;
-            const glm::vec3 desired = stationary ? glm::vec3(m_vctCacheOriginSize) : glm::floor((lighting.cameraPosition - glm::vec3(size * 0.5f)) / snap) * snap;
+            const glm::vec3 desired = stationary ? glm::vec3(m_vctCacheOriginSize) :
+                detail::VctVolumeOrigin(lighting.cameraPosition, size, resolution,
+                                        cascade.origin, cascade.valid && cascade.size == size);
             const bool intervalElapsed = !cascade.valid ||
                 m_frameIndex - cascade.lastUpdateFrame >= updateInterval;
             const bool requiresRefresh = !cascade.valid || cascade.size != size ||
@@ -2462,6 +2472,7 @@ namespace PlutoGE::render
                 cascade.pendingInjectLocalLights = effect.parameters[4].w > 0.5f;
                 cascade.pendingSecondaryBounce = secondaryBounce;
                 cascade.secondaryPass = false;
+                cascade.stagedBounceSource = false;
                 cascade.secondaryReady = false;
                 cascade.nextBounceSlice = 0;
                 commands.ClearStorageImageUint(cascade.surfaceRecord.Get());
@@ -2675,8 +2686,9 @@ namespace PlutoGE::render
                 const ScopedGpuTiming bounceTiming(commands, "RHI VCT Secondary Gather");
                 // Fixed voxel work, independent of scene triangles/draws. Skip empty cells in the shader.
                 const auto slices = std::max(4u, (32768u / (resolution * resolution) / 4u) * 4u);
-                const glm::uvec4 params(resolution, static_cast<std::uint32_t>(rebuildIndex),
-                                        cascadeCount, cascade.nextBounceSlice);
+                const glm::uvec4 params(resolution, cascade.stagedBounceSource ? 0u : static_cast<std::uint32_t>(rebuildIndex),
+                                        cascade.stagedBounceSource ? 1u : cascadeCount, cascade.nextBounceSlice);
+                const auto &bounceSource = cascade.stagedBounceSource ? m_vctInjectionAtlases : m_vctRadianceAtlases;
                 auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
                 commands.BindPipeline(m_vctBouncePipeline.Get());
@@ -2685,7 +2697,7 @@ namespace PlutoGE::render
                 commands.BindStorageImage(2, cascade.accumulation[3].Get());
                 commands.BindStorageImage(3, cascade.secondaryVolume.Get());
                 for (std::uint32_t direction = 0; direction < 6; ++direction)
-                    commands.BindTexture(7 + direction, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+                    commands.BindTexture(7 + direction, bounceSource[direction].Get(), m_vctVolumeSampler.Get());
                 commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, slices / 4);
                 commands.ShaderMemoryBarrier();
                 cascade.nextBounceSlice += slices;
@@ -2697,12 +2709,15 @@ namespace PlutoGE::render
             if (publish)
             {
                 const ScopedGpuTiming publishTiming(commands, "RHI VCT Volume Publish");
+                const bool stageDirect = !cascade.secondaryPass && cascade.pendingSecondaryBounce > 0.0f;
+                auto &destination = stageDirect ? m_vctInjectionAtlases : m_vctRadianceAtlases;
+                const auto destinationCascade = stageDirect ? 0u : static_cast<std::uint32_t>(rebuildIndex);
                 const float gain = cascade.secondaryReady ? cascade.pendingSecondaryBounce : 0.0f;
                 const VctResolveParameters resolve{
-                    resolution, static_cast<std::uint32_t>(rebuildIndex) * resolution, gain, 0};
+                    resolution, destinationCascade * resolution, gain, 0};
                 auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
-                for (auto &atlas : m_vctRadianceAtlases)
+                for (auto &atlas : destination)
                 {
                     commands.BindPipeline(m_vctResolvePipeline.Get());
                     commands.BindUniformBuffer(0, resolveBuffer.Get());
@@ -2714,40 +2729,43 @@ namespace PlutoGE::render
                     commands.ShaderMemoryBarrier();
                 }
                 const auto maximumMip = static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
-                for (std::size_t direction = 0; direction < m_vctRadianceAtlases.size(); ++direction)
+                for (std::size_t direction = 0; direction < destination.size(); ++direction)
                     for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
                     {
                         const std::uint32_t mipSize = std::max(1u, resolution >> mip);
                         const VctMipParameters params{static_cast<std::uint32_t>(direction / 2),
                             direction % 2 == 0 ? 1 : -1,
-                            static_cast<std::uint32_t>(rebuildIndex), mipSize, mip - 1, {}};
+                            destinationCascade, mipSize, mip - 1, {}};
                         auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
                         m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
                         commands.BindPipeline(m_vctDirectionalMipPipeline.Get());
                         commands.BindUniformBuffer(0, buffer.Get());
-                        commands.BindTexture(1, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
-                        commands.BindStorageImage(2, m_vctRadianceAtlases[direction].Get(), mip);
+                        commands.BindTexture(1, destination[direction].Get(), m_vctVolumeSampler.Get());
+                        commands.BindStorageImage(2, destination[direction].Get(), mip);
                         commands.Dispatch((mipSize + 3) / 4, (mipSize + 3) / 4, (mipSize + 3) / 4);
                         commands.ShaderMemoryBarrier();
                     }
-                cascade.contentSignature = cascade.pendingSignature;
-                cascade.origin = cascade.pendingOrigin;
-                cascade.size = cascade.pendingSize;
-                cascade.lastUpdateFrame = m_frameIndex;
-                cascade.valid = true;
-                cascade.appliedSecondaryBounce = gain;
-                const bool startSecondary = !cascade.secondaryReady && cascade.pendingSecondaryBounce > 0.0f;
-                cascade.rebuilding = startSecondary;
-                if (startSecondary)
+                cascade.pendingDraws.clear();
+                if (stageDirect)
                 {
                     cascade.secondaryPass = true;
+                    cascade.stagedBounceSource = true;
                     m_vctNextCascade = static_cast<std::uint32_t>(rebuildIndex);
-                    cascade.pendingDraws.clear();
                 }
-                else cascade.pendingDraws.clear();
-                m_vctHistoryValid = false;
-                if (!startSecondary)
+                else
                 {
+                    // Publish metadata and radiance together, after the whole
+                    // bounce is ready. Motion never exposes the direct-only field.
+                    if (cascade.appliedSecondaryBounce != gain) m_vctHistoryValid = false;
+                    cascade.contentSignature = cascade.pendingSignature;
+                    cascade.origin = cascade.pendingOrigin;
+                    cascade.size = cascade.pendingSize;
+                    cascade.lastUpdateFrame = m_frameIndex;
+                    cascade.valid = true;
+                    cascade.appliedSecondaryBounce = gain;
+                    cascade.rebuilding = false;
+                    cascade.stagedBounceSource = false;
+                    if (!cascade.secondaryReady) cascade.nextBounceSlice = 0;
                     m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
                     if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
                 }

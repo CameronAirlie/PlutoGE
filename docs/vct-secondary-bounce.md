@@ -3,10 +3,10 @@
 ## Implementation
 
 1. Voxelize the direct-light and emissive field once. Alongside the original integer radiance/coverage sums, capture a packed surface normal and diffuse reflectance per occupied voxel.
-2. Resolve the direct field and directional mips. Gather one unit-strength secondary bounce into a separate RGBA16F volume using `VCTBounceUpdate.slang` and the shared four-cone integration in `VCTSecondaryBounce.slang`.
-3. Publish direct + strength × secondary and rebuild the directional mips. Refresh the stationary probe cache when its source cascade completes.
+2. Resolve the direct field and directional mips into a shared staging volume. Gather one unit-strength secondary bounce into a separate RGBA16F volume using `VCTBounceUpdate.slang` and the shared four-cone integration in `VCTSecondaryBounce.slang`.
+3. Publish direct + strength × secondary and its new volume origin together, then rebuild the directional mips. Refresh the stationary probe cache when its source cascade completes.
 
-Both the RHI OpenGL/Vulkan renderer and the legacy OpenGL effect use this compute shader. The sampled direct atlas stays immutable until the gather finishes. The original integer sums remain intact, allowing strength changes to recombine the cached fields without repeating geometry or cone tracing. Geometry, material, light and volume changes invalidate the unit bounce. Partial gathers never become visible; disabling midway preserves the direct field and a later enable can resume the gather.
+Both the RHI OpenGL/Vulkan renderer and the legacy OpenGL effect use this compute shader. The sampled direct atlas stays immutable until the gather finishes. The original integer sums remain intact, allowing strength changes to recombine the cached fields without repeating geometry or cone tracing. Geometry, material, light and volume changes invalidate the unit bounce. The last completed field remains visible during geometry injection and secondary gathering. Partial gathers never become visible; disabling midway discards an unfinished gather and publishes the direct field. A later enable restarts that gather.
 
 This lets illuminated walls become secondary sources for other surfaces. Black and fully metallic surfaces contribute no diffuse secondary light. A 32-bit record stores five bits per normal/reflectance component and a validity bit. Atomic maximum selects one coherent representative where surfaces overlap, independent of fragment ordering. This is an approximation: mixed materials/normals within one voxel are represented by one surface, and gathering starts at the voxel center. Reflectance is clamped before quantization, with a maximum encoded value of 29/31.
 
@@ -23,7 +23,7 @@ The compute budget targets 32,768 voxel cells per frame, rounded to groups of fo
 | 64³ | 8 | 8 | 3 MiB |
 | 128³ | 4 | 32 | 24 MiB |
 
-The extra memory is an R32UI surface record and RGBA16F unit-bounce texture. Original accumulation textures are reused for the direct contribution. Each reflecting cell traces four cones with at most 24 steps and early exit on occlusion/volume boundaries. GPU cost still depends on occupancy and trace length; the work budget is not a millisecond guarantee. Publication performs the resolve and directional mip generation in one frame. `RHI VCT Secondary Gather` and `RHI VCT Volume Publish` expose those costs in GPU profiling.
+The per-cascade extra memory is an R32UI surface record and RGBA16F unit-bounce texture. One additional shared staging field, including six directional mip chains, uses about 13.7 MiB at 64³ or 109.7 MiB at 128³; it is shared across all cascades. Original accumulation textures are reused for the direct contribution. Each reflecting cell traces four cones with at most 24 steps and early exit on occlusion/volume boundaries. GPU cost still depends on occupancy and trace length; the work budget is not a millisecond guarantee. Publication performs the resolve and directional mip generation in one frame. `RHI VCT Secondary Gather` and `RHI VCT Volume Publish` expose those costs in GPU profiling.
 
 An unchanged scene performs no secondary updates and retains the existing screen-space trace cost. Initial geometry voxelization and subsequent geometry/light changes still use the existing progressive draw/triangle budgets. The improvement removes the secondary geometry replay and prevents strength changes from restarting primary voxelization; it does not make initial loading or dynamic source reinjection instantaneous. Stationary probes retain their own update budget.
 
@@ -54,3 +54,19 @@ On this machine's RTX 4070 SUPER, Vulkan timestamps from the same isolated captu
 Direct radiance accumulation retains its 1/4095 precision and bounded integer sums, preserving faint emission and preventing wrap under heavy overlap. Coverage remains independently encoded. The RHI **Indirect Only** preview retains fixed exposure 1, gamma 2.2 and ACES display mapping; raw voxel diagnostic views retain their existing mapping.
 
 This is one additional diffuse bounce within the voxel coverage. Volume extent, coarse filtering, thin walls, material quantization and existing local-light injection limits still affect the result. No additional local-light shadow maps or unlimited recursive bounces are introduced.
+
+## Camera-motion stability
+
+Camera following now has an overlapping scroll margin, so small movements across a snapping boundary do not alternate between volume rebuilds. Both renderer paths preserve their previous completed field while preparing a replacement in the shared staging volume. Only a completed direct + secondary field is published, including the matching origin. Publication with unchanged bounce strength preserves temporal history; explicit strength changes still reset it for immediate switching.
+
+The temporal resolve keeps depth/normal-validated history during camera movement and across lighting publications. RHI validation checks each exact metadata/colour pair before interpolating, avoiding metadata blended from separate surfaces. It no longer disables history solely because camera motion exceeds eight pixels per frame, or clamps valid previous lighting to a newly published field before blending. Newly visible geometry still rejects unrelated history.
+
+The moving-volume regression previously dropped deposited radiance from 54.6 to zero during a rebuild. With staging it remains above 53.6 throughout the same move. GPU tests additionally cover valid history during fast camera motion, smooth lighting publication, and rejection on newly visible geometry. The original fast cached switching and source-removal regressions remain in place.
+
+A read-only CoD capture loads `Assets/Scenes/Main.plutoscene` and its saved VCT parameters from `PostProcessing/main.plutopostprocess`. It warms the field for 500 frames, then moves the camera 18 metres over 300 frames through the corridor. It isolates GI at fixed exposure; it does not run the player controller or reproduce the complete gameplay post-processing stack:
+
+```powershell
+PlutoGEEngineGraphicsApiTests.exe --vct-motion S:/PlutoGE/CoD S:/PlutoGE/CoD/Assets/Scenes/Main.plutoscene out/vct-cod-motion-final 500 9.5 3.4 65 9.5 3.8 40
+```
+
+The capture contains 40 draw commands, 24,114 triangles and seven emissive draws. Frame captures are in `out/vct-cod-motion-final/`; timing output is in `out/build/vct-cod-motion-final.log`. Source scene assets and GI settings are not modified by this capture.

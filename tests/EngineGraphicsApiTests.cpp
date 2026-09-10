@@ -85,7 +85,8 @@ int main(int argc, char **argv)
 
     // Optional project-backed GI comparison. Input assets are only loaded;
     // captures are written to the explicitly supplied output directory.
-    if (argc >= 6 && std::string_view(argv[1]) == "--vct-scene")
+    const bool motionCapture = argc >= 6 && std::string_view(argv[1]) == "--vct-motion";
+    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || motionCapture))
     {
         engine.GetAssetManager().SetProjectContext(argv[2]);
         std::string error;
@@ -124,6 +125,16 @@ int main(int argc, char **argv)
             {"Max Distance",render::PostProcessParameterType::Float,"100"},
             {"Temporal Blend",render::PostProcessParameterType::Float,"0"},
             {"Indirect Only",render::PostProcessParameterType::Bool,"true"}});
+        if (motionCapture)
+        {
+            bool loaded = false;
+            const auto preset = engine.GetAssetManager().LoadPostProcessPresetAsset("project://PostProcessing/main.plutopostprocess", &loaded);
+            if (!loaded) return 33;
+            for (const auto &effect : preset.effects)
+                if (effect.typeName == "VCTGI") gi.ApplyParameters(effect.parameters);
+            gi.ApplyParameters({{"Indirect Only",render::PostProcessParameterType::Bool,"true"},
+                                {"World Cache",render::PostProcessParameterType::Bool,"true"}});
+        }
         const std::array<render::IPostProcessEffect *,1> effects{&gi};
         std::filesystem::create_directories(argv[4]);
         const int frames=std::stoi(argv[5]);
@@ -131,12 +142,21 @@ int main(int argc, char **argv)
         int phase = 0;
         for (int gain : {0,1,0,1})
         {
+            if (motionCapture && phase > 1) break;
+            if (motionCapture) gain = 1;
             gi.ApplyParameters({{"Secondary Bounce",render::PostProcessParameterType::Float,std::to_string(gain)}});
             const auto begin=std::chrono::steady_clock::now();
-            for (int frame=0;frame<frames;++frame)
+            const int phaseFrames = motionCapture && phase == 1 ? 300 : frames;
+            for (int frame=0;frame<phaseFrames;++frame)
             {
+                if (motionCapture && phase == 1)
+                {
+                    const auto offset = glm::normalize(target-eye) * (18.0f * float(frame) / 299.0f);
+                    camera.view = glm::lookAtRH(eye+offset,target+offset,glm::vec3(0,1,0));
+                    lighting = render::BuildSceneLighting(camera,scene.get());
+                }
                 if (!service.RenderSceneAndPresent(camera,lighting,commands,{},scene.get(),effects)) return 32;
-                if (frame < 20 || (frame+1)%100==0 || frame+1==frames)
+                if ((motionCapture && phase == 1) || frame < 20 || (frame+1)%100==0 || frame+1==phaseFrames)
                 {
                     const auto pixels=device.ReadTextureRgba8(output.texture);
                     const auto path=std::filesystem::path(argv[4])/(std::to_string(phase)+"-"+std::to_string(gain)+"-"+std::to_string(frame+1)+".ppm");

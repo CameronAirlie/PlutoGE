@@ -538,6 +538,7 @@ namespace PlutoGE::render
             bool pendingInjectLocalLights = false;
             float pendingSecondaryBounce = 0.0f;
             bool secondaryPass = false;
+            bool stagedBounceSource = false;
             glm::mat4 pendingShadowMatrix{1.0f};
             std::size_t nextShadowDraw = 0;
             std::uint32_t nextShadowIndex = 0;
@@ -547,6 +548,7 @@ namespace PlutoGE::render
         };
         std::array<VctCascade, 3> m_vctCascades;
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
+        std::array<rhi::Texture, 6> m_vctInjectionAtlases;
         rhi::Texture m_vctShadowDepth, m_vctShadowColor;
         rhi::Texture m_vctTraceTarget;
         std::uint32_t m_vctTraceWidth = 0, m_vctTraceHeight = 0;

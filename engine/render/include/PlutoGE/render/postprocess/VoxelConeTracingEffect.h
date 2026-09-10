@@ -140,6 +140,7 @@ namespace PlutoGE::render
             bool hasVolume = false;
             bool rebuildInProgress = false;
             bool secondaryPass = false;
+            bool stagedBounceSource = false;
         };
 
         void EnsureResources(int width, int height);
@@ -148,7 +149,7 @@ namespace PlutoGE::render
                                const std::vector<RenderCommand> &commands,
                                const RenderContext &renderContext);
         bool VoxelizeChunk(std::size_t cascadeIndex, const PostProcessContext &context);
-        void GenerateDirectionalMips(VoxelCascade &cascade);
+        void GenerateDirectionalMips(VoxelCascade &cascade, bool staging = false);
         void ClearAccumulation(VoxelCascade &cascade);
         void ReleaseVolume();
         void ResetHistory();
@@ -177,6 +178,7 @@ namespace PlutoGE::render
         // A scene replacement must invalidate them before another chunk runs.
         const scene::Scene *m_jobScene = nullptr;
         std::array<unsigned int, kDirectionCount> m_radianceAtlases{};
+        std::array<unsigned int, kDirectionCount> m_injectionAtlases{};
         unsigned int m_voxelInstanceBuffer = 0;
         std::size_t m_voxelInstanceCapacity = 0;
         int m_allocatedResolution = 0;

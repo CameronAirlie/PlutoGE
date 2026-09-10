@@ -1,3 +1,4 @@
+#include "PlutoGE/render/VctVolumePlacement.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include "PlutoGE/render/GBuffer.h"
@@ -584,17 +585,10 @@ void main(){
     if(score<bestScore){bestScore=score;bestCoord=coord;foundHistory=true;}
    }
    if(foundHistory){
-    vec3 padding=max((hi-lo)*.5,vec3(.03));
-    vec3 historySample=texelFetch(uHistoryColorTexture,bestCoord,0).rgb;
-    vec3 clippedHistory=clamp(historySample,lo-padding,hi+padding);
-    // A stationary, depth/normal-validated receiver must retain its accumulated
-    // radiance when the voxel lighting changes. Clamping it to the new frame's
-    // neighbourhood would turn a global illumination step into an instant jump.
-    // Reintroduce clipping as motion increases, where stale screen-space samples
-    // are more likely to cause trails.
-    float motionRejection=clamp(length(motion)*32.0,0,1);
-    vec3 history=mix(historySample,clippedHistory,motionRejection);
-    float historyWeight=uTemporalBlend*(1.0-motionRejection);
+    // Geometry validation already rejects disocclusions; retain the same
+    // receiver's light history while moving and across volume publications.
+    vec3 history=texelFetch(uHistoryColorTexture,bestCoord,0).rgb;
+    float historyWeight=uTemporalBlend;
     resolved=mix(current,history,historyWeight);
     historyDebug=vec3(0,.2+.8*historyWeight,0);
    }
@@ -661,6 +655,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             cascade.hasVolume = false;
             cascade.rebuildInProgress = false;
         }
+        deleteTextures(m_injectionAtlases);
+        m_injectionAtlases.fill(0);
         deleteTextures(m_radianceAtlases);
         m_radianceAtlases.fill(0);
         const unsigned int probeTextures[] = {m_probeRadiance, m_probeVisibility};
@@ -697,6 +693,18 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                     GL_TEXTURE_3D, mipCount, GL_RGBA16F,
                     m_resolution, m_resolution,
                     m_resolution * static_cast<int>(m_activeCascadeCount));
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, mipCount - 1);
+            }
+            glGenTextures(static_cast<GLsizei>(m_injectionAtlases.size()), m_injectionAtlases.data());
+            for (const auto texture : m_injectionAtlases)
+            {
+                Graphics::BindTexture(GL_TEXTURE_3D, texture);
+                glTexStorage3D(GL_TEXTURE_3D, mipCount, GL_RGBA16F, m_resolution, m_resolution, m_resolution);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -963,6 +971,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         }
         cascade.rebuildInProgress = true;
         cascade.secondaryPass = false;
+        cascade.stagedBounceSource = false;
         cascade.secondaryReady = false;
         cascade.nextBounceSlice = 0;
         ClearAccumulation(cascade);
@@ -986,17 +995,18 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     }
 
-    void VoxelConeTracingEffect::GenerateDirectionalMips(VoxelCascade &cascade)
+    void VoxelConeTracingEffect::GenerateDirectionalMips(VoxelCascade &cascade, bool staging)
     {
         if (!m_directionalMipShader)
             return;
-        const int cascadeIndex = static_cast<int>(&cascade - m_cascades.data());
+        const int cascadeIndex = staging ? 0 : static_cast<int>(&cascade - m_cascades.data());
+        const auto &atlases = staging ? m_injectionAtlases : m_radianceAtlases;
         const int mipCount = 1 + static_cast<int>(std::floor(std::log2(m_resolution)));
         for (std::size_t direction = 1; direction < kDirectionCount; ++direction)
         {
             glCopyImageSubData(
-                m_radianceAtlases[0], GL_TEXTURE_3D, 0, 0, 0, cascadeIndex * m_resolution,
-                m_radianceAtlases[direction], GL_TEXTURE_3D, 0, 0, 0, cascadeIndex * m_resolution,
+                atlases[0], GL_TEXTURE_3D, 0, 0, 0, cascadeIndex * m_resolution,
+                atlases[direction], GL_TEXTURE_3D, 0, 0, 0, cascadeIndex * m_resolution,
                 m_resolution, m_resolution, m_resolution);
         }
         glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -1004,7 +1014,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         {
             m_directionalMipShader->Bind();
             Graphics::ActiveTexture(GL_TEXTURE0);
-            Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+            Graphics::BindTexture(GL_TEXTURE_3D, atlases[direction]);
             m_directionalMipShader->SetUniform("uSource", 0);
             const int axis = static_cast<int>(direction / 2);
             const int sign = direction % 2 == 0 ? 1 : -1;
@@ -1016,7 +1026,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 const int mipSize = std::max(1, m_resolution >> mip);
                 m_directionalMipShader->SetUniform("uSourceMip", mip - 1);
                 m_directionalMipShader->SetUniform("uCascadeMipSize", mipSize);
-                glBindImageTexture(0, m_radianceAtlases[direction], mip, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+                glBindImageTexture(0, atlases[direction], mip, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
                 const GLuint groups = static_cast<GLuint>((mipSize + 3) / 4);
                 glDispatchCompute(groups, groups, groups);
                 glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -1258,8 +1268,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         if (cascade.secondaryPass && !cascade.secondaryReady && m_secondaryBounce > 0.0f)
         {
             const auto slices = std::max(4u, (32768u / (unsigned(m_resolution) * unsigned(m_resolution)) / 4u) * 4u);
-            const glm::uvec4 params(unsigned(m_resolution), unsigned(cascadeIndex),
-                                    unsigned(m_activeCascadeCount), cascade.nextBounceSlice);
+            const glm::uvec4 params(unsigned(m_resolution), cascade.stagedBounceSource ? 0u : unsigned(cascadeIndex),
+                                    cascade.stagedBounceSource ? 1u : unsigned(m_activeCascadeCount), cascade.nextBounceSlice);
+            const auto &bounceSource = cascade.stagedBounceSource ? m_injectionAtlases : m_radianceAtlases;
             m_bounceUpdateShader->Bind();
             glBindBuffer(GL_UNIFORM_BUFFER, m_bounceParameters);
             glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(params), &params);
@@ -1270,7 +1281,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             for (std::size_t direction = 0; direction < 6; ++direction)
             {
                 Graphics::ActiveTexture(GL_TEXTURE7 + unsigned(direction));
-                Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+                Graphics::BindTexture(GL_TEXTURE_3D, bounceSource[direction]);
             }
             glDispatchCompute((m_resolution + 3) / 4, (m_resolution + 3) / 4, slices / 4);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -1278,6 +1289,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             cascade.secondaryReady = cascade.nextBounceSlice >= unsigned(m_resolution);
             if (!cascade.secondaryReady) return false;
         }
+        const bool stageDirect = !cascade.secondaryPass && m_secondaryBounce > 0.0f;
+        const auto &destination = stageDirect ? m_injectionAtlases : m_radianceAtlases;
         m_voxelResolveShader->Bind();
         const float gain = cascade.secondaryReady ? m_secondaryBounce : 0.0f;
         m_voxelResolveShader->SetUniform("uSecondaryGain", gain);
@@ -1287,8 +1300,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
         glBindImageTexture(3, cascade.accumulationCount, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
         glBindImageTexture(4, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
-        glBindImageTexture(5, m_radianceAtlases[0], 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-        const int atlasCascadeIndex = static_cast<int>(&cascade - m_cascades.data());
+        glBindImageTexture(5, destination[0], 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        const int atlasCascadeIndex = stageDirect ? 0 : static_cast<int>(&cascade - m_cascades.data());
         m_voxelResolveShader->SetUniform("uResolution", m_resolution);
         m_voxelResolveShader->SetUniform("uDestinationZOffset", atlasCascadeIndex * m_resolution);
         const GLuint groupCount = static_cast<GLuint>((m_resolution + 3) / 4);
@@ -1298,22 +1311,23 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
                         GL_TEXTURE_FETCH_BARRIER_BIT |
                         GL_TEXTURE_UPDATE_BARRIER_BIT);
-        GenerateDirectionalMips(cascade);
+        GenerateDirectionalMips(cascade, stageDirect);
+        cascade.jobs.clear();
+        if (stageDirect)
+        {
+            cascade.secondaryPass = true;
+            cascade.stagedBounceSource = true;
+            return false;
+        }
+        if (cascade.appliedSecondaryBounce != gain) ResetHistory();
         cascade.origin = cascade.pendingOrigin;
         cascade.lastSceneSignature = cascade.pendingSceneSignature;
         cascade.lastLightSignature = cascade.pendingLightSignature;
         cascade.hasVolume = true;
         cascade.appliedSecondaryBounce = gain;
-        ResetHistory();
-        if (!cascade.secondaryReady && m_secondaryBounce > 0.0f)
-        {
-            // Gather from the immutable direct atlas into a separate unit bounce.
-            cascade.secondaryPass = true;
-            cascade.jobs.clear();
-            return false;
-        }
         cascade.rebuildInProgress = false;
-        cascade.jobs.clear();
+        cascade.stagedBounceSource = false;
+        if (!cascade.secondaryReady) cascade.nextBounceSlice = 0;
         cascade.pendingShadowSourceMaps.fill(0);
         return true;
     }
@@ -1375,24 +1389,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 desiredOrigins[cascadeIndex] = glm::vec3(m_cacheOriginSize);
                 continue;
             }
-            const float cascadeVoxelSize = cascade.size / static_cast<float>(m_resolution);
-            const float scrollStep = cascadeVoxelSize * 8.0f;
-            const glm::vec3 centeredOrigin =
-                glm::floor((cameraPosition - glm::vec3(cascade.size * 0.5f)) / scrollStep) * scrollStep;
-            desiredOrigins[cascadeIndex] = cascade.hasVolume ? cascade.origin : centeredOrigin;
-            if (cascade.hasVolume)
-            {
-                const glm::vec3 volumeCenter = cascade.origin + glm::vec3(cascade.size * 0.5f);
-                const float safeTraceDistance = std::max(
-                    cascadeVoxelSize,
-                    cascade.size * 0.5f - scrollStep * 0.5f - cascadeVoxelSize * 2.0f);
-                const float allowedCenterOffset = std::max(
-                    cascadeVoxelSize,
-                    cascade.size * 0.5f - safeTraceDistance - cascadeVoxelSize);
-                if (glm::any(glm::greaterThan(glm::abs(cameraPosition - volumeCenter),
-                                              glm::vec3(allowedCenterOffset))))
-                    desiredOrigins[cascadeIndex] = centeredOrigin;
-            }
+            desiredOrigins[cascadeIndex] = detail::VctVolumeOrigin(cameraPosition, cascade.size,
+                unsigned(m_resolution), cascade.origin, cascade.hasVolume);
         }
 
         std::size_t activeRebuild = m_activeCascadeCount;

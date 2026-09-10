@@ -322,6 +322,59 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     effect.parameters[5].y = 1;
     if (glm::length(render(1) - on) > 1)
         throw std::runtime_error("Cached secondary enable replayed geometry");
+    // A moving camera must never see the direct-only intermediate field.
+    // Keep the view fixed here to isolate field publication from screen sampling.
+    const auto cameraBeforeMove = lighting.cameraPosition;
+    double minimumMoving = on.r;
+    lighting.cameraPosition.x += 3.0f;
+    for (int frame = 0; frame < 20; ++frame)
+        minimumMoving = std::min(minimumMoving, double(render(1).r));
+    std::cout << "VCT moving field minimum=" << minimumMoving << ", settled=" << on.r << '\n';
+    if (minimumMoving < on.r * .5)
+        throw std::runtime_error("Moving cascade exposed an unfinished secondary field");
+    lighting.cameraPosition = cameraBeforeMove;
+    render(20);
+    // Valid reprojected static geometry keeps history even at >8 pixels/frame.
+    // The history diagnostic is green for accepted history, red for rejection.
+    effect.parameters[1].y = .92f;
+    effect.parameters[3].x = 3;
+    render(1);
+    const auto viewBeforeMotion = lighting.view;
+    lighting.cameraPosition.x += .4f;
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(.4f,0,0), glm::vec3(0,1,0));
+    const auto movingHistory = render(1);
+    if (movingHistory.g < 200 || movingHistory.r > 1)
+        throw std::runtime_error("Camera movement discarded valid VCT history");
+    lighting.cameraPosition = cameraBeforeMove;
+    lighting.view = viewBeforeMotion;
+    effect.parameters[1].y = .9f;
+    effect.parameters[3].x = 1;
+    render(1);
+    draws[1].emission *= .25f;
+    float previousLight = render(1).r, maximumStep = 0.0f;
+    for (int frame = 0; frame < 24; ++frame)
+    {
+        const auto currentLight = render(1).r;
+        maximumStep = std::max(maximumStep, std::abs(currentLight - previousLight));
+        previousLight = currentLight;
+    }
+    std::cout << "VCT publication temporal step=" << maximumStep << '\n';
+    if (maximumStep > on.r * .2f || previousLight > on.r * .85f)
+        throw std::runtime_error("VCT publication jumped or failed to update valid history");
+    draws[1].emission = emitter.emission;
+    effect.parameters[1].y = 0;
+    render(20);
+    effect.parameters[1].y = .9f;
+    effect.parameters[3].x = 3;
+    render(1);
+    draws[0].model = glm::translate(glm::mat4(1), glm::vec3(0,0,1));
+    const auto disoccluded = render(1);
+    if (disoccluded.r < 200 || disoccluded.g > 1)
+        throw std::runtime_error("VCT retained unrelated history on newly visible geometry");
+    draws[0].model = receiver.model;
+    effect.parameters[1].y = 0;
+    effect.parameters[3].x = 1;
+    render(24);
     // Read final received GI on a third wall, not radiance stored on the
     // first receiving floor. This exercises both legs of the secondary bounce.
     BasicDraw wall=receiver; wall.baseColor={.8f,.8f,.8f,1};

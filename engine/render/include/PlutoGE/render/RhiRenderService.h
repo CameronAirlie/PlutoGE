@@ -36,7 +36,8 @@ namespace PlutoGE::render
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {},
-                                                 const PlutoGE::scene::Scene *scene = nullptr);
+                                                 const PlutoGE::scene::Scene *scene = nullptr,
+                                                 std::span<IPostProcessEffect *const> postProcessEffects = {});
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 

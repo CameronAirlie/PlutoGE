@@ -46,14 +46,12 @@ float3 reconstructWorldRay(float2 uv, float4x4 view, float4x4 projection, uint f
 
 float3 transformWorldToLocalPosition(float3 position, float4x4 worldToLocal, uint flipY)
 {
-    return (flipY != 0
-        ? mul(worldToLocal, float4(position, 1.0))
-        : mul(float4(position, 1.0), worldToLocal)).xyz;
+    // Slang preserves this transform when lowering column-major uniforms to
+    // row-major GLSL; reversing mul here would discard the translation.
+    return mul(worldToLocal, float4(position, 1.0)).xyz;
 }
 
 float3 transformWorldToLocalDirection(float3 direction, float4x4 worldToLocal, uint flipY)
 {
-    return (flipY != 0
-        ? mul(worldToLocal, float4(direction, 0.0))
-        : mul(float4(direction, 0.0), worldToLocal)).xyz;
+    return mul(worldToLocal, float4(direction, 0.0)).xyz;
 }

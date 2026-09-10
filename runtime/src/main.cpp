@@ -1,4 +1,4 @@
-#include "PlutoGE/scene/DirectionalShadowLighting.h"
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
@@ -599,18 +599,11 @@ int RunRuntime(int argc, char **argv)
                 PlutoGE::g_runtimeDiagnostics.currentPhase = "render Vulkan frame";
 #endif
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
-                PlutoGE::render::BasicLighting lighting;
-                lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
-                for (const auto *light : scene->GetLights())
-                    if (light && light->type == PlutoGE::scene::LightType::Directional)
-                    {
-                        lighting.directionalDirection = light->direction;
-                        lighting.directionalColor = light->color;
-                        lighting.directionalIntensity = light->intensity;
-                        lighting.shadowsEnabled = light->castsShadows;
-                        PlutoGE::scene::ApplyDirectionalShadowSettings(lighting, light->directionalShadowSettings);
-                        break;
-                    }
+                const auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get());
+                std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
+                postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
+                for (const auto &effect : cameraComponent->GetPostProcessEffects())
+                    postProcessEffects.push_back(effect.get());
                 const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
                 {
                     const auto source = texture.GetRgba8Pixels();
@@ -618,7 +611,7 @@ int RunRuntime(int argc, char **argv)
                                                   reinterpret_cast<const std::byte *>(source.data() + source.size()));
                 };
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, renderer.GetSceneRenderCommands(), readTexturePixels, scene.get()))
+                        cameraData, lighting, renderer.GetSceneRenderCommands(), readTexturePixels, scene.get(), postProcessEffects))
                 {
                     std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
                     window.RequestClose();

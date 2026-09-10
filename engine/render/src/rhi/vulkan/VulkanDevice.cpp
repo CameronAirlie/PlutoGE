@@ -2026,7 +2026,7 @@ namespace PlutoGE::render::rhi::vulkan
             return true;
         }
 
-        bool Present(TextureHandle sourceHandle) override
+        bool Present(TextureHandle sourceHandle, bool flipY = false) override
         {
             auto *source = m_impl.textures.Get(sourceHandle);
             if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || !m_swapchain)
@@ -2093,6 +2093,11 @@ namespace PlutoGE::render::rhi::vulkan
             VkImageBlit blit{};
             blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             blit.srcOffsets[1] = {static_cast<std::int32_t>(source->descriptor.width), static_cast<std::int32_t>(source->descriptor.height), 1};
+            if (flipY)
+            {
+                blit.srcOffsets[0].y = static_cast<std::int32_t>(source->descriptor.height);
+                blit.srcOffsets[1].y = 0;
+            }
             blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             blit.dstOffsets[1] = {static_cast<std::int32_t>(m_width), static_cast<std::int32_t>(m_height), 1};
             vkCmdBlitImage(frame.commandBuffer, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

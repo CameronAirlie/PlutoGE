@@ -1,3 +1,4 @@
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
@@ -42,7 +43,8 @@ namespace PlutoGE::render
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
-                                                 const scene::Scene *scene)
+                                                 const scene::Scene *scene,
+                                                 std::span<IPostProcessEffect *const> postProcessEffects)
     {
         if (!m_swapchain || !m_renderer)
             return false;
@@ -61,8 +63,9 @@ namespace PlutoGE::render
         const bool combineRuntimeUiSubmission = scene && scene->HasRmlRuntimeUI() &&
                                                 RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
+        const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
-                                     commands, {}, {}, texturePixelReader, PostProcessDebugView::None,
+                                     commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
                                      !combineRuntimeUiSubmission, scene))
             return false;
         if (scene && scene->HasRmlRuntimeUI())
@@ -73,7 +76,9 @@ namespace PlutoGE::render
                                          !combineRuntimeUiSubmission);
         if (combineRuntimeUiSubmission)
             m_device->GetImmediateContext().Submit();
-        return m_swapchain->Present(m_sceneRenderer->GetColorTexture());
+        // Scene output uses the same bottom-up texture convention as editor viewports.
+        return m_swapchain->Present(m_sceneRenderer->GetColorTexture(),
+                                    m_graphicsApi == rhi::GraphicsApi::Vulkan);
     }
 
     bool RhiRenderService::Resize(std::uint32_t width, std::uint32_t height)

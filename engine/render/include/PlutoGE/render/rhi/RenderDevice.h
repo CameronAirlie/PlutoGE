@@ -140,7 +140,8 @@ namespace PlutoGE::render::rhi
         virtual bool Resize(std::uint32_t width, std::uint32_t height) = 0;
         virtual void SetOverlayPreparation(OverlayRecorder recorder) { (void)recorder; }
         virtual void SetOverlayRecorder(OverlayRecorder recorder) { (void)recorder; }
-        virtual bool Present(TextureHandle source) = 0;
+        // Flip the source vertically when presenting bottom-up scene output on Vulkan.
+        virtual bool Present(TextureHandle source, bool flipY = false) = 0;
     };
 
     class IRenderDevice

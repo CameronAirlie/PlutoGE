@@ -9,6 +9,7 @@ add_library(PlutoGERender
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
     src/VirtualShadowMaps.cpp
+    src/SceneEnvironment.cpp
     src/RhiRenderService.cpp
     src/RhiSceneRenderer.cpp
     src/RhiPostProcessAdapter.cpp

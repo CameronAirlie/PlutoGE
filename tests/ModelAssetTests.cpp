@@ -1,3 +1,8 @@
+// Keep the checks and their setup calls active in distribution builds.
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "PlutoGE/assets/ModelAsset.h"
 
 #include <cassert>

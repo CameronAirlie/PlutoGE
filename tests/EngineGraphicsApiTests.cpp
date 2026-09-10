@@ -1,3 +1,8 @@
+#include "PlutoGE/render/SceneEnvironment.h"
+#include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
+#include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -10,6 +15,30 @@
 #include <chrono>
 #include <iostream>
 #include <string_view>
+
+namespace
+{
+    // Capture the actual runtime output without requiring a visible window.
+    class CaptureSwapchain final : public PlutoGE::render::rhi::ISwapchain
+    {
+    public:
+        PlutoGE::render::rhi::Format GetFormat() const noexcept override
+        { return PlutoGE::render::rhi::Format::R8G8B8A8Unorm; }
+        std::uint32_t GetWidth() const noexcept override { return 64; }
+        std::uint32_t GetHeight() const noexcept override { return 64; }
+        bool IsVSyncEnabled() const noexcept override { return false; }
+        bool SetVSyncEnabled(bool) override { return true; }
+        bool Resize(std::uint32_t, std::uint32_t) override { return true; }
+        bool Present(PlutoGE::render::rhi::TextureHandle source, bool flipY = false) override
+        {
+            texture = source;
+            flipped = flipY;
+            return true;
+        }
+        PlutoGE::render::rhi::TextureHandle texture;
+        bool flipped = false;
+    };
+}
 
 int main(int argc, char **argv)
 {
@@ -130,6 +159,42 @@ int main(int argc, char **argv)
         child.SetParent(nullptr);
         if (!checkPosition(0.1f) || !checkPosition(0.1f)) return 15;
         renderer.ClearRenderCommands();
+    }
+    {
+        auto &device = static_cast<render::rhi::vulkan::VulkanDevice &>(*engine.GetRenderDevice());
+        CaptureSwapchain output;
+        render::RhiRenderService runtime;
+        if (!runtime.Initialize(device, output)) return 20;
+        scene::Scene atmosphereScene;
+        auto skyEntity = std::make_unique<scene::Entity>();
+        auto *sky = skyEntity->CreateComponent<scene::PhysicalSkyComponent>();
+        atmosphereScene.AddEntity(std::move(skyEntity));
+        const render::CameraData camera{
+            .view = glm::mat4(1.0f),
+            .projection = glm::perspective(glm::radians(60.0f), 1.0f, 100.0f, 0.1f)};
+        const auto lighting = render::BuildSceneLighting(camera, &atmosphereScene);
+        if (!runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene) || !output.flipped)
+            return 21;
+        const auto skyPixels = device.ReadTextureRgba8(output.texture);
+        render::GammaCorrectionEffect gamma(2.2f);
+        const std::array<render::IPostProcessEffect *, 1> effects{&gamma};
+        if (!runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene, effects))
+            return 22;
+        const auto gradedPixels = device.ReadTextureRgba8(output.texture);
+        if (skyPixels.empty() || skyPixels == gradedPixels)
+        {
+            std::cerr << "Runtime camera post-processing did not change the rendered sky.\n";
+            return 23;
+        }
+        sky->SetEnabled(false);
+        if (!runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene)) return 24;
+        if (skyPixels == device.ReadTextureRgba8(output.texture))
+        {
+            std::cerr << "Runtime atmosphere was not included in scene output.\n";
+            return 25;
+        }
+        if (!engine.GetSwapchain()->Present(output.texture, true)) return 26;
+        runtime.Shutdown();
     }
     engine.Shutdown();
     return 0;

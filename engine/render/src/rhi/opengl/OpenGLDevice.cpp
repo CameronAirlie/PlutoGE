@@ -569,7 +569,7 @@ namespace PlutoGE::render::rhi::opengl
             return width != 0 && height != 0;
         }
 
-        bool Present(TextureHandle sourceHandle) override
+        bool Present(TextureHandle sourceHandle, bool flipY = false) override
         {
             const auto *source = m_impl.textures.Get(sourceHandle);
             if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || m_width == 0 || m_height == 0)
@@ -580,8 +580,8 @@ namespace PlutoGE::render::rhi::opengl
             if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                 return false;
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            glBlitFramebuffer(0, 0,
-                              static_cast<GLint>(source->descriptor.width), static_cast<GLint>(source->descriptor.height),
+            glBlitFramebuffer(0, flipY ? static_cast<GLint>(source->descriptor.height) : 0,
+                              static_cast<GLint>(source->descriptor.width), flipY ? 0 : static_cast<GLint>(source->descriptor.height),
                               0, 0, static_cast<GLint>(m_width), static_cast<GLint>(m_height),
                               GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

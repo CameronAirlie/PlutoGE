@@ -38,6 +38,12 @@ add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)
 
 add_executable(PlutoGEEngineGraphicsApiTests EngineGraphicsApiTests.cpp)
 target_link_libraries(PlutoGEEngineGraphicsApiTests PRIVATE PlutoGE::Core)
+
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEEngineGraphicsApiTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEngineGraphicsApiTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
 add_test(NAME PlutoGEEngineGraphicsApiTests COMMAND PlutoGEEngineGraphicsApiTests)
 
 add_executable(PlutoGEOpenGLRhiTests OpenGLRhiTests.cpp)

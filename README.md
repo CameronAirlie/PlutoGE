@@ -6,6 +6,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 
 ## Contents
 
+- [Game developer manual](docs/README.md) — practical guides and examples for building games
 - [Highlights](#highlights)
 - [Technology](#technology)
 - [Requirements](#requirements)
@@ -336,7 +337,7 @@ public override void OnDestroy()
 }
 ```
 
-See the full [C# scripting specification](docs/CSHARP_SCRIPTING.md) before authoring gameplay code. It documents supported serialized types and APIs; PlutoGE does not expose Unity APIs such as `MonoBehaviour`, `Transform`, coroutines, or `FixedUpdate`.
+Start with the [game developer manual](docs/README.md) for editor setup and practical examples, then use the [C# scripting reference](docs/CSHARP_SCRIPTING.md) for supported serialized types and APIs. PlutoGE behaviours use `OnUpdate`, `OnFixedUpdate`, and `OnLateUpdate`; Unity APIs such as `MonoBehaviour`, `Transform`, and coroutines are not available.
 See [PlutoGE networking](docs/NETWORKING.md) for the transport design, usage
 model, wire format, and planned replication layers.
 
@@ -546,6 +547,8 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 
 ## Further documentation
 
+- [Game developer manual and feature index](docs/README.md)
+- [Build your first playable game](docs/guide/first-game.md)
 - [Feature milestones](docs/FEATURE_MILESTONES.md)
 - [Editor iteration tools](docs/EDITOR_WORKFLOWS.md)
 - [Foliage, spatial cells, and tree collision](docs/FOLIAGE.md)

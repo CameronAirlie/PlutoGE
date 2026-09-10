@@ -2,6 +2,10 @@
 
 This document is the source-of-truth guide for humans and AI agents writing C# gameplay scripts for PlutoGE. It describes the public managed API implemented in `engine/scripting/managed/PlutoGE.ScriptCore`.
 
+For editor setup, complete gameplay examples, and system-by-system workflows,
+start with the [game developer manual](README.md). This page is a reference
+summary; the public managed source defines the exact API for your checkout.
+
 ## Quick start
 
 Project scripts use .NET 8 and normally live in the project's `Assets/Scripts` directory. The editor creates and maintains the project `.csproj`, builds the assembly into `Assets/Managed`, and reloads it after a successful build.
@@ -48,6 +52,7 @@ Override only the callbacks needed by the script:
 ```csharp
 public override void OnCreate() {}
 public override void OnUpdate(float deltaTime) {}
+public override void OnFixedUpdate(float fixedDeltaTime) {}
 public override void OnLateUpdate(float deltaTime) {}
 public override void OnDestroy() {}
 public override void OnCollisionEnter(GameObject other) {}
@@ -62,7 +67,11 @@ public override void OnCollisionExit(GameObject other) {}
   mode ends or its script component is destroyed. Use it to unsubscribe events
   and dispose resources created by the script.
 - Collision callbacks receive the other entity as a `GameObject`.
-- There is currently no public fixed-update, trigger-enter, or trigger-exit callback.
+- `OnFixedUpdate` runs before each fixed physics step, currently at 60 Hz with at
+  most eight substeps per render frame. A frame may contain zero or multiple fixed
+  callbacks. Capture button edges in `OnUpdate` and consume queued physics actions
+  once in `OnFixedUpdate`; see the [impulse example](guide/gameplay.md#example-apply-one-impulse-per-press).
+- There are no separate public trigger-enter or trigger-exit callbacks.
 - Scripts run only as instances attached through an entity's `ScriptComponent`.
 
 ## Multiplayer networking
@@ -237,9 +246,16 @@ bool Enabled { get; set; }
 
 Components are references to existing native components. The C# API does not currently add or remove native components.
 
+`GameObject.IsValid` and `ComponentReference.IsValid` currently test only for a
+nonzero entity ID. They are not scene-existence checks; clear references when
+their objects are destroyed and reacquire them after scene replacement.
+
 ### RigidbodyComponent
 
 Properties: `Mass`, `LinearDrag`, `AngularDrag`, `Friction`, `UseGravity`, `IsKinematic`, `FreezeRotation`, `Velocity`, and `AngularVelocity`.
+
+`CenterOfMass` sets the local center of mass. `GetVelocityAtPoint(Vector3
+worldPosition)` returns velocity at a world-space point, including angular motion.
 
 Methods:
 
@@ -256,6 +272,9 @@ Properties: `Shape`, `Center`, `Size`, `Radius`, `Height`, `IsTrigger`, and `Blo
 
 `ColliderShape` values: `Box`, `Sphere`, `Capsule`.
 
+These are the managed enum values. The native Inspector additionally supports
+Terrain and Mesh shapes; author those with their corresponding source components.
+
 ### CameraComponent
 
 Properties: `IsMainCamera`, `Fov`.
@@ -271,6 +290,10 @@ Properties: `Static`, `Color`, `Emission`.
 ### AnimationComponent
 
 Properties: `ClipCount` (read-only), `ClipIndex`, `Playing`, `Looping`, `Autoplay`, `Speed`, and `Time`.
+
+Ragdoll controls also include `RagdollEnabled`, `RagdollWeight`,
+`AddRagdollImpulse(Vector3 impulse)`, and `ResetRagdoll()`. See
+[ragdolls](RAGDOLLS.md) for setup and the `ActiveRagdollComponent` wrapper.
 
 Methods:
 
@@ -354,6 +377,11 @@ bool Input.CursorLocked { get; set; }
 `KeyCode` covers letters `A`–`Z`, digits `D0`–`D9`, punctuation, arrows/navigation, modifiers, `Space`, `Escape`, `Enter`, `Tab`, `Backspace`, and `F1`–`F12`.
 
 `MouseButton` values: `Left`, `Right`, `Middle`, `Button4` through `Button8`.
+
+Gamepad input is also available through `Input` using `GamepadButton` and
+`GamepadAxis`. `InputActionMap` maps named actions to keyboard, mouse, and
+controller bindings, with `GetAxis`, `IsDown`, and `WasPressed` queries. See
+[input examples and edge semantics](guide/gameplay.md#keyboard-mouse-controllers-and-action-maps).
 
 ## Physics
 
@@ -550,7 +578,7 @@ public override void OnLateUpdate(float deltaTime)
 
 When generating a PlutoGE script:
 
-1. Use only APIs documented here or verified in `PlutoGE.ScriptCore`; do not assume Unity APIs such as `Transform`, `MonoBehaviour`, `Time`, `Instantiate`, `Destroy`, `GetAxis`, coroutines, or `FixedUpdate` exist.
+1. Use only APIs documented here or verified in `PlutoGE.ScriptCore`; do not assume Unity APIs such as `Transform`, `MonoBehaviour`, `Time`, coroutines, or unqualified `Instantiate`/`Destroy` exist. Use `OnFixedUpdate` for fixed-step callbacks and `InputActionMap.GetAxis` for named input axes.
 2. Derive attachable scripts from `ScriptBehaviour`.
 3. Add `[SerializedField]` to editor-configurable members and use only supported serialized types.
 4. Use nullable references and guard them before access.

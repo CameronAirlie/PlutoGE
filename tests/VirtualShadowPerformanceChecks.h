@@ -71,6 +71,8 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
             if (scenario == 2) casters.front().model[3].x += .01f;
             render(scenario == 0 ? 0.0f : float(frame) * .005f);
             const auto stats = renderer.GetFrameStats().virtualShadows;
+            if (scenario > 0 && frame > 0 && stats.reusedFrame)
+                throw std::runtime_error("Changing VSM inputs reused a stale completed frame");
             if (!renderer.GetFrameStats().virtualShadowsActive) throw std::runtime_error("GPU VSM performance path unavailable");
             const auto &frameStats = renderer.GetFrameStats();
             if (frameStats.shadowCascadeTargets || frameStats.shadowCascadeUpdates || frameStats.shadowCascadeCacheHits ||
@@ -94,6 +96,8 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
             commands += timing.indexedDrawCalls; ++samples;
         }
         if (samples == 0) throw std::runtime_error("VSM asynchronous GPU statistics never arrived");
+        if (scenario == 0 && commands / samples > 2)
+            throw std::runtime_error("Stationary VSM frame retained redundant draw recording");
         if (scenario == 0 && (triangles != 0 || hits == 0)) throw std::runtime_error("Stationary VSM cache failed to converge");
         std::cout << "VSM performance " << (scenario == 0 ? "stationary" : scenario == 1 ? "camera movement" : "animated caster")
                   << ": GPU frame " << total / samples << " ms, planning " << planning / samples << " ms, pages " << pages / samples

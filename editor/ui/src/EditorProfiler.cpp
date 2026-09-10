@@ -342,7 +342,8 @@ namespace PlutoGE::ui
         {
             const auto &pages = rhiScene.virtualShadows;
             report << "VSM submissions: " << pages.submittedIndirectCommands << " indirect commands, " << pages.receiverDraws
-                   << " receiver draws; " << pages.memoryBytes << " bytes\n";
+                   << " receiver draws; " << pages.memoryBytes << " bytes allocated\n";
+            if (pages.reusedFrame) report << "VSM frame reused: unchanged inputs and confirmed clean pages\n";
             if (pages.gpuCountersAvailable)
                 report << "VSM GPU frame " << pages.gpuFrame << " (delayed): " << pages.requested << " requested, " << pages.resident
                        << " resident, " << pages.cacheHits << " hits, " << pages.dirty << " dirty, " << pages.updated << " updated, "

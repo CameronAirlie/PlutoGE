@@ -17,6 +17,13 @@ namespace PlutoGE::render
             glm::uvec4 draw{};
             glm::vec4 alpha{};
         };
+        struct alignas(16) RigidDrawParameters
+        {
+            glm::mat4 model{};
+            glm::uvec4 draw{};
+            glm::vec4 alpha{};
+        };
+        static_assert(sizeof(RigidDrawParameters) == 96);
         struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; };
         static_assert(sizeof(Caster) == 48 && sizeof(DrawParameters) == 4128);
         std::uint32_t ProjectionEpoch(const glm::mat4 &view, float depthCentre, float depthRange, float span)
@@ -107,22 +114,25 @@ namespace PlutoGE::render
         descriptor.vertexLayout = {sizeof(BasicVertex), {
             {0, Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
             {1, Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
+        const auto meshLayout = descriptor.vertexLayout;
         for (std::size_t index = 0; index < m_raster.size(); ++index)
         {
+            const auto role = index < 3 ? index : index - 3;
+            descriptor.vertexLayout = role == 2 ? decltype(meshLayout){} : meshLayout;
             descriptor.vertexShader = shaders.raster[index * 2];
             descriptor.fragmentShader = shaders.raster[index * 2 + 1];
-            descriptor.depthCompare = index == 0 ? CompareOperation::Greater : index == 1 ? CompareOperation::Less : CompareOperation::Always;
-            descriptor.clipDistanceCount = index == 1 ? 4 : 0;
+            descriptor.depthCompare = role == 0 ? CompareOperation::Greater : role == 1 ? CompareOperation::Less : CompareOperation::Always;
+            descriptor.clipDistanceCount = role == 1 ? 4 : 0;
             descriptor.resourceBindings = {{0, 0, 0, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics}};
-            if (index != 2)
+            if (role != 2)
             {
                 descriptor.resourceBindings.push_back({1, 0, 1, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics});
                 descriptor.resourceBindings.push_back({9, 1, 1, ResourceBindingType::SampledTexture, ShaderStageMask::Fragment});
             }
-            if (index != 0) descriptor.resourceBindings.push_back({2, 0, 2, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
-            if (index == 1) descriptor.resourceBindings.push_back({4, 0, 4, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
-            if (index == 2) descriptor.vertexLayout = {};
-            descriptor.debugName = index == 0 ? "VSM receiver depth" : index == 1 ? "VSM indirect pages" : "VSM tile clears";
+            if (role != 0) descriptor.resourceBindings.push_back({2, 0, 2, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
+            if (role == 1) descriptor.resourceBindings.push_back({4, 0, 4, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
+            if (role == 2) descriptor.vertexLayout = {};
+            descriptor.debugName = role == 0 ? "VSM receiver depth" : role == 1 ? "VSM indirect pages" : "VSM tile clears";
             m_raster[index] = GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         }
         m_depth = Texture(device, device.CreateTexture({PLUTO_VSM_ATLAS_SIZE, PLUTO_VSM_ATLAS_SIZE, Format::D32Float,
@@ -159,6 +169,7 @@ namespace PlutoGE::render
     {
         if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
         if (!CanPrepare(receivers, casters)) return false;
+        bool changed = m_frame == 0 || m_width != width || m_height != height;
         if (m_width != width || m_height != height)
         {
             m_receiverDepth = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::D32Float,
@@ -183,20 +194,37 @@ namespace PlutoGE::render
                 {
                     if (cursor == chunks.size()) chunks.emplace_back();
                     auto &chunk = chunks[cursor];
-                    if (!chunk.uniform) chunk.uniform = rhi::Buffer(device, device.CreateBuffer({sizeof(DrawParameters), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
-                    DrawParameters parameters;
                     const auto models = static_cast<std::uint32_t>(std::min(std::size_t{64}, modelCount - first));
-                    if (draw.instanceModels && !draw.instanceModels->empty()) std::copy_n(draw.instanceModels->begin() + first, models, parameters.models.begin());
-                    else parameters.models[0] = draw.model;
-                    parameters.draw = {cursor, models, draw.alphaMode, 0};
-                    parameters.alpha = {draw.uvScale, draw.alphaCutoff, draw.baseColor.a};
-                    const auto bytes = Bytes(parameters);
-                    if (chunk.uploaded.size() != bytes.size() ||
-                        std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
+                    const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
+                    const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
+                    const auto upload = [&](const auto &parameters)
                     {
-                        device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
-                        chunk.uploaded.assign(bytes.begin(), bytes.end());
+                        const auto bytes = Bytes(parameters);
+                        if (!chunk.uniform || chunk.uploaded.size() != bytes.size())
+                            chunk.uniform = rhi::Buffer(device, device.CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
+                        if (chunk.uploaded.size() != bytes.size() || std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
+                        {
+                            device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
+                            chunk.uploaded.assign(bytes.begin(), bytes.end());
+                            changed = true;
+                        }
+                    };
+                    if (models == 1)
+                    {
+                        const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
+                        upload(RigidDrawParameters{model, drawParameters, alpha});
                     }
+                    else
+                    {
+                        DrawParameters parameters;
+                        std::copy_n(draw.instanceModels->begin() + first, models, parameters.models.begin());
+                        parameters.draw = drawParameters; parameters.alpha = alpha;
+                        upload(parameters);
+                    }
+                    const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
+                    changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
+                        chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != draw.firstIndex;
+                    chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
                     chunk.submission = {&draw, count, draw.firstIndex, models, {}, cursor * 20};
                     chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                     if (shadow)
@@ -211,8 +239,10 @@ namespace PlutoGE::render
             }
             return cursor;
         };
-        m_receiverCount = prepare(receivers, m_receiverChunks, false);
-        m_casterCount = prepare(casters, m_casterChunks, true);
+        const auto receiverCount = prepare(receivers, m_receiverChunks, false);
+        const auto casterCount = prepare(casters, m_casterChunks, true);
+        changed |= receiverCount != m_receiverCount || casterCount != m_casterCount;
+        m_receiverCount = receiverCount; m_casterCount = casterCount;
         if (m_capacity < std::max(m_casterCount, std::size_t{1}))
         {
             m_capacity = 1;
@@ -221,7 +251,14 @@ namespace PlutoGE::render
             m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * PLUTO_VSM_CAPACITY * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
             m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
         }
-        if (!inputs.empty()) device.UpdateBuffer(m_casters.Get(), 0, std::as_bytes(std::span(inputs)));
+        const auto inputBytes = std::as_bytes(std::span(inputs));
+        if (m_uploadedCasters.size() != inputBytes.size() ||
+            (!inputBytes.empty() && std::memcmp(m_uploadedCasters.data(), inputBytes.data(), inputBytes.size()) != 0))
+        {
+            if (!inputBytes.empty()) device.UpdateBuffer(m_casters.Get(), 0, inputBytes);
+            m_uploadedCasters.assign(inputBytes.begin(), inputBytes.end());
+            changed = true;
+        }
         for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
         // Delayed feedback never stalls the GPU. Fit the working set by changing
         // resolution globally, rather than leaving arbitrary fine-page islands.
@@ -260,7 +297,19 @@ namespace PlutoGE::render
         parameters.limits = {m_casterCount, m_frame, std::clamp(lighting.virtualShadowPageBudget, 1u, std::uint32_t(PLUTO_VSM_CAPACITY)),
                              std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u)};
         parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, m_resolutionScale};
-        device.UpdateBuffer(m_parameters.Get(), 0, Bytes(parameters));
+        auto inputKey = parameters;
+        inputKey.limits.y = 0; inputKey.settings.z = 0;
+        changed |= std::memcmp(&inputKey, &m_previousInputs, sizeof(inputKey)) != 0;
+        m_previousInputs = inputKey;
+        if (changed) m_inputChangeFrame = m_frame;
+        const auto fineRequests = m_stats->requested > PLUTO_VSM_ROOT_PAGES ? m_stats->requested - PLUTO_VSM_ROOT_PAGES : 0;
+        const bool refinementPending = m_resolutionScale > 1.0f && fineRequests < (PLUTO_VSM_CAPACITY - PLUTO_VSM_ROOT_PAGES) / 8;
+        // Delayed counters may skip work only when they describe these exact
+        // inputs. A changed camera/caster immediately resumes GPU planning.
+        m_reuseFrame = !changed && !refinementPending && m_stats->gpuCountersAvailable &&
+            m_stats->gpuFrame >= m_inputChangeFrame && m_stats->dirty == 0 && m_stats->updated == 0 &&
+            m_stats->deferred == 0 && m_stats->overflow == 0;
+        if (!m_reuseFrame) device.UpdateBuffer(m_parameters.Get(), 0, Bytes(parameters));
         return true;
     }
     void VirtualShadowMaps::BindCompute(rhi::ICommandContext &commands, std::size_t pipeline)
@@ -275,6 +324,7 @@ namespace PlutoGE::render
     }
     void VirtualShadowMaps::Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
     {
+        if (m_reuseFrame) return;
         commands.BeginGpuScope("RHI VSM Receiver Depth");
         rhi::RenderingInfo depth;
         depth.colorAttachments = {m_receiverColor.Get()}; depth.depthAttachment = m_receiverDepth.Get();
@@ -285,6 +335,7 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < m_receiverCount; ++index)
         {
             const auto &chunk = m_receiverChunks[index];
+            commands.BindPipeline(m_raster[chunk.submission.instances == 1 ? 3 : 0].Get());
             commands.BindUniformBuffer(1, chunk.uniform.Get());
             commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
             submit(chunk.submission);
@@ -318,6 +369,7 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < m_casterCount; ++index)
         {
             const auto &chunk = m_casterChunks[index];
+            commands.BindPipeline(m_raster[chunk.submission.instances == 1 ? 4 : 1].Get());
             commands.BindUniformBuffer(1, chunk.uniform.Get());
             commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
             submit(chunk.submission);
@@ -346,12 +398,15 @@ namespace PlutoGE::render
     {
         auto stats = *m_stats;
         stats.resolutionScale = m_resolutionScale;
-        stats.submittedIndirectCommands = static_cast<std::uint32_t>(m_casterCount);
-        stats.receiverDraws = static_cast<std::uint32_t>(m_receiverCount);
+        stats.reusedFrame = m_reuseFrame;
+        stats.submittedIndirectCommands = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_casterCount);
+        stats.receiverDraws = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(PLUTO_VSM_ATLAS_SIZE) * PLUTO_VSM_ATLAS_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + PLUTO_VSM_CAPACITY * 64 + sizeof(VirtualShadowParameters) + 80 +
             m_capacity * (sizeof(Caster) + PLUTO_VSM_CAPACITY * 4 + 20) +
-            (m_receiverChunks.size() + m_casterChunks.size()) * sizeof(DrawParameters) + std::uint64_t(m_width) * m_height * 8;
+            std::uint64_t(m_width) * m_height * 8;
+        for (const auto &chunk : m_receiverChunks) stats.memoryBytes += chunk.uploaded.size();
+        for (const auto &chunk : m_casterChunks) stats.memoryBytes += chunk.uploaded.size();
         return stats;
     }
 }

@@ -13,8 +13,8 @@ namespace PlutoGE::render
     struct VirtualShadowShaders
     {
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 7> compute;
-        // Receiver, physical page, and tile-clear vertex/fragment pairs.
-        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 6> raster;
+        // Receiver, page, clear, rigid receiver, and rigid page shader pairs.
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 10> raster;
         [[nodiscard]] bool Complete() const;
     };
     struct alignas(16) VirtualShadowParameters
@@ -56,17 +56,20 @@ namespace PlutoGE::render
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
         [[nodiscard]] VirtualShadowStats GetStats() const;
     private:
-        struct Chunk { Submission submission; rhi::Buffer uniform; rhi::TextureHandle texture; std::vector<std::byte> uploaded; };
+        struct Chunk { Submission submission; rhi::Buffer uniform; rhi::TextureHandle texture; std::vector<std::byte> uploaded; const void *mesh = nullptr; std::uint64_t meshRevision = 0; };
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
-        std::array<rhi::GraphicsPipeline, 3> m_raster;
+        std::array<rhi::GraphicsPipeline, 5> m_raster;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_receiverColor, m_white;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Sampler m_sampler, m_materialSampler;
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;
-        VirtualShadowParameters m_previousClipmaps{};
+        VirtualShadowParameters m_previousClipmaps{}, m_previousInputs{};
+        std::vector<std::byte> m_uploadedCasters;
+        std::uint32_t m_inputChangeFrame = 0;
+        bool m_reuseFrame = false;
         float m_resolutionScale = 1.0f;
         std::uint32_t m_feedbackAfter = 0, m_feedbackFrame = 0, m_lowPressureFrames = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();

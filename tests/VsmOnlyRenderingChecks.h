@@ -70,7 +70,9 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     lighting.shadowMethod = ShadowMethod::Virtual;
     renderSurface(); assertExclusive();
     for (int frame = 0; frame < 3; ++frame) { renderSurface(); assertExclusive(); }
-    if (renderer.GetFrameStats().virtualShadows.gpuFrame <= frameBeforeSwitch)
+    const auto resumed = renderer.GetFrameStats().virtualShadows;
+    if (resumed.gpuFrame < frameBeforeSwitch ||
+        (resumed.gpuFrame == frameBeforeSwitch && !resumed.reusedFrame))
         throw std::runtime_error("Shadow-method switching recreated VSM pipelines and residency");
 
     caster.castsShadow = true;

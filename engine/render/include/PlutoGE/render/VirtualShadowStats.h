@@ -14,6 +14,7 @@ namespace PlutoGE::render
         // GPU counters describe gpuFrame; submission counts and memory describe the current frame.
         std::uint32_t gpuFrame = 0, submittedIndirectCommands = 0, receiverDraws = 0;
         bool gpuCountersAvailable = false;
+        bool reusedFrame = false;
         float resolutionScale = 1.0f;
     };
 }

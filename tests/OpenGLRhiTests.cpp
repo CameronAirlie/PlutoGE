@@ -161,7 +161,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].glsl = ReadText((std::string(vsmCompute[index]) + ".compute.glsl").c_str());
-        const std::array<const char *, 3> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear"};
+        const std::array<const char *, 5> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid"};
         for (std::size_t index = 0; index < vsmRaster.size(); ++index)
         {
             shaders.virtualShadows.raster[index * 2].glsl = ReadText((std::string(vsmRaster[index]) + ".vertex.glsl").c_str());

@@ -117,6 +117,20 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
             throw std::runtime_error("GPU virtual shadow page boundaries lost coverage");
     if (renderVirtual() != virtualPixels)
         throw std::runtime_error("GPU virtual shadow static cache changed pixels");
+    for (int frame = 0; frame < 16 && !renderer.GetFrameStats().virtualShadows.reusedFrame; ++frame) renderVirtual();
+    const auto idleStats = renderer.GetFrameStats().virtualShadows;
+    if (!idleStats.reusedFrame || idleStats.receiverDraws != 0 || idleStats.submittedIndirectCommands != 0)
+        throw std::runtime_error("Unchanged clean VSM frame still recorded shadow draws");
+    auto instanceModels = std::make_shared<std::vector<glm::mat4>>(65, caster.model);
+    caster.instanceModels = instanceModels;
+    for (int frame = 0; frame < 8; ++frame) renderVirtual();
+    if (renderVirtual() != virtualPixels)
+        throw std::runtime_error("Mixed rigid/64-instance shadow chunks changed coverage");
+    instanceModels->back()[3].x += .4f;
+    if (renderVirtual() == virtualPixels || renderer.GetFrameStats().virtualShadows.reusedFrame)
+        throw std::runtime_error("Last instance edit reused stale shadow inputs");
+    caster.instanceModels.reset();
+    for (int frame = 0; frame < 8; ++frame) renderVirtual();
     // Moving the clipmap window by one page changes local addresses while
     // preserving the depth identity of still-visible absolute world pages.
     lighting.cameraPosition.x += VirtualShadowMaps::BuildClipmaps(lighting).metrics[1].z;

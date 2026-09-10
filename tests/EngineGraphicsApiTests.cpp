@@ -83,10 +83,11 @@ int main(int argc, char **argv)
         presentationTiming.presentQueueMs < 0.0f)
         return 8;
 
-    // Optional project-backed GI comparison. Input assets are only loaded;
+    // Optional project-backed GI comparison or shadow CPU benchmark. Assets are only loaded;
     // captures are written to the explicitly supplied output directory.
+    const bool vsmCapture = argc >= 6 && std::string_view(argv[1]) == "--vsm-scene";
     const bool motionCapture = argc >= 6 && std::string_view(argv[1]) == "--vct-motion";
-    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || motionCapture))
+    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || motionCapture || vsmCapture))
     {
         engine.GetAssetManager().SetProjectContext(argv[2]);
         std::string error;
@@ -106,6 +107,7 @@ int main(int argc, char **argv)
         device.GetImmediateContext().SetGpuProfilingEnabled(true);
         CaptureSwapchain output; output.extentWidth=320; output.extentHeight=180;
         render::RhiRenderService service;
+        if (vsmCapture) { output.extentWidth = 1603; output.extentHeight = 672; }
         if (!service.Initialize(device, output)) return 31;
         glm::vec3 eye(-7,2,3), target(-7,2,-5);
         if (argc >= 12)
@@ -138,6 +140,50 @@ int main(int argc, char **argv)
         const std::array<render::IPostProcessEffect *,1> effects{&gi};
         std::filesystem::create_directories(argv[4]);
         const int frames=std::stoi(argv[5]);
+        if (vsmCapture)
+        {
+            camera.projection = glm::perspective(glm::radians(70.0f), float(output.extentWidth) / output.extentHeight, 1000.0f, .1f);
+            lighting.directionalIntensity = 1.0f;
+            lighting.shadowsEnabled = true;
+            lighting.shadowMethod = render::ShadowMethod::Virtual;
+            // Warm up before measuring stationary and translating camera workloads.
+            for (int scenario = 0; scenario < 3; ++scenario)
+            {
+                double elapsed = 0, descriptors = 0, receiverCpu = 0, pageCpu = 0;
+                std::uint64_t draws = 0, uploaded = 0;
+                int samples = 0;
+                for (int frame = 0; frame < frames; ++frame)
+                {
+                    const glm::vec3 offset(scenario == 2 ? float(frame) * .005f : 0, 0, 0);
+                    camera.view = glm::lookAtRH(eye + offset, target + offset, glm::vec3(0, 1, 0));
+                    lighting.view = camera.view; lighting.cameraPosition = eye + offset;
+                    const auto begin = std::chrono::steady_clock::now();
+                    if (!service.RenderSceneAndPresent(camera, lighting, commands, {}, scene.get(), effects)) return 32;
+                    if (scenario == 0 || frame < 10) continue;
+                    elapsed += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+                    const auto timing = device.GetTimingStats("Scene");
+                    descriptors += timing.descriptorCpuMs; draws += timing.indexedDrawCalls; uploaded += timing.uniformBytesUploaded;
+                    for (const auto &scope : timing.gpuScopes)
+                    {
+                        if (scope.name == "RHI VSM Receiver Depth") receiverCpu += scope.cpuMilliseconds;
+                        if (scope.name == "RHI Virtual Shadow Pages") pageCpu += scope.cpuMilliseconds;
+                    }
+                    ++samples;
+                }
+                if (samples) std::cout << "Bistro VSM " << (scenario == 1 ? "stationary" : "moving")
+                    << " render_ms=" << elapsed / samples << " descriptor_ms=" << descriptors / samples
+                    << " receiver_cpu_ms=" << receiverCpu / samples << " pages_cpu_ms=" << pageCpu / samples
+                    << " indexed=" << draws / samples << " uniform_bytes=" << uploaded / samples << std::endl;
+                if (scenario == 1)
+                {
+                    const auto pixels = device.ReadTextureRgba8(output.texture);
+                    std::ofstream file(std::filesystem::path(argv[4]) / "stationary.ppm", std::ios::binary);
+                    file << "P6\n" << output.extentWidth << " " << output.extentHeight << "\n255\n";
+                    for (std::size_t i = 0; i < pixels.size(); i += 4) file.write(reinterpret_cast<const char*>(pixels.data() + i), 3);
+                }
+            }
+            service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
+        }
         std::vector<std::byte> off;
         int phase = 0;
         for (int gain : {0,1,0,1})

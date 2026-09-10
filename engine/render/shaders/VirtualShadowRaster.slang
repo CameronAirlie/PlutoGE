@@ -1,8 +1,11 @@
 #include "VirtualShadowCommon.slang"
+#ifndef VSM_MODEL_CAPACITY
+#define VSM_MODEL_CAPACITY 64
+#endif
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { VirtualShadowParameters vsm; };
 [[vk::binding(1, 0)]] cbuffer DrawParameters : register(b1, space0)
 {
-    column_major float4x4 models[64];
+    column_major float4x4 models[VSM_MODEL_CAPACITY];
     uint4 drawParameters; // chunk index, model count, alpha mode, unused
     float4 alpha; // UV scale, cutoff, base colour alpha
 };

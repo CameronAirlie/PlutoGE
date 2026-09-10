@@ -281,8 +281,9 @@ namespace PlutoGE::ui
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;
-            ImGui::Text("  VSM submissions: %u indirect commands, %u receiver draws; %.2f MiB",
+            ImGui::Text("  VSM submissions: %u indirect commands, %u receiver draws; %.2f MiB allocated",
                 pages.submittedIndirectCommands, pages.receiverDraws, pages.memoryBytes / 1048576.0);
+            if (pages.reusedFrame) ImGui::TextUnformatted("  VSM frame reused (unchanged and clean)");
             if (pages.gpuCountersAvailable)
             {
                 ImGui::Text("  VSM GPU frame %u (delayed): %u requested, %u resident, %u hits", pages.gpuFrame, pages.requested, pages.resident, pages.cacheHits);

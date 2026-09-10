@@ -4,7 +4,11 @@ param(
     [string] $Project,
 
     [Parameter(Mandatory = $true, Position = 1)]
-    [string] $Output
+    [string] $Output,
+
+    [string] $RuntimePath,
+
+    [switch] $RebuildRuntime
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,13 +24,29 @@ if ([System.IO.Path]::GetExtension($outputPath) -ne '.exe') {
     $outputPath += '.exe'
 }
 
-Write-Host 'Configuring the shipping runtime...'
-& cmake --preset msvc-shipping -S $repositoryRoot
-if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+if ($RebuildRuntime -and $RuntimePath) {
+    throw 'Use either -RuntimePath for a prebuilt runtime or -RebuildRuntime for the engine shipping runtime.'
+}
 
-Write-Host 'Building the Release runtime...'
-& cmake --build --preset shipping
-if ($LASTEXITCODE -ne 0) { throw 'Shipping runtime build failed.' }
+if (-not $RuntimePath) {
+    $RuntimePath = Join-Path $repositoryRoot 'out/build/msvc-shipping/runtime/Release/PlutoGERuntime.exe'
+} else {
+    $RuntimePath = [System.IO.Path]::GetFullPath($RuntimePath, (Get-Location).Path)
+}
+
+if ($RebuildRuntime) {
+    Write-Host 'Configuring the shipping runtime...'
+    & cmake --preset msvc-shipping -S $repositoryRoot
+    if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+    Write-Host 'Building the Release runtime...'
+    & cmake --build (Join-Path $repositoryRoot 'out/build/msvc-shipping') --config Release --target PlutoGERuntime
+    if ($LASTEXITCODE -ne 0) { throw 'Shipping runtime build failed.' }
+}
+
+if (-not (Test-Path -LiteralPath $RuntimePath -PathType Leaf)) {
+    throw "Prebuilt runtime was not found: $RuntimePath. Build it once with -RebuildRuntime, or specify -RuntimePath."
+}
 
 $projectDirectory = Split-Path -Parent $projectPath
 $scriptProjectCandidates = @(Get-ChildItem -LiteralPath $projectDirectory -Filter '*.Scripts.csproj' -File)
@@ -37,11 +57,6 @@ if ($scriptProjectCandidates.Count -eq 1) {
     Write-Host 'Building project scripts...'
     & dotnet build $scriptProjectCandidates[0].FullName -c Release -f net8.0
     if ($LASTEXITCODE -ne 0) { throw 'Project script build failed.' }
-}
-
-$runtimePath = Join-Path $repositoryRoot 'out/build/msvc-shipping/runtime/Release/PlutoGERuntime.exe'
-if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
-    throw "Shipping runtime was not produced at the expected path: $runtimePath"
 }
 
 Write-Host 'Cooking assets and assembling the game...'

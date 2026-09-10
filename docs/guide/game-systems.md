@@ -259,8 +259,10 @@ For a Windows shipping folder, run from the engine repository root:
   "C:\Builds\MyGame\MyGame.exe"
 ```
 
-The helper builds a Release runtime, builds an adjacent script project when
-present, cooks assets, copies native dependencies, and bundles .NET. Follow
+The helper reuses a prebuilt Release runtime, builds an adjacent script project
+when present, cooks assets, copies native dependencies, and bundles .NET. Add
+`-RebuildRuntime` on the first export or after engine changes, or use
+`-RuntimePath` to select an existing shipping runtime. Follow
 [Exporting](../../EXPORTING.md) for the exact workflow and lower-level command.
 Distribute the entire generated folder. The `.plutopack` is packaging, not
 cryptographic protection. The PowerShell helper describes the Windows workflow;

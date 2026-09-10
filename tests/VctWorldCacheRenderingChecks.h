@@ -258,3 +258,93 @@ void CheckVctSmallEmitters(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     }
     std::cout << "VCT small emissive submeshes: all 7 alignments injected light, minimum red=" << minimumRed << '\n';
 }
+
+// Read deposited radiance on a non-emissive floor. First-pass GI leaves this
+// field black; the secondary pass must turn it into a coloured light source.
+template <class ReadPixels>
+void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    constexpr std::array<BasicVertex, 4> vertices = {{
+        {{{-6,-6,0}}, {{0,0,1}}, {{0,0}}}, {{{6,-6,0}}, {{0,0,1}}, {{1,0}}},
+        {{{6,6,0}}, {{0,0,1}}, {{1,1}}}, {{{-6,6,0}}, {{0,0,1}}, {{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    auto mesh = renderer.CreateMesh({vertices,indices});
+    BasicDraw receiver; receiver.mesh = &mesh; receiver.baseColor = {0.8f,0.2f,0.1f,1};
+    BasicDraw emitter = receiver;
+    emitter.model = glm::translate(glm::mat4(1),glm::vec3(0,0,4)) *
+        glm::rotate(glm::mat4(1),glm::radians(180.0f),glm::vec3(1,0,0));
+    emitter.emission = {4,4,4};
+    std::array draws{receiver,emitter};
+    BasicLighting lighting;
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    lighting.cameraPosition = {0,0,2};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition,glm::vec3(0),glm::vec3(0,1,0));
+    glm::mat4 projection(0);
+    projection[0][0] = projection[1][1] = 1;
+    projection[2][2] = .1f / 99.9f; projection[2][3] = -1; projection[3][2] = 10.0f / 99.9f;
+    BasicPostProcessEffect effect{BasicPostProcessEffectType::VCTGI};
+    effect.historyOwner = &effect; effect.quality = 6;
+    effect.parameters[0] = {16,1,.55f,12};
+    effect.parameters[1] = {.35f,0,.25f,.9f};
+    effect.parameters[2] = {64,1,1,1};
+    effect.parameters[3] = {1,0,1,1}; // Deposited radiance, one draw/frame.
+    const auto render = [&](int frames)
+    {
+        for (int frame = 0; frame < frames; ++frame)
+            renderer.Render(projection*lighting.view,lighting,draws,std::span(&effect,1));
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        glm::vec3 value(0); unsigned count = 0;
+        for (unsigned y=renderer.GetHeight()/3;y<renderer.GetHeight()*2/3;++y)
+            for (unsigned x=renderer.GetWidth()/3;x<renderer.GetWidth()*2/3;++x)
+            {
+                const auto at=(y*renderer.GetWidth()+x)*4;
+                value += glm::vec3(pixels.at(at),pixels.at(at+1),pixels.at(at+2)); ++count;
+            }
+        return value / float(count);
+    };
+    const auto off = render(8);
+    effect.parameters[5].y = 1;
+    const auto on = render(12);
+    const auto settled = render(24);
+    std::cout << "VCT secondary deposited radiance: off=" << off.r << ", on=" << on.r
+              << ", green=" << on.g << ", settled=" << settled.r << '\n';
+    if (off.r > 1 || on.r < 8 || on.r < on.g*1.4f || glm::length(on-settled)>1)
+        throw std::runtime_error("Secondary GI did not deposit stable material-coloured radiance");
+    // Read final received GI on a third wall, not radiance stored on the
+    // first receiving floor. This exercises both legs of the secondary bounce.
+    BasicDraw wall=receiver; wall.baseColor={.8f,.8f,.8f,1};
+    wall.model=glm::translate(glm::mat4(1),glm::vec3(3,0,2))*
+        glm::rotate(glm::mat4(1),glm::radians(-90.0f),glm::vec3(0,1,0))*
+        glm::scale(glm::mat4(1),glm::vec3(.25f));
+    const std::array room{receiver,emitter,wall};
+    const auto originalView=lighting.view;
+    lighting.view=glm::lookAtRH(lighting.cameraPosition,glm::vec3(3,0,2),glm::vec3(0,1,0));
+    effect.parameters[3].x=0;
+    const auto roomFrame=[&](float gain) {
+        effect.parameters[5].y=gain;
+        for(int frame=0;frame<24;++frame)
+            renderer.Render(projection*lighting.view,lighting,room,std::span(&effect,1));
+        const auto pixels=readPixels(renderer.GetColorTexture());
+        const auto at=(renderer.GetHeight()/2*renderer.GetWidth()+renderer.GetWidth()/2)*4;
+        return glm::vec3(int(pixels.at(at)),int(pixels.at(at+1)),int(pixels.at(at+2)));
+    };
+    const auto receivedOff=roomFrame(0), receivedOn=roomFrame(1);
+    std::cout << "VCT secondary received light: off=" << receivedOff.r << ", on=" << receivedOn.r << '\n';
+    if(receivedOn.r <= receivedOff.r+1 || glm::length(roomFrame(0)-receivedOff)>1)
+        throw std::runtime_error("Secondary radiance did not reach another surface in final GI");
+    lighting.view=originalView; effect.parameters[3].x=1; effect.parameters[5].y=1;
+    draws[0].baseColor = {0,0,0,1};
+    if (glm::length(render(12)) > 1) throw std::runtime_error("Black surface reflected secondary GI");
+    draws[0].baseColor = receiver.baseColor; draws[0].metallic = 1;
+    if (glm::length(render(12)) > 1) throw std::runtime_error("Metal reflected diffuse secondary GI");
+    draws[0].metallic = 0;
+    effect.parameters[4] = {1,48,256,0};
+    if (render(32).r < 8) throw std::runtime_error("World cache lost secondary voxel radiance");
+    draws[1].emission = {0,0,0};
+    if (glm::length(render(40)) > 1) throw std::runtime_error("Removed emitter left secondary GI behind");
+    draws[1].emission = emitter.emission;
+    effect.parameters[5].y = 0;
+    if (glm::length(render(12)) > 1) throw std::runtime_error("Disabling secondary GI retained its radiance");
+}

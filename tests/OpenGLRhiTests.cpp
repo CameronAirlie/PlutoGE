@@ -10,6 +10,7 @@
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
+#include "VctWorldCacheRenderingChecks.h"
 
 #include <array>
 #include <cassert>
@@ -220,6 +221,18 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-secondary")
+        {
+            try {
+                CheckVctSecondaryBounce(basicRenderer, [&](auto texture) {
+                    std::vector<unsigned char> pixels(basicRenderer.GetWidth()*basicRenderer.GetHeight()*4);
+                    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
+                    return pixels;
+                });
+            } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")
         {
             try {

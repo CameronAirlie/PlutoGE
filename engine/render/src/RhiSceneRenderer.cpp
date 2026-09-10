@@ -577,15 +577,8 @@ namespace PlutoGE::render
         {
             if (!effect || !effect->IsEnabled())
                 continue;
-            if (auto adapted = AdaptPostProcessEffect(*effect))
+            if (auto adapted = AdaptPostProcessEffect(*effect, cameraData.nearPlane, cameraData.farPlane))
             {
-                if (adapted->type == BasicPostProcessEffectType::DepthOfField)
-                    adapted->parameters[2] = {cameraData.nearPlane, cameraData.farPlane, 0.0f, 0.0f};
-                if (HasInput(InputsFor(adapted->type), BasicPostProcessInput::Depth))
-                {
-                    adapted->parameters[5].x = cameraData.nearPlane;
-                    adapted->parameters[5].y = cameraData.farPlane;
-                }
                 basicEffects.push_back(std::move(*adapted));
             }
         }
@@ -606,7 +599,21 @@ namespace PlutoGE::render
                                                                (effect.parameters[3].z > 0.5f || effect.parameters[3].x > 0.5f)) ||
                                                               (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u); });
         if (terminalDiagnostic != basicEffects.end())
+        {
+            const bool displayIndirect = terminalDiagnostic->type == BasicPostProcessEffectType::VCTGI &&
+                terminalDiagnostic->parameters[3].z > 0.5f && terminalDiagnostic->parameters[3].x == 0.0f;
             basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());
+            if (displayIndirect)
+            {
+                // Indirect lighting is HDR scene radiance, not a normalized
+                // diagnostic colour. A fixed display transform makes faint GI
+                // visible without auto exposure concealing on/off differences.
+                BasicPostProcessEffect display{BasicPostProcessEffectType::ToneMapping};
+                display.exposure = 1.0f;
+                display.gamma = 2.2f;
+                basicEffects.push_back(display);
+            }
+        }
         const auto taa = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
                                       { return effect.type == BasicPostProcessEffectType::TAA; });
         glm::vec2 jitterPixels(0.0f);

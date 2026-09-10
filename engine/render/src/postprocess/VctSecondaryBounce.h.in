@@ -1,0 +1,11 @@
+#pragma once
+namespace PlutoGE::render
+{
+inline constexpr const char* kVctSecondaryBounce = R"GLSL(
+#define float3 vec3
+#define float4 vec4
+@PLUTO_VCT_SECONDARY_BOUNCE_SOURCE@
+#undef float4
+#undef float3
+)GLSL";
+}

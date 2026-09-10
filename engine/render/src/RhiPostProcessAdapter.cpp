@@ -270,6 +270,7 @@ namespace PlutoGE::render
                                         static_cast<float>(settings.cascadeCount),
                                         static_cast<float>(settings.traceResolutionDivisor),
                                         static_cast<float>(settings.updateInterval)};
+                result.parameters[5].y = settings.secondaryBounce;
                 result.parameters[5].x = settings.localLightBounce - 1.0f; // Zero-initialized packets retain unit gain.
                 result.parameters[4] = {settings.worldCache ? 1.0f : 0.0f, settings.cacheSize, float(settings.cacheUpdates), settings.injectLocalLights ? 1.0f : 0.0f};
                 result.parameters[3] = {static_cast<float>(settings.debugView),
@@ -309,6 +310,24 @@ namespace PlutoGE::render
             if (registration.typeName == typeName)
                 return registration.adapt(effect);
         return std::nullopt;
+    }
+
+    std::optional<BasicPostProcessEffect> AdaptPostProcessEffect(
+        const IPostProcessEffect &effect, float nearPlane, float farPlane)
+    {
+        auto adapted = AdaptPostProcessEffect(effect);
+        if (!adapted) return std::nullopt;
+        if (adapted->type == BasicPostProcessEffectType::DepthOfField)
+            adapted->parameters[2] = {nearPlane, farPlane, 0.0f, 0.0f};
+        // Only SSAO's shader expects clip planes in 5.xy. Other depth-based
+        // effects own these fields (VCT uses them for its two bounce gains).
+        // Shared camera depth parameters are supplied separately in 5.zw.
+        if (adapted->type == BasicPostProcessEffectType::SSAO)
+        {
+            adapted->parameters[5].x = nearPlane;
+            adapted->parameters[5].y = farPlane;
+        }
+        return adapted;
     }
 
     bool IsRhiPostProcessEffectSupported(std::string_view typeName) noexcept

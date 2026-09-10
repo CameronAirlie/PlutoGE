@@ -143,7 +143,8 @@ namespace PlutoGE::render
         {
             glm::vec3 volumeOrigin{0.0f}; float volumeSize = 1.0f;
             std::uint32_t resolution = 1, hasDirectionalLight = 0;
-            glm::uvec2 padding{};
+            float secondaryBounce = 0.0f;
+            std::uint32_t bounceCascade = 0;
             glm::vec4 lightDirectionIntensity{0.0f};
             glm::vec4 lightColor{0.0f};
             std::array<glm::mat4, 4> shadowMatrices{
@@ -764,6 +765,8 @@ namespace PlutoGE::render
                     {11, 0, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {12, 0, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                for (std::uint32_t slot = 14; slot < 20; ++slot)
+                    voxelization.resourceBindings.push_back({slot, 1, slot - 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 voxelization.vertexLayout = {
                     .stride = sizeof(BasicVertex),
                     .attributes = {
@@ -2388,7 +2391,9 @@ namespace PlutoGE::render
             m_vctCacheOriginSize = glm::vec4(glm::floor(lighting.cameraPosition / snap) * snap - glm::vec3(size * 0.5f), size);
         }
         const float localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
-        const auto contentSignature = VctContentSignature(draws, lighting, effect.parameters[4].w > 0.5f, localLightBounce);
+        const float secondaryBounce = std::clamp(effect.parameters[5].y, 0.0f, 1.0f);
+        auto contentSignature = VctContentSignature(draws, lighting, effect.parameters[4].w > 0.5f, localLightBounce);
+        HashVctValue(contentSignature, secondaryBounce);
         const auto updateInterval = static_cast<std::uint64_t>(
             std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
         std::size_t rebuildIndex = cascadeCount;
@@ -2429,6 +2434,8 @@ namespace PlutoGE::render
                 for (auto &light : cascade.pendingLighting.pointLights) light.intensity *= localLightBounce;
                 for (auto &spot : cascade.pendingLighting.spotLights) spot.light.intensity *= localLightBounce;
                 cascade.pendingInjectLocalLights = effect.parameters[4].w > 0.5f;
+                cascade.pendingSecondaryBounce = secondaryBounce;
+                cascade.secondaryPass = false;
                 cascade.nextShadowDraw = 0;
                 cascade.nextShadowIndex = 0;
                 cascade.shadowReady = !lighting.shadowsEnabled || lighting.directionalIntensity <= 0.0f;
@@ -2449,7 +2456,8 @@ namespace PlutoGE::render
         // triangle budget between shadow injection and voxelization, and retain
         // an index cursor so every triangle is eventually submitted exactly once.
         constexpr std::uint32_t maxIndicesPerDraw = 32768 * 3;
-        std::uint32_t remainingIndices = 65536 * 3;
+        std::uint32_t remainingIndices =
+            rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].secondaryPass ? 32768 * 3 : 65536 * 3;
         if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
@@ -2523,6 +2531,9 @@ namespace PlutoGE::render
         {
             auto &cascade = m_vctCascades[rebuildIndex];
             VctVoxelParameters voxel;
+            voxel.secondaryBounce = cascade.secondaryPass ? cascade.pendingSecondaryBounce : 0.0f;
+            voxel.bounceCascade = static_cast<std::uint32_t>(rebuildIndex);
+            voxel.localLightCount.y = cascadeCount;
             voxel.volumeOrigin = cascade.pendingOrigin;
             voxel.volumeSize = cascade.pendingSize;
             voxel.resolution = resolution;
@@ -2560,6 +2571,8 @@ namespace PlutoGE::render
             commands.BeginRendering(raster);
             commands.BindPipeline(m_vctVoxelizationPipeline.Get());
             commands.BindUniformBuffer(0, voxelBuffer.Get());
+            for (std::uint32_t direction = 0; direction < 6; ++direction)
+                commands.BindTexture(14 + direction, m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
             for (std::size_t channel = 0; channel < 4; ++channel)
                 commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
             const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
@@ -2658,17 +2671,30 @@ namespace PlutoGE::render
                 cascade.origin = cascade.pendingOrigin;
                 cascade.size = cascade.pendingSize;
                 cascade.lastUpdateFrame = m_frameIndex;
-                cascade.rebuilding = false; cascade.valid = true;
-                cascade.pendingDraws.clear();
+                cascade.valid = true;
+                const bool startSecondary = !cascade.secondaryPass && cascade.pendingSecondaryBounce > 0.0f;
+                cascade.rebuilding = startSecondary;
+                if (startSecondary)
+                {
+                    cascade.secondaryPass = true;
+                    m_vctNextCascade = static_cast<std::uint32_t>(rebuildIndex);
+                    cascade.nextDraw = 0;
+                    cascade.nextVoxelIndex = 0;
+                    for (auto &texture : cascade.accumulation) commands.ClearStorageImageUint(texture.Get());
+                }
+                else cascade.pendingDraws.clear();
                 m_vctHistoryValid = false;
-                m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
-                if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
+                if (!startSecondary)
+                {
+                    m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
+                    if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
+                }
             }
         }
         std::uint32_t availableCascades = 0;
         while (availableCascades < cascadeCount && m_vctCascades[availableCascades].valid) ++availableCascades;
         if (availableCascades == 0 || (useCache && availableCascades < cascadeCount)) return source;
-        if (useCache && availableCascades == cascadeCount)
+        if (useCache && availableCascades == cascadeCount && !m_vctCascades[cascadeCount - 1].rebuilding)
         {
             const auto dispatch = [&](std::uint32_t first, std::uint32_t count, bool clear)
             {

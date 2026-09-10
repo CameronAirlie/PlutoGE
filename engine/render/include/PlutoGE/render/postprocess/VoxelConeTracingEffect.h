@@ -40,6 +40,7 @@ namespace PlutoGE::render
             float historyNormalThreshold = 0.9f;
             bool injectLocalLights = false;
             float localLightBounce = 1.0f;
+            float secondaryBounce = 1.0f;
             bool indirectOnly = false;
             bool worldCache = true;
             float cacheSize = 432.0f;
@@ -88,6 +89,7 @@ namespace PlutoGE::render
             std::shared_ptr<const std::vector<glm::mat4>> jointMatrices;
             std::size_t voxelLod = 0;
             std::size_t nextInstance = 0;
+            std::uint32_t nextIndex = 0;
         };
 
         struct VoxelCascade
@@ -133,6 +135,7 @@ namespace PlutoGE::render
             unsigned long long lastVoxelizedFrame = ~0ull;
             bool hasVolume = false;
             bool rebuildInProgress = false;
+            bool secondaryPass = false;
         };
 
         void EnsureResources(int width, int height);
@@ -142,6 +145,7 @@ namespace PlutoGE::render
                                const RenderContext &renderContext);
         bool VoxelizeChunk(std::size_t cascadeIndex, const PostProcessContext &context);
         void GenerateDirectionalMips(VoxelCascade &cascade);
+        void ClearAccumulation(VoxelCascade &cascade);
         void ReleaseVolume();
         void ResetHistory();
 
@@ -201,6 +205,7 @@ namespace PlutoGE::render
         bool m_volumeChangedThisFrame = false;
         bool m_injectLocalLights = false;
         float m_localLightBounce = 1.0f;
+        float m_secondaryBounce = 1.0f;
         bool m_indirectOnly = false;
     };
 }

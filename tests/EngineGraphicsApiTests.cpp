@@ -2,6 +2,11 @@
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
+#include "PlutoGE/render/postprocess/ToneMappingEffect.h"
+#include <filesystem>
+#include <fstream>
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
@@ -24,8 +29,8 @@ namespace
     public:
         PlutoGE::render::rhi::Format GetFormat() const noexcept override
         { return PlutoGE::render::rhi::Format::R8G8B8A8Unorm; }
-        std::uint32_t GetWidth() const noexcept override { return 64; }
-        std::uint32_t GetHeight() const noexcept override { return 64; }
+        std::uint32_t GetWidth() const noexcept override { return extentWidth; }
+        std::uint32_t GetHeight() const noexcept override { return extentHeight; }
         bool IsVSyncEnabled() const noexcept override { return false; }
         bool SetVSyncEnabled(bool) override { return true; }
         bool Resize(std::uint32_t, std::uint32_t) override { return true; }
@@ -37,6 +42,7 @@ namespace
         }
         PlutoGE::render::rhi::TextureHandle texture;
         bool flipped = false;
+        unsigned extentWidth = 64, extentHeight = 64;
     };
 }
 
@@ -76,6 +82,78 @@ int main(int argc, char **argv)
         presentationTiming.presentSubmitMs < 0.0f ||
         presentationTiming.presentQueueMs < 0.0f)
         return 8;
+
+    // Optional project-backed GI comparison. Input assets are only loaded;
+    // captures are written to the explicitly supplied output directory.
+    if (argc >= 6 && std::string_view(argv[1]) == "--vct-scene")
+    {
+        engine.GetAssetManager().SetProjectContext(argv[2]);
+        std::string error;
+        auto scene = scene::SceneSerializer::Load(argv[3], &error);
+        if (!scene) { std::cerr << error << std::endl; return 30; }
+        engine.SetScene(scene.get());
+        scene->SubmitRenderCommands();
+        const auto &commands = engine.GetRenderer().GetSceneRenderCommands();
+        std::size_t triangles = 0, emitters = 0;
+        for (const auto &draw : commands)
+        {
+            if (draw.mesh) triangles += draw.mesh->GetSubmeshLodIndexCount(draw.submeshIndex)/3;
+            if (draw.material && glm::length(draw.material->GetConfig().emission)>0) ++emitters;
+        }
+        std::cout << "Scene commands=" << commands.size() << " triangles=" << triangles << " emitters=" << emitters << std::endl;
+        auto &device = static_cast<render::rhi::vulkan::VulkanDevice &>(*engine.GetRenderDevice());
+        CaptureSwapchain output; output.extentWidth=320; output.extentHeight=180;
+        render::RhiRenderService service;
+        if (!service.Initialize(device, output)) return 31;
+        glm::vec3 eye(-7,2,3), target(-7,2,-5);
+        if (argc >= 12)
+        {
+            eye={std::stof(argv[6]),std::stof(argv[7]),std::stof(argv[8])};
+            target={std::stof(argv[9]),std::stof(argv[10]),std::stof(argv[11])};
+        }
+        render::CameraData camera{.view=glm::lookAtRH(eye,target,glm::vec3(0,1,0)),
+            .projection=glm::perspective(glm::radians(70.0f),320.0f/180.0f,1000.0f,.1f),.nearPlane=.1f,.farPlane=1000};
+        auto lighting = render::BuildSceneLighting(camera,scene.get());
+        std::cout << "lighting local=" << lighting.pointLights.size() << " sun=" << lighting.directionalIntensity << std::endl;
+
+        render::VoxelConeTracingEffect gi;
+        gi.ApplyParameters({{"World Cache",render::PostProcessParameterType::Bool,"false"},
+            {"Inject Local Lights",render::PostProcessParameterType::Bool,"true"},
+            {"Intensity",render::PostProcessParameterType::Float,"4"},
+            {"Max Distance",render::PostProcessParameterType::Float,"100"},
+            {"Temporal Blend",render::PostProcessParameterType::Float,"0"},
+            {"Indirect Only",render::PostProcessParameterType::Bool,"true"}});
+        const std::array<render::IPostProcessEffect *,1> effects{&gi};
+        std::filesystem::create_directories(argv[4]);
+        const int frames=std::stoi(argv[5]);
+        std::vector<std::byte> off;
+        for (int gain : {0,1})
+        {
+            gi.ApplyParameters({{"Secondary Bounce",render::PostProcessParameterType::Float,std::to_string(gain)}});
+            const auto begin=std::chrono::steady_clock::now();
+            for (int frame=0;frame<frames;++frame)
+            {
+                if (!service.RenderSceneAndPresent(camera,lighting,commands,{},scene.get(),effects)) return 32;
+                if ((frame+1)%100==0 || frame+1==frames)
+                {
+                    const auto pixels=device.ReadTextureRgba8(output.texture);
+                    const auto path=std::filesystem::path(argv[4])/(std::to_string(gain)+"-"+std::to_string(frame+1)+".ppm");
+                    std::ofstream file(path,std::ios::binary); file << "P6\n320 180\n255\n";
+                    double energy=0,difference=0;
+                    for (std::size_t i=0;i<pixels.size();i+=4)
+                    {
+                        file.write(reinterpret_cast<const char*>(pixels.data()+i),3);
+                        energy+=int(pixels[i])+int(pixels[i+1])+int(pixels[i+2]);
+                        if (!off.empty()) for (int c=0;c<3;++c) difference+=std::abs(int(pixels[i+c])-int(off[i+c]));
+                    }
+                    std::cout << "gain=" << gain << " frame=" << frame+1 << " energy=" << energy << " diff=" << difference
+                        << " elapsed=" << std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count() << std::endl;
+                    if (gain==0 && frame+1==frames) off=pixels;
+                }
+            }
+        }
+        service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
+    }
 
     render::MeshConfig meshConfig;
     meshConfig.data.vertices = {
@@ -195,6 +273,51 @@ int main(int argc, char **argv)
         }
         if (!engine.GetSwapchain()->Present(output.texture, true)) return 26;
         runtime.Shutdown();
+    }
+    {
+        // With no visible emission or direct light, the indirect-only preview
+        // must match the normally tone-mapped scene at the same fixed exposure.
+        auto &device=static_cast<render::rhi::vulkan::VulkanDevice &>(*engine.GetRenderDevice());
+        CaptureSwapchain output;
+        render::RhiRenderService preview;
+        if (!preview.Initialize(device,output)) return 40;
+        render::Material diffuse({.color=glm::vec4(1)});
+        render::Material emissive({.color=glm::vec4(1),.emission=glm::vec3(.01f)});
+        std::array<render::RenderCommand,2> room{
+            render::RenderCommand{.material=&diffuse,.mesh=&mesh},
+            render::RenderCommand{.material=&emissive,.mesh=&mesh,
+                .model=glm::translate(glm::mat4(1),glm::vec3(0,0,.5f))*
+                       glm::rotate(glm::mat4(1),glm::radians(180.0f),glm::vec3(0,1,0))}};
+        const glm::vec3 eye(0,0,.25f);
+        render::CameraData camera{.view=glm::lookAtRH(eye,glm::vec3(0),glm::vec3(0,1,0)),
+            .projection=glm::perspective(glm::radians(60.0f),1.0f,100.0f,.01f),.nearPlane=.01f,.farPlane=100};
+        render::BasicLighting lighting; lighting.cameraPosition=eye; lighting.view=camera.view;
+        lighting.ambientIntensity=lighting.directionalIntensity=0;
+        render::VoxelConeTracingEffect gi;
+        gi.ApplyParameters({{"Volume Size",render::PostProcessParameterType::Float,"4"},
+            {"World Cache",render::PostProcessParameterType::Bool,"false"},
+            {"Cascade Count",render::PostProcessParameterType::Int,"1"},
+            {"Secondary Bounce",render::PostProcessParameterType::Float,"0"},
+            {"Temporal Blend",render::PostProcessParameterType::Float,"0"},
+            {"Indirect Only",render::PostProcessParameterType::Bool,"true"}});
+        render::ToneMappingEffect toneMapping(1.0f,2.2f);
+        const std::array<render::IPostProcessEffect*,2> effects{&gi,&toneMapping};
+        gi.ApplyParameters({{"Indirect Only",render::PostProcessParameterType::Bool,"false"}});
+        for(int frame=0;frame<8;++frame)
+            if(!preview.RenderSceneAndPresent(camera,lighting,room,{},nullptr,effects)) return 41;
+        const auto reference=device.ReadTextureRgba8(output.texture);
+        gi.ApplyParameters({{"Indirect Only",render::PostProcessParameterType::Bool,"true"}});
+        for(int frame=0;frame<8;++frame)
+            if(!preview.RenderSceneAndPresent(camera,lighting,room,{},nullptr,effects)) return 41;
+        const auto pixels=device.ReadTextureRgba8(output.texture);
+        const int center=int(pixels.at((32*64+32)*4));
+        const int expected=int(reference.at((32*64+32)*4));
+        std::cout << "Faint GI preview center=" << center << ", reference=" << expected << std::endl;
+        if(expected==0 || center!=expected) { std::cerr << "Indirect-only preview did not match fixed-exposure scene lighting\n"; return 42; }
+        gi.ApplyParameters({{"Intensity",render::PostProcessParameterType::Float,"0"}});
+        if(!preview.RenderSceneAndPresent(camera,lighting,room,{},nullptr,effects)) return 43;
+        if(int(device.ReadTextureRgba8(output.texture).at((32*64+32)*4))!=0) return 44;
+        preview.Shutdown();
     }
     engine.Shutdown();
     return 0;

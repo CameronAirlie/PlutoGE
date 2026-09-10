@@ -338,6 +338,7 @@ namespace PlutoGE::render
         // SSR reserves lane 4.xyz for its internal trace/resolve passes; set
         // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
         // VCT uses lane 2.z for trace divisor and lane 4.w for local injection.
+        // Lane 5.x is local gain minus one; 5.y is secondary bounce (0 disables).
         std::array<glm::vec4, 6> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
@@ -530,6 +531,8 @@ namespace PlutoGE::render
             std::vector<BasicDraw> pendingDraws;
             BasicLighting pendingLighting;
             bool pendingInjectLocalLights = false;
+            float pendingSecondaryBounce = 0.0f;
+            bool secondaryPass = false;
             glm::mat4 pendingShadowMatrix{1.0f};
             std::size_t nextShadowDraw = 0;
             std::uint32_t nextShadowIndex = 0;

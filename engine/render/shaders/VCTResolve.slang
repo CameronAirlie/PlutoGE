@@ -34,7 +34,7 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // overlapping surfaces exceed a full footprint, never by a fractional area.
     if (weight > 0)
         radiance = float3(accumulationR[coordinate], accumulationG[coordinate],
-                          accumulationB[coordinate]) * (16.0 / max(float(weight), 4095.0));
+                          accumulationB[coordinate]) * (1.0 / max(float(weight), 4095.0));
     float opacity = opacityAt(coordinate, size);
     const int3 offsets[6] = {int3(1,0,0), int3(-1,0,0), int3(0,1,0),
                              int3(0,-1,0), int3(0,0,1), int3(0,0,-1)};

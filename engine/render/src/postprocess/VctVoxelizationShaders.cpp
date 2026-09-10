@@ -1,5 +1,6 @@
 #include "VctVoxelizationShaders.h"
 #include "VctCoverage.h"
+#include "VctSecondaryBounce.h"
 
 namespace PlutoGE::render::detail
 {
@@ -53,7 +54,7 @@ uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform fl
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4],uViewMatrix;uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
 vec2 shadowTexel(int c){if(c==0)return 1.0/vec2(textureSize(uShadow0,0));if(c==1)return 1.0/vec2(textureSize(uShadow1,0));if(c==2)return 1.0/vec2(textureSize(uShadow2,0));return 1.0/vec2(textureSize(uShadow3,0));}
-const uint MAX_VOXEL_SAMPLES=1048575u;
+const uint MAX_VOXEL_SAMPLES=65535u;
 bool claimSample(ivec3 coord){uint count=imageLoad(uAccumulationCount,coord).r;for(;;){if(count>=MAX_VOXEL_SAMPLES)return false;uint observed=imageAtomicCompSwap(uAccumulationCount,coord,count,count+1u);if(observed==count)return true;count=observed;}}
 bool projectShadow(int c,vec3 p,out vec3 q){vec4 lp=uShadowMatrix[c]*vec4(p-uShadowOrigin[c],1);q=lp.xyz/max(lp.w,.0001);q=q*.5+.5;return all(greaterThanEqual(q,vec3(0)))&&all(lessThanEqual(q,vec3(1)));}
 float visibility(vec3 p,vec3 n,vec3 lightDirection){if(uShadowCascadeCount<=0)return 1;float d=max(-(uViewMatrix*vec4(p,1)).z,0.0);if(d>uShadowSplit[uShadowCascadeCount-1])return 1;int selected=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){selected=i;break;}}
@@ -72,6 +73,24 @@ float visibility(vec3 p,vec3 n,vec3 lightDirection){if(uShadowCascadeCount<=0)re
  vec2 texel=shadowTexel(covered);float lit=0.0;
  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 o=vec2(x,y)*texel;lit+=q.z-bias<=shadowSample(covered,q.xy+o)?1.0:0.0;}
  return lit/9.0;}
+layout(binding=10) uniform sampler3D uBounce0;
+layout(binding=11) uniform sampler3D uBounce1;
+layout(binding=12) uniform sampler3D uBounce2;
+layout(binding=13) uniform sampler3D uBounce3;
+layout(binding=14) uniform sampler3D uBounce4;
+layout(binding=15) uniform sampler3D uBounce5;
+uniform float uSecondaryBounce;uniform int uBounceCascade,uBounceCascadeCount;
+vec4 vctBounceSample(vec3 tc,vec3 direction,float mip)
+{
+ float edge=.5*exp2(ceil(mip))/float(imageSize(uAccumulationR).x);
+ tc=clamp(tc,vec3(edge),vec3(1.0-edge));tc.z=(float(uBounceCascade)+tc.z)/float(max(uBounceCascadeCount,1));
+ vec3 w=abs(direction);w/=max(w.x+w.y+w.z,.0001);
+ vec4 x=direction.x>=0?textureLod(uBounce0,tc,mip):textureLod(uBounce1,tc,mip);
+ vec4 y=direction.y>=0?textureLod(uBounce2,tc,mip):textureLod(uBounce3,tc,mip);
+ vec4 z=direction.z>=0?textureLod(uBounce4,tc,mip):textureLod(uBounce5,tc,mip);
+ return x*w.x+y*w.y+z*w.z;
+}
+// SECONDARY_BOUNCE_HELPER
 void main(){
  vec3 worldPosition=g.p,worldNormal=g.n;vec2 materialUv=g.uv;
  float areaCoverage=1.0;
@@ -87,11 +106,13 @@ void main(){
  vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,materialUv);if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,materialUv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
  bool glassSurface=uSurfaceType==1;bool alphaBlend=uAlphaMode==2;float radianceCoverage=areaCoverage*((glassSurface||alphaBlend)?clamp(a.a,0,1):1.0);float opacity=glassSurface?0.0:radianceCoverage;vec3 normal=normalize(worldNormal),directRadiance=vec3(0);if(uHasInjectionLight!=0){vec3 lightDir=normalize(-uLightDirection);float ndl=max(dot(normal,lightDir),0);float shadow=uInjectionLightHasShadow!=0?visibility(worldPosition,worldNormal,uLightDirection):1;directRadiance=uLightColor*uLightIntensity*ndl*shadow;}for(int i=0;i<MAX_LOCAL_LIGHTS;i++){if(i>=uLocalLightCount)break;vec3 toLight=uLocalLightPosition[i]-worldPosition;float distanceToLight=length(toLight),range=max(uLocalLightRange[i],.0001);if(distanceToLight>=range)continue;vec3 lightDir=toLight/max(distanceToLight,.0001);float attenuation=(1.0-smoothstep(range*.9,range,distanceToLight))/max(distanceToLight*distanceToLight,.0001);if(uLocalLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLocalLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}directRadiance+=uLocalLightColor[i]*uLocalLightIntensity[i]*attenuation*max(dot(normal,lightDir),0.0);}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(1.0/3.14159265):vec3(0);vec3 r=diffuseBounce+max(uEmission,vec3(0));
+ if(uSecondaryBounce>0.0&&uSurfaceType==0&&metallic<1.0)r+=clamp(a.rgb*(1.0-metallic),vec3(0),vec3(.95))*uSecondaryBounce*vctSecondaryBounce(tc,normal,float(imageSize(uAccumulationR).x));
  // Keep invalid or extreme material/light values out of the half-float mip chain.
  // RGB is premultiplied by occupancy so partially occupied mip voxels cannot
  // contribute the radiance of a completely filled voxel.
- if(any(isnan(r))||any(isinf(r)))r=vec3(0);r=clamp(r,vec3(0),vec3(16))*radianceCoverage;uvec3 encoded=uvec3(round(r*(4095.0/16.0)));uint encodedOpacity=uint(round(opacity*4095.0));ivec3 coord=clamp(ivec3(tc*imageSize(uAccumulationR)),ivec3(0),imageSize(uAccumulationR)-ivec3(1));if(claimSample(coord)){imageAtomicAdd(uAccumulationR,coord,encoded.r);imageAtomicAdd(uAccumulationG,coord,encoded.g);imageAtomicAdd(uAccumulationB,coord,encoded.b);imageAtomicAdd(uAccumulationOpacity,coord,encodedOpacity);}})";
+ if(any(isnan(r))||any(isinf(r)))r=vec3(0);r=clamp(r,vec3(0),vec3(16))*radianceCoverage;uvec3 encoded=uvec3(round(r*4095.0));uint encodedOpacity=uint(round(opacity*4095.0));ivec3 coord=clamp(ivec3(tc*imageSize(uAccumulationR)),ivec3(0),imageSize(uAccumulationR)-ivec3(1));if(claimSample(coord)){imageAtomicAdd(uAccumulationR,coord,encoded.r);imageAtomicAdd(uAccumulationG,coord,encoded.g);imageAtomicAdd(uAccumulationB,coord,encoded.b);imageAtomicAdd(uAccumulationOpacity,coord,encodedOpacity);}})";
         voxel.fragmentSource.insert(voxel.fragmentSource.find("void main()"), kVctCoverage);
+        voxel.fragmentSource.insert(voxel.fragmentSource.find("// SECONDARY_BOUNCE_HELPER"), kVctSecondaryBounce);
         return voxel;
     }
 
@@ -109,7 +130,7 @@ layout(rgba16f,binding=5)writeonly uniform image3D uResolvedVolume;
 uniform int uResolution,uDestinationZOffset;
 float opacityAt(ivec3 coord,ivec3 size){if(any(lessThan(coord,ivec3(0)))||any(greaterThanEqual(coord,size)))return 0;uint count=imageLoad(uAccumulationCount,coord).r;if(count==0u)return 0;return clamp(float(imageLoad(uAccumulationOpacity,coord).r)/4095.0,0.0,1.0);}
 void main(){ivec3 coord=ivec3(gl_GlobalInvocationID),localSize=ivec3(uResolution);if(any(greaterThanEqual(coord,localSize)))return;uint count=imageLoad(uAccumulationCount,coord).r;vec3 radiance=vec3(0);if(count>0u){vec3 sums=vec3(imageLoad(uAccumulationR,coord).r,imageLoad(uAccumulationG,coord).r,imageLoad(uAccumulationB,coord).r);// Match the Slang resolve: fractional coverage must survive normalization.
- radiance=sums*(16.0/max(float(imageLoad(uAccumulationOpacity,coord).r),4095.0));}float opacity=opacityAt(coord,localSize);const ivec3 offsets[6]=ivec3[6](ivec3(1,0,0),ivec3(-1,0,0),ivec3(0,1,0),ivec3(0,-1,0),ivec3(0,0,1),ivec3(0,0,-1));for(int i=0;i<6;i++)opacity=max(opacity,opacityAt(coord+offsets[i],localSize)*.35);imageStore(uResolvedVolume,coord+ivec3(0,0,uDestinationZOffset),vec4(radiance,opacity));})";
+ radiance=sums*(1.0/max(float(imageLoad(uAccumulationOpacity,coord).r),4095.0));}float opacity=opacityAt(coord,localSize);const ivec3 offsets[6]=ivec3[6](ivec3(1,0,0),ivec3(-1,0,0),ivec3(0,1,0),ivec3(0,-1,0),ivec3(0,0,1),ivec3(0,0,-1));for(int i=0;i<6;i++)opacity=max(opacity,opacityAt(coord+offsets[i],localSize)*.35);imageStore(uResolvedVolume,coord+ivec3(0,0,uDestinationZOffset),vec4(radiance,opacity));})";
         return resolve;
     }
 }

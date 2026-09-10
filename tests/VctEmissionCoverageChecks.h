@@ -2,6 +2,7 @@
 #include "../engine/render/src/postprocess/VctVoxelizationShaders.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include <array>
+#include <bit>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -32,6 +33,7 @@ inline bool CheckVctEmissionCoverage()
             resolveSource.computeSource = artifacts.Load("VCTResolve", "compute").glsl;
         }
         std::unique_ptr<Shader> voxel(Shader::Create(voxelSource)), resolve(Shader::Create(resolveSource)), mip(Shader::Create(mipSource));
+        if (!voxel || !resolve || !mip) return false;
         for (auto* shader : {voxel.get(), resolve.get(), mip.get()})
         {
             shader->Bind(); GLint program = 0, linked = 0;
@@ -41,7 +43,7 @@ inline bool CheckVctEmissionCoverage()
         }
         GLuint vao = 0, vbo = 0, framebuffer = 0;
         std::array<GLuint, 3> buffers{};
-        std::array<GLuint, 7> textures{};
+        std::array<GLuint, 8> textures{};
         glGenVertexArrays(1, &vao); glBindVertexArray(vao);
         glGenBuffers(1, &vbo); glBindBuffer(GL_ARRAY_BUFFER, vbo);
         struct Vertex { glm::vec3 position, normal; glm::vec2 uv; };
@@ -64,7 +66,7 @@ inline bool CheckVctEmissionCoverage()
             glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(size), data, GL_DYNAMIC_DRAW);
             glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffers[slot]);
         };
-        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f)
+        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1)
         {
             constexpr float volumeSize = 16.0f;
             const float voxelSize = volumeSize / float(resolution);
@@ -107,6 +109,20 @@ inline bool CheckVctEmissionCoverage()
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
             glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
+            // Immutable synthetic field: opaque incident radiance is returned
+            // at the first sample. This isolates the shared bounce integral and
+            // material response from mip/filter and scene coverage errors.
+            std::vector<glm::vec4> incident(count,glm::vec4(sourceRadiance,sourceRadiance,sourceRadiance,1));
+            for (unsigned direction=0;direction<6;++direction)
+            {
+                glActiveTexture(GL_TEXTURE0+(legacy?10:14)+direction);
+                glBindTexture(GL_TEXTURE_3D,textures[7]);
+            }
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,incident.data());
+            glActiveTexture(GL_TEXTURE0);
             voxel->Bind();
             if (legacy)
             {
@@ -114,18 +130,21 @@ inline bool CheckVctEmissionCoverage()
                 voxel->SetUniform("uVolumeOrigin",glm::vec3(0)); voxel->SetUniform("uVolumeSize",volumeSize);
                 voxel->SetUniform("uVoxelResolution",resolution); voxel->SetUniform("uColor",glm::vec4(1));
                 voxel->SetUniform("uEmission",glm::vec3(emission,emission*.5f,emission*.25f));
+                voxel->SetUniform("uSecondaryBounce",bounce);
+                voxel->SetUniform("uMetallicFactor",metallic);
             }
             else
             {
-                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
+                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,std::bit_cast<unsigned>(bounce),0}};
                 struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; } material;
                 static_assert(sizeof(MaterialPass)==64);
                 material.emission = {emission,emission*.5f,emission*.25f};
+                material.metallic = metallic;
                 glm::mat4 model(1);
                 upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
             }
             glViewport(0,0,resolution,resolution);
-            glDrawArrays(GL_TRIANGLES,0,GLsizei(vertices.size()));
+            glDrawArraysInstanced(GL_TRIANGLES,0,GLsizei(vertices.size()),repetitions);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             resolve->Bind();
             if (legacy)
@@ -217,6 +236,30 @@ inline bool CheckVctEmissionCoverage()
                 const double actual = measure(side,.13f,1,resolution,2,false,1.0f);
                 if (std::abs(actual-side*side) > .025) passed = false;
             }
+        for (const float gain : {0.0f,0.5f,1.0f})
+        {
+            const double actual=measure(2,.13f,1,32,2,false,0,gain);
+            const double expected=4.0*2.0*.95*gain;
+            if (std::abs(actual-expected)>.15)
+            {
+                std::cerr << "VCT " << (legacy?"legacy":"Slang") << " secondary material integral: expected=" << expected << " actual=" << actual << '\n';
+                passed=false;
+            }
+        }
+        const double faint = measure(2,.13f,1,32,2,false,0,1,0,.001f);
+        if (std::abs(faint - .0038) > .0008)
+        {
+            std::cerr << "Faint secondary radiance was lost: " << faint << '\n';
+            passed = false;
+        }
+        passed &= measure(2,.13f,1,32,2,false,0,1,1)<.01;
+        passed &= measure(2,.13f,1,32,2,false,0,1,0,0)<.01;
+        const double saturated = measure(2,0,1,32,2,false,16,0,0,2,70000);
+        if (std::abs(saturated-64.0)>1.0)
+        {
+            std::cerr << "Dense voxel accumulation wrapped or changed source energy: " << saturated << '\n';
+            passed=false;
+        }
         passed &= glGetError()==GL_NO_ERROR;
         glBindFramebuffer(GL_FRAMEBUFFER,0); glDeleteFramebuffers(1,&framebuffer);
         glBindVertexArray(0); glDeleteVertexArrays(1,&vao); glDeleteBuffers(1,&vbo);

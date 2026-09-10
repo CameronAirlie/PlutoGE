@@ -84,6 +84,7 @@ add_test(NAME PlutoGEVulkanSsrTests COMMAND PlutoGEVulkanRhiTests --ssr-only)
 add_test(NAME PlutoGEVulkanVsmOnlyTests COMMAND PlutoGEVulkanRhiTests --vsm-only)
 add_test(NAME PlutoGEVulkanVsmPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)
 add_test(NAME PlutoGEVctWorldCacheRenderingTests COMMAND PlutoGEVulkanRhiTests --vct-world-cache)
+add_test(NAME PlutoGEVctSecondaryBounceOpenGLTests COMMAND PlutoGEOpenGLRhiTests --vct-secondary)
 
 add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)

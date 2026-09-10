@@ -142,6 +142,7 @@ int main(int argc, char **argv)
             {
                 return device.ReadTextureRgba8(texture);
             });
+            CheckVctSecondaryBounce(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             CheckVctSmallEmitters(renderer, [&](rhi::TextureHandle texture)
             {
                 return device.ReadTextureRgba8(texture);

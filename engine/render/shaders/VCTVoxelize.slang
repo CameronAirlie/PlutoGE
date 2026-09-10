@@ -7,7 +7,8 @@ struct VoxelParameters
     float volumeSize;
     uint resolution;
     uint hasDirectionalLight;
-    uint2 padding;
+    float secondaryBounce;
+    uint bounceCascade;
     float4 lightDirectionIntensity;
     float4 lightColor;
     column_major float4x4 shadowMatrices[4];
@@ -49,6 +50,25 @@ struct MaterialParameters
 [[vk::binding(5, 0)]] RWTexture3D<uint> accumulationG : register(u5, space0);
 [[vk::binding(6, 0)]] RWTexture3D<uint> accumulationB : register(u6, space0);
 [[vk::binding(7, 0)]] RWTexture3D<uint> accumulationWeight : register(u7, space0);
+
+[[vk::binding(6, 1)]] Sampler3D bounce0 : register(t6, space1);
+[[vk::binding(7, 1)]] Sampler3D bounce1 : register(t7, space1);
+[[vk::binding(8, 1)]] Sampler3D bounce2 : register(t8, space1);
+[[vk::binding(9, 1)]] Sampler3D bounce3 : register(t9, space1);
+[[vk::binding(10, 1)]] Sampler3D bounce4 : register(t10, space1);
+[[vk::binding(11, 1)]] Sampler3D bounce5 : register(t11, space1);
+float4 vctBounceSample(float3 tc, float3 direction, float mip)
+{
+    float edge = 0.5 * exp2(ceil(mip)) / float(voxel.resolution);
+    tc = clamp(tc, edge, 1.0 - edge);
+    tc.z = (float(voxel.bounceCascade) + tc.z) / float(max(voxel.localLightCount.y, 1u));
+    float3 w = abs(direction); w /= max(w.x + w.y + w.z, 0.0001);
+    float4 x = direction.x >= 0.0 ? bounce0.SampleLevel(tc,mip) : bounce1.SampleLevel(tc,mip);
+    float4 y = direction.y >= 0.0 ? bounce2.SampleLevel(tc,mip) : bounce3.SampleLevel(tc,mip);
+    float4 z = direction.z >= 0.0 ? bounce4.SampleLevel(tc,mip) : bounce5.SampleLevel(tc,mip);
+    return x*w.x + y*w.y + z*w.z;
+}
+#include "VCTSecondaryBounce.slang"
 
 struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
 struct VertexOutput { float3 worldPosition : POSITION0; float3 worldNormal : NORMAL0; float2 uv : TEXCOORD0; };
@@ -225,15 +245,31 @@ void fragmentMain(GeometryOutput input)
     }
     float3 radiance = albedo.rgb * (1.0 - metallic) * direct *
                       (1.0 / 3.14159265) + max(material.emission, 0.0);
+    if (voxel.secondaryBounce > 0.0 && metallic < 1.0)
+        radiance += clamp(albedo.rgb * (1.0 - metallic), 0.0, 0.95) * voxel.secondaryBounce *
+            vctSecondaryBounce(textureCoordinate, normal, float(voxel.resolution));
     // Clamp source radiance before weighting so the storage limit cannot
     // change a source's effective brightness as its voxel footprint changes.
     radiance = clamp(radiance, 0.0, 16.0) * coverage;
-    const uint3 encoded = uint3(round(radiance * (4095.0 / 16.0)));
+    const uint3 encoded = uint3(round(radiance * 4095.0));
     const uint encodedOpacity = uint(round(coverage * 4095.0));
     const int3 coordinate = clamp(int3(textureCoordinate * float(voxel.resolution)),
                                   int3(0), int3(voxel.resolution - 1));
-    InterlockedAdd(accumulationR[coordinate], encoded.r);
-    InterlockedAdd(accumulationG[coordinate], encoded.g);
-    InterlockedAdd(accumulationB[coordinate], encoded.b);
-    InterlockedAdd(accumulationWeight[coordinate], encodedOpacity);
+    // Reserve weighted coverage before adding radiance. 16-bit source values
+    // retain faint secondary light; bound sums so dense overlapping geometry
+    // cannot wrap their uint storage. Quantized coverage also bounds radiance.
+    if (encodedOpacity == 0u) return;
+    const uint maximumWeight = 65535u * 4095u;
+    uint previousWeight;
+    InterlockedAdd(accumulationWeight[coordinate], encodedOpacity, previousWeight);
+    if (previousWeight > maximumWeight - encodedOpacity)
+    {
+        InterlockedMin(accumulationWeight[coordinate], maximumWeight);
+        return;
+    }
+    const uint3 safeEncoded = min(encoded, encodedOpacity * 16u);
+    InterlockedAdd(accumulationR[coordinate], safeEncoded.r);
+    InterlockedAdd(accumulationG[coordinate], safeEncoded.g);
+    InterlockedAdd(accumulationB[coordinate], safeEncoded.b);
+
 }

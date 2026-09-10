@@ -231,6 +231,7 @@ namespace PlutoGE::render
             {"Trace Quality", PostProcessParameterType::Enum, std::to_string(m_traceResolutionDivisor == 4 ? 0 : 1), {"Balanced", "High"}},
             {"Inject Local Lights", PostProcessParameterType::Bool, m_injectLocalLights ? "true" : "false"},
             {"Local Light Bounce", PostProcessParameterType::Float, std::to_string(m_localLightBounce)},
+            {"Secondary Bounce", PostProcessParameterType::Float, std::to_string(m_secondaryBounce)},
             {"Voxelization LOD Bias", PostProcessParameterType::Int, std::to_string(m_voxelizationLodBias)},
             {"Voxelization Command Budget", PostProcessParameterType::Int, std::to_string(m_voxelizationCommandBudget)},
             {"Cone Aperture", PostProcessParameterType::Float, std::to_string(m_aperture)},
@@ -265,6 +266,7 @@ namespace PlutoGE::render
                 .historyNormalThreshold = m_historyNormalThreshold,
                 .injectLocalLights = m_injectLocalLights,
                 .localLightBounce = m_localLightBounce,
+                .secondaryBounce = m_secondaryBounce,
                 .indirectOnly = m_indirectOnly,
                 .worldCache = m_worldCache, .cacheSize = m_cacheSize, .cacheUpdates = m_cacheUpdates};
     }
@@ -333,6 +335,16 @@ namespace PlutoGE::render
                 if (nextDivisor != m_traceResolutionDivisor)
                 {
                     m_traceResolutionDivisor = nextDivisor;
+                    ResetHistory();
+                }
+            }
+            else if (p.name == "Secondary Bounce")
+            {
+                const float next = std::clamp(std::stof(p.value), 0.0f, 1.0f);
+                if (next != m_secondaryBounce)
+                {
+                    m_secondaryBounce = next;
+                    ReleaseVolume();
                     ResetHistory();
                 }
             }
@@ -931,7 +943,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             job.voxelLod = voxelLod;
         }
         cascade.rebuildInProgress = true;
+        cascade.secondaryPass = false;
+        ClearAccumulation(cascade);
+    }
 
+    void VoxelConeTracingEffect::ClearAccumulation(VoxelCascade &cascade)
+    {
         const unsigned int zero[4] = {0, 0, 0, 0};
         Graphics::BindFramebuffer(GL_FRAMEBUFFER, cascade.framebuffer);
         const unsigned int accumulationVolumes[] = {
@@ -1061,11 +1078,23 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             m_voxelizationShader->SetUniform(shadowOriginNames[shadowCascade], cascade.pendingShadowOrigins[shadowCascade]);
             m_voxelizationShader->SetUniform(shadowSplitNames[shadowCascade], cascade.pendingShadowSplits[shadowCascade]);
         }
+        m_voxelizationShader->SetUniform("uSecondaryBounce", cascade.secondaryPass ? m_secondaryBounce : 0.0f);
+        m_voxelizationShader->SetUniform("uBounceCascade", static_cast<int>(cascadeIndex));
+        m_voxelizationShader->SetUniform("uBounceCascadeCount", static_cast<int>(m_activeCascadeCount));
+        static const auto bounceNames = MakeNumberedUniformNames<kDirectionCount>("uBounce");
+        for (std::size_t direction = 0; direction < kDirectionCount; ++direction)
+        {
+            const int slot = 10 + static_cast<int>(direction);
+            Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+            Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+            m_voxelizationShader->SetUniform(bounceNames[direction], slot);
+        }
+        const std::size_t triangleBudget = cascade.secondaryPass ? 32768 : kMaxVoxelTrianglesPerFrame;
         int submittedDraws = 0;
         std::size_t submittedTriangles = 0;
         while (cascade.jobIndex < cascade.jobs.size() &&
                submittedDraws < m_voxelizationCommandBudget &&
-               submittedTriangles < kMaxVoxelTrianglesPerFrame)
+               submittedTriangles < triangleBudget)
         {
             auto &job = cascade.jobs[cascade.jobIndex];
             const auto &c = job.command;
@@ -1110,7 +1139,32 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                     "uJointMatrices[0]", job.jointMatrices->data(), jointCount);
             }
 
-            if (c.instanceModels && !c.instanceModels->empty())
+            const auto range = c.mesh->GetSubmeshLodRange(c.submeshIndex, job.voxelLod);
+            const std::size_t remainingTriangles = triangleBudget - submittedTriangles;
+            if (job.nextIndex != 0 || range.indexCount / 3 > remainingTriangles)
+            {
+                // Split large meshes too: one draw must not defeat the smaller
+                // secondary-pass budget. Advance instances only after all indices.
+                const bool instanced = c.instanceModels && !c.instanceModels->empty();
+                const auto indexCount = range.indexCount - range.indexCount % 3;
+                const auto chunk = static_cast<std::uint32_t>(std::min<std::size_t>(
+                    indexCount - job.nextIndex, remainingTriangles * 3));
+                m_voxelizationShader->SetUniform("uUseInstancing", 0);
+                m_voxelizationShader->SetUniform("uModel", instanced ? (*c.instanceModels)[job.nextInstance] : c.model);
+                c.mesh->Bind();
+                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(chunk), GL_UNSIGNED_INT,
+                    reinterpret_cast<const void *>(std::uintptr_t(range.indexOffset + job.nextIndex) * sizeof(unsigned int)));
+                job.nextIndex += chunk;
+                submittedTriangles += chunk / 3;
+                ++submittedDraws;
+                if (job.nextIndex == indexCount)
+                {
+                    job.nextIndex = 0;
+                    ++job.nextInstance;
+                    if (!instanced || job.nextInstance == c.instanceModels->size()) ++cascade.jobIndex;
+                }
+            }
+            else if (c.instanceModels && !c.instanceModels->empty())
             {
                 const std::size_t instanceCount = c.instanceModels->size();
                 const std::size_t indexCount = c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod);
@@ -1118,7 +1172,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 const std::size_t instancesForTriangleBudget =
                     std::max<std::size_t>(kMaxVoxelTrianglesPerDraw / trianglesPerInstance, 1);
                 const std::size_t remainingTriangleBudget =
-                    kMaxVoxelTrianglesPerFrame - submittedTriangles;
+                    triangleBudget - submittedTriangles;
                 const std::size_t instancesForFrameBudget =
                     std::max<std::size_t>(remainingTriangleBudget / trianglesPerInstance, 1);
                 const std::size_t remainingInstances = instanceCount - job.nextInstance;
@@ -1207,8 +1261,18 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.origin = cascade.pendingOrigin;
         cascade.lastSceneSignature = cascade.pendingSceneSignature;
         cascade.lastLightSignature = cascade.pendingLightSignature;
-        cascade.rebuildInProgress = false;
         cascade.hasVolume = true;
+        if (!cascade.secondaryPass && m_secondaryBounce > 0.0f)
+        {
+            // Keep the first-pass atlas immutable while the second pass writes
+            // only to accumulation images. Never accumulate previous-frame GI.
+            cascade.secondaryPass = true;
+            cascade.jobIndex = 0;
+            for (auto &job : cascade.jobs) { job.nextInstance = 0; job.nextIndex = 0; }
+            ClearAccumulation(cascade);
+            return false;
+        }
+        cascade.rebuildInProgress = false;
         cascade.jobs.clear();
         cascade.pendingShadowSourceMaps.fill(0);
         return true;
@@ -1407,7 +1471,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             shader->SetUniform("uWorldCache", useCache ? 1 : 0);
         };
         if (useCache && availableCascadeCount == static_cast<int>(m_activeCascadeCount) &&
-            (m_probeSchedule.clear || m_probeSchedule.remaining > 0))
+            (m_probeSchedule.clear || m_probeSchedule.remaining > 0) &&
+            !m_cascades[m_activeCascadeCount - 1].rebuildInProgress)
         {
             m_probeUpdateShader->Bind();
             for (std::size_t direction = 0; direction < 6; ++direction)

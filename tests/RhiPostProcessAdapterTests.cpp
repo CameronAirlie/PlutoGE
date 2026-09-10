@@ -65,6 +65,36 @@ int main()
     if (!Near(AdaptPostProcessEffect(vct)->parameters[5].x, 2.0f) ||
         !Near(vct.GetSettings().localLightBounce, 3.0f)) return 100;
 
+    for (const float gain : {0.0f, 0.5f, 1.0f})
+    {
+        vct.ApplyParameters({{.name = "Secondary Bounce", .type = PostProcessParameterType::Float,
+                              .value = std::to_string(gain)}});
+        if (!Near(AdaptPostProcessEffect(vct)->parameters[5].y, gain) ||
+            !Near(vct.GetSettings().secondaryBounce, gain)) return 107;
+        // Exercise the camera decoration actually used by RhiSceneRenderer.
+        // It previously replaced these gains with near/far clipping distances,
+        // silently forcing secondary GI on even when its control was zero.
+        for (const float farPlane : {100.0f, 5000.0f})
+        {
+            const auto scenePacket = AdaptPostProcessEffect(vct, 0.1f, farPlane);
+            if (!scenePacket || !Near(scenePacket->parameters[5].y, gain) ||
+                !Near(scenePacket->parameters[5].x, 2.0f))
+            {
+                std::cerr << "Scene camera parameters overwrote VCT bounce controls\n";
+                return 108;
+            }
+        }
+    }
+
+    SSAOEffect cameraAo;
+    const auto cameraAoPacket = AdaptPostProcessEffect(cameraAo, 0.1f, 5000.0f);
+    if (!cameraAoPacket || !Near(cameraAoPacket->parameters[5].x, 0.1f) ||
+        !Near(cameraAoPacket->parameters[5].y, 5000.0f)) return 109;
+    DepthOfFieldEffect cameraDof;
+    const auto cameraDofPacket = AdaptPostProcessEffect(cameraDof, 0.1f, 5000.0f);
+    if (!cameraDofPacket || !Near(cameraDofPacket->parameters[2].x, 0.1f) ||
+        !Near(cameraDofPacket->parameters[2].y, 5000.0f)) return 110;
+
     ToneMappingEffect toneMapping(1.7f, 2.0f);
     const auto tonePacket = AdaptPostProcessEffect(toneMapping);
     if (!tonePacket || tonePacket->type != BasicPostProcessEffectType::ToneMapping ||

@@ -187,14 +187,27 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     if (channelEnergy(disabled, 1) > channelEnergy(edited, 1) * .1)
         throw std::runtime_error("VCT ignored the local injection toggle");
     lighting.pointLights.clear();
-    // Illuminate the visible floor. The narrow ceiling patch injects radiance,
-    // but its bounce falls below the 8-bit readback threshold in this view.
-    lighting.spotLights = {{{{0,1.5f,0},12,{1,0,0},16},{0,-1,0}}};
+    // Illuminate a broad ceiling patch so its bounce reaches the visible floor.
+    // A mid-height light aimed down only lights a tiny floor patch; the
+    // resulting ceiling bounce is almost invisible to this camera in RGBA8.
+    lighting.spotLights = {{{{0,.25f,0},12,{1,0,0},128},{0,1,0}}};
     effect.parameters[4].w = 1;
     const auto spot = renderFrames(160);
     std::cout << "VCT local light energy: point=" << channelEnergy(point, 0)
               << ", spot=" << channelEnergy(spot, 0) << '\n';
     if (channelEnergy(spot, 0) < 100) throw std::runtime_error("Spot lights did not inject VCT radiance");
+    // Rotate horizontally between the two planes: the cone no longer covers
+    // the ceiling patch. This catches treating spots as omnidirectional points.
+    lighting.spotLights[0].direction = {1,0,0};
+    const auto turnedSpot = renderFrames(160);
+    if (channelEnergy(turnedSpot, 0) > channelEnergy(spot, 0) * .1)
+        throw std::runtime_error("Spot direction did not constrain VCT injection");
+    lighting.spotLights[0].direction = {0,1,0};
+    effect.parameters[4].w = 0;
+    const auto disabledSpot = renderFrames(160);
+    if (channelEnergy(disabledSpot, 0) > channelEnergy(spot, 0) * .1)
+        throw std::runtime_error("Disabled spot injection retained VCT radiance");
+    effect.parameters[4].w = 1;
     lighting.spotLights.clear();
     lighting.pointLights = {{{0,1.5f,0},12,{1,0,0},16}};
     const auto fullResolution = renderFrames(160);

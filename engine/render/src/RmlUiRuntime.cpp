@@ -1711,11 +1711,18 @@ namespace PlutoGE::render
         m_cpuTiming.beginFrameMs = elapsedMs(beginFrameBegin, Clock::now());
 
         const auto renderBegin = Clock::now();
-        m_context->Render();
-        m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
-
-        const auto endFrameBegin = Clock::now();
-        m_rhiRenderer->EndFrame(manageSubmission);
-        m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
+        try
+        {
+            m_context->Render();
+            m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
+            const auto endFrameBegin = Clock::now();
+            m_rhiRenderer->EndFrame(manageSubmission);
+            m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
+        }
+        catch (...)
+        {
+            m_rhiRenderer->CancelFrame();
+            throw;
+        }
     }
 }

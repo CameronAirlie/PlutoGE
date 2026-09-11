@@ -70,6 +70,9 @@ int main()
         Write(assets / "Stone.plutomaterial", "AlbedoTexture=Stone texture.png\n");
         Write(assets / "Stone texture.png", "fixture");
         Write(assets / "Unused.png", "fixture");
+        Write(assets / "Paladin.glb", "direct model fixture");
+        { std::ofstream scene(assets / "Main.plutoscene", std::ios::app);
+          scene << "PROPERTY\tMeshAssetReference\t2\tproject://Paladin.glb\t0\n"; }
         Write(assets / "Robot.fbx", "source model fixture");
         Write(assets / "Robot.plutomodel", "PLUTOMODEL\t1\nSOURCE\tproject://Robot.fbx\nOBJECT\t42\tMesh\tRobot\tproject://Robot.plutomesh\n");
         Write(assets / "Robot.plutomesh", "fixture");
@@ -81,6 +84,7 @@ int main()
         auto success = CookProjectContent(project, cooked, options, &error);
         Require(success, "Cook failed: " + error);
         Require(std::filesystem::exists(cooked / "Stone texture.png"), "Transitive asset-relative material texture omitted");
+        Require(std::filesystem::exists(cooked / "Paladin.glb"), "Direct runtime model was omitted");
         Require(!std::filesystem::exists(cooked / "Unused.png"), "Unreferenced asset was cooked");
         Require(!std::filesystem::exists(cooked / "Robot.fbx"), "Source model shipped");
         Require(std::filesystem::exists(cooked / "Robot.plutomodel"), "Runtime model manifest omitted");

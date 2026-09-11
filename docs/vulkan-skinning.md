@@ -42,3 +42,17 @@ On the 9,669-vertex Paladin, a 40-pose benchmark measured the preserved original
 kernel at 27.79 ms/pose and the new kernel at 0.458 ms/pose (about 61x faster).
 These are kernel measurements, not a claim of equivalent whole-frame speedup.
 The benchmark and reference comparison run with the imported GLB skinning test.
+
+## Viewport recovery after rendering errors
+
+A caught scene/UI exception used to leave the shared Vulkan context recording.
+Both viewports then failed subsequent BeginFrame calls until the editor restarted.
+The editor now closes and submits the valid command prefix, completing its frame
+fence and recorded image transitions, and resets temporal history. RmlUi clears
+its active-frame flag when rendering throws. This recovers host-side rendering
+errors; it does not repair a lost Vulkan device.
+
+The native UI regression test shows/hides a large victory message and injects an
+invalid uniform binding during UI rendering. It verifies the stranded context
+before recovery and checks background pixels in subsequent frames. The user's
+original boss-death exception has not yet been identified from a console log.

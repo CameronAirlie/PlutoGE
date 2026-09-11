@@ -1336,6 +1336,17 @@ namespace PlutoGE::render::rhi::vulkan
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
         }
 
+        void RecoverInterruptedFrame() override
+        {
+            // Submit the valid prefix instead of discarding it: tracked image
+            // layouts already include its transitions, and BeginFrame reset the
+            // slot fence. Submission completes that fence and retires resources.
+            if (!m_recording) return;
+            if (m_rendering) EndRendering();
+            Submit();
+            InvalidateDescriptorCaches();
+        }
+
         void SetViewport(const Viewport &v) override
         {
             VkViewport viewport{v.x, v.y + v.height, v.width, -v.height, v.minDepth, v.maxDepth};

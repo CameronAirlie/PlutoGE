@@ -482,3 +482,5 @@ if(TARGET PlutoGEEditorUI)
     target_link_libraries(PlutoGEEditorVulkanTextureTests PRIVATE PlutoGE::EditorUI)
     add_test(NAME PlutoGEEditorVulkanTextureTests COMMAND PlutoGEEditorVulkanTextureTests)
 endif()
+
+target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_UI_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")

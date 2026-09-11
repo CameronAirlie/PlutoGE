@@ -116,6 +116,9 @@ namespace PlutoGE::render::rhi
         // Submit all rendering recorded since the previous call. Explicit APIs
         // use this as the frame boundary; immediate APIs may make it a no-op.
         virtual void Submit() {}
+        // Complete valid commands recorded before a recoverable host-side error.
+        // Backends must leave the context ready for the next BeginFrame.
+        virtual void RecoverInterruptedFrame() {}
     };
 
     struct SwapchainDescriptor

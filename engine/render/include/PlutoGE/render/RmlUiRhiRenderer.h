@@ -30,6 +30,8 @@ namespace PlutoGE::render
         // The flags are false when UI is appended to an already active scene frame.
         void BeginFrame(rhi::TextureHandle target, bool beginSubmission = true);
         void EndFrame(bool submit = true);
+        // CPU-side state only; the owning service recovers the command context.
+        void CancelFrame() noexcept { m_frameActive = false; m_outputTarget = {}; }
 
         Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                     Rml::Span<const int> indices) override;

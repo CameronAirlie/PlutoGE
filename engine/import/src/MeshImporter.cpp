@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/import/MeshImporter.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -4665,6 +4666,14 @@ namespace PlutoGE::assetimport
             };
 
             logProgress("Starting");
+            // Native import libraries require a real source file. Packed direct
+            // model references (including embedded GLBs) are materialized lazily.
+            if (PlutoGE::content::IsMounted(filePath))
+            {
+                std::string error;
+                if (!PlutoGE::content::Materialize(filePath, &error))
+                    throw std::runtime_error("Cannot read packed model: " + error);
+            }
             if (!MeshImporter().SupportsFileType(filePath))
             {
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");

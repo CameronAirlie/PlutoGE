@@ -159,6 +159,15 @@ namespace PlutoGE::ui
         catch (const std::exception &error)
         {
             std::cerr << "Editor scene RHI render failed: " << error.what() << '\n';
+            try
+            {
+                m_device->GetImmediateContext().RecoverInterruptedFrame();
+                m_sceneRenderer->ResetTemporalHistory();
+            }
+            catch (const std::exception &recoveryError)
+            {
+                std::cerr << "Editor RHI frame recovery failed: " << recoveryError.what() << '\n';
+            }
             m_viewportTexture = {};
             return false;
         }

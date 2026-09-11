@@ -213,6 +213,20 @@ namespace PlutoGE::assets
                 }
             }
         }
+        // A direct scene/animation reference to a source model is a runtime
+        // dependency, unlike the source identity behind a generated .plutomodel.
+        std::set<std::string> runtimeModelSources;
+        for (const auto &record : database.GetRecords())
+        {
+            if (!options.includeUnreferencedAssets && !reachable.contains(record.reference)) continue;
+            if (record.type != ProjectAssetType::Scene && record.type != ProjectAssetType::Prefab &&
+                record.type != ProjectAssetType::Animation && record.type != ProjectAssetType::AnimationClip &&
+                record.type != ProjectAssetType::AnimationGraph) continue;
+            for (const auto &dependency : record.dependencies)
+                if (const auto *target = database.FindByReference(dependency);
+                    target && target->type == ProjectAssetType::Model)
+                    runtimeModelSources.insert(dependency);
+        }
         std::error_code error;
         std::filesystem::create_directories(destination, error);
         if (error) { SetError(errorMessage, "Failed to create cooked asset directory: " + error.message()); return false; }
@@ -228,7 +242,7 @@ namespace PlutoGE::assets
         manifest << kCookHeader << '\n';
         for (const auto &record : database.GetRecords())
         {
-            if (!ShouldCook(record.type, options)) continue;
+            if (!ShouldCook(record.type, options) && !runtimeModelSources.contains(record.reference)) continue;
             const auto assembly = project.ResolveAssetReference(project.GetManifest().scriptAssembly);
             const auto recordPath = project.ResolveAssetReference(record.reference);
             const auto extension = recordPath.extension().string();

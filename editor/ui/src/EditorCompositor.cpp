@@ -13,6 +13,7 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace PlutoGE::ui
@@ -286,6 +287,14 @@ namespace PlutoGE::ui
                     if (entry.inUse && entry.descriptorSet)
                         ImGui_ImplVulkan_RemoveTexture(entry.descriptorSet);
                 m_textures.clear();
+                for (auto descriptor : m_pendingDescriptors)
+                    ImGui_ImplVulkan_RemoveTexture(descriptor);
+                m_pendingDescriptors.clear();
+                for (auto &batch : m_retiredDescriptors) {
+                    for (auto descriptor : batch.descriptors) ImGui_ImplVulkan_RemoveTexture(descriptor);
+                    vkDestroyFence(m_context.device, batch.fence, nullptr);
+                }
+                m_retiredDescriptors.clear();
                 ImGui_ImplVulkan_Shutdown();
                 ImGui_ImplGlfw_Shutdown();
                 m_drawData = nullptr;
@@ -297,6 +306,7 @@ namespace PlutoGE::ui
 
             void BeginFrame() override
             {
+                CollectRetiredDescriptors();
                 { core::CpuScope scope("ImGui Vulkan backend new frame", core::CpuCategory::UI); ImGui_ImplVulkan_NewFrame(); }
                 { core::CpuScope scope("ImGui GLFW new frame", core::CpuCategory::UI); ImGui_ImplGlfw_NewFrame(); }
             }
@@ -348,7 +358,7 @@ namespace PlutoGE::ui
                     imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 if (!replacement)
                     return;
-                ImGui_ImplVulkan_RemoveTexture(entry.descriptorSet);
+                m_pendingDescriptors.push_back(entry.descriptorSet);
                 entry.descriptorSet = replacement;
                 entry.texture = descriptor.texture;
             }
@@ -360,7 +370,7 @@ namespace PlutoGE::ui
                 auto &entry = m_textures[texture.index];
                 if (!entry.inUse || entry.generation != texture.generation)
                     return;
-                ImGui_ImplVulkan_RemoveTexture(entry.descriptorSet);
+                m_pendingDescriptors.push_back(entry.descriptorSet);
                 entry.inUse = false;
                 entry.descriptorSet = VK_NULL_HANDLE;
                 entry.texture = {};
@@ -384,6 +394,43 @@ namespace PlutoGE::ui
             }
 
         private:
+            struct RetiredDescriptors
+            {
+                VkFence fence = VK_NULL_HANDLE;
+                std::vector<VkDescriptorSet> descriptors;
+            };
+
+            void CollectRetiredDescriptors()
+            {
+                // Called before NewFrame: the preceding ImGui draw data and
+                // platform windows have now been submitted. Never recycle a
+                // descriptor while either CPU draw data or GPU work can use it.
+                for (auto it=m_retiredDescriptors.begin(); it!=m_retiredDescriptors.end();) {
+                    const auto status=vkGetFenceStatus(m_context.device,it->fence);
+                    if(status==VK_NOT_READY) { ++it; continue; }
+                    if(status!=VK_SUCCESS) throw std::runtime_error("Vulkan editor descriptor retirement fence failed");
+                    for(auto descriptor:it->descriptors) ImGui_ImplVulkan_RemoveTexture(descriptor);
+                    vkDestroyFence(m_context.device,it->fence,nullptr);
+                    it=m_retiredDescriptors.erase(it);
+                }
+                if(m_pendingDescriptors.empty()) return;
+                VkFence fence=VK_NULL_HANDLE;
+                VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                if(vkCreateFence(m_context.device,&info,nullptr,&fence)!=VK_SUCCESS)
+                    throw std::runtime_error("Could not create editor descriptor retirement fence");
+                // An empty submission fences all earlier work on the shared
+                // graphics queue without a device-wide idle or a CPU wait.
+                VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                if(vkQueueSubmit(m_context.queue,1,&submit,fence)!=VK_SUCCESS) {
+                    vkDestroyFence(m_context.device,fence,nullptr);
+                    throw std::runtime_error("Could not submit editor descriptor retirement fence");
+                }
+                m_retiredDescriptors.push_back({fence,std::move(m_pendingDescriptors)});
+                m_pendingDescriptors.clear();
+            }
+
+            std::vector<VkDescriptorSet> m_pendingDescriptors;
+            std::vector<RetiredDescriptors> m_retiredDescriptors;
             struct TextureEntry
             {
                 VkDescriptorSet descriptorSet = VK_NULL_HANDLE;

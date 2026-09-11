@@ -1995,7 +1995,7 @@ namespace PlutoGE::ui
         const std::uint64_t displayedNativeTexture = displayRhiTexture ? 0 : m_renderTarget->GetColorTextureID();
         const bool registeredTextureChanged = displayedNativeTexture != m_registeredNativeTexture ||
                                               (displayRhiTexture && m_rhiViewportTexture != m_registeredRhiTexture);
-        if (registeredTextureChanged)
+        if (registeredTextureChanged || !m_registeredTexture.IsValid())
         {
             ReleaseRegisteredTexture();
             const EditorTextureDescriptor descriptor = displayRhiTexture
@@ -2018,7 +2018,11 @@ namespace PlutoGE::ui
         const auto imguiTexture = EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_registeredTexture);
         ImTextureID texId = static_cast<ImTextureID>(imguiTexture);
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
-        ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
+        // A missing/stale registration must not emit an invalid Vulkan binding.
+        if (imguiTexture != 0)
+            ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
+        else
+            ImGui::Dummy(imageSize);
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
         if (m_config.editorViewport && m_hasEditorCameraData)

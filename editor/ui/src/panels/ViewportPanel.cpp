@@ -2054,6 +2054,13 @@ namespace PlutoGE::ui
                 ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
                 rhiLabelColor, rhiLabel.c_str());
         }
+        if (m_rhiRenderService && !m_rhiRenderService->GetLastRenderError().empty())
+        {
+            const auto &error = m_rhiRenderService->GetLastRenderError();
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                ImVec2(viewportMin.x + 12, viewportMin.y + 12), IM_COL32(255, 130, 110, 255),
+                error.c_str(), nullptr, std::max(80.0f, imageSize.x - 24));
+        }
         m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
         m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
         const ImVec2 mousePosition = ImGui::GetIO().MousePos;

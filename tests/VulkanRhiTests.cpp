@@ -127,6 +127,12 @@ int main(int argc, char **argv)
             CheckOpaqueBatching(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--fsr2-soak")
+        {
+            CheckTemporalMotionRendering(renderer, device, true,
+                [&](auto texture) { return device.ReadTextureRgba8(texture); }, 4800);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")
         {
             CheckFsr2Rendering(renderer, device);
@@ -150,6 +156,11 @@ int main(int argc, char **argv)
             CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
                 return device.ReadTextureRgba8(texture);
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-removed-character")
+        {
+            CheckVctRemovedCharacter(renderer);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")

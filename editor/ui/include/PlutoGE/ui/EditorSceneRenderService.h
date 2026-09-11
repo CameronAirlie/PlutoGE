@@ -48,6 +48,7 @@ namespace PlutoGE::ui
                     const scene::Scene *scene,
                     render::PostProcessDebugView debugView);
 
+        [[nodiscard]] const std::string &GetLastRenderError() const noexcept { return m_lastRenderError; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
         [[nodiscard]] bool IsVulkan() const noexcept { return m_isVulkan; }
         [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() const noexcept { return m_device; }
@@ -76,6 +77,7 @@ namespace PlutoGE::ui
         bool m_vulkanAvailable = false;
         std::uint64_t m_frameSequence = 0;
         render::rhi::TemporalUpscalerOptions m_upscalerOptions;
+        std::string m_lastRenderError;
         std::string m_vulkanStatus = "Vulkan not probed";
     };
 }

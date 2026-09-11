@@ -1392,7 +1392,10 @@ namespace PlutoGE::render::rhi::vulkan
         {
             auto *resource = m_impl.buffers.Get(handle);
             if (!resource || resource->usage != BufferUsage::Vertex)
-                throw std::invalid_argument("Invalid Vulkan vertex buffer");
+                throw std::invalid_argument("Invalid Vulkan vertex buffer (index=" +
+                    std::to_string(handle.index) + ", generation=" + std::to_string(handle.generation) +
+                    ", pipeline='" + (m_pipeline ? m_pipeline->descriptor.debugName : std::string("none")) +
+                    "', " + (resource ? "wrong buffer usage" : "missing or expired handle") + ")");
             if (m_boundVertexBuffer == handle && m_boundVertexOffset == offset)
                 return;
             const VkDeviceSize vkOffset = offset;

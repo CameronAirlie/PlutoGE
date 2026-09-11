@@ -2680,6 +2680,13 @@ namespace PlutoGE::render
                 cascade.pendingDraws.clear();
                 for (const auto &draw : draws)
                 {
+                    // This queue survives across frames. Animated meshes are
+                    // disposable cache entries and must not be retained here,
+                    // including for the GI injection shadow pass. Use the same
+                    // eligibility as the content signature and voxelization.
+                    if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 ||
+                        !draw.mesh || !draw.mesh->IsValid())
+                        continue;
                     if (draw.instanceModels && !draw.instanceModels->empty())
                         for (const auto &model : *draw.instanceModels)
                         {

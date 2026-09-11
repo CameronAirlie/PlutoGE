@@ -8,6 +8,45 @@
 #include <vector>
 #include <glm/gtc/matrix_transform.hpp>
 
+// A progressive GI shadow job must not retain disposable animated geometry.
+inline void CheckVctRemovedCharacter(PlutoGE::render::BasicRenderer &renderer)
+{
+    using namespace PlutoGE::render;
+    constexpr std::array<BasicVertex, 3> vertices = {{
+        {{{-1,0,0}}, {{0,0,1}}, {{0,0}}},
+        {{{1,0,0}}, {{0,0,1}}, {{1,0}}},
+        {{{0,1,0}}, {{0,0,1}}, {{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t, 3> indices{0,1,2};
+    auto mesh = renderer.CreateMesh({vertices, indices});
+    auto character = std::make_unique<BasicMesh>(renderer.CreateMesh({vertices, indices}));
+    std::vector<BasicDraw> draws(4);
+    for (auto &draw : draws) draw.mesh = &mesh;
+    draws.back().mesh = character.get();
+    draws.back().contributesToGi = false;
+    BasicLighting lighting;
+    lighting.shadowsEnabled = true;
+    lighting.directionalIntensity = 1;
+    lighting.cameraPosition = {0,1,5};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0,1,0));
+    const auto projection = glm::perspectiveRH_ZO(glm::radians(60.0f), 1.5f, 100.0f, .1f);
+    BasicPostProcessEffect effect{BasicPostProcessEffectType::VCTGI};
+    effect.historyOwner = &effect;
+    effect.parameters[0] = {16,1,.55f,16};
+    effect.parameters[1] = {.35f,0,.25f,.9f};
+    effect.parameters[2] = {64,1,1,1};
+    effect.parameters[3].w = 1; // Leave the character queued behind rigid casters.
+    const auto render = [&] {
+        renderer.Render(projection * lighting.view, lighting, draws, std::span(&effect,1), {},
+            PostProcessDebugView::None, nullptr, nullptr, true, draws);
+    };
+    render();
+    draws.pop_back();
+    character.reset();
+    for (int frame = 0; frame < 16; ++frame) render();
+    std::cout << "VCT removed character: passed\n";
+}
+
 // Rasterize and voxelize two facing surfaces. The ceiling emits red light;
 // the floor must retain that local bounce with a cold and a populated cache.
 // Use the reported configuration: 128 voxels, 48/144/432-unit cascades,

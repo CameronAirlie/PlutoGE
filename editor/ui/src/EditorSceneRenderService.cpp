@@ -1,6 +1,7 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
+#include "PlutoGE/ui/EditorShell.h"
 
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
@@ -142,7 +143,7 @@ namespace PlutoGE::ui
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
                                          postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView,
                                          !combineRuntimeUiSubmission, scene))
-                return false;
+                throw std::runtime_error("Scene renderer returned no frame at " + std::to_string(width) + "x" + std::to_string(height));
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
             if (scene && scene->HasRmlRuntimeUI())
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
@@ -158,7 +159,14 @@ namespace PlutoGE::ui
         }
         catch (const std::exception &error)
         {
-            std::cerr << "Editor scene RHI render failed: " << error.what() << '\n';
+            const std::string message = std::string("Editor scene RHI render failed: ") + error.what();
+            const bool reportError = m_lastRenderError != message;
+            if (reportError)
+            {
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, message);
+                std::cerr << message << '\n';
+            }
+            m_lastRenderError = message;
             try
             {
                 m_device->GetImmediateContext().RecoverInterruptedFrame();
@@ -166,12 +174,18 @@ namespace PlutoGE::ui
             }
             catch (const std::exception &recoveryError)
             {
-                std::cerr << "Editor RHI frame recovery failed: " << recoveryError.what() << '\n';
+                const std::string recoveryMessage = std::string("Editor RHI frame recovery failed: ") + recoveryError.what();
+                if (reportError)
+                {
+                    EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, recoveryMessage);
+                    std::cerr << recoveryMessage << '\n';
+                }
             }
             m_viewportTexture = {};
             return false;
         }
 
+        m_lastRenderError.clear();
         if (!m_isVulkan)
         {
             render::Graphics::ResetStateCache();

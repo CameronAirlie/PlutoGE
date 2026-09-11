@@ -6,7 +6,7 @@
 #include <stdexcept>
 
 template<class Device, class ReadPixels>
-void CheckTemporalMotionRendering(PlutoGE::render::BasicRenderer &renderer, Device &device, bool fsr, ReadPixels readPixels)
+void CheckTemporalMotionRendering(PlutoGE::render::BasicRenderer &renderer, Device &device, bool fsr, ReadPixels readPixels, unsigned frames = 48)
 {
     using namespace PlutoGE::render;
     const std::array<BasicVertex, 3> vertices{{
@@ -36,7 +36,7 @@ void CheckTemporalMotionRendering(PlutoGE::render::BasicRenderer &renderer, Devi
         taa.parameters[0] = {.90f,.94f,.55f,0};
         taa.parameters[1] = {.0035f,.82f,80,1};
         taa.quality = reordered == 4 ? 0u : 1u;
-        for (unsigned frame = 0; frame < 48; ++frame)
+        for (unsigned frame = 0; frame < frames; ++frame)
         {
             // Combined object and camera motion; the offscreen draw changes
             // list position but must never become the edge's previous model.
@@ -57,7 +57,7 @@ void CheckTemporalMotionRendering(PlutoGE::render::BasicRenderer &renderer, Devi
             }
             std::array draws{edge, hidden};
             if (reordered && (frame & 1)) std::swap(draws[0], draws[1]);
-            glm::mat4 camera(1); camera[3].x = reordered == 3 ? 0.0f : float(frame) * .125f / 64.0f;
+            glm::mat4 camera(1); camera[3].x = reordered == 3 ? 0.0f : float(frame % 48) * .125f / 64.0f;
             const glm::vec2 jitter(halton(frame % 18 + 1,2), halton(frame % 18 + 1,3));
             taa.parameters[2] = {jitter / 128.0f, 0, 0};
             rhi::TemporalUpscalerFrame upscaler;

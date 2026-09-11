@@ -139,6 +139,31 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicPostProcessParameters) == 400);
 
+        constexpr std::size_t kMaxFusedColorOperations = 8;
+        struct alignas(16) ColorOperationParameters
+        {
+            glm::vec4 control{0.0f};
+            std::array<glm::vec4, 6> parameters{};
+        };
+        struct alignas(16) FusedColorParameters
+        {
+            glm::vec4 header{0.0f};
+            std::array<ColorOperationParameters, kMaxFusedColorOperations> operations{};
+        };
+        static_assert(sizeof(ColorOperationParameters) == 112);
+        static_assert(sizeof(FusedColorParameters) == 912);
+
+        int ColorOperationCode(BasicPostProcessEffectType type)
+        {
+            switch (type)
+            {
+            case BasicPostProcessEffectType::ToneMapping: return 0;
+            case BasicPostProcessEffectType::GammaCorrection: return 1;
+            case BasicPostProcessEffectType::ColorGrading: return 2;
+            default: return -1;
+            }
+        }
+
         struct VctLocalLight { glm::vec4 positionRange{}, colorIntensity{}, directionSpot{}; };
         struct alignas(16) VctVoxelParameters
         {
@@ -469,6 +494,18 @@ namespace PlutoGE::render
                      {4, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, center)}}};
                 particle.debugName = "RHI particles";
                 m_particlePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(particle));
+                if (!shaders.particleInstancedVertex.spirv.empty() || !shaders.particleInstancedVertex.glsl.empty())
+                {
+                    particle.vertexShader = shaders.particleInstancedVertex;
+                    particle.vertexLayout = {};
+                    particle.resourceBindings.push_back(
+                        {3, 0, 3, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
+                    particle.debugName = "RHI instanced particles";
+                    m_particleInstancedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(particle));
+                    constexpr std::array<std::uint32_t, 6> indices{0, 1, 2, 2, 1, 3};
+                    m_particleQuadIndices = rhi::Buffer(device, device.CreateBuffer(
+                        {sizeof(indices), rhi::BufferUsage::Index, "Particle quad indices"}, Bytes(indices)));
+                }
             }
             rhi::GraphicsPipelineDescriptor shadowDescriptor;
             shadowDescriptor.vertexShader = shaders.shadowVertex;
@@ -606,6 +643,39 @@ namespace PlutoGE::render
                     shaders.postProcess[index].vertex, shaders.postProcess[index].fragment, debugNames[index],
                     static_cast<BasicPostProcessEffectType>(index));
             }
+            const auto hasShader = [](const BasicPostProcessShaderPackage &shader)
+            {
+                return (!shader.vertex.spirv.empty() || !shader.vertex.glsl.empty()) &&
+                       (!shader.fragment.spirv.empty() || !shader.fragment.glsl.empty());
+            };
+            for (std::size_t index = 0; index < m_volumetricTracePipelines.size(); ++index)
+            {
+                const auto &shader = shaders.volumetricTrace[index];
+                if (hasShader(shader))
+                    m_volumetricTracePipelines[index] = createPostProcessPipeline(shader.vertex, shader.fragment,
+                        index == 0 ? "Fog trace" : "Cloud trace", index == 0 ?
+                        BasicPostProcessEffectType::VolumetricFog : BasicPostProcessEffectType::VolumetricCloud);
+            }
+            if (hasShader(shaders.volumetricComposite))
+            {
+                rhi::GraphicsPipelineDescriptor composite;
+                composite.vertexShader = shaders.volumetricComposite.vertex;
+                composite.fragmentShader = shaders.volumetricComposite.fragment;
+                composite.colorFormat = rhi::Format::R16G16B16A16Float;
+                composite.depthFormat = rhi::Format::Undefined;
+                composite.depthTest = composite.depthWrite = false;
+                composite.cullMode = rhi::CullMode::None;
+                composite.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                composite.debugName = "Volumetric reconstruction";
+                m_volumetricCompositePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(composite));
+            }
+            if (hasShader(shaders.fusedColor))
+                m_fusedColorPipeline = createPostProcessPipeline(shaders.fusedColor.vertex,
+                    shaders.fusedColor.fragment, "Fused tone and color", BasicPostProcessEffectType::ColorGrading);
             constexpr std::array<const char *, 2> exposureNames{
                 "Auto exposure metering", "Auto exposure application"};
             for (std::size_t index = 0; index < m_autoExposurePipelines.size(); ++index)
@@ -899,6 +969,15 @@ namespace PlutoGE::render
         for (auto &target : m_ssaoHistoryTargets)
             target.Reset();
         m_particlePipeline.Reset();
+        m_particleInstancedPipeline.Reset();
+        m_particleQuadIndices.Reset();
+        m_particleInstances.clear();
+        m_particleInstanceCapacities.clear();
+        m_fusedColorPipeline.Reset();
+        m_fusedColorBuffers.clear();
+        m_volumetricCompositePipeline.Reset();
+        for (auto &pipeline : m_volumetricTracePipelines)
+            pipeline.Reset();
         m_particleDepthCopy.Reset();
         m_particleVertices.clear();
         m_particleVertexCapacities.clear();
@@ -1867,7 +1946,8 @@ namespace PlutoGE::render
                 commands.EndRendering();
             }
         };
-        bool particlesPending = !particles.empty();
+        bool particlesPending = std::ranges::any_of(particles, [](const auto &draw)
+            { return !draw.vertices.empty() || !draw.instances.empty(); });
         const auto renderParticles = [&]() {
             if (!particlesPending || !m_particlePipeline)
                 return;
@@ -1899,39 +1979,68 @@ namespace PlutoGE::render
             info.width = m_width;
             info.height = m_height;
             info.clearColor = info.clearDepth = false;
-            commands.BeginRendering(info);
-            commands.BindPipeline(m_particlePipeline.Get());
+            // Storage uploads are recorded transfer commands on Vulkan and
+            // must finish before opening the rendering scope.
             for (std::size_t index = 0; index < particles.size(); ++index)
             {
                 const auto &draw = particles[index];
-                if (draw.vertices.empty())
+                const bool instanced = !draw.instances.empty();
+                if (draw.vertices.empty() && !instanced)
                     continue;
+                if (instanced && !m_particleInstancedPipeline)
+                    throw std::runtime_error("Instanced particles require the ParticlesInstanced shader artifact");
                 while (m_particleVertices.size() <= index)
                 {
                     m_particleVertices.emplace_back();
                     m_particleVertexCapacities.push_back(0);
+                    m_particleInstances.emplace_back();
+                    m_particleInstanceCapacities.push_back(0);
                     m_particleParameters.emplace_back(
                         *m_device, m_device->CreateBuffer({sizeof(BasicParticleParameters), rhi::BufferUsage::Uniform,
                                                            "Particle parameters"}));
                 }
-                const auto size = draw.vertices.size() * sizeof(BasicParticleVertex);
-                if (m_particleVertexCapacities[index] < size)
+                const auto size = instanced ? draw.instances.size() * sizeof(BasicParticleInstance)
+                                            : draw.vertices.size() * sizeof(BasicParticleVertex);
+                auto &capacity = instanced ? m_particleInstanceCapacities[index] : m_particleVertexCapacities[index];
+                auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
+                if (capacity < size)
                 {
-                    m_particleVertices[index] = rhi::Buffer(
-                        *m_device, m_device->CreateBuffer({size, rhi::BufferUsage::Vertex, "Particle vertices"}));
-                    m_particleVertexCapacities[index] = size;
+                    // Geometric growth avoids repeated reallocations while emitters fill.
+                    capacity = std::max(size, capacity + capacity / 2);
+                    buffer = rhi::Buffer(*m_device, m_device->CreateBuffer({capacity,
+                        instanced ? rhi::BufferUsage::Storage : rhi::BufferUsage::Vertex, "Particle data"}));
                 }
-                m_device->UpdateBuffer(m_particleVertices[index].Get(), 0,
-                                       {reinterpret_cast<const std::byte *>(draw.vertices.data()), size});
+                const auto *data = instanced ? reinterpret_cast<const std::byte *>(draw.instances.data())
+                                             : reinterpret_cast<const std::byte *>(draw.vertices.data());
+                m_device->UpdateBuffer(buffer.Get(), 0, {data, size});
                 auto parameters = draw.parameters;
                 parameters.values[23] = {1.0f / m_width, 1.0f / m_height,
                                          m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0};
                 m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
+            }
+            commands.BeginRendering(info);
+            for (std::size_t index = 0; index < particles.size(); ++index)
+            {
+                const auto &draw = particles[index];
+                const bool instanced = !draw.instances.empty();
+                if (!instanced && draw.vertices.empty())
+                    continue;
+                const auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
+                commands.BindPipeline(instanced ? m_particleInstancedPipeline.Get() : m_particlePipeline.Get());
                 commands.BindUniformBuffer(0, m_particleParameters[index].Get());
                 commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
                 commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
-                commands.BindVertexBuffer(m_particleVertices[index].Get());
-                commands.Draw(static_cast<std::uint32_t>(draw.vertices.size()));
+                if (instanced)
+                {
+                    commands.BindStorageBuffer(3, buffer.Get());
+                    commands.BindIndexBuffer(m_particleQuadIndices.Get());
+                    commands.DrawIndexedInstanced(6, static_cast<std::uint32_t>(draw.instances.size()));
+                }
+                else
+                {
+                    commands.BindVertexBuffer(buffer.Get());
+                    commands.Draw(static_cast<std::uint32_t>(draw.vertices.size()));
+                }
             }
             commands.EndRendering();
         };
@@ -1983,8 +2092,10 @@ namespace PlutoGE::render
             m_exposureHistoryValid = false;
         if (!hasSsao)
             m_ssaoHistoryValid = false;
-        for (const auto &effect : postProcessEffects)
+        std::size_t fusedBufferIndex = 0;
+        for (std::size_t effectCursor = 0; effectCursor < postProcessEffects.size(); ++effectCursor)
         {
+            const auto &effect = postProcessEffects[effectCursor];
             if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
             {
                 renderParticles();
@@ -1994,6 +2105,21 @@ namespace PlutoGE::render
                 evaluateTemporalUpscaler();
             if (temporalUpscalerEvaluated && effect.type == BasicPostProcessEffectType::TAA)
                 continue;
+            if (m_fusedColorPipeline && ColorOperationCode(effect.type) >= 0)
+            {
+                std::size_t count = 1;
+                while (count < kMaxFusedColorOperations && effectCursor + count < postProcessEffects.size() &&
+                       ColorOperationCode(postProcessEffects[effectCursor + count].type) >= 0)
+                    ++count;
+                if (count > 1)
+                {
+                    const ScopedGpuTiming timing(commands, "RHI Fused Tone and Color");
+                    m_outputColor = RenderFusedColor(m_outputColor, postProcessEffects.subspan(effectCursor, count),
+                                                     commands, fusedBufferIndex++, targetIndex);
+                    effectCursor += count - 1;
+                    continue;
+                }
+            }
             const auto scopeIndex = static_cast<std::size_t>(effect.type);
             if (scopeIndex >= PostProcessScopeNames.size())
                 continue;
@@ -2022,7 +2148,17 @@ namespace PlutoGE::render
             const auto effectIndex = static_cast<std::size_t>(effect.type);
             if (effectIndex >= m_postProcessPipelines.size())
                 continue;
-            const auto pipeline = m_postProcessPipelines[effectIndex].Get();
+            auto pipeline = m_postProcessPipelines[effectIndex].Get();
+            const bool volumetric = effect.type == BasicPostProcessEffectType::VolumetricFog ||
+                                    effect.type == BasicPostProcessEffectType::VolumetricCloud;
+            const std::size_t volumeIndex = effect.type == BasicPostProcessEffectType::VolumetricFog ? 0 : 1;
+            const bool reducedVolume = volumetric && effect.volumetricResolutionDivisor > 1 &&
+                                       m_volumetricCompositePipeline && m_volumetricTracePipelines[volumeIndex];
+            const auto divisor = reducedVolume ? std::clamp(effect.volumetricResolutionDivisor, 1u, 4u) : 1u;
+            const auto passWidth = (m_postProcessWidth + divisor - 1u) / divisor;
+            const auto passHeight = (m_postProcessHeight + divisor - 1u) / divisor;
+            if (reducedVolume)
+                pipeline = m_volumetricTracePipelines[volumeIndex].Get();
             if (!pipeline)
                 continue;
             auto effectParameters = effect.parameters;
@@ -2100,14 +2236,13 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::TAA)
                 destination = &m_taaHistoryTargets[1u - m_taaHistoryIndex];
             else
-                destination = &AcquirePostProcessTarget(targetIndex++, m_postProcessWidth,
-                                                        m_postProcessHeight);
+                destination = &AcquirePostProcessTarget(targetIndex++, passWidth, passHeight);
             if (!destination)
                 continue;
             rhi::RenderingInfo postInfo;
             postInfo.colorAttachments = {destination->Get()};
-            postInfo.width = m_postProcessWidth;
-            postInfo.height = m_postProcessHeight;
+            postInfo.width = passWidth;
+            postInfo.height = passHeight;
             postInfo.clearDepth = false;
             commands.BeginRendering(postInfo);
             commands.BindPipeline(pipeline);
@@ -2115,7 +2250,7 @@ namespace PlutoGE::render
             commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
             const auto inputs = InputsFor(effect.type);
             if (HasInput(inputs, BasicPostProcessInput::Depth))
-                commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), reducedVolume ? m_shadowSampler.Get() : m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Normal))
                 commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
             if (HasInput(inputs, BasicPostProcessInput::Material))
@@ -2143,7 +2278,9 @@ namespace PlutoGE::render
             }
             commands.Draw(3);
             commands.EndRendering();
-            m_outputColor = destination->Get();
+            m_outputColor = reducedVolume
+                ? CompositeVolumetric(m_outputColor, destination->Get(), passWidth, passHeight, commands, targetIndex)
+                : destination->Get();
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
                 m_taaHistoryIndex = 1u - m_taaHistoryIndex;
@@ -2231,6 +2368,69 @@ namespace PlutoGE::render
             m_postProcessPassTargetSizes[index] = requested;
         }
         return m_postProcessPassTargets[index];
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderFusedColor(rhi::TextureHandle source,
+        std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
+        std::size_t bufferIndex, std::size_t &targetIndex)
+    {
+        FusedColorParameters parameters;
+        parameters.header = {static_cast<float>(effects.size()),
+            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f,
+            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)), 0.0f};
+        for (std::size_t index = 0; index < effects.size(); ++index)
+        {
+            const auto &effect = effects[index];
+            parameters.operations[index] = {{static_cast<float>(ColorOperationCode(effect.type)),
+                effect.exposure, effect.gamma, 0.0f}, effect.parameters};
+        }
+        while (m_fusedColorBuffers.size() <= bufferIndex)
+            m_fusedColorBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                {sizeof(FusedColorParameters), rhi::BufferUsage::Uniform, "Fused color parameters"}));
+        const auto buffer = m_fusedColorBuffers[bufferIndex].Get();
+        m_device->UpdateBuffer(buffer, 0, Bytes(parameters));
+        const auto destination = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth, m_postProcessHeight).Get();
+        rhi::RenderingInfo info;
+        info.colorAttachments = {destination};
+        info.width = m_postProcessWidth;
+        info.height = m_postProcessHeight;
+        info.clearDepth = false;
+        commands.BeginRendering(info);
+        commands.BindPipeline(m_fusedColorPipeline.Get());
+        commands.BindUniformBuffer(0, buffer);
+        commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+        return destination;
+    }
+
+    rhi::TextureHandle BasicRenderer::CompositeVolumetric(rhi::TextureHandle source,
+        rhi::TextureHandle trace, std::uint32_t traceWidth, std::uint32_t traceHeight,
+        rhi::ICommandContext &commands, std::size_t &targetIndex)
+    {
+        BasicPostProcessParameters parameters;
+        parameters.flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+        parameters.zeroToOneDepth = m_device->UsesZeroToOneClipDepth() ? 1u : 0u;
+        parameters.inverseViewProjection = m_inverseViewProjection;
+        parameters.view = m_postProcessView;
+        parameters.parameters[5] = {static_cast<float>(traceWidth), static_cast<float>(traceHeight), 0, 0};
+        auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+        m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
+        const auto destination = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth, m_postProcessHeight).Get();
+        rhi::RenderingInfo info;
+        info.colorAttachments = {destination};
+        info.width = m_postProcessWidth;
+        info.height = m_postProcessHeight;
+        info.clearDepth = false;
+        commands.BeginRendering(info);
+        commands.BindPipeline(m_volumetricCompositePipeline.Get());
+        commands.BindUniformBuffer(0, buffer.Get());
+        commands.BindTexture(1, source, m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+        commands.BindTexture(6, trace, m_shadowSampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+        return destination;
     }
 
     rhi::TextureHandle BasicRenderer::RenderAutoExposure(rhi::TextureHandle source,

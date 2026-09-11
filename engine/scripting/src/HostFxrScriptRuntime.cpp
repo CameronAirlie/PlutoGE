@@ -109,6 +109,7 @@ namespace PlutoGE::scripting
         using set_entity_id_fn = int(PLUTO_HOST_CALL *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
+        using register_window_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_scene_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
         using register_scriptable_object_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
@@ -1257,6 +1258,16 @@ namespace PlutoGE::scripting
         {
             const auto *activeScene = core::Engine::GetInstance().GetScene();
             return activeScene ? activeScene->GetFilePath().c_str() : "";
+        }
+
+        int32_t GetWindowFullscreen()
+        {
+            return core::Engine::GetInstance().GetWindow().IsFullscreen() ? 1 : 0;
+        }
+
+        void SetWindowFullscreen(int32_t fullscreen)
+        {
+            core::Engine::GetInstance().GetWindow().SetFullscreen(fullscreen != 0);
         }
 
         void QuitApplication()
@@ -3209,6 +3220,7 @@ namespace PlutoGE::scripting
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
         register_prefab_api_fn registerPrefabApi = nullptr;
+        register_window_api_fn registerWindowApi = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
         register_component_api_fn registerComponentApi = nullptr;
@@ -3315,6 +3327,7 @@ namespace PlutoGE::scripting
             impl.setEntityId = nullptr;
             impl.registerGameObjectApi = nullptr;
             impl.registerPrefabApi = nullptr;
+            impl.registerWindowApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerScriptableObjectApi = nullptr;
             impl.registerComponentApi = nullptr;
@@ -3661,6 +3674,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("SetEntityId"), impl.setEntityId) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterWindowApi"), impl.registerWindowApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
@@ -3950,6 +3964,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<is_prefab_ready_fn>(&IsPrefabReady))) == 0)
         {
             setManagedBridgeFailure("RegisterPrefabApi");
+            return false;
+        }
+
+        if (!m_impl->registerWindowApi || m_impl->registerWindowApi(
+                reinterpret_cast<void *>(&GetWindowFullscreen),
+                reinterpret_cast<void *>(&SetWindowFullscreen)) == 0)
+        {
+            setManagedBridgeFailure("RegisterWindowApi");
             return false;
         }
 

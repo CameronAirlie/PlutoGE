@@ -139,11 +139,9 @@ float directionalVisibility(float3 worldPosition)
 
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
-[shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+float4 integrateFog(FullscreenVertexOutput input)
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
-    const float4 scene = sceneTexture.Sample(uv);
     const float sceneDepth = depthTexture.Sample(uv).r;
     const float maximumDistance = max(pass.parameters[1].z, 0.001);
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
@@ -156,7 +154,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         marchDistance = min(length(surfacePosition - pass.cameraPosition.xyz), maximumDistance);
     }
     if (marchDistance <= 0.0001 || pass.parameters[0].w <= 0.0)
-        return scene;
+        return float4(0, 0, 0, 1);
 
     const int stepCount = clamp((int)pass.quality, 1, 64);
     const int shadowStepStride = clamp((int)pass.parameters[3].x, 1, 4);
@@ -217,5 +215,16 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                               ? integratedOpacity
                               : min(integratedOpacity, saturate(pass.parameters[2].w));
     const float3 fogRadiance = accumulatedLight / max(integratedOpacity, 0.0001);
-    return float4(lerp(scene.rgb, fogRadiance, opacity), scene.a);
+    return float4(fogRadiance * opacity, 1.0 - opacity);
+}
+
+[shader("fragment")]
+float4 traceMain(FullscreenVertexOutput input) : SV_Target { return integrateFog(input); }
+
+[shader("fragment")]
+float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+{
+    const float4 scene = sceneTexture.Sample(orientFullscreenUv(input.uv, pass.flipY));
+    const float4 volume = integrateFog(input);
+    return float4(scene.rgb * volume.a + volume.rgb, scene.a);
 }

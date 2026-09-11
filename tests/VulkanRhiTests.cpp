@@ -1,3 +1,4 @@
+#include "RenderOptimizationChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -109,10 +110,17 @@ int main(int argc, char **argv)
         }
         shaders.particles.vertexShader.spirv = ReadSpirv("Particles.vertex.spv");
         shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
+        LoadRenderOptimizationShaders(shaders);
         BasicRenderer renderer;
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")
+        {
+            CheckRenderOptimizations(renderer, device, shaders,
+                [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")
         {
             CheckOpaqueBatching(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });

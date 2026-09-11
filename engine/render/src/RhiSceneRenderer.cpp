@@ -14,6 +14,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "rhi/NormalMipmaps.h"
 #include "BasicDrawBatching.h"
+#include "ParticleVisibility.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -167,6 +168,8 @@ namespace PlutoGE::render
 
     void RhiSceneRenderer::Shutdown()
     {
+        m_particleDraws.clear();
+        m_sortedParticles.clear();
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
         m_meshes.clear();
@@ -714,15 +717,26 @@ namespace PlutoGE::render
             giDraws.reserve(sceneCommands.size());
             appendDraws(sceneCommands, giDraws, false, true);
         }
-        std::vector<BasicParticleDraw> particleDraws;
+        std::size_t particleDrawCount = 0;
+        const auto acquireParticleDraw = [&]() -> BasicParticleDraw &
+        {
+            if (particleDrawCount == m_particleDraws.size())
+                m_particleDraws.emplace_back();
+            auto &draw = m_particleDraws[particleDrawCount++];
+            draw.vertices.clear();
+            draw.instances.clear();
+            draw.parameters = {};
+            draw.texture = {};
+            return draw;
+        };
         if (scene)
         {
             core::CpuScope particleScope("Particle render preparation", core::CpuCategory::Rendering);
             const auto inverseView = glm::inverse(cameraData.view);
             const auto inverseProjection = glm::inverse(cameraData.projection);
             const auto particleViewProjection = projection * cameraData.view;
+            const ParticleVisibility visibility(cameraData.projection * cameraData.view);
             const glm::vec3 right = glm::normalize(glm::vec3(inverseView[0]));
-            const glm::vec3 up = glm::normalize(glm::vec3(inverseView[1]));
             const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
             const auto hash = [](float seed) {
                 const float value = std::sin(seed) * 43758.5453123f;
@@ -734,7 +748,23 @@ namespace PlutoGE::render
                     continue;
                 if (system->GetParticleCount() == 0 && !system->GetTrailsEnabled())
                     continue;
-                BasicParticleDraw draw;
+                // Cull live billboards before sorting, material lookup, and light
+                // selection. Scratch capacity survives across emitters and frames.
+                auto &sorted = m_sortedParticles;
+                sorted.clear();
+                for (const auto &particle : system->GetCpuParticles())
+                {
+                    if (!particle.active || particle.age >= particle.lifetime)
+                        continue;
+                    const float maximumSize = system->GetSizeOverLifetimeEnabled()
+                        ? std::max(std::abs(particle.size), std::abs(system->GetEndSize())) : std::abs(particle.size);
+                    if (visibility.IsVisible(particle.position, maximumSize * 0.707107f))
+                        sorted.emplace_back(&particle, glm::dot(particle.position - effectiveLighting.cameraPosition, forward));
+                }
+                if (sorted.empty() && !system->GetTrailsEnabled())
+                    continue;
+                std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+                auto &draw = acquireParticleDraw();
                 auto &parameters = draw.parameters;
                 parameters.viewProjection = particleViewProjection;
                 parameters.inverseProjection = inverseProjection;
@@ -786,20 +816,12 @@ namespace PlutoGE::render
                     v[13 + light] = {local.color * local.intensity, static_cast<float>(local.type)};
                     v[17 + light] = {glm::mat3(cameraData.view) * local.direction, 0};
                 }
-                std::vector<const scene::ParticleCpuData *> sorted;
-                sorted.reserve(system->GetParticleCount());
-                for (const auto &particle : system->GetCpuParticles())
-                    if (particle.active && particle.age < particle.lifetime)
-                        sorted.push_back(&particle);
-                std::sort(sorted.begin(), sorted.end(), [&](const auto *a, const auto *b) {
-                    return glm::dot(a->position - effectiveLighting.cameraPosition, forward) >
-                           glm::dot(b->position - effectiveLighting.cameraPosition, forward);
-                });
                 constexpr glm::vec2 corners[] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {-0.5f, 0.5f},
                                                  {-0.5f, 0.5f},  {0.5f, -0.5f}, {0.5f, 0.5f}};
-                draw.vertices.reserve(sorted.size() * 6);
-                for (const auto *particle : sorted)
+                draw.instances.reserve(sorted.size());
+                for (const auto &entry : sorted)
                 {
+                    const auto *particle = entry.first;
                     const float age = glm::clamp(particle->age / std::max(particle->lifetime, 0.0001f), 0.0f, 1.0f);
                     const float size = system->GetSizeOverLifetimeEnabled()
                                            ? glm::mix(particle->size, system->GetEndSize(), age)
@@ -819,24 +841,12 @@ namespace PlutoGE::render
                         glm::radians(system->GetRotationSpeed()) *
                             (1 + (hash(particle->seed + 24) * 2 - 1) * system->GetRotationSpeedVariation()) *
                             particle->age;
-                    const float cosine = std::cos(angle), sine = std::sin(angle);
-                    const glm::vec4 ageLifetimeRandomSize{particle->age, particle->lifetime, hash(particle->seed), size};
-                    for (const auto corner : corners)
-                    {
-                        const glm::vec2 rotated{cosine * corner.x + sine * corner.y,
-                                                -sine * corner.x + cosine * corner.y};
-                        draw.vertices.push_back({particle->position + (right * rotated.x + up * rotated.y) * size,
-                                                 color,
-                                                 corner + 0.5f,
-                                                 ageLifetimeRandomSize,
-                                                 particle->position});
-                    }
+                    draw.instances.push_back({glm::vec4(particle->position, angle), color,
+                        {particle->age, particle->lifetime, hash(particle->seed), size}});
                 }
-                if (!draw.vertices.empty())
-                    particleDraws.push_back(std::move(draw));
                 if (system->GetTrailsEnabled())
                 {
-                    BasicParticleDraw trail;
+                    auto &trail = acquireParticleDraw();
                     trail.parameters.viewProjection = particleViewProjection;
                     trail.parameters.inverseProjection = inverseProjection;
                     trail.parameters.view = cameraData.view;
@@ -850,7 +860,9 @@ namespace PlutoGE::render
                     for (const auto &segment : segments)
                     {
                         const auto direction = segment.end - segment.start;
-                        if (glm::length(direction) <= 0.0001f || segment.width <= 0)
+                        if (glm::length(direction) <= 0.0001f || segment.width <= 0 ||
+                            !visibility.IsVisible((segment.start + segment.end) * 0.5f,
+                                (glm::length(direction) + segment.width) * 0.5f))
                             continue;
                         auto side = glm::cross(forward, glm::normalize(direction));
                         side = glm::length(side) > 0.0001f ? glm::normalize(side) : right;
@@ -864,15 +876,13 @@ namespace PlutoGE::render
                                                       {0, 1, 0, segment.width},
                                                       segment.start});
                     }
-                    if (!trail.vertices.empty())
-                        particleDraws.push_back(std::move(trail));
                 }
             }
         }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
                            useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
-                           particleDraws);
+                           std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount));
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&

@@ -1,5 +1,6 @@
 #include "PlutoGE/platform/Window.h"
 #include <iostream>
+#include <algorithm>
 
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -103,7 +104,7 @@ namespace PlutoGE::platform
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         }
 
-        m_window = glfwCreateWindow(m_clientWidth, m_clientHeight, m_config.title.c_str(), m_config.fullscreen ? glfwGetPrimaryMonitor() : nullptr, nullptr);
+        m_window = glfwCreateWindow(m_clientWidth, m_clientHeight, m_config.title.c_str(), nullptr, nullptr);
         if (!m_window)
         {
             std::cerr << "Failed to create GLFW window." << std::endl;
@@ -130,7 +131,8 @@ namespace PlutoGE::platform
         }
         if (m_config.fullscreen)
         {
-            glfwSetWindowMonitor(m_window, glfwGetPrimaryMonitor(), 0, 0, m_clientWidth, m_clientHeight, GLFW_DONT_CARE);
+            m_config.fullscreen = false;
+            SetFullscreen(true);
         }
         if (m_config.resizeCallback)
         {
@@ -304,6 +306,51 @@ namespace PlutoGE::platform
         {
             glfwSetWindowShouldClose(m_window, GLFW_TRUE);
         }
+    }
+
+    void Window::SetFullscreen(bool fullscreen)
+    {
+        if (!m_window || m_config.fullscreen == fullscreen) return;
+        if (fullscreen)
+        {
+            glfwGetWindowPos(m_window, &m_windowedX, &m_windowedY);
+            glfwGetWindowSize(m_window, &m_windowedWidth, &m_windowedHeight);
+            m_windowedMaximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) != 0;
+            GLFWmonitor *selected = glfwGetPrimaryMonitor();
+            int count = 0, bestArea = -1;
+            GLFWmonitor **monitors = glfwGetMonitors(&count);
+            for (int i = 0; i < count; ++i)
+            {
+                int x, y;
+                glfwGetMonitorPos(monitors[i], &x, &y);
+                const auto *mode = glfwGetVideoMode(monitors[i]);
+                if (!mode) continue;
+                const int area = (std::max)(0, (std::min)(m_windowedX + m_windowedWidth, x + mode->width) - (std::max)(m_windowedX, x)) *
+                                 (std::max)(0, (std::min)(m_windowedY + m_windowedHeight, y + mode->height) - (std::max)(m_windowedY, y));
+                if (area > bestArea) { selected = monitors[i]; bestArea = area; }
+            }
+            const auto *mode = selected ? glfwGetVideoMode(selected) : nullptr;
+            if (!mode) return;
+            int x, y;
+            glfwGetMonitorPos(selected, &x, &y);
+            if (m_windowedMaximized)
+            {
+                glfwRestoreWindow(m_window);
+                glfwGetWindowPos(m_window, &m_windowedX, &m_windowedY);
+                glfwGetWindowSize(m_window, &m_windowedWidth, &m_windowedHeight);
+            }
+            glfwSetWindowAttrib(m_window, GLFW_DECORATED, GLFW_FALSE);
+            // A monitor-less window covers the desktop without an exclusive video-mode switch.
+            glfwSetWindowMonitor(m_window, nullptr, x, y, mode->width, mode->height, GLFW_DONT_CARE);
+        }
+        else
+        {
+            glfwSetWindowAttrib(m_window, GLFW_DECORATED, GLFW_TRUE);
+            glfwSetWindowMonitor(m_window, nullptr, m_windowedX, m_windowedY, m_windowedWidth, m_windowedHeight, GLFW_DONT_CARE);
+            if (m_windowedMaximized) glfwMaximizeWindow(m_window);
+        }
+        m_config.fullscreen = fullscreen;
+        glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
     }
 
     void Window::SetTitle(const std::string &title)

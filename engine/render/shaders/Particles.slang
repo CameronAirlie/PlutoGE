@@ -23,6 +23,34 @@ struct VertexOutput
 };
 [[vk::binding(1, 0)]] Sampler2D uAlbedoTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D uSceneDepth : register(t2, space0);
+struct ParticleInstance
+{
+    float4 centerRotation;
+    float4 color;
+    float4 data;
+};
+[[vk::binding(3, 0)]] StructuredBuffer<ParticleInstance> particleInstances : register(t3, space0);
+[shader("vertex")]
+VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
+{
+    const float2 corners[4] = {float2(-0.5, -0.5), float2(0.5, -0.5),
+                               float2(-0.5, 0.5), float2(0.5, 0.5)};
+    const ParticleInstance particle = particleInstances[instanceId];
+    const float2 corner = corners[vertexId];
+    float sine, cosine;
+    sincos(particle.centerRotation.w, sine, cosine);
+    const float2 rotated = float2(cosine * corner.x + sine * corner.y,
+                                  -sine * corner.x + cosine * corner.y);
+    // The view rotation maps world to camera; its rows are the billboard basis.
+    const float3 offset = mul(float3(rotated * particle.data.w, 0), (float3x3)view);
+    VertexOutput output;
+    output.position = mul(viewProjection, float4(particle.centerRotation.xyz + offset, 1));
+    output.color = particle.color;
+    output.uv = corner + 0.5;
+    output.data = particle.data;
+    output.centerView = mul(view, float4(particle.centerRotation.xyz, 1)).xyz;
+    return output;
+}
 [shader("vertex")] VertexOutput vertexMain(VertexInput input) {
     VertexOutput output;
     output.position = mul(viewProjection, float4(input.position, 1));

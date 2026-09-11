@@ -40,6 +40,8 @@ namespace PlutoGE::platform
         void PollEvents();
         void Close();
         void RequestClose();
+        void SetFullscreen(bool fullscreen);
+        [[nodiscard]] bool IsFullscreen() const { return m_config.fullscreen; }
         void SetTitle(const std::string &title);
 
         [[nodiscard]] bool IsOpen() const;
@@ -76,6 +78,8 @@ namespace PlutoGE::platform
         GLFWwindow *m_window = nullptr;
         int m_clientWidth = 0;
         int m_clientHeight = 0;
+        int m_windowedX = 0, m_windowedY = 0, m_windowedWidth = 800, m_windowedHeight = 600;
+        bool m_windowedMaximized = false;
         bool m_isCursorLocked = false;
         bool m_isScriptInputEnabled = true;
         bool m_requestedScriptCursorLocked = false;

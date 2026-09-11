@@ -631,6 +631,24 @@ internal static unsafe partial class ScriptBridge
         return 1;
     }
 
+    private static delegate* unmanaged[Cdecl]<int> _getWindowFullscreen;
+    private static delegate* unmanaged[Cdecl]<int, void> _setWindowFullscreen;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterWindowApi")]
+    public static int RegisterWindowApi(delegate* unmanaged[Cdecl]<int> getFullscreen,
+        delegate* unmanaged[Cdecl]<int, void> setFullscreen)
+    {
+        if (getFullscreen == null || setFullscreen == null) return 0;
+        _getWindowFullscreen = getFullscreen;
+        _setWindowFullscreen = setFullscreen;
+        return 1;
+    }
+    internal static bool GetWindowFullscreen() => _getWindowFullscreen != null && _getWindowFullscreen() != 0;
+    internal static void SetWindowFullscreen(bool value)
+    {
+        if (_setWindowFullscreen != null) _setWindowFullscreen(value ? 1 : 0);
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSceneApi")]
     public static int RegisterSceneApi(
         delegate* unmanaged[Cdecl]<byte*, int> loadScene,

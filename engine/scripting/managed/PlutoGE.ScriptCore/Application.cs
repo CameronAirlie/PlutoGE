@@ -1,8 +1,15 @@
 namespace PlutoGE.ScriptCore;
 
-/// <summary>Paths associated with the currently loaded PlutoGE project.</summary>
+/// <summary>Application window, lifecycle, and project paths.</summary>
 public static class Application
 {
+    /// <summary>Borderless fullscreen on the window's current monitor (the editor window when hosted).</summary>
+    public static bool Fullscreen
+    {
+        get => Native.ScriptBridge.GetWindowFullscreen();
+        set => Native.ScriptBridge.SetWindowFullscreen(value);
+    }
+
     private static readonly object Gate = new();
     // Keep type initialization free of filesystem and environment lookups. The
     // script bridge configures both paths before exposing any script classes.
@@ -23,7 +30,7 @@ public static class Application
         get { lock (Gate) return _persistentDataPath; }
     }
 
-    /// <summary>Requests that the application close after the current frame.</summary>
+    /// <summary>Stops play mode in the editor; closes the application in a built project.</summary>
     public static void Quit()
     {
         Native.ScriptBridge.QuitApplication();

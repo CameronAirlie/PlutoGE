@@ -13,6 +13,7 @@
 namespace PlutoGE::scene
 {
     class Scene;
+    struct ParticleCpuData;
 }
 
 namespace PlutoGE::render
@@ -156,6 +157,8 @@ namespace PlutoGE::render
       std::uint32_t m_pendingNormalHeight = 0;
       std::size_t m_sceneCommandCount = 0;
       std::size_t m_drawCount = 0;
+      std::vector<BasicParticleDraw> m_particleDraws;
+      std::vector<std::pair<const scene::ParticleCpuData *, float>> m_sortedParticles;
       RhiSceneTimingStats m_timingStats;
       std::uint64_t m_temporalFrameIndex = 0;
       glm::vec2 m_previousTemporalJitterNdc{0.0f};

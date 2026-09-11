@@ -5,7 +5,7 @@ namespace PlutoGE.ScriptCore;
 /// <summary>Shared pause state for gameplay controllers and pause-menu scripts.</summary>
 public static class GamePause
 {
-    public static bool IsPaused { get; internal set; }
+    public static bool IsPaused { get; set; }
 
     public static float TimeScale
     {

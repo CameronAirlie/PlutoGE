@@ -51,6 +51,11 @@ namespace PlutoGE::render
                               .fragment = Load("DisplayOutput", "fragment")}};
         result.particles.vertexShader = Load("Particles", "vertex");
         result.particles.fragmentShader = Load("Particles", "fragment");
+        result.particleInstancedVertex = Load("ParticlesInstanced", "vertex");
+        result.volumetricTrace[0] = {Load("VolumetricFogTrace", "vertex"), Load("VolumetricFogTrace", "fragment")};
+        result.volumetricTrace[1] = {Load("VolumetricCloudTrace", "vertex"), Load("VolumetricCloudTrace", "fragment")};
+        result.volumetricComposite = {Load("VolumetricComposite", "vertex"), Load("VolumetricComposite", "fragment")};
+        result.fusedColor = {Load("FusedColor", "vertex"), Load("FusedColor", "fragment")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {

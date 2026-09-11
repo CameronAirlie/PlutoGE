@@ -1,3 +1,4 @@
+#include "RenderOptimizationChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -144,6 +145,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
+        LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particles.fragmentShader.glsl = ReadText("Particles.fragment.glsl");
         shaders.vertex.glsl = ReadText("BasicLit.vertex.glsl");
@@ -211,7 +213,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             // limits on older OpenGL drivers from blocking particle/point checks.
             if (argc > 1 && (std::string_view(argv[1]) == "--temporal-motion" ||
                              std::string_view(argv[1]) == "--particles-points-only" ||
-                             std::string_view(argv[1]) == "--opaque-batching"))
+                             std::string_view(argv[1]) == "--opaque-batching" ||
+                             std::string_view(argv[1]) == "--render-optimizations"))
                 shaders.virtualShadows = {};
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
                 return 6;
@@ -232,6 +235,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                     return pixels;
                 });
             } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")
+        {
+            CheckRenderOptimizations(basicRenderer, device, shaders, [&](auto texture) {
+                GLint width = 0, height = 0;
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::vector<unsigned char> pixels(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")

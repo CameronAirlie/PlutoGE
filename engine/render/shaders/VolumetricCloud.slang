@@ -43,6 +43,8 @@ float densityAt(float3 worldPosition, float4x4 inverseVolume)
     const float2 edge = 0.5 - abs(local.xz);
     const float shape = smoothstep(0.0, 0.14, height) * (1.0 - smoothstep(0.62, 1.0, height)) *
                         smoothstep(0.0, 0.07, min(edge.x, edge.y));
+    if (shape <= 0.0 || pass.parameters[1].w <= 0.0)
+        return 0.0;
     const float coverage = max(pass.parameters[0].w, 0.001);
     float density = saturate((fbm((worldPosition + pass.parameters[1].xyz) * pass.parameters[4].w) -
                               (1.0 - coverage)) /
@@ -59,7 +61,9 @@ float2 intersectVolume(float3 origin, float3 direction, float4x4 inverseVolume)
 {
     const float3 localOrigin = transformWorldToLocalPosition(origin, inverseVolume, pass.flipY);
     const float3 localDirection = transformWorldToLocalDirection(direction, inverseVolume, pass.flipY);
-    const float3 safeDirection = sign(localDirection) * max(abs(localDirection), 0.000001);
+    const float3 safeDirection = float3(localDirection.x < 0 ? -1 : 1,
+                                        localDirection.y < 0 ? -1 : 1,
+                                        localDirection.z < 0 ? -1 : 1) * max(abs(localDirection), 0.000001);
     const float3 t0 = (-0.5 - localOrigin) / safeDirection;
     const float3 t1 = (0.5 - localOrigin) / safeDirection;
     const float3 low = min(t0, t1), high = max(t0, t1);
@@ -77,6 +81,8 @@ float lightTransmittance(float3 position, float3 lightDirection, float4x4 invers
         if (index >= lightSteps)
             break;
         opticalDepth += densityAt(position, inverseVolume) * pass.parameters[2].w * stepLength;
+        if (opticalDepth >= 9.21034) // Remaining sunlight is below 0.0001.
+            break;
         position += lightDirection * stepLength;
     }
     return exp(-opticalDepth);
@@ -88,11 +94,11 @@ FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
     return fullscreenVertex(id);
 }
 
-[shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+// RGB is integrated radiance, alpha is transmittance. Keep scene color out
+// of the trace so reconstruction never blurs opaque geometry.
+float4 integrateCloud(FullscreenVertexOutput input)
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
-    const float4 scene = sceneTexture.Sample(uv);
     const float4x4 inverseVolume = pass.worldToLocal;
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);
@@ -106,7 +112,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     }
     const float start = max(hit.x, 0.0);
     if (end <= start)
-        return scene;
+        return float4(0, 0, 0, 1);
 
     const uint primarySteps = clamp(pass.quality & 255u, 1u, 128u);
     const uint lightSteps = clamp((pass.quality >> 8u) & 255u, 1u, 16u);
@@ -130,6 +136,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             break;
         const float3 samplePosition = pass.cameraPosition.xyz + rayDirection * distanceAlongRay;
         const float density = densityAt(samplePosition, inverseVolume);
+        distanceAlongRay += stepLength;
+        // An empty segment has exactly zero scattering and extinction.
+        if (density <= 0.0)
+            continue;
         const float segmentTransmittance = exp(-density * pass.parameters[2].w * stepLength);
         const float sunlight = pass.parameters[3].w > 0.0001
                                    ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps)
@@ -138,7 +148,17 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                                 pass.parameters[3].rgb * pass.parameters[3].w * phase * sunlight;
         radiance += transmittance * pass.parameters[0].rgb * incident * pass.parameters[4].x * (1.0 - segmentTransmittance);
         transmittance *= segmentTransmittance;
-        distanceAlongRay += stepLength;
     }
-    return float4(scene.rgb * transmittance + radiance, scene.a);
+    return float4(radiance, transmittance);
+}
+
+[shader("fragment")]
+float4 traceMain(FullscreenVertexOutput input) : SV_Target { return integrateCloud(input); }
+
+[shader("fragment")]
+float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+{
+    const float4 scene = sceneTexture.Sample(orientFullscreenUv(input.uv, pass.flipY));
+    const float4 volume = integrateCloud(input);
+    return float4(scene.rgb * volume.a + volume.rgb, scene.a);
 }

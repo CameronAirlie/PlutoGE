@@ -14,15 +14,7 @@ FullscreenVertexOutput vertexMain(uint vertexId : SV_VertexID)
     return fullscreenVertex(vertexId);
 }
 
-float3 aces(float3 value)
-{
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
-}
+#include "ColorOperations.slang"
 
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target

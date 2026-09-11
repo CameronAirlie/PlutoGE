@@ -181,6 +181,10 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 4> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
+        rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
+        std::array<BasicPostProcessShaderPackage, 2> volumetricTrace; // fog, clouds
+        BasicPostProcessShaderPackage volumetricComposite;
+        BasicPostProcessShaderPackage fusedColor;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
     };
@@ -264,9 +268,18 @@ namespace PlutoGE::render
         // local directions 17-20, trail 21, reserved 22, viewport 23.
         std::array<glm::vec4, 24> values{};
     };
+    // Matches the structured buffer in Particles.slang. One record per billboard.
+    struct alignas(16) BasicParticleInstance
+    {
+        glm::vec4 centerRotation{0};
+        glm::vec4 color{1};
+        glm::vec4 ageLifetimeRandomSize{0};
+    };
+    static_assert(sizeof(BasicParticleInstance) == 48);
     struct BasicParticleDraw
     {
         std::vector<BasicParticleVertex> vertices;
+        std::vector<BasicParticleInstance> instances;
         BasicParticleParameters parameters;
         rhi::TextureHandle texture;
     };
@@ -342,6 +355,8 @@ namespace PlutoGE::render
         std::array<glm::vec4, 6> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
+        // Volumetric trace resolution; 1 retains the full-resolution reference.
+        std::uint32_t volumetricResolutionDivisor = 2;
     };
 
     struct BasicRendererFrameStats
@@ -423,6 +438,12 @@ namespace PlutoGE::render
         }
 
     private:
+        [[nodiscard]] rhi::TextureHandle RenderFusedColor(rhi::TextureHandle source,
+            std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
+            std::size_t bufferIndex, std::size_t &targetIndex);
+        [[nodiscard]] rhi::TextureHandle CompositeVolumetric(rhi::TextureHandle source,
+            rhi::TextureHandle trace, std::uint32_t traceWidth, std::uint32_t traceHeight,
+            rhi::ICommandContext &commands, std::size_t &targetIndex);
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect);
         [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,
@@ -462,6 +483,10 @@ namespace PlutoGE::render
         std::vector<rhi::Buffer> m_shadowMaterialBuffers;
         rhi::GraphicsPipeline m_displayPipeline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
+        std::array<rhi::GraphicsPipeline, 2> m_volumetricTracePipelines;
+        rhi::GraphicsPipeline m_volumetricCompositePipeline;
+        rhi::GraphicsPipeline m_fusedColorPipeline;
+        std::vector<rhi::Buffer> m_fusedColorBuffers;
         rhi::Buffer m_cameraBuffer;
         rhi::Buffer m_debugViewBuffer;
         std::array<rhi::Buffer, 4> m_shadowCameraBuffers;
@@ -576,6 +601,10 @@ namespace PlutoGE::render
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
         rhi::GraphicsPipeline m_particlePipeline;
+        rhi::GraphicsPipeline m_particleInstancedPipeline;
+        rhi::Buffer m_particleQuadIndices;
+        std::vector<rhi::Buffer> m_particleInstances;
+        std::vector<std::size_t> m_particleInstanceCapacities;
         rhi::Texture m_particleDepthCopy;
         rhi::Extent2D m_particleDepthSize;
         std::vector<rhi::Buffer> m_particleVertices;

@@ -1,0 +1,118 @@
+--- a/Include/RmlUi/Core/FontGlyph.h
++++ b/Include/RmlUi/Core/FontGlyph.h
+@@ -39,6 +39,7 @@
+     @author Peter Curry
+  */
+ 
++// PlutoGE retains native metrics/effect bitmaps and adds a denser base layer.
+ class RMLUICORE_API FontGlyph {
+ public:
+ 	/// The distance from the cursor (positioned vertically on the baseline) to the top-left corner of this glyph's bitmap.
+@@ -52,6 +53,12 @@
+ 	Vector2i bitmap_dimensions;
+ 	ColorFormat color_format = ColorFormat::A8;
+ 
++	const byte* raster_data = nullptr;
++	UniquePtr<byte[]> raster_owned_data;
++	Vector2i raster_dimensions;
++	Vector2i raster_bearing;
++	int raster_scale = 1;
++
+ 	// bitmap_data may point to this member or another font glyph data.
+ 	UniquePtr<byte[]> bitmap_owned_data;
+ 
+@@ -64,6 +71,10 @@
+ 		glyph.bitmap_data = bitmap_data;
+ 		glyph.bitmap_dimensions = bitmap_dimensions;
+ 		glyph.color_format = color_format;
++		glyph.raster_data = raster_data;
++		glyph.raster_dimensions = raster_dimensions;
++		glyph.raster_bearing = raster_bearing;
++		glyph.raster_scale = raster_scale;
+ 		return glyph;
+ 	}
+ };
+--- a/Source/Core/FontEngineDefault/FreeTypeInterface.cpp
++++ b/Source/Core/FontEngineDefault/FreeTypeInterface.cpp
+@@ -37,6 +37,8 @@
+ #include FT_FREETYPE_H
+ #include FT_MULTIPLE_MASTERS_H
+ #include FT_TRUETYPE_TABLES_H
++#include FT_OUTLINE_H
++#include <PlutoGE_RmlUi_FontRaster.h>
+ 
+ namespace Rml {
+ 
+@@ -449,6 +451,34 @@
+ 		}
+ 	}
+ 
++	// Rasterize scalable, monochrome outlines at display density. Keep the
++	// native glyph above for layout, kerning and font effects. Transform the
++	// loaded outline instead of changing the face size/hinting or advances.
++	const int raster_scale = PlutoGE_GetRmlUiFontRasterScale();
++	if (raster_scale > 1 && !scale_bitmap && glyph.color_format == ColorFormat::A8 &&
++		glyph.bitmap_dimensions.x > 0 && glyph.bitmap_dimensions.y > 0 &&
++		glyph.bitmap_dimensions.x * raster_scale < 1000 && glyph.bitmap_dimensions.y * raster_scale < 1000 &&
++		FT_Load_Glyph(ft_face, index, FT_LOAD_DEFAULT) == 0 && ft_face->glyph->format == FT_GLYPH_FORMAT_OUTLINE)
++	{
++		FT_Matrix matrix{raster_scale * 65536L, 0, 0, raster_scale * 65536L};
++		FT_Outline_Transform(&ft_face->glyph->outline, &matrix);
++		if (FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL) == 0)
++		{
++			const auto& bitmap = ft_face->glyph->bitmap;
++			if (bitmap.pixel_mode == FT_PIXEL_MODE_GRAY && bitmap.width > 0 && bitmap.rows > 0 &&
++				bitmap.width < 1000 && bitmap.rows < 1000)
++			{
++				glyph.raster_scale = raster_scale;
++				glyph.raster_dimensions = {int(bitmap.width), int(bitmap.rows)};
++				glyph.raster_bearing = {ft_face->glyph->bitmap_left, ft_face->glyph->bitmap_top};
++				glyph.raster_owned_data.reset(new byte[bitmap.width * bitmap.rows]);
++				glyph.raster_data = glyph.raster_owned_data.get();
++				for (unsigned int y = 0; y < bitmap.rows; ++y)
++					memcpy(glyph.raster_owned_data.get() + y * bitmap.width, bitmap.buffer + int(y) * bitmap.pitch, bitmap.width);
++			}
++		}
++	}
++
+ 	return true;
+ }
+ 
+--- a/Source/Core/FontEngineDefault/FontFaceLayer.cpp
++++ b/Source/Core/FontEngineDefault/FontFaceLayer.cpp
+@@ -104,7 +104,8 @@
+ 			const FontGlyph& glyph = pair.second;
+ 
+ 			Vector2i glyph_origin(0, 0);
+-			Vector2i glyph_dimensions = glyph.bitmap_dimensions;
++			const bool dense_base = !effect && glyph.raster_data;
++			Vector2i glyph_dimensions = dense_base ? glyph.raster_dimensions : glyph.bitmap_dimensions;
+ 
+ 			// Adjust glyph origin / dimensions for the font effect.
+ 			if (effect)
+@@ -116,6 +117,11 @@
+ 			TextureBox box;
+ 			box.origin = Vector2f(float(glyph_origin.x + glyph.bearing.x), float(glyph_origin.y - glyph.bearing.y));
+ 			box.dimensions = Vector2f(glyph_dimensions);
++			if (dense_base)
++			{
++				box.origin = Vector2f(float(glyph.raster_bearing.x), float(-glyph.raster_bearing.y)) / float(glyph.raster_scale);
++				box.dimensions /= float(glyph.raster_scale);
++			}
+ 
+ 			RMLUI_ASSERT(box.dimensions.x >= 0 && box.dimensions.y >= 0);
+ 
+@@ -205,7 +211,12 @@
+ 		if (it == glyphs.end())
+ 			continue;
+ 
+-		const FontGlyph& glyph = it->second;
++		FontGlyph glyph = it->second.WeakCopy();
++		if (!effect && glyph.raster_data)
++		{
++			glyph.bitmap_data = glyph.raster_data;
++			glyph.bitmap_dimensions = glyph.raster_dimensions;
++		}
+ 
+ 		if (effect == nullptr)
+ 		{

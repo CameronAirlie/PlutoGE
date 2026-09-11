@@ -229,6 +229,7 @@ FetchContent_Declare(
     GIT_TAG        6.1
 )
 FetchContent_MakeAvailable(rmlui)
+include("${CMAKE_CURRENT_SOURCE_DIR}/rmlui/ApplyFontRasterPatch.cmake")
 if (MSVC)
     # VS 2026's dependency scanner and shared PDB writer are unstable when the
     # RmlUi core translation units are compiled concurrently.

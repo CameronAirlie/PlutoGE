@@ -131,3 +131,18 @@ not change the separate legacy GL3 backend or add RHI multisample/resolve APIs.
 and, with `--opengl`, OpenGL. Pixel readbacks check increased fractional edge
 coverage, transparent compositing, clipping, resize, shared submissions and
 clearing hidden UI.
+
+Canvas scaling also raises the font atlas density, accounting for the RHI's 2x
+supersampling surface. A small patch to pinned RmlUi 6.1 rasterizes scalable font
+outlines at 1–4x density while preserving the original advances, kerning, line
+wrapping and effect measurements. Density is rounded up to integer buckets;
+changing buckets releases font resources through RmlUi so existing documents
+refresh their text geometry. Enlarging the canvas therefore uses finer glyph
+coverage instead of magnifying the original low-resolution font bitmap.
+
+Bitmap/color glyphs and glyphs too large for the atlas retain their original
+rendering. Unique font-effect textures also retain their original resolution;
+shared-atlas shadows use the denser base glyphs. Atlas memory grows with the
+square of the density, bounded at 4x per axis. `PlutoGERmlUiFontRasterTests`
+checks atlas density, unchanged layout and hit testing at 3x canvas scale,
+resize transitions, font effects, atlas reuse and resource cleanup.

@@ -412,12 +412,13 @@ int RunRuntime(int argc, char **argv)
                     !PlutoGE::content::Mount(executablePath.parent_path() / relative, temporaryContent.path, &unpackError))
                 { std::cerr << "Cannot mount patch pack " << packName << ": " << unpackError << '\n'; return 1; }
             }
-            // Managed runtime dependencies require disk paths; normal game assets do not.
+            // Managed runtime dependencies and InputActionMap's System.IO loader
+            // require disk paths. Native asset readers use the mounted pack directly.
             for (const auto &path : PlutoGE::content::Files(temporaryContent.path))
             {
                 auto extension = path.extension().string();
                 std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (extension == ".dll" || extension == ".pdb" || path.filename().string().ends_with(".deps.json") || path.filename().string().ends_with(".runtimeconfig.json"))
+                if (extension == ".dll" || extension == ".pdb" || extension == ".plutoinput" || path.filename().string().ends_with(".deps.json") || path.filename().string().ends_with(".runtimeconfig.json"))
                     if (!PlutoGE::content::Materialize(path, &unpackError)) { std::cerr << unpackError << '\n'; return 1; }
             }
             manifestPath = temporaryContent.path / PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath).filename();

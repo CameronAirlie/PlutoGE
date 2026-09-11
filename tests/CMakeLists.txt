@@ -461,6 +461,11 @@ add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --o
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
 
 add_executable(PlutoGERmlUiAntialiasingTests RmlUiAntialiasingTests.cpp)
+add_executable(PlutoGERmlUiFontRasterTests RmlUiFontRasterTests.cpp)
+target_link_libraries(PlutoGERmlUiFontRasterTests PRIVATE RmlUi::Core)
+target_include_directories(PlutoGERmlUiFontRasterTests PRIVATE "${CMAKE_SOURCE_DIR}/third_party/rmlui")
+target_compile_definitions(PlutoGERmlUiFontRasterTests PRIVATE PLUTO_FONT_TEST_FILE="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
+add_test(NAME PlutoGERmlUiFontRasterTests COMMAND PlutoGERmlUiFontRasterTests)
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>" PlutoGE::Platform)

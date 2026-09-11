@@ -22,6 +22,7 @@
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
 #include <PlutoGE_RmlUi_Target.h>
+#include <PlutoGE_RmlUi_FontRaster.h>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -737,6 +738,14 @@ namespace PlutoGE::render
             CollectDocuments(owner, viewportSize, requestedDocuments, view, projection,
                              inheritedScale, insideDocumentCanvas, false);
         }
+
+        // Canvas transforms enlarge geometry without requesting larger font
+        // faces. Match the atlas to the largest active canvas and the RHI's 2x
+        // antialiasing surface, retaining RmlUi's original layout measurements.
+        float fontRasterScale = m_rhiRenderer ? 2.0f : 1.0f;
+        for (const auto &[key, request] : requestedDocuments)
+            fontRasterScale = std::max(fontRasterScale, request.scale * (m_rhiRenderer ? 2.0f : 1.0f));
+        PlutoGE_SetRmlUiFontRasterScale(fontRasterScale);
 
         for (auto it = m_worldSurfaceTargets.begin(); it != m_worldSurfaceTargets.end();)
         {

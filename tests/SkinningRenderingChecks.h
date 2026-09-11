@@ -1,4 +1,6 @@
 #pragma once
+#include "ReferenceSkinning.h"
+#include <chrono>
 #include "../engine/render/src/RhiSkinning.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/Renderer.h"
@@ -102,6 +104,27 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     vertex.weights={1,0,0,0}; joints[0]=glm::scale(glm::mat4(1),{2,1,1});
     const auto scaled=SkinRhiVertices(std::span(&vertex,1),joints);
     require(std::abs(scaled[0].normal[1]/scaled[0].normal[0]-2)<1e-5f,"Skinned normals ignored nonuniform scale");
+    // Compare all outputs against the prior implementation for blended rotations,
+    // reflected/nonuniform scales, invalid weights and degenerate bases.
+    for(int sample=0;sample<96;++sample) {
+        vertex.position={.1f*sample,-.3f,.7f}; vertex.normal={.2f,.8f,.4f};
+        vertex.tangent={.7f,-.2f,.1f,-1};
+        vertex.joints={0,1,-1,999}; vertex.weights={.3f,.7f,2,1};
+        joints[0]=glm::rotate(glm::mat4(1),.07f*sample,glm::normalize(glm::vec3(1,2,3)));
+        joints[1]=glm::scale(glm::mat4(1),glm::vec3(sample%2 ? -2.f : 2.f,.5f,1.5f));
+        if(sample%8==0) joints[0]=joints[1]=glm::mat4(0);
+        const auto expected=ReferenceSkinRhiVertices(std::span(&vertex,1),joints);
+        auto actual=SkinRhiVertices(std::span(&vertex,1),joints);
+        for(unsigned c=0;c<3;++c) {
+            require(std::abs(expected[0].position[c]-actual[0].position[c])<1e-4f,"Affine position differs from reference");
+            require(std::abs(expected[0].normal[c]-actual[0].normal[c])<1e-4f,"Cofactor normal differs from reference");
+            require(std::abs(expected[0].tangent[c]-actual[0].tangent[c])<1e-4f,"Orthonormal tangent differs from reference");
+        }
+        require(expected[0].tangent[3]==actual[0].tangent[3],"Reflected tangent handedness differs");
+        const auto oldPosition=actual[0].position;
+        SkinRhiVerticesInto(std::span(&vertex,1),joints,actual,actual);
+        for(unsigned c=0;c<3;++c) require(actual[0].previousPosition[c]==oldPosition[c],"In-place output lost previous pose");
+    }
     std::cout << "PASS Vulkan skinning: pixels, independent actors, submeshes, shadows, motion, pause/reset, in-flight uploads and weights\n";
 }
 
@@ -148,6 +171,30 @@ void CheckImportedSkinning(Device &device, const PlutoGE::render::BasicRendererS
     if(!animation.Play("Gameplay.Player.heavy")) throw std::runtime_error("Fixture attack clip missing");
     animation.Update(.52f); palette=animation.GetJointMatrices(mesh.GetSkeleton(),mesh.GetAnimationNodes());
     const auto attack=capture("attack");
+    // Same asset, palette and build: compare the old kernel against the optimized
+    // reusable stream. Keep the reference independent to catch arithmetic drift.
+    const auto reference = ReferenceSkinRhiVertices(config.data.vertices, palette);
+    std::vector<BasicVertex> optimized;
+    SkinRhiVerticesInto(config.data.vertices, palette, {}, optimized);
+    for (std::size_t i=0; i<reference.size(); ++i) {
+        for (unsigned c=0;c<3;++c)
+            if (std::abs(reference[i].position[c]-optimized[i].position[c])>1e-5f ||
+                std::abs(reference[i].normal[c]-optimized[i].normal[c])>1e-5f)
+                throw std::runtime_error("Optimized skinning differs from reference");
+    }
+    double checksum=0;
+    const auto bench=[&](bool old) {
+        const auto start=std::chrono::steady_clock::now();
+        for(int i=0;i<40;++i) {
+            if(old) optimized=ReferenceSkinRhiVertices(config.data.vertices,palette);
+            else SkinRhiVerticesInto(config.data.vertices,palette,optimized,optimized);
+            checksum+=optimized[i%optimized.size()].position[0];
+        }
+        return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/40;
+    };
+    const auto before=bench(true), after=bench(false);
+    std::cout<<"Paladin CPU skinning ("<<reference.size()<<" vertices): "<<before<<" -> "<<after<<" ms/pose, "<<before/after<<"x; checksum="<<checksum<<'\n';
+
     const auto changed=[](const auto &a,const auto &b) {
         unsigned count=0;
         for(std::size_t i=0;i<a.size();i+=4)

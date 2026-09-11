@@ -356,8 +356,9 @@ namespace PlutoGE::render
                         {
                             if (changed || !entry.mesh.IsValid())
                             {
-                                entry.vertices = SkinRhiVertices(source.vertices, *command.jointMatrices,
-                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{});
+                                core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
+                                SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
+                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices);
                                 entry.pose = *command.jointMatrices;
                                 ++m_timingStats.skinningUpdateCount;
                                 m_timingStats.skinningVertexCount += source.vertices.size();

@@ -11,6 +11,7 @@ add_library(PlutoGERender
     src/VirtualShadowMaps.cpp
     src/SceneEnvironment.cpp
     src/RhiRenderService.cpp
+    src/RhiSkinning.cpp
     src/RhiSceneRenderer.cpp
     src/RhiPostProcessAdapter.cpp
     src/PostProcessGraph.cpp
@@ -305,3 +306,13 @@ target_link_libraries(PlutoGERender PUBLIC
 )
 
 target_include_directories(PlutoGERender PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# Keep the vertex math kernel optimized even in editor debugging builds. Skip
+# the PCH because MSVC requires matching optimization/runtime-check options.
+set_source_files_properties(src/RhiSkinning.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if(MSVC)
+    set_source_files_properties(src/RhiSkinning.cpp PROPERTIES COMPILE_OPTIONS "/O2;/Ob2;/Zi"
+        VS_SETTINGS "BasicRuntimeChecks=Default")
+else()
+    set_source_files_properties(src/RhiSkinning.cpp PROPERTIES COMPILE_OPTIONS "-O3")
+endif()

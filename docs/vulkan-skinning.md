@@ -27,3 +27,18 @@ Validation (RelWithDebInfo, AMD Radeon Graphics):
 Rebuild both editor/runtime and shader outputs. ShadowSouls `Edit.ps1` and
 `Play.ps1` select the patched local builds; the older Program Files executables
 could not be overwritten because Windows denied access.
+
+## CPU kernel optimization
+
+The captured editor profile spent 57.6 ms in command translation, versus 1.1 ms
+in animation sampling. The local build's configuration optimization flags were
+empty. Skinning now lives in a separately optimized translation unit, uses an
+explicit affine 3x4 blend and cofactor normals, and reuses the per-character output
+allocation. Other engine code retains its existing debugging settings. The kernel
+retains symbols, but stepping through its optimized instructions is less direct.
+A dedicated CPU trace scope identifies skeletal vertex deformation.
+
+On the 9,669-vertex Paladin, a 40-pose benchmark measured the preserved original
+kernel at 27.79 ms/pose and the new kernel at 0.458 ms/pose (about 61x faster).
+These are kernel measurements, not a claim of equivalent whole-frame speedup.
+The benchmark and reference comparison run with the imported GLB skinning test.

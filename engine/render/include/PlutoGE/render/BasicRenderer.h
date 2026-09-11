@@ -152,6 +152,9 @@ namespace PlutoGE::render
         // A valid fallback avoids undefined normalization for procedural or legacy meshes
         // that do not provide tangent data. Imported meshes overwrite this value.
         std::array<float, 4> tangent{1.0f, 0.0f, 0.0f, 1.0f};
+        // w=1 carries an explicitly deformed previous position. Static mesh
+        // aggregates keep w=0 and use position for object-only motion.
+        std::array<float, 4> previousPosition{};
     };
 
     struct BasicMeshData
@@ -206,7 +209,9 @@ namespace PlutoGE::render
         rhi::Buffer m_vertexBuffer;
         rhi::Buffer m_indexBuffer;
         std::uint32_t m_indexCount = 0;
+        std::size_t m_vertexCount = 0;
         std::uint64_t m_revision = 0;
+        mutable std::vector<BasicVertex> m_pendingVertices;
     };
 
     struct BasicDraw
@@ -403,6 +408,9 @@ namespace PlutoGE::render
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
         void Shutdown();
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
+        // Stage CPU-deformed vertices; upload after BeginFrame, before any pass
+        // reads the buffer. Topology and index buffers remain unchanged.
+        void UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged = true);
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;

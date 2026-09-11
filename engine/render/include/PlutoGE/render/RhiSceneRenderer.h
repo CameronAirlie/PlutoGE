@@ -26,6 +26,8 @@ namespace PlutoGE::render
         float textureReadMs = 0.0f;
         float textureUploadMs = 0.0f;
         std::size_t meshUploadCount = 0;
+        std::size_t skinningUpdateCount = 0;
+        std::size_t skinningVertexCount = 0;
         std::size_t textureUploadCount = 0;
         float sceneSetupMs = 0.0f;
         float renderRecordingMs = 0.0f;
@@ -94,6 +96,7 @@ namespace PlutoGE::render
             m_linearTextures.clear();
             m_normalTextures.clear();
             m_meshes.clear();
+            m_skinnedMeshes.clear();
         }
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
@@ -116,6 +119,7 @@ namespace PlutoGE::render
         }
         void ResetTemporalHistory() noexcept
         {
+            ++m_skinningHistoryEpoch;
             m_upscalerHistoryValid = false;
             m_temporalFrameIndex = 0;
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
@@ -147,6 +151,21 @@ namespace PlutoGE::render
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unordered_map<const Mesh *, BasicMesh> m_meshes;
+      struct SkinnedMesh
+      {
+          BasicMesh mesh;
+          std::vector<BasicVertex> vertices;
+          std::vector<glm::mat4> pose;
+          std::uint64_t lastFrame = 0;
+          std::uint64_t historyEpoch = 0;
+          bool wasMoving = false;
+          glm::vec3 boundsCenter{0};
+          float boundsRadius = 0;
+      };
+      // A shared model can have multiple independently animated owners.
+      std::unordered_map<const Mesh *, std::unordered_map<const std::vector<glm::mat4> *, SkinnedMesh>> m_skinnedMeshes;
+      std::uint64_t m_skinningFrame = 0;
+      std::uint64_t m_skinningHistoryEpoch = 0;
       std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
       std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
       std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;

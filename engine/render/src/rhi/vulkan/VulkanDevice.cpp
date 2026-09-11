@@ -3065,15 +3065,18 @@ namespace PlutoGE::render::rhi::vulkan
                                                           .count();
             return;
         }
-        if (resource->usage == BufferUsage::Storage)
+        if (resource->usage == BufferUsage::Storage ||
+            ((resource->usage == BufferUsage::Vertex || resource->usage == BufferUsage::Index) &&
+             m_impl->context->NativeCommandBuffer()))
         {
             const auto commandBuffer = m_impl->context->NativeCommandBuffer();
             if (!commandBuffer || offset % 4 || data.size() % 4)
-                throw std::logic_error("Storage uploads require frame recording outside rendering and four-byte alignment");
+                throw std::logic_error("Recorded buffer uploads require frame recording outside rendering and four-byte alignment");
             // vkCmdUpdateBuffer snapshots its source into the command stream;
             // never overwrite host-visible data still read by an earlier frame.
             VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
+                                   VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
             before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  0, 1, &before, 0, nullptr, 0, nullptr);
@@ -3082,7 +3085,8 @@ namespace PlutoGE::render::rhi::vulkan
                                   std::min(std::size_t{65536}, data.size() - cursor), data.data() + cursor);
             VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+            after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
+                                  VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  0, 1, &after, 0, nullptr, 0, nullptr);
             return;

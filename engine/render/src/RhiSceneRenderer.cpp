@@ -15,6 +15,7 @@
 #include "rhi/NormalMipmaps.h"
 #include "BasicDrawBatching.h"
 #include "ParticleVisibility.h"
+#include "RhiSkinning.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -173,6 +174,7 @@ namespace PlutoGE::render
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
         m_meshes.clear();
+        m_skinnedMeshes.clear();
         m_srgbTextures.clear();
         m_linearTextures.clear();
         m_normalTextures.clear();
@@ -246,6 +248,15 @@ namespace PlutoGE::render
         m_timingStats.translationPreparationMs = millisecondsBetween(totalStart, std::chrono::steady_clock::now());
 
         m_sceneCommandCount = commands.size();
+        ++m_skinningFrame;
+        // Retain offscreen poses briefly, but do not accumulate destroyed
+        // animators indefinitely in scenes that spawn disposable characters.
+        for (auto model = m_skinnedMeshes.begin(); model != m_skinnedMeshes.end(); )
+        {
+            std::erase_if(model->second, [&](const auto &entry) { return m_skinningFrame - entry.second.lastFrame > 120; });
+            if (model->second.empty()) model = m_skinnedMeshes.erase(model);
+            else ++model;
+        }
         std::vector<BasicDraw> draws;
         draws.reserve(commands.size());
         if (m_normalMipJob.valid() &&
@@ -327,9 +338,64 @@ namespace PlutoGE::render
             {
                 if (!command.mesh || (shadowOnly && !command.castsShadow))
                     continue;
-                auto mesh = m_meshes.find(command.mesh);
-                if (mesh == m_meshes.end())
+                BasicMesh *renderMesh = nullptr;
+                SkinnedMesh *deformed = nullptr;
+                if (command.jointMatrices && !command.jointMatrices->empty())
                 {
+                    auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
+                    deformed = &entry;
+                    if (entry.lastFrame != m_skinningFrame)
+                    {
+                        const auto &source = command.mesh->GetMeshData();
+                        if (source.vertices.empty() || source.indices.empty()) continue;
+                        const auto start = std::chrono::steady_clock::now();
+                        const bool topologyChanged = entry.vertices.size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size();
+                        const bool changed = entry.pose != *command.jointMatrices || topologyChanged;
+                        const bool hasHistory = entry.lastFrame + 1 == m_skinningFrame && entry.historyEpoch == m_skinningHistoryEpoch;
+                        if (!entry.mesh.IsValid() || changed || entry.wasMoving || !hasHistory)
+                        {
+                            if (changed || !entry.mesh.IsValid())
+                            {
+                                entry.vertices = SkinRhiVertices(source.vertices, *command.jointMatrices,
+                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{});
+                                entry.pose = *command.jointMatrices;
+                                ++m_timingStats.skinningUpdateCount;
+                                m_timingStats.skinningVertexCount += source.vertices.size();
+                                glm::vec3 minimum(std::numeric_limits<float>::max()), maximum(std::numeric_limits<float>::lowest());
+                                for (const auto &v : entry.vertices)
+                                {
+                                    const glm::vec3 p(v.position[0], v.position[1], v.position[2]);
+                                    minimum = glm::min(minimum, p); maximum = glm::max(maximum, p);
+                                }
+                                entry.boundsCenter = (minimum + maximum) * .5f;
+                                entry.boundsRadius = glm::length(maximum - minimum) * .5f;
+                            }
+                            else
+                            {
+                                // Clear limb motion on pause, and discard stale
+                                // history when a previously invisible actor returns.
+                                for (auto &v : entry.vertices)
+                                    v.previousPosition = {v.position[0], v.position[1], v.position[2], 1};
+                            }
+                            if (!entry.mesh.IsValid() || topologyChanged)
+                            {
+                                entry.mesh = m_renderer->CreateMesh({entry.vertices, source.indices});
+                                ++m_timingStats.meshUploadCount;
+                            }
+                            else m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, changed);
+                        }
+                        entry.wasMoving = changed;
+                        entry.lastFrame = m_skinningFrame;
+                        entry.historyEpoch = m_skinningHistoryEpoch;
+                        m_timingStats.meshUploadMs += millisecondsBetween(start, std::chrono::steady_clock::now());
+                    }
+                    renderMesh = &entry.mesh;
+                }
+                else
+                {
+                    auto mesh = m_meshes.find(command.mesh);
+                    if (mesh == m_meshes.end())
+                    {
                     core::CpuScope meshScope("Mesh conversion and upload", core::CpuCategory::Rendering);
                     const auto &source = command.mesh->GetMeshData();
                     if (source.vertices.empty() || source.indices.empty())
@@ -342,6 +408,8 @@ namespace PlutoGE::render
                         vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
                     mesh = m_meshes.emplace(command.mesh, m_renderer->CreateMesh({vertices, source.indices})).first;
                     m_timingStats.meshUploadMs += millisecondsBetween(meshStart, std::chrono::steady_clock::now());
+                    }
+                    renderMesh = &mesh->second;
                 }
 
                 std::uint32_t firstIndex = 0;
@@ -356,7 +424,12 @@ namespace PlutoGE::render
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
                 }
-                BasicDraw draw{.mesh = &mesh->second, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                BasicDraw draw{.mesh = renderMesh, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                if (deformed)
+                {
+                    draw.shadowBoundsCenter = glm::vec3(command.model * glm::vec4(deformed->boundsCenter, 1));
+                    draw.shadowBoundsRadius = deformed->boundsRadius * std::max({glm::length(glm::vec3(command.model[0])), glm::length(glm::vec3(command.model[1])), glm::length(glm::vec3(command.model[2]))});
+                }
                 const std::size_t lodCount = command.submeshIndex < command.mesh->GetSubmeshCount()
                                                  ? command.mesh->GetSubmeshLodCount(command.submeshIndex)
                                                  : 1u;

@@ -1,4 +1,5 @@
 #include "RenderOptimizationChecks.h"
+#include "SkinningRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -129,6 +130,12 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")
         {
             CheckFsr2Rendering(renderer, device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--skinning")
+        {
+            CheckSkinningRendering(device, shaders);
+            if(argc>2) CheckImportedSkinning(device,shaders,argv[2],argc>3?argv[3]:nullptr);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--temporal-motion")

@@ -13,6 +13,7 @@ struct VertexInput
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
     float4 tangent : TANGENT;
+    float4 previousPosition : TEXCOORD1;
 };
 
 struct VertexOutput
@@ -577,7 +578,8 @@ VertexOutput vertexMain(VertexInput input)
     output.position = mul(viewProjection, worldPosition);
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
-    output.previousClip = mul(previousViewProjection, mul(previousModel, float4(input.position, 1.0)));
+    const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
+    output.previousClip = mul(previousViewProjection, mul(previousModel, float4(previousPosition, 1.0)));
     output.objectDebug = objectDebugParameters.x;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
@@ -603,7 +605,8 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     output.position = mul(viewProjection, worldPosition);
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
-    output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(input.position, 1.0)));
+    const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
+    output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(previousPosition, 1.0)));
     output.objectDebug = instance.debugParameters.x;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
     output.uv = input.uv;

@@ -431,6 +431,7 @@ namespace PlutoGE::render
                     {1, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, normal))},
                     {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))},
                     {3, rhi::Format::R32G32B32A32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, tangent))},
+                    {4, rhi::Format::R32G32B32A32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, previousPosition))},
                 },
             };
             // The migration renderer accepts existing scene assets whose
@@ -1083,7 +1084,17 @@ namespace PlutoGE::render
         mesh.m_indexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
                                                         {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
         mesh.m_indexCount = static_cast<std::uint32_t>(data.indices.size());
+        mesh.m_vertexCount = data.vertices.size();
         return mesh;
+    }
+
+    void BasicRenderer::UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged)
+    {
+        if (!m_device || !mesh.IsValid() || vertices.size() != mesh.m_vertexCount)
+            throw std::invalid_argument("Dynamic mesh update must preserve vertex count");
+        mesh.m_pendingVertices.assign(vertices.begin(), vertices.end());
+        // Shadow caches must see deformation even when the model is stationary.
+        if (geometryChanged) mesh.m_revision = m_nextMeshRevision++;
     }
 
     void BasicRenderer::SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
@@ -1276,6 +1287,20 @@ namespace PlutoGE::render
         core::CpuScope beginScope("RHI.BeginFrame", core::CpuCategory::Rendering);
         const auto beginFrameStart = std::chrono::steady_clock::now();
         commands.BeginFrame("Scene");
+        const auto uploadDeformedMeshes = [&](std::span<const BasicDraw> list)
+        {
+            for (const auto &draw : list)
+            {
+                if (!draw.mesh || draw.mesh->m_pendingVertices.empty()) continue;
+                const auto &mesh = *draw.mesh;
+                m_device->UpdateBuffer(mesh.m_vertexBuffer.Get(), 0,
+                    Bytes(std::span<const BasicVertex>(mesh.m_pendingVertices)));
+                mesh.m_pendingVertices.clear();
+            }
+        };
+        uploadDeformedMeshes(draws);
+        uploadDeformedMeshes(shadowDraws);
+        uploadDeformedMeshes(giDraws);
         beginScope.End();
         const auto beginFrameEnd = std::chrono::steady_clock::now();
         const auto elapsedMs = [](const auto begin, const auto end)

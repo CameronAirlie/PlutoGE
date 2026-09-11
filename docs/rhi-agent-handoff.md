@@ -14,7 +14,7 @@ Read these documents first:
 - The editor viewport can render the loaded scene through Vulkan `BasicRenderer`.
 - Vulkan currently renders off-screen, reads RGBA pixels back to the CPU, and uploads them into an OpenGL texture displayed by ImGui.
 - The viewport overlay reports the selected RHI, scene-command count, draw count, and changed-pixel count.
-- Meshes, submeshes, LOD ranges, instances, bind-pose skinned geometry, and terrain base geometry are submitted.
+- Meshes, submeshes, LOD ranges, instances, animated skinned geometry, and terrain base geometry are submitted.
 - Albedo textures, material tint, UV scale, one directional light, camera-aware specular, ambient light, metallic/roughness factors, emission, and alpha masking are implemented.
 - `D:\PlutoProjects\CoD\CoDplutoproject.plutoproject` currently contains `GRAPHICS_API Vulkan`.
 - MSI Afterburner will still identify the editor window as OpenGL. That is expected until the GLFW window, swapchain, and ImGui presentation migrate to Vulkan.
@@ -145,7 +145,7 @@ After ownership extraction, implement in this order:
 3. Transparent blending and sorted transparent draws.
 4. Environment/IBL support.
 5. Post-processing parity.
-6. Animated skinning rather than bind-pose geometry.
+6. GPU skinning optimization (CPU deformation now supports animated RHI meshes).
 
 Do not port the entire legacy renderer directly. Add small backend-neutral render packets and passes with explicit resource ownership.
 

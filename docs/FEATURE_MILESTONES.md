@@ -35,10 +35,10 @@ that a milestone is complete.
 | M08 | Camera rigs | Medium | Implemented; automated checks passed |
 | M09 | Surface response assets | Medium | Implemented; automated checks passed |
 | M10 | Prefab variants | Medium–large | Property variants implemented; automated checks passed |
-| M11 | Sequencer/timeline | Large | Planned |
-| M12 | Additive scene loading and streaming | Large | Planned |
-| M13 | Networked entity replication | Large | Planned |
-| M14 | Procedural spline roads | Large | Planned |
+| M11 | Sequencer/timeline | Large | Partial: authoring, runtime and restored preview; interactive checks pending |
+| M12 | Additive scene loading and streaming | Large | Partial: native/managed section loading and ownership |
+| M13 | Networked entity replication | Large | Partial: snapshots, authority, interpolation and scene adapter |
+| M14 | Procedural spline roads | Large | Partial: banked collision and guardrail geometry |
 
 ### M01 — Keep selected play-mode changes
 
@@ -294,3 +294,39 @@ OpenGL/Vulkan verification remains pending.
   remain pending. Editor linking used temporary stripped archive copies to fit
   host memory while preserving the original library debug information.
 - Guide: [Prefab variants](PREFAB_VARIANTS.md). M11-M14 remain planned.
+
+
+### 2026-09-14: M11 partial delivery and M11-M14 plan
+
+- Added [implementation plan](M11_M14_IMPLEMENTATION_PLAN.md) for all four milestones.
+- M11 now has a bounded deterministic evaluator, versioned serialization, native
+  runtime component, inspector tracks/keys, binding diagnostics and prefab remapping.
+- Restored editor preview is pending; M11 is not complete. M12-M14 remain planned,
+  with no implementation delivered in this change. See [Sequencer](SEQUENCER.md).
+- Validation: MSVC Release editor and standalone runtime builds passed. Timeline,
+  sequencer scene, scene-history, camera-rig and prefab-variant tests passed.
+  MSBuild and the prefab test required unsandboxed execution because filesystem
+  tracking/canonicalization returned Access Denied. Interactive checks remain pending.
+
+
+### 2026-09-14: continued M11-M14 implementation
+
+- M11: render-scoped preview restores authoring state before UI/history/save work;
+  added capture-current-value authoring and preview invalidation tests.
+- M12: asynchronous bounded file reading, main-thread section activation, ownership,
+  reference remapping, cancellation/progress/failure handling, managed generation-
+  scoped handles and a distance-streaming example. Fixed binary CRLF scene parsing.
+  See [Scene streaming](SCENE_STREAMING.md) for remaining integration checks.
+- M13: bounded versioned entity snapshots, authority/ownership, properties, late
+  join, interpolation and native scene binding; bounded inbound transport storage
+  and fixed cancellation suppressing disconnect notifications. Added reproducible
+  two-client checks. See [Entity replication](ENTITY_REPLICATION.md) for scope.
+- M14: banked collision now follows spline rotations; optional guardrail ribbons
+  share visual/collision geometry and serialize through existing workflows.
+  See [Spline roads](SPLINE_ROADS.md) for remaining road features.
+- All four milestones remain explicitly partial; foundations do not satisfy the
+  outstanding gameplay, lifecycle, authoring and interactive acceptance checks.
+- Validation: final MSVC Release editor/runtime and managed SDK builds passed.
+  All eight combined native/managed regression suites passed (4.25 seconds); the
+  existing networking smoke test also passed. git diff --check passed.
+  Interactive OpenGL/Vulkan and Linux validation remain pending.

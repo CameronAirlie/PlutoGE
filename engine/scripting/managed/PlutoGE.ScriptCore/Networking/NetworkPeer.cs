@@ -56,6 +56,7 @@ internal sealed class NetworkPeer : IAsyncDisposable
             _outbound.Writer.TryComplete();
             _client.Close();
             try { await Task.WhenAll(readTask, writeTask); }
+            catch (OperationCanceledException) { /* Shutdown must still notify the owner below. */ }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 error ??= exception;

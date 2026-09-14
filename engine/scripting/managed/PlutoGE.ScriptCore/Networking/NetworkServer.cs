@@ -9,13 +9,14 @@ namespace PlutoGE.ScriptCore.Networking;
 public sealed class NetworkServer : IAsyncDisposable, IDisposable
 {
     private readonly ConcurrentDictionary<int, NetworkPeer> _peers = new();
-    private readonly ConcurrentQueue<Action> _events = new();
+    private readonly NetworkEventQueue _events = new();
     private CancellationTokenSource? _cancellation;
     private TcpListener? _listener;
     private int _nextPeerId;
 
     public bool IsRunning => _listener is not null;
     public int ClientCount => _peers.Count;
+    public int MaxClients { get; init; } = 128;
     public int MaxPayloadSize { get; init; } = NetworkProtocol.DefaultMaxPayloadSize;
     public int OutboundQueueCapacity { get; init; } = 1024;
 
@@ -26,12 +27,14 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
 
     public void Start(ushort port, int backlog = 128, string bindAddress = "0.0.0.0")
     {
+        if (_events.Overflowed) throw new InvalidOperationException("Receive overflow requires a new transport instance.");
         if (IsRunning)
             throw new InvalidOperationException("The server is already running.");
         if (MaxPayloadSize < 1)
             throw new InvalidOperationException("MaxPayloadSize must be positive.");
         if (OutboundQueueCapacity < 1)
             throw new InvalidOperationException("OutboundQueueCapacity must be positive.");
+        if (MaxClients is < 1 or > 4096) throw new InvalidOperationException("MaxClients must be between 1 and 4096.");
         if (backlog < 1)
             throw new ArgumentOutOfRangeException(nameof(backlog));
         if (!IPAddress.TryParse(bindAddress, out var address))
@@ -80,6 +83,12 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
     {
         if (maxEvents < 1)
             throw new ArgumentOutOfRangeException(nameof(maxEvents));
+        if (_events.Overflowed)
+        {
+            Dispose();
+            _events.Clear();
+            throw new IOException("Network receive queue exceeded 1024 events or 16 MiB; transport closed. Create a new instance to reconnect.");
+        }
         var count = 0;
         while (count < maxEvents && _events.TryDequeue(out var callback))
         {
@@ -111,6 +120,7 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(cancellationToken);
+                if (_peers.Count >= MaxClients) { client.Dispose(); continue; }
                 var peerId = Interlocked.Increment(ref _nextPeerId);
                 var peer = new NetworkPeer(peerId, client, MaxPayloadSize, OutboundQueueCapacity);
                 if (!_peers.TryAdd(peerId, peer))
@@ -121,7 +131,7 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
                 _events.Enqueue(() => ClientConnected?.Invoke(peerId));
                 _ = peer.RunAsync(
                     frame => _events.Enqueue(() => MessageReceived?.Invoke(
-                        new NetworkMessage(peerId, frame.Channel, frame.Payload))),
+                        new NetworkMessage(peerId, frame.Channel, frame.Payload)), frame.Payload.Length),
                     exception => OnPeerClosed(peerId, exception));
             }
         }

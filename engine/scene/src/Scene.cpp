@@ -1,3 +1,5 @@
+#include "PlutoGE/scene/SceneStreaming.h"
+#include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Scene.h"
@@ -1390,6 +1392,85 @@ namespace PlutoGE::scene
     }
     Scene::~Scene() = default;
 
+    SceneStreaming &Scene::GetStreaming()
+    {
+        if (!m_streaming) m_streaming = std::make_unique<SceneStreaming>(*this);
+        return *m_streaming;
+    }
+    std::uint64_t Scene::GetSectionOwner(EntityID id) const
+    {
+        const auto it = m_sectionOwners.find(id);
+        return it == m_sectionOwners.end() ? 0 : it->second;
+    }
+    void Scene::AdoptSectionEntities(Scene &source, std::uint64_t section)
+    {
+        if (&source == this || source.IsRuntimeStarted() || !section) throw std::runtime_error("Invalid section activation");
+        std::unordered_map<EntityID, EntityID> remap;
+        for (const auto &entity : source.m_entityStorage)
+        {
+            const auto id = Entity::GenerateUniqueID();
+            if (!id || FindEntityByID(id) || remap.contains(entity->GetID())) throw std::runtime_error("Scene entity IDs exhausted or duplicated");
+            remap.emplace(entity->GetID(), id);
+        }
+        // Remap the complete section before publishing any entities, so references
+        // between different roots remain internal to this section instance.
+        for (const auto &entity : source.m_entityStorage)
+        {
+            for (const auto &bucket : entity->GetComponentBuckets()) for (auto *component : bucket)
+            {
+                if (auto *script = dynamic_cast<ScriptComponent *>(component))
+                {
+                    for (const auto &[name, value] : script->GetFieldValues())
+                        if (const auto *id = std::get_if<std::uint32_t>(&value); id && *id && !remap.contains(*id))
+                            throw std::runtime_error("Section script contains an external entity reference");
+                    script->RemapEntityReferences(remap);
+                }
+                if (auto *sequence = dynamic_cast<SequencerComponent *>(component))
+                {
+                    for (const auto &track : sequence->GetTimeline().tracks)
+                        if (!remap.contains(track.entity)) throw std::runtime_error("Section timeline contains an external entity reference");
+                    sequence->RemapBindings(remap);
+                }
+                std::vector<Property> changed;
+                for (auto property : component->Serialize())
+                {
+                    if (property.type != PropertyType::Entity && property.name != "Target Entity") continue;
+                    const auto id = static_cast<EntityID>(std::stoul(property.value));
+                    if (auto it = remap.find(id); it != remap.end()) property.value = std::to_string(it->second);
+                    else if (id) throw std::runtime_error("Section contains an external entity reference");
+                    changed.push_back(std::move(property));
+                }
+                if (!changed.empty()) component->Deserialize(changed);
+            }
+        }
+        m_entityStorage.reserve(m_entityStorage.size() + source.m_entityStorage.size());
+        m_rootEntities.reserve(m_rootEntities.size() + source.m_rootEntities.size());
+        m_entitiesById.reserve(m_entitiesById.size() + source.m_entityStorage.size());
+        m_sectionOwners.reserve(m_sectionOwners.size() + source.m_entityStorage.size());
+        for (auto &entity : source.m_entityStorage)
+        {
+            entity->m_id = remap.at(entity->GetID());
+            m_entitiesById.emplace(entity->GetID(), entity.get());
+            m_sectionOwners.emplace(entity->GetID(), section);
+        }
+        for (auto *root : source.m_rootEntities)
+        {
+            root->SetSceneRecursive(this);
+            m_rootEntities.push_back(root);
+        }
+        for (auto &entity : source.m_entityStorage) m_entityStorage.push_back(std::move(entity));
+        source.m_entityStorage.clear();
+        source.m_rootEntities.clear();
+        source.m_entitiesById.clear();
+        InvalidatePhysicsQueryCache();
+    }
+    void Scene::UnloadSectionEntities(std::uint64_t section)
+    {
+        for (auto *root : m_rootEntities)
+            if (GetSectionOwner(root->GetID()) == section) DestroyEntity(root->GetID());
+    }
+
+
     UISystem &Scene::GetUISystem()
     {
         return *m_uiSystem;
@@ -2015,6 +2096,17 @@ namespace PlutoGE::scene
         }
     }
 
+    namespace {
+        void ResetSequencers(const std::vector<Entity *> &roots)
+        {
+            for (auto *entity : roots)
+            {
+                for (auto *sequencer : entity->GetComponents<SequencerComponent>()) sequencer->ResetRuntime();
+                ResetSequencers(entity->GetChildren());
+            }
+        }
+    }
+
     void Scene::StartRuntime()
     {
         if (m_runtimeStarted)
@@ -2022,6 +2114,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        ResetSequencers(m_rootEntities);
         VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
@@ -2108,7 +2201,10 @@ namespace PlutoGE::scene
 
         core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
 
+        if (m_streaming) m_streaming->Reset();
+        FlushPendingDestroyEntities();
         m_runtimeStarted = false;
+        ResetSequencers(m_rootEntities);
         VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
@@ -2351,6 +2447,7 @@ namespace PlutoGE::scene
 
         if (parent)
         {
+            if (const auto section = GetSectionOwner(parent->GetID())) m_sectionOwners[entityPtr->GetID()] = section;
             parent->AddChild(entityPtr);
         }
         else
@@ -2414,6 +2511,7 @@ namespace PlutoGE::scene
         const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
         for (const auto *subtreeEntity : subtree)
         {
+            m_sectionOwners.erase(subtreeEntity->GetID());
             m_entitiesById.erase(subtreeEntity->GetID());
         }
 
@@ -2559,6 +2657,7 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
+        if (m_streaming) m_streaming->Pump();
         using Clock = std::chrono::high_resolution_clock;
         core::CpuScope preparationScope("Scene.Preparation");
         const auto updateStart = Clock::now();

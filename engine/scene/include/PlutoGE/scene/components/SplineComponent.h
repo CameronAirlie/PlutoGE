@@ -26,6 +26,7 @@ namespace PlutoGE::scene
                 std::vector<SplineControlPoint> points;
                 float width = 8.0f;
                 float thickness = 0.25f;
+                float guardrailHeight = 0.0f;
                 float samplesPerSegment = 12.0f;
                 float collisionSamplesPerSegment = 4.0f;
                 float maxChordError = 0.1f;
@@ -59,6 +60,8 @@ namespace PlutoGE::scene
 
                 float GetWidth() const { return m_width; }
                 void SetWidth(float width);
+                float GetGuardrailHeight() const { return m_guardrailHeight; }
+                void SetGuardrailHeight(float height);
                 float GetThickness() const { return m_thickness; }
                 void SetThickness(float thickness);
                 int GetSamplesPerSegment() const { return m_samplesPerSegment; }
@@ -96,6 +99,7 @@ namespace PlutoGE::scene
                 std::vector<SplineControlPoint> m_points;
                 float m_width = 8.0f;
                 float m_thickness = 0.25f;
+                float m_guardrailHeight = 0.0f;
                 int m_samplesPerSegment = 12;
                 int m_collisionSamplesPerSegment = 4;
                 float m_maxChordError = 0.1f;

@@ -190,8 +190,9 @@ namespace PlutoGE::scene
 
         std::vector<glm::vec3> BuildSplineCenters(const std::vector<SplineControlPoint> &points,
                                                   bool closed,
-                                                  int samplesPerSegment)
+                                                  int samplesPerSegment, std::vector<glm::quat> *rotations = nullptr)
         {
+            if (rotations) rotations->clear();
             std::vector<glm::vec3> centers;
             if (points.size() < 2)
             {
@@ -210,6 +211,9 @@ namespace PlutoGE::scene
                 for (int sample = 0; sample < samplesPerSegment; ++sample)
                 {
                     const float t = static_cast<float>(sample) / static_cast<float>(samplesPerSegment);
+                    if (rotations) rotations->push_back(glm::slerp(
+                        RotationQuaternion(GetWrappedControlPoint(points, segment, closed).rotation),
+                        RotationQuaternion(GetWrappedControlPoint(points, segment + 1, closed).rotation), t));
                     centers.push_back(CatmullRom(
                         GetWrappedPoint(points, segment - 1, closed),
                         GetWrappedPoint(points, segment, closed),
@@ -222,6 +226,7 @@ namespace PlutoGE::scene
             if (!closed)
             {
                 centers.push_back(points.back().position);
+                if (rotations) rotations->push_back(RotationQuaternion(points.back().rotation));
             }
 
             return centers;
@@ -299,7 +304,7 @@ namespace PlutoGE::scene
                                                       float thickness,
                                                       float uvMetersPerTile,
                                                       bool closed,
-                                                      bool includeSideFaces = true)
+                                                      bool includeSideFaces = true, float guardrailHeight = 0, bool initializeGraphics = true)
         {
             if (centers.size() < 2)
             {
@@ -371,6 +376,35 @@ namespace PlutoGE::scene
                 }
             }
 
+            if (guardrailHeight > 0)
+            {
+                // Continuous edge ribbons use the same banked cross-section as
+                // the road surface. Collision and visible geometry share this path.
+                for (unsigned side = 0; side < 2; ++side)
+                {
+                    const auto railBase = static_cast<unsigned>(meshData.vertices.size());
+                    for (std::size_t row = 0; row < centers.size(); ++row)
+                    {
+                        const auto edge = meshData.vertices[row * 4 + side];
+                        const glm::vec3 position(edge.position[0], edge.position[1], edge.position[2]);
+                        const glm::vec3 up(edge.normal[0], edge.normal[1], edge.normal[2]);
+                        const glm::vec3 right(edge.tangent[0], edge.tangent[1], edge.tangent[2]);
+                        const glm::vec3 normal = side ? right : -right;
+                        AddVertex(meshData, position, normal, {distances[row] / uvMetersPerTile, 0}, up);
+                        AddVertex(meshData, position + up * guardrailHeight, normal, {distances[row] / uvMetersPerTile, 1}, up);
+                    }
+                    for (std::size_t row = 0; row < edgeCount; ++row)
+                    {
+                        const auto a = railBase + static_cast<unsigned>(row * 2);
+                        const auto b = railBase + static_cast<unsigned>(((row + 1) % centers.size()) * 2);
+                        // Both faces are present so ribbons remain visible from
+                        // inside and outside the road without material changes.
+                        AddQuad(meshData, a, a + 1, b, b + 1);
+                        AddQuad(meshData, a + 1, a, b + 1, b);
+                    }
+                }
+            }
+
             render::MeshConfig config;
             config.data = std::move(meshData);
             config.submeshes.push_back(render::Submesh{
@@ -380,7 +414,8 @@ namespace PlutoGE::scene
                 .name = "Spline Track",
             });
 
-            return std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config));
+            return initializeGraphics ? std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config))
+                                      : std::make_unique<render::Mesh>(config);
         }
 
     }
@@ -400,6 +435,7 @@ namespace PlutoGE::scene
           m_material(config.material),
           m_materialAssetReference(config.materialAssetReference)
     {
+        SetGuardrailHeight(config.guardrailHeight);
         EnsureDefaultPoints();
         RebuildMaterialFromReference();
     }
@@ -521,6 +557,13 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
+    void SplineComponent::SetGuardrailHeight(float height)
+    {
+        if (!std::isfinite(height)) return;
+        m_guardrailHeight = std::clamp(height, 0.0f, 10.0f);
+        MarkDirty();
+    }
+
     void SplineComponent::SetThickness(float thickness)
     {
         m_thickness = std::max(thickness, 0.0f);
@@ -629,7 +672,7 @@ namespace PlutoGE::scene
                                               m_thickness,
                                               m_uvMetersPerTile,
                                               m_closed,
-                                              true);
+                                              true, m_guardrailHeight);
         }
         else
         {
@@ -638,14 +681,15 @@ namespace PlutoGE::scene
 
         if (m_generateCollision)
         {
-            m_collisionPathPoints = BuildSplineCenters(m_points, m_closed, std::min(m_samplesPerSegment, m_collisionSamplesPerSegment));
+            std::vector<glm::quat> collisionRotations;
+            m_collisionPathPoints = BuildSplineCenters(m_points, m_closed, std::min(m_samplesPerSegment, m_collisionSamplesPerSegment), &collisionRotations);
             m_generatedCollisionMesh = BuildSplineMesh(m_collisionPathPoints,
-                                                       nullptr,
+                                                       &collisionRotations,
                                                        m_width,
                                                        m_thickness,
                                                        m_uvMetersPerTile,
                                                        m_closed,
-                                                       false);
+                                                       false, m_guardrailHeight, false);
         }
         else
         {
@@ -697,6 +741,7 @@ namespace PlutoGE::scene
         std::vector<Property> properties = {
             {"Width", PropertyType::Float, std::to_string(m_width)},
             {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
+            {"GuardrailHeight", PropertyType::Float, std::to_string(m_guardrailHeight)},
             {"SamplesPerSegment", PropertyType::Int, std::to_string(m_samplesPerSegment)},
             {"CollisionSamplesPerSegment", PropertyType::Int, std::to_string(m_collisionSamplesPerSegment)},
             {"MaxChordError", PropertyType::Float, std::to_string(m_maxChordError)},
@@ -727,6 +772,8 @@ namespace PlutoGE::scene
         {
             if (property.name == "Width")
                 m_width = std::max(std::stof(property.value), 0.05f);
+            else if (property.name == "GuardrailHeight")
+                SetGuardrailHeight(std::stof(property.value));
             else if (property.name == "Thickness")
                 m_thickness = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "SamplesPerSegment")

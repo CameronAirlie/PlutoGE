@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Prefab.h"
@@ -106,6 +107,7 @@ namespace PlutoGE::scene
                 return "ActiveRagdollComponent";
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
+            if (dynamic_cast<const SequencerComponent *>(&component)) return "SequencerComponent";
             if (dynamic_cast<const CameraRigComponent *>(&component))
                 return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
@@ -162,6 +164,7 @@ namespace PlutoGE::scene
                 return std::make_unique<ActiveRagdollComponent>();
             if (componentType == "SkeletonAttachmentComponent")
                 return std::make_unique<SkeletonAttachmentComponent>();
+            if (componentType == "SequencerComponent") return std::make_unique<SequencerComponent>();
             if (componentType == "CameraRigComponent")
                 return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
@@ -414,6 +417,7 @@ namespace PlutoGE::scene
             {
                 for (auto *component : bucket)
                 {
+                    if (auto *sequencer = dynamic_cast<SequencerComponent *>(component)) sequencer->RemapBindings(entityIdRemap);
                     auto *navAgent = dynamic_cast<NavAgentComponent *>(component);
                     auto *cameraRig = dynamic_cast<CameraRigComponent *>(component);
                     if (!navAgent && !cameraRig)

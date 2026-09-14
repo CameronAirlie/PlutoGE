@@ -206,6 +206,9 @@ namespace PlutoGE::scene
 
     void Entity::AddChild(Entity *child)
     {
+        if (child && m_scene && child->m_scene == m_scene &&
+            m_scene->GetSectionOwner(GetID()) != m_scene->GetSectionOwner(child->GetID())) return;
+
         if (!child)
         {
             return;

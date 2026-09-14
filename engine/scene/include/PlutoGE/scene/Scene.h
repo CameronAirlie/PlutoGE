@@ -20,6 +20,7 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class UISystem;
+    class SceneStreaming;
     class NavigationSystem;
     class Entity;
     class FoliageComponent;
@@ -112,6 +113,8 @@ namespace PlutoGE::scene
     public:
         Scene();
         ~Scene();
+        SceneStreaming &GetStreaming();
+        std::uint64_t GetSectionOwner(EntityID entity) const;
 
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
@@ -242,6 +245,11 @@ namespace PlutoGE::scene
         void UnregisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent);
 
     private:
+        friend class SceneStreaming;
+        void AdoptSectionEntities(Scene &source, std::uint64_t section);
+        void UnloadSectionEntities(std::uint64_t section);
+        std::unordered_map<EntityID, std::uint64_t> m_sectionOwners;
+        std::unique_ptr<SceneStreaming> m_streaming;
         struct PhysicsQueryCache;
         struct RuntimePhysicsState;
         struct PendingRigidbodyForce

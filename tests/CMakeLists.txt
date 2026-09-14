@@ -485,3 +485,48 @@ if(TARGET PlutoGEEditorUI)
 endif()
 
 target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_UI_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
+add_executable(PlutoGETimelineTests TimelineTests.cpp ../engine/scene/src/Timeline.cpp)
+target_include_directories(PlutoGETimelineTests PRIVATE ../engine/scene/include)
+target_compile_features(PlutoGETimelineTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGETimelineTests COMMAND PlutoGETimelineTests)
+
+add_executable(PlutoGESequencerTests SequencerTests.cpp)
+add_executable(PlutoGESceneStreamingTests SceneStreamingTests.cpp)
+add_executable(PlutoGESplineRoadTests SplineRoadTests.cpp)
+target_link_libraries(PlutoGESplineRoadTests PRIVATE PlutoGE::Scene)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESplineRoadTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+endif()
+add_test(NAME PlutoGESplineRoadTests COMMAND PlutoGESplineRoadTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGESplineRoadTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESplineRoadTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEReplicationTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.ReplicationTests/PlutoGE.ReplicationTests.csproj --configuration Release)
+endif()
+target_link_libraries(PlutoGESceneStreamingTests PRIVATE PlutoGE::Scene)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESceneStreamingTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+endif()
+add_test(NAME PlutoGESceneStreamingTests COMMAND PlutoGESceneStreamingTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGESceneStreamingTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneStreamingTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+target_include_directories(PlutoGESequencerTests PRIVATE ../editor/ui/include)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESequencerTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+else()
+    target_link_libraries(PlutoGESequencerTests PRIVATE PlutoGE::Scene)
+endif()
+add_test(NAME PlutoGESequencerTests COMMAND PlutoGESequencerTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGESequencerTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESequencerTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()

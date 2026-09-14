@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -232,6 +233,7 @@ namespace PlutoGE::scene
             {
                 return "SkeletonAttachmentComponent";
             }
+            if (dynamic_cast<const SequencerComponent *>(&component)) return "SequencerComponent";
             if (dynamic_cast<const CameraRigComponent *>(&component)) return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
             {
@@ -346,6 +348,7 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<SkeletonAttachmentComponent>();
             }
+            if (componentType == "SequencerComponent") return std::make_unique<SequencerComponent>();
             if (componentType == "CameraRigComponent") return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
             {
@@ -710,6 +713,9 @@ namespace PlutoGE::scene
             while (std::getline(input, line))
             {
                 ++lineNumber;
+                // LoadFromString also accepts bytes read asynchronously in binary
+                // mode, where Windows CRLF has not been translated by ifstream.
+                if (!line.empty() && line.back() == '\r') line.pop_back();
                 const auto tokens = SplitEscaped(line, '\t');
                 if (tokens.empty())
                 {

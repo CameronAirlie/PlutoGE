@@ -1,4 +1,8 @@
 add_library(PlutoGEScene
+    src/Timeline.cpp
+    src/TimelineBindings.cpp
+    src/SceneStreaming.cpp
+    src/components/SequencerComponent.cpp
     src/Entity.cpp
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp

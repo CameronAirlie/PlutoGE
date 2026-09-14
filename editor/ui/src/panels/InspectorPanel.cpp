@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
@@ -183,6 +184,7 @@ namespace PlutoGE::ui
             LegacyCanvas = 27,
             ActiveRagdoll = 28,
             CameraRig = 30,
+            Sequencer = 31,
         };
 
         struct ScriptAssetOption
@@ -1607,6 +1609,7 @@ namespace PlutoGE::ui
             {
                 return "Skeleton Attachment Component";
             }
+            if (dynamic_cast<const scene::SequencerComponent *>(&component)) return "Sequencer";
             if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "Camera Rig";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
             {
@@ -1701,6 +1704,7 @@ namespace PlutoGE::ui
                 return "ActiveRagdollComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
+            if (dynamic_cast<const scene::SequencerComponent *>(&component)) return "SequencerComponent";
             if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "CameraRigComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
                 return "CameraComponent";
@@ -1842,6 +1846,8 @@ namespace PlutoGE::ui
             case AddableComponentType::ActiveRagdoll:
                 return entity.HasComponent<scene::AnimationComponent>() &&
                        !entity.HasComponent<scene::ActiveRagdollComponent>();
+            case AddableComponentType::Sequencer:
+                return !entity.HasComponent<scene::SequencerComponent>();
             case AddableComponentType::CameraRig:
                 return entity.HasComponent<scene::CameraComponent>() && !entity.HasComponent<scene::CameraRigComponent>();
             case AddableComponentType::Camera:
@@ -1911,6 +1917,7 @@ namespace PlutoGE::ui
                 renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
                 renderItem("Camera Rig", AddableComponentType::CameraRig);
+                renderItem("Sequencer", AddableComponentType::Sequencer);
                 renderItem("Light", AddableComponentType::Light);
                 ImGui::EndMenu();
             }
@@ -2029,6 +2036,9 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Ocean:
                 entity.CreateComponent<scene::OceanComponent>();
+                break;
+            case AddableComponentType::Sequencer:
+                entity.CreateComponent<scene::SequencerComponent>();
                 break;
             case AddableComponentType::CameraRig:
                 entity.CreateComponent<scene::CameraRigComponent>();
@@ -5172,12 +5182,98 @@ namespace PlutoGE::ui
                                 }
                             }
                         }
+                        else if (auto *sequencer = dynamic_cast<scene::SequencerComponent *>(componentPtr))
+                        {
+                            propertiesProvided = true;
+                            properties = {{"Play On Start", scene::PropertyType::Bool, sequencer->GetPlayOnStart() ? "true" : "false"}};
+                            auto data = sequencer->GetTimeline();
+                            bool edited = ImGui::InputDouble("Duration", &data.duration, 0.1, 1.0);
+                            edited |= ImGui::Checkbox("Loop", &data.loop);
+                            for (std::size_t ti = 0; ti < data.tracks.size(); ++ti)
+                            {
+                                ImGui::PushID(static_cast<int>(ti));
+                                if (ImGui::TreeNode("Track", "Track %u", static_cast<unsigned>(ti + 1)))
+                                {
+                                    auto &track = data.tracks[ti];
+                                    edited |= ImGui::InputScalar("Entity ID", ImGuiDataType_U32, &track.entity);
+                                    int channel = static_cast<int>(track.channel);
+                                    if (ImGui::Combo("Channel", &channel, "Position\0Rotation (Euler)\0Scale\0Camera FOV\0Light Color\0Light Intensity\0Audio Volume\0Audio Play\0Script Event\0")) { track.channel = static_cast<scene::TimelineChannel>(channel); edited = true; }
+                                    int interpolation = static_cast<int>(track.interpolation);
+                                    if (ImGui::Combo("Interpolation", &interpolation, "Step\0Linear\0Smooth\0")) { track.interpolation = static_cast<scene::TimelineInterpolation>(interpolation); edited = true; }
+                                    for (std::size_t ki = 0; ki < track.keys.size(); ++ki)
+                                    {
+                                        ImGui::PushID(static_cast<int>(ki));
+                                        auto &key = track.keys[ki];
+                                        edited |= ImGui::InputDouble("Time", &key.time);
+                                        edited |= ImGui::InputFloat3("Value", key.value.data());
+                                        if (ImGui::Button("Capture Current Value") && entity->GetScene())
+                                            edited |= scene::ReadTimelineValue(*entity->GetScene(), track, key.value);
+                                        char eventText[1025]{};
+                                        std::snprintf(eventText, sizeof(eventText), "%s", key.event.c_str());
+                                        if (ImGui::InputText("Event", eventText, sizeof(eventText))) { key.event = eventText; edited = true; }
+                                        if (ImGui::Button("Remove Key")) { track.keys.erase(track.keys.begin() + ki); edited = true; ImGui::PopID(); break; }
+                                        ImGui::Separator();
+                                        ImGui::PopID();
+                                    }
+                                    if (ImGui::Button("Add Key") && (track.keys.empty() || track.keys.back().time < data.duration))
+                                    {
+                                        scene::TimelineKey key;
+                                        key.time = track.keys.empty() ? 0 : (std::min)(data.duration, track.keys.back().time + 1);
+                                        track.keys.push_back(key); edited = true;
+                                    }
+                                    ImGui::SameLine();
+                                    const bool remove = ImGui::Button("Remove Track");
+                                    ImGui::TreePop();
+                                    if (remove) { data.tracks.erase(data.tracks.begin() + ti); edited = true; ImGui::PopID(); break; }
+                                }
+                                ImGui::PopID();
+                            }
+                            if (ImGui::Button("Add Track") && data.tracks.size() < 256)
+                            {
+                                scene::TimelineTrack track; track.entity = entity->GetID();
+                                data.tracks.push_back(track); edited = true;
+                            }
+                            if (edited)
+                            {
+                                std::string timelineError;
+                                if (data.Validate(&timelineError) && sequencer->SetTimeline(data))
+                                {
+                                    entity->AddPrefabOverride("Component:SequencerComponent:Timeline");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                else ImGui::TextWrapped("Edit rejected: %s", timelineError.c_str());
+                            }
+                            if (!sequencer->MissingBindings().empty()) ImGui::TextUnformatted("Missing bindings: repair the track entity ID or component.");
+                            if (entity->GetScene() && !entity->GetScene()->IsRuntimeStarted())
+                            {
+                                auto &preview = editorShell.GetTimelinePreview();
+                                if (ImGui::Button("Preview Timeline")) preview.Begin(*entity->GetScene(), entity->GetID(), true);
+                                ImGui::SameLine();
+                                if (ImGui::Button("Stop Preview")) preview.Stop();
+                                double time = preview.Owner() == entity->GetID() ? preview.Time() : 0;
+                                const double minimum = 0, maximum = sequencer->GetTimeline().duration;
+                                if (ImGui::SliderScalar("Preview Time", ImGuiDataType_Double, &time, &minimum, &maximum, "%.3f s"))
+                                {
+                                    if (preview.Owner() != entity->GetID()) preview.Begin(*entity->GetScene(), entity->GetID(), false);
+                                    preview.Seek(time);
+                                }
+                                ImGui::TextDisabled("Visual preview; audio and script events are muted.");
+                            }
+                            if (entity->GetScene() && entity->GetScene()->IsRuntimeStarted())
+                            {
+                                if (ImGui::Button("Play Timeline")) sequencer->Play();
+                                ImGui::SameLine();
+                                if (ImGui::Button("Stop Timeline")) sequencer->Stop();
+                                ImGui::Text("Time: %.3f", sequencer->GetTime());
+                            }
+                        }
                         else if (auto *splineComponent = dynamic_cast<scene::SplineComponent *>(componentPtr))
                         {
                             propertiesProvided = true;
                             properties = {
                                 {"Width", scene::PropertyType::Float, std::to_string(splineComponent->GetWidth())},
                                 {"Thickness", scene::PropertyType::Float, std::to_string(splineComponent->GetThickness())},
+                                {"GuardrailHeight", scene::PropertyType::Float, std::to_string(splineComponent->GetGuardrailHeight())},
                                 {"SamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetSamplesPerSegment())},
                                 {"CollisionSamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetCollisionSamplesPerSegment())},
                                 {"MaxChordError", scene::PropertyType::Float, std::to_string(splineComponent->GetMaxChordError())},

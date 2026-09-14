@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
 #include "PlutoGE/scene/components/CameraRigComponent.h"
@@ -1243,6 +1244,54 @@ namespace PlutoGE::scripting
         int32_t IsPrefabReady(const char *prefabReference)
         {
             return prefabReference && prefabReference[0] != '\0' && scene::Prefab::IsReady(prefabReference) ? 1 : 0;
+        }
+
+        struct SceneStreamingRequest
+        {
+            std::uint64_t id, generation;
+            std::int32_t operation, state;
+            float progress;
+            const char *path;
+            const char *error;
+        };
+        static_assert(sizeof(SceneStreamingRequest) == 48);
+        int ControlSceneStreaming(SceneStreamingRequest *request)
+        {
+            if (!request) return 0;
+            static thread_local std::string error;
+            error.clear();
+            request->error = nullptr;
+            try
+            {
+                auto *scene = core::Engine::GetInstance().GetScene();
+                if (!scene || !scene->IsRuntimeStarted()) throw std::runtime_error("Scene streaming requires runtime");
+                auto &streaming = scene->GetStreaming();
+                if (request->operation != 0 && request->operation != 6 && request->generation != streaming.Generation()) throw std::runtime_error("Scene section belongs to a previous scene");
+                switch (request->operation)
+                {
+                case 0:
+                    if (!request->path || !request->path[0]) return 0;
+                    request->id = streaming.Load(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(request->path), request->state != 0);
+                    request->generation = streaming.Generation();
+                    return request->id != 0;
+                case 1:
+                {
+                    const auto status = streaming.Status(request->id);
+                    request->state = static_cast<std::int32_t>(status.state);
+                    request->progress = status.progress;
+                    error = status.error;
+                    request->error = error.c_str();
+                    return 1;
+                }
+                case 2: return streaming.Activate(request->id);
+                case 3: return streaming.Cancel(request->id);
+                case 4: return streaming.Unload(request->id);
+                case 5: return streaming.Forget(request->id);
+                case 6: request->generation = streaming.Generation(); return 1;
+                default: return 0;
+                }
+            }
+            catch (const std::exception &exception) { error = exception.what(); request->error = error.c_str(); return 0; }
         }
 
         int LoadScene(const char *sceneAssetReference)
@@ -3222,6 +3271,7 @@ namespace PlutoGE::scripting
         register_prefab_api_fn registerPrefabApi = nullptr;
         register_window_api_fn registerWindowApi = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
+        int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
         register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
         register_component_api_fn registerComponentApi = nullptr;
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
@@ -3329,6 +3379,7 @@ namespace PlutoGE::scripting
             impl.registerPrefabApi = nullptr;
             impl.registerWindowApi = nullptr;
             impl.registerSceneApi = nullptr;
+            impl.registerSceneStreamingApi = nullptr;
             impl.registerScriptableObjectApi = nullptr;
             impl.registerComponentApi = nullptr;
             impl.registerCameraComponentApi = nullptr;
@@ -3696,6 +3747,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi);
 
             if (!requiredExportsLoaded)
@@ -4349,6 +4401,11 @@ namespace PlutoGE::scripting
         if (!m_impl->registerSurfaceResponseApi || m_impl->registerSurfaceResponseApi(reinterpret_cast<void *>(&ResolveSurfaceResponse)) == 0)
         {
             setManagedBridgeFailure("RegisterSurfaceResponseApi");
+            return false;
+        }
+        if (!m_impl->registerSceneStreamingApi || m_impl->registerSceneStreamingApi(reinterpret_cast<void *>(&ControlSceneStreaming)) == 0)
+        {
+            setManagedBridgeFailure("RegisterSceneStreamingApi");
             return false;
         }
         if (!m_impl->registerCameraRigApi || m_impl->registerCameraRigApi(reinterpret_cast<void *>(&ControlCameraRig)) == 0)

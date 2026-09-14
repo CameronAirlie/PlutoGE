@@ -7,7 +7,7 @@ namespace PlutoGE.ScriptCore.Networking;
 /// <summary>A reliable multiplayer client. Call <see cref="Poll"/> from OnUpdate.</summary>
 public sealed class NetworkClient : IAsyncDisposable, IDisposable
 {
-    private readonly ConcurrentQueue<Action> _events = new();
+    private readonly NetworkEventQueue _events = new();
     private NetworkPeer? _peer;
 
     public bool IsConnected => _peer is not null;
@@ -21,6 +21,7 @@ public sealed class NetworkClient : IAsyncDisposable, IDisposable
 
     public async Task ConnectAsync(string host, ushort port, CancellationToken cancellationToken = default)
     {
+        if (_events.Overflowed) throw new InvalidOperationException("Receive overflow requires a new transport instance.");
         if (IsConnected)
             throw new InvalidOperationException("The client is already connected.");
         if (MaxPayloadSize < 1)
@@ -37,7 +38,7 @@ public sealed class NetworkClient : IAsyncDisposable, IDisposable
             _events.Enqueue(() => Connected?.Invoke());
             _ = peer.RunAsync(
                 frame => _events.Enqueue(() => MessageReceived?.Invoke(
-                    new NetworkMessage(0, frame.Channel, frame.Payload))),
+                    new NetworkMessage(0, frame.Channel, frame.Payload)), frame.Payload.Length),
                 exception => OnClosed(peer, exception));
         }
         catch
@@ -62,6 +63,12 @@ public sealed class NetworkClient : IAsyncDisposable, IDisposable
     {
         if (maxEvents < 1)
             throw new ArgumentOutOfRangeException(nameof(maxEvents));
+        if (_events.Overflowed)
+        {
+            Dispose();
+            _events.Clear();
+            throw new IOException("Network receive queue exceeded 1024 events or 16 MiB; transport closed. Create a new instance to reconnect.");
+        }
         var count = 0;
         while (count < maxEvents && _events.TryDequeue(out var callback))
         {

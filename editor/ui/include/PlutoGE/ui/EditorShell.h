@@ -1,3 +1,4 @@
+#include "PlutoGE/ui/TimelinePreview.h"
 #pragma once
 
 #include "PlutoGE/ui/EntitySelection.h"
@@ -249,6 +250,7 @@ namespace PlutoGE::ui
         void Log(ConsoleSeverity severity, std::string message);
         std::vector<ConsoleMessage> GetConsoleMessages() const;
         void ClearConsoleMessages();
+        TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
         void MarkSceneDirty();
         void MarkProjectDirty();
         [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
@@ -375,6 +377,7 @@ namespace PlutoGE::ui
         std::string m_activeAnimationClipAssetReference;
         std::string m_activeParticleSystemAssetReference;
         std::string m_activeInputMappingAssetReference;
+        TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;

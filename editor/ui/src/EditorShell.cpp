@@ -2070,6 +2070,7 @@ namespace PlutoGE::ui
 
     void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs)
     {
+        m_timelinePreview.Stop();
         CancelSceneEdit();
         if (updatePrefabs) m_recoveredSceneNeedsSaveAs = false;
         if (m_engine.IsRuntimeRunning())
@@ -3252,6 +3253,18 @@ namespace PlutoGE::ui
                 }
             }
 
+            std::unique_ptr<scene::ScopedTimelinePose> timelinePose;
+            if (m_scene && !isBakeRunning && !m_engine.IsRuntimeRunning())
+            {
+                timelinePose = m_timelinePreview.RenderPose(*m_scene, deltaSeconds);
+                if (timelinePose)
+                {
+                    renderer.ClearRenderCommands();
+                    m_scene->SubmitRenderCommands();
+                }
+            }
+            else m_timelinePreview.Stop();
+
             core::CpuScope viewportScope("Viewport.Render", core::CpuCategory::Rendering);
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
@@ -3324,6 +3337,7 @@ namespace PlutoGE::ui
                 frameTimingStats.rhiSceneTimingStats = m_editorSceneRenderService->GetTimingStats();
             }
 
+            timelinePose.reset(); // Authoring state is restored before any UI, save or history work.
             renderer.ClearRenderCommands();
 
             // UI

@@ -490,7 +490,8 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
         [[nodiscard]] rhi::Texture &AcquirePostProcessTarget(std::size_t index,
                                                             std::uint32_t width,
-                                                            std::uint32_t height);
+                                                            std::uint32_t height,
+                                                            rhi::Format format = rhi::Format::R16G16B16A16Float);
         void EnsureShadowTargets(const BasicLighting &lighting);
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
         VirtualShadowShaders m_virtualShadowShaders;
@@ -514,6 +515,7 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_volumetricTracePipelines;
         rhi::GraphicsPipeline m_volumetricCompositePipeline;
+        rhi::GraphicsPipeline m_oceanVolumeDepthPipeline;
         rhi::GraphicsPipeline m_fusedColorPipeline;
         std::vector<rhi::Buffer> m_fusedColorBuffers;
         rhi::Buffer m_cameraBuffer;
@@ -557,7 +559,13 @@ namespace PlutoGE::render
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
         // screen-tile corruption. Keep one stable output per ordinary pass.
         std::vector<rhi::Texture> m_postProcessPassTargets;
-        std::vector<rhi::Extent2D> m_postProcessPassTargetSizes;
+        struct PostProcessTargetDescription
+        {
+            rhi::Extent2D size;
+            rhi::Format format = rhi::Format::Undefined;
+            bool operator==(const PostProcessTargetDescription &) const = default;
+        };
+        std::vector<PostProcessTargetDescription> m_postProcessPassTargetDescriptions;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;

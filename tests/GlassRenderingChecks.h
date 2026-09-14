@@ -115,6 +115,12 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const auto unfoggedSurface = render(glowingDraws);
     const auto foggedSurface = render(glowingDraws, fogEffects);
     require(foggedSurface[0] + 40 < unfoggedSurface[0], "Glass surface emission bypassed fog");
+    fogEffect.parameters[1].z = .1f;
+    const std::array shortDetailEffects{fogEffect};
+    const auto distantFoggedSurface = render(glowingDraws, shortDetailEffects);
+    for (int c = 0; c < 3; ++c)
+        require(std::abs(distantFoggedSurface[c] - foggedSurface[c]) <= 3,
+                "Glass fog stopped at shadow detail distance");
     auto reflectivePane = pane;
     reflectivePane.model[3].z = .9f;
     reflectivePane.ior = 1.5f;

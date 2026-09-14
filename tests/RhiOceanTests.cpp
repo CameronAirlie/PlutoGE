@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string_view>
+#include <algorithm>
 void Check(bool ok,const char *message){if(!ok)throw std::runtime_error(message);}
 int main(int argc,char **argv) try
 {
@@ -106,6 +107,52 @@ int main(int argc,char **argv) try
         ocean->SetEnabled(false);
         Check(center(render())==masked,"Ocean fog depth ignores exclusion mask");
         ocean->SetEnabled(true);ocean->RemoveArea(0);
+    }
+    // Above the exponential fog layer, raising the camera must not quantize
+    // the ocean intersection into alternating fog-density rows.
+    {
+        const auto savedOcean = ocean->Serialize();
+        const auto savedCamera = camera;
+        const auto savedLighting = lighting;
+        auto flatOcean = savedOcean;
+        for (auto &property : flatOcean)
+            if (property.name == "WaveAmplitude") property.value = "0";
+        ocean->Deserialize(flatOcean);
+        lighting.directionalIntensity = 0;
+        lighting.ambientIntensity = 1;
+        auto altitudeFog = fog;
+        altitudeFog.parameters[0] = {1,1,1,.05f};
+        altitudeFog.parameters[1] = {.12f,0,80,1};
+        altitudeFog.parameters[2] = {0,1,0,1};
+        // With flat water and a fixed view direction, surface lighting and
+        // integrated fog should converge once the camera is above the layer.
+        const auto atHeight = [&](float height, unsigned divisor)
+        {
+            lighting.cameraPosition = {0,height,0};
+            camera.view = glm::lookAt(lighting.cameraPosition,
+                lighting.cameraPosition + glm::vec3(0,-1,-1), glm::vec3(0,1,0));
+            altitudeFog.volumetricResolutionDivisor = divisor;
+            atmosphere = {altitudeFog};
+            return render();
+        };
+        for (unsigned divisor : {1u,2u,4u})
+        {
+            const auto low = atHeight(100.f, divisor);
+            const auto high = atHeight(5000.f, divisor);
+            int maximumDifference = 0;
+            for (int y=resolution/3; y<resolution*2/3; ++y)
+                for (int x=resolution/3; x<resolution*2/3; ++x)
+                {
+                    const auto pixel = (y*resolution+x)*4;
+                    maximumDifference = std::max(maximumDifference,
+                        std::abs(int(low[pixel])-int(high[pixel])));
+                }
+            std::cout << "Ocean fog altitude difference (divisor " << divisor << "): " << maximumDifference << '\n';
+            Check(maximumDifference <= 3, "Ocean fog develops altitude-dependent depth quantization bands");
+        }
+        ocean->Deserialize(savedOcean);
+        camera = savedCamera;
+        lighting = savedLighting;
     }
     atmosphere.clear();
     ocean->Update(.8f);const auto waves=render();Check(waves!=wet,"Ocean waves do not animate");

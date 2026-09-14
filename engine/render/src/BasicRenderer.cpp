@@ -610,7 +610,8 @@ namespace PlutoGE::render
                 m_displayPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(displayDescriptor));
             }
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
-                                                       const char *debugName, BasicPostProcessEffectType type)
+                                                       const char *debugName, BasicPostProcessEffectType type,
+                                                       rhi::Format outputFormat = rhi::Format::R16G16B16A16Float)
             {
                 rhi::GraphicsPipelineDescriptor postDescriptor;
                 postDescriptor.vertexShader = vertex;
@@ -621,7 +622,7 @@ namespace PlutoGE::render
                 // precision during camera motion.
                 postDescriptor.colorFormat = type == BasicPostProcessEffectType::TAA
                                                  ? rhi::Format::R32G32B32A32Float
-                                                 : rhi::Format::R16G16B16A16Float;
+                                                 : outputFormat;
                 postDescriptor.resourceBindings = {
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
@@ -686,6 +687,10 @@ namespace PlutoGE::render
                 m_postProcessPipelines[index] = createPostProcessPipeline(
                     shaders.postProcess[index].vertex, shaders.postProcess[index].fragment, debugNames[index],
                     static_cast<BasicPostProcessEffectType>(index));
+                if (static_cast<BasicPostProcessEffectType>(index) == BasicPostProcessEffectType::Ocean)
+                    m_oceanVolumeDepthPipeline = createPostProcessPipeline(
+                        shaders.postProcess[index].vertex, shaders.postProcess[index].fragment,
+                        "Ocean volume distance", BasicPostProcessEffectType::Ocean, rhi::Format::R32Float);
             }
             const auto hasShader = [](const BasicPostProcessShaderPackage &shader)
             {
@@ -1007,7 +1012,7 @@ namespace PlutoGE::render
         for (auto &target : m_postProcessTargets)
             target.Reset();
         m_postProcessPassTargets.clear();
-        m_postProcessPassTargetSizes.clear();
+        m_postProcessPassTargetDescriptions.clear();
         for (auto &target : m_taaHistoryTargets)
             target.Reset();
         for (auto &target : m_exposureHistoryTargets)
@@ -1024,6 +1029,7 @@ namespace PlutoGE::render
         m_fusedColorPipeline.Reset();
         m_fusedColorBuffers.clear();
         m_volumetricCompositePipeline.Reset();
+        m_oceanVolumeDepthPipeline.Reset();
         for (auto &pipeline : m_volumetricTracePipelines)
             pipeline.Reset();
         m_particleDepthCopy.Reset();
@@ -1223,7 +1229,7 @@ namespace PlutoGE::render
                                                     {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "G-buffer debug", true}));
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
-        m_postProcessPassTargetSizes.clear();
+        m_postProcessPassTargetDescriptions.clear();
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
                                                                      {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
@@ -2386,7 +2392,7 @@ namespace PlutoGE::render
             // accumulating the nearest surface across all enabled oceans.
             const bool writeOceanDepth = effect.type == BasicPostProcessEffectType::Ocean && needsOceanVolumeDepth;
             const auto depthDestination = writeOceanDepth
-                ? AcquirePostProcessTarget(targetIndex++, passWidth, passHeight).Get() : rhi::TextureHandle{};
+                ? AcquirePostProcessTarget(targetIndex++, passWidth, passHeight, rhi::Format::R32Float).Get() : rhi::TextureHandle{};
             for (int drawPass = 0; drawPass < (writeOceanDepth ? 2 : 1); ++drawPass)
             {
                 if (drawPass == 1)
@@ -2401,7 +2407,7 @@ namespace PlutoGE::render
                 postInfo.height = passHeight;
                 postInfo.clearDepth = false;
                 commands.BeginRendering(postInfo);
-                commands.BindPipeline(pipeline);
+                commands.BindPipeline(drawPass == 1 ? m_oceanVolumeDepthPipeline.Get() : pipeline);
                 commands.BindUniformBuffer(0, drawParameterBuffer);
                 if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
                 commands.BindTexture(1, drawPass == 1 && oceanVolumeDepth ? oceanVolumeDepth : m_outputColor, m_screenSampler.Get());
@@ -2510,22 +2516,23 @@ namespace PlutoGE::render
 
     rhi::Texture &BasicRenderer::AcquirePostProcessTarget(std::size_t index,
                                                           std::uint32_t width,
-                                                          std::uint32_t height)
+                                                          std::uint32_t height,
+                                                          rhi::Format format)
     {
         while (m_postProcessPassTargets.size() <= index)
         {
             m_postProcessPassTargets.emplace_back();
-            m_postProcessPassTargetSizes.emplace_back();
+            m_postProcessPassTargetDescriptions.emplace_back();
         }
-        const rhi::Extent2D requested{width, height};
-        if (!m_postProcessPassTargets[index] || m_postProcessPassTargetSizes[index] != requested)
+        const PostProcessTargetDescription requested{{width, height}, format};
+        if (!m_postProcessPassTargets[index] || m_postProcessPassTargetDescriptions[index] != requested)
         {
             m_postProcessPassTargets[index] = rhi::Texture(
                 *m_device, m_device->CreateTexture(
-                               {width, height, rhi::Format::R16G16B16A16Float,
+                               {width, height, format,
                                 rhi::TextureUsage::ColorAttachment,
                                 "Post-process pass output " + std::to_string(index), true}));
-            m_postProcessPassTargetSizes[index] = requested;
+            m_postProcessPassTargetDescriptions[index] = requested;
         }
         return m_postProcessPassTargets[index];
     }
@@ -2574,6 +2581,7 @@ namespace PlutoGE::render
         parameters.inverseViewProjection = m_inverseViewProjection;
         parameters.view = m_postProcessView;
         parameters.parameters[5] = {static_cast<float>(traceWidth), static_cast<float>(traceHeight), 0, 0};
+        parameters.inverseResolution = {1.0f / m_postProcessWidth, 1.0f / m_postProcessHeight};
         parameters.parameters[4].x = oceanVolumeDepth ? 1.0f : 0.0f;
         auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));

@@ -191,6 +191,10 @@ int main()
     SSGIEffect ssgi;
     SSREffect ssr;
     VolumetricFogEffect fog;
+    fog.SetParameters({PostProcessParameter{.name = "Max Distance", .value = "37"}});
+    if (!Near(fog.GetSettings().shadowDetailDistance, 37.f))
+        return 12;
+    fog.SetParameters({PostProcessParameter{.name = "Shadow Detail Distance", .value = "24"}});
     SceneCompositeEffect composite;
     const auto ssaoPacket = AdaptPostProcessEffect(ssao);
     const auto ssgiPacket = AdaptPostProcessEffect(ssgi);
@@ -207,6 +211,8 @@ int main()
         ssrPacket->type != BasicPostProcessEffectType::SSR ||
         fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
         !Near(fogPacket->parameters[3].x, 2.0f) ||
+        !Near(fogPacket->parameters[1].z, 24.0f) ||
+        !Near(fogPacket->parameters[2].w, 1.0f) ||
         compositePacket->type != BasicPostProcessEffectType::SceneComposite)
         return 12;
 

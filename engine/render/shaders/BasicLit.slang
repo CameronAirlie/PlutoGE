@@ -188,6 +188,8 @@ float3 sampleGlassBackground(float2 uv, float2 originalUv, float surfaceDepth)
 static const float PI = 3.14159265359;
 
 #include "PhysicalSkyEnvironment.slang"
+#include "FogEnvironment.slang"
+#include "FogIntegration.slang"
 
 float sampleConventionalShadowCascade(int cascade, float2 uv)
 {
@@ -437,7 +439,7 @@ float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, f
     return visibility / max(totalWeight, 0.000001);
 }
 
-float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBias)
+float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBias, bool fadeFogCoverage = false)
 {
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
     const float3 shadowCoord = lightClip.xyz / lightClip.w;
@@ -446,8 +448,12 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBia
         shadowUv.y = 1.0 - shadowUv.y;
     if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) || shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
         return 1.0;
-    return compareShadowCascade(cascade, shadowUv,
+    const float visibility = compareShadowCascade(cascade, shadowUv,
                                 shadowCoord.z * shadowDepthScale + shadowDepthBias - depthBias);
+    const float edge = min(min(min(shadowUv.x, 1.0 - shadowUv.x),
+                              min(shadowUv.y, 1.0 - shadowUv.y)),
+                              min(shadowCoord.z, 1.0 - shadowCoord.z));
+    return fadeFogCoverage ? lerp(1.0, visibility, smoothstep(0.0, 0.05, edge)) : visibility;
 }
 
 // Exact unpolarized air/dielectric Fresnel, including index-matched glass.
@@ -471,38 +477,55 @@ float4 glassAtmosphere(float3 worldPosition)
     const float distance = length(ray);
     const float3 direction = ray / max(distance, 0.0001);
     const int steps = clamp((int)glassFog[3].x, 1, 64);
-    const float stepLength = min(distance, max(glassFog[1].z, 0.001)) / steps;
+    float detailDistance = max(glassFog[1].z, 0.001);
+    if (shadowsEnabled != 0 && shadowCascadeParameters.w <= 0.5)
+    {
+        const int count = clamp((int)shadowCascadeParameters.x, 1, 4);
+        const float viewScale = max(-mul((float3x3)view, direction).z, 0.0001);
+        detailDistance = min(detailDistance, max(shadowCascadeSplits[count - 1], 0.001) / viewScale);
+    }
+    const float marchDistance = min(distance, detailDistance);
+    const float stepLength = marchDistance / steps;
     const float g = clamp(glassFog[2].x, -0.85, 0.85);
     const float cosine = dot(direction, normalize(-directionalDirectionIntensity.xyz));
-    const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5);
+    const float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5));
     const float3 ambientLight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
-        max(glassFog[2].y, 0.0) * max(cameraPositionAmbient.w, 0.12);
+        max(glassFog[2].y, 0.0) * fogEnvironmentLighting(cameraPositionAmbient.w);
     const float3 sunlight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
         max(glassFog[2].z, 0.0) * max(directionalColor.rgb, 0.0) * max(directionalDirectionIntensity.w, 0.0) * phase;
     float transmittance = 1.0;
     float3 radiance = 0.0;
     for (int i = 0; i < steps; ++i)
     {
-        const float3 position = cameraPositionAmbient.xyz + direction * ((i + 0.5) * stepLength);
-        const float density = max(glassFog[0].w, 0.0) * exp(clamp(-max(glassFog[1].x, 0.0) * (position.y - glassFog[1].y), -8.0, 8.0));
+        const float sampleDistance = (i + 0.5) * stepLength;
+        const float3 position = cameraPositionAmbient.xyz + direction * sampleDistance;
+        const float opticalDepth = heightFogOpticalDepth(glassFog[0].w, glassFog[1].x,
+            glassFog[1].y, cameraPositionAmbient.y + direction.y * (i * stepLength), direction.y, stepLength);
         float visibility = 1.0;
         if (shadowsEnabled != 0 && any(sunlight > 0.0))
         {
             if (shadowCascadeParameters.w > 0.5)
-                visibility = virtualShadowVolumeVisibility(vsm, virtualShadowAtlas, virtualShadowTable, position);
+                visibility = virtualShadowFogVisibility(vsm, virtualShadowAtlas, virtualShadowTable, position);
             else
             {
             const float depth = -mul(view, float4(position, 1)).z;
             const int count = clamp((int)shadowCascadeParameters.x, 1, 4);
             int cascade = 0;
             while (cascade + 1 < count && depth > shadowCascadeSplits[cascade]) ++cascade;
-            visibility = depth > shadowCascadeSplits[count - 1] ? 0.0 : evaluateShadowCascadeTap(cascade, position, 0.0015);
+            visibility = depth >= shadowCascadeSplits[count - 1] ? 1.0 : evaluateShadowCascadeTap(cascade, position, 0.0015, true);
+            visibility = lerp(1.0, visibility, fogShadowWeight(depth, max(shadowCascadeSplits[count - 1], 0.001)));
             }
         }
-        const float segment = exp(-density * stepLength);
+        visibility = lerp(1.0, visibility, fogShadowWeight(sampleDistance, detailDistance));
+        const float segment = exp(-opticalDepth);
         radiance += transmittance * (1.0 - segment) * (ambientLight + sunlight * visibility);
         transmittance *= segment;
     }
+    const float tailDepth = heightFogOpticalDepth(glassFog[0].w, glassFog[1].x, glassFog[1].y,
+        cameraPositionAmbient.y + direction.y * marchDistance, direction.y, max(distance - marchDistance, 0.0));
+    const float tailTransmittance = exp(-tailDepth);
+    radiance += transmittance * (1.0 - tailTransmittance) * (ambientLight + sunlight);
+    transmittance *= tailTransmittance;
     const float opacity = min(1.0 - transmittance, saturate(glassFog[2].w));
     return float4(radiance * opacity / max(1.0 - transmittance, 0.0001), 1.0 - opacity);
 }

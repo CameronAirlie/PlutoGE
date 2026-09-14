@@ -28,14 +28,14 @@ namespace PlutoGE::render
         struct Settings
         {
             glm::vec3 color;
-            float density, heightFalloff, heightOffset, maxDistance, scattering;
+            float density, heightFalloff, heightOffset, shadowDetailDistance, scattering;
             float anisotropy, ambientContribution, directionalContribution, maxOpacity;
             int stepCount, shadowStepStride;
             bool halfResolution;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
-            return {m_fogColor, m_density, m_heightFalloff, m_heightOffset, m_maxDistance,
+            return {m_fogColor, m_density, m_heightFalloff, m_heightOffset, m_shadowDetailDistance,
                     m_scattering, m_anisotropy, m_ambientContribution,
                     m_directionalContribution, m_maxOpacity, m_stepCount,
                     m_shadowStepStride, m_halfResolution};
@@ -60,12 +60,14 @@ namespace PlutoGE::render
         float m_density = 0.035f;
         float m_heightFalloff = 0.12f;
         float m_heightOffset = 0.0f;
-        float m_maxDistance = 80.0f;
+        // Bounds shadow sampling only; height fog continues analytically to
+        // the surface or infinity. SetParameters accepts legacy "Max Distance".
+        float m_shadowDetailDistance = 80.0f;
         float m_scattering = 0.65f;
         float m_anisotropy = 0.2f;
         float m_ambientContribution = 1.0f;
         float m_directionalContribution = 6.0f;
-        float m_maxOpacity = 0.92f;
+        float m_maxOpacity = 1.0f;
         int m_stepCount = 16;
         int m_shadowStepStride = 2;
         int m_internalWidth = 0;

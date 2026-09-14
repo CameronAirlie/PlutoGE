@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
+#include "FogIntegration.h"
 
 namespace PlutoGE::render
 {
@@ -149,9 +150,9 @@ namespace PlutoGE::render
                 .value = std::to_string(m_heightOffset),
             },
             PostProcessParameter{
-                .name = "Max Distance",
+                .name = "Shadow Detail Distance",
                 .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_maxDistance),
+                .value = std::to_string(m_shadowDetailDistance),
             },
             PostProcessParameter{
                 .name = "Scattering",
@@ -228,9 +229,9 @@ namespace PlutoGE::render
             {
                 m_heightOffset = std::stof(parameter.value);
             }
-            else if (parameter.name == "Max Distance")
+            else if ((parameter.name == "Shadow Detail Distance" || parameter.name == "Max Distance"))
             {
-                m_maxDistance = std::max(std::stof(parameter.value), 0.1f);
+                m_shadowDetailDistance = std::max(std::stof(parameter.value), 0.1f);
             }
             else if (parameter.name == "Scattering")
             {
@@ -331,7 +332,7 @@ namespace PlutoGE::render
             uniform float uFogDensity;
             uniform float uHeightFalloff;
             uniform float uHeightOffset;
-            uniform float uMaxDistance;
+            uniform float uShadowDetailDistance;
             uniform float uScattering;
             uniform float uAnisotropy;
             uniform float uAmbientContribution;
@@ -379,19 +380,6 @@ namespace PlutoGE::render
                 vec4 viewPosition = uInverseProjectionMatrix * clipPosition;
                 viewPosition /= max(viewPosition.w, 0.0001);
                 return (uInverseViewMatrix * vec4(viewPosition.xyz, 1.0)).xyz;
-            }
-
-            float ComputeOpticalDepth(vec3 startPosition, vec3 rayDirection, float stepLength)
-            {
-                float falloff = max(uHeightFalloff, 0.0);
-                float span = abs(falloff * rayDirection.y * stepLength);
-                float average = span < 0.001
-                    ? 1.0 - span * 0.5 + span * span / 6.0
-                    : (1.0 - exp(-span)) / span;
-                float denseHeight = min(startPosition.y, startPosition.y + rayDirection.y * stepLength);
-                float logDepth = log(max(uFogDensity, 1e-30)) + log(stepLength) +
-                    log(average) - falloff * (denseHeight - uHeightOffset);
-                return exp(clamp(logDepth, -80.0, 80.0));
             }
 
             float ComputePhase(float cosTheta)
@@ -466,7 +454,10 @@ namespace PlutoGE::render
                     return 0.0;
                 }
 
-                return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords);
+                float edge = min(min(min(projectedCoords.x, 1.0 - projectedCoords.x),
+                                     min(projectedCoords.y, 1.0 - projectedCoords.y)),
+                                     min(projectedCoords.z, 1.0 - projectedCoords.z));
+                return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords) * smoothstep(0.0, 0.05, edge);
             }
 
             float ComputeDirectionalLightShadow(vec3 worldPosition, float viewDepth)
@@ -478,10 +469,7 @@ namespace PlutoGE::render
 
                 if (viewDepth > uCascadeSplits[uCascadeCount - 1])
                 {
-                    // There is no occlusion information beyond the final
-                    // cascade. Treating that region as fully visible creates
-                    // a bright ring of sun-lit fog at the shadow horizon.
-                    return 1.0;
+                    return 0.0;
                 }
 
                 int cascadeIndex = SelectDirectionalCascadeIndex(viewDepth);
@@ -489,7 +477,7 @@ namespace PlutoGE::render
                 float shadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex, hasCascadeCoverage);
                 if (!hasCascadeCoverage)
                 {
-                    return 1.0;
+                    return 0.0;
                 }
 
                 if (cascadeIndex < uCascadeCount - 1)
@@ -508,18 +496,7 @@ namespace PlutoGE::render
                     }
                 }
 
-                // Fade visibility into the end of the final shadow cascade.
-                // This avoids a hard transition to the conservative
-                // no-coverage result while preventing distant fog from being
-                // assumed to receive unobstructed sunlight.
-                if (cascadeIndex == uCascadeCount - 1)
-                {
-                    float splitDistance = uCascadeSplits[cascadeIndex];
-                    float fadeDistance = max(uCascadeBlendDistance, splitDistance * 0.05);
-                    float fadeStart = max(splitDistance - fadeDistance, 0.0);
-                    float coverageFade = clamp((viewDepth - fadeStart) / max(fadeDistance, 0.0001), 0.0, 1.0);
-                    shadow = mix(shadow, 1.0, coverageFade);
-                }
+                shadow *= fogShadowWeight(viewDepth, max(uCascadeSplits[uCascadeCount - 1], 0.001));
 
                 return shadow;
             }
@@ -533,19 +510,19 @@ namespace PlutoGE::render
                 }
 
                 float sceneDepth = texture(uSceneDepthTexture, UV).r;
-                bool isSky = sceneDepth <= 0.000001;
+                bool isSky = sceneDepth <= 0.0;
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 fogTint = max(uFogColor, vec3(0.0));
                 vec3 ambientFogColor = texture(uFogAmbientTexture, vec2(0.5)).rgb;
 
-                float hitDistance = uMaxDistance;
+                float hitDistance = uShadowDetailDistance;
                 // PlutoGE uses reversed-Z: cleared sky is zero and geometry is
                 // greater than zero. Reconstructing a zero-depth sky sample as
                 // a surface collapses its march distance and leaves it unfogged.
-                if (sceneDepth > 0.000001)
+                if (sceneDepth > 0.0)
                 {
                     vec3 surfacePosition = ReconstructWorldPosition(UV, sceneDepth);
-                    hitDistance = min(distance(surfacePosition, uCameraPosition), uMaxDistance);
+                    hitDistance = distance(surfacePosition, uCameraPosition);
                 }
 
                 if (hitDistance <= 0.0001 || uFogDensity <= 0.0 || uStepCount <= 0)
@@ -554,15 +531,19 @@ namespace PlutoGE::render
                     return;
                 }
 
-                float stepLength = hitDistance / float(uStepCount);
+                vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                float viewDepthScale = max(dot(rayDirection, cameraForward), 0.0001);
+                float detailDistance = uShadowDetailDistance;
+                if (uCascadeCount > 0)
+                    detailDistance = min(detailDistance, max(uCascadeSplits[uCascadeCount - 1], 0.001) / viewDepthScale);
+                float marchDistance = isSky ? detailDistance : min(hitDistance, detailDistance);
+                float stepLength = marchDistance / float(uStepCount);
                 // A regular midpoint march stamps the same shadow silhouette
                 // at every depth plane. Use this as the seed for a stratified
                 // low-discrepancy sequence below instead of shifting the whole
                 // regular lattice by one shared offset.
                 float frameIndex = uTemporalSampling != 0 ? uFrameIndex : 0.0;
                 float rayJitter = PixelJitter(gl_FragCoord.xy, frameIndex);
-                vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
-                float viewDepthScale = max(dot(rayDirection, cameraForward), 0.0);
                 vec3 accumulatedLight = vec3(0.0);
                 float transmittance = 1.0;
                 float directionalInscattering = uHasDirectionalLight != 0
@@ -583,7 +564,7 @@ namespace PlutoGE::render
                     float sampleDistance = float(stepIndex) * stepLength;
                     vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
                     float sampleViewDepth = viewDepthScale * sampleDistance;
-                    float extinction = ComputeOpticalDepth(samplePosition, rayDirection, stepLength);
+                    float extinction = heightFogOpticalDepth(uFogDensity, uHeightFalloff, uHeightOffset, samplePosition.y, rayDirection.y, stepLength);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
                     // Shadow lookups dominate this ray march. Adjacent samples
@@ -595,7 +576,7 @@ namespace PlutoGE::render
                     {
                         float shadowDistance = (float(stepIndex) + cellJitter) * stepLength;
                         vec3 shadowPosition = uCameraPosition + rayDirection * shadowDistance;
-                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(shadowPosition, viewDepthScale * shadowDistance);
+                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(shadowPosition, viewDepthScale * shadowDistance) * fogShadowWeight(shadowDistance, detailDistance);
                     }
                     // Environment radiance is already the incident ambient
                     // light. Do not attenuate it a second time based on the
@@ -610,7 +591,7 @@ namespace PlutoGE::render
                     accumulatedLight += transmittance * segmentFog * fogLighting;
                     transmittance *= segmentTransmittance;
 
-                    if (transmittance <= 0.001)
+                    if (transmittance <= 0.000001)
                     {
                         // Below this threshold the remaining source radiance is
                         // negligible. Resolve it to fully opaque so very bright
@@ -619,6 +600,16 @@ namespace PlutoGE::render
                         break;
                     }
                 }
+
+                float tailHeight = uCameraPosition.y + rayDirection.y * marchDistance;
+                float tailDepth = isSky
+                    ? infiniteHeightFogOpticalDepth(uFogDensity, uHeightFalloff, uHeightOffset, tailHeight, rayDirection.y)
+                    : heightFogOpticalDepth(uFogDensity, uHeightFalloff, uHeightOffset, tailHeight, rayDirection.y, max(hitDistance - marchDistance, 0.0));
+                float tailTransmittance = exp(-tailDepth);
+                vec3 tailLighting = ambientFogColor * uAmbientContribution + fogTint *
+                    uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution;
+                accumulatedLight += transmittance * (1.0 - tailTransmittance) * tailLighting;
+                transmittance *= tailTransmittance;
 
                 float totalFog = Saturate(1.0 - transmittance);
                 if (totalFog <= 0.0001)
@@ -633,6 +624,8 @@ namespace PlutoGE::render
             }
         )";
 
+        const auto versionEnd = source.fragmentSource.find('\n', source.fragmentSource.find("#version"));
+        source.fragmentSource.insert(versionEnd + 1, kFogIntegrationSource);
         m_shader = Shader::Create(source);
 
         ShaderSource ambientSource;
@@ -985,7 +978,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uFogDensity", std::max(m_density, 0.0f));
         m_shader->SetUniform("uHeightFalloff", std::max(m_heightFalloff, 0.0f));
         m_shader->SetUniform("uHeightOffset", m_heightOffset);
-        m_shader->SetUniform("uMaxDistance", std::max(m_maxDistance, 0.1f));
+        m_shader->SetUniform("uShadowDetailDistance", std::max(m_shadowDetailDistance, 0.1f));
         m_shader->SetUniform("uScattering", m_scattering);
         m_shader->SetUniform("uAnisotropy", m_anisotropy);
         m_shader->SetUniform("uAmbientContribution", m_ambientContribution);

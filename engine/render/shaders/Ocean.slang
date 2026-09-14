@@ -72,8 +72,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 ray = mul(pass.worldToLocal, float4(worldRay, 0)).xyz;
     float3 scenePosition = reconstructWorldPosition(uv, max(depth, 0.0000001), pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
     float sceneDistance = depth <= 0.0000001 ? 100000.0 : max(dot(scenePosition - pass.cameraPosition.xyz, worldRay), 0.0);
-    // Fog-only depth pass: reciprocal ray distance retains useful precision in
-    // an HDR target. Zero denotes sky; one stops atmospheric fog at the camera.
+    // Fog-only distance data uses R32Float, independently of HDR colour targets.
+    // Half precision quantizes the reconstructed water height at high altitude.
+    // Zero denotes sky; one stops atmospheric fog at the camera.
     bool fogDepthPass = pass.parameters[4].x > .5;
     if (fogDepthPass)
         original = float4(max(pass.parameters[4].y > .5 ? original.r : 0.0,
@@ -102,7 +103,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float bound = max(crestFoam.w, .0001);
     float lower = max(0.0, (bound-origin.y)/ray.y);
     float upper = min(sceneDistance, (-bound-origin.y)/ray.y);
-    if (upper <= lower) return original;
+    // A flat sea's tiny wave envelope can collapse to one representable distance
+    // at high altitude. That is a valid plane hit, not missing water coverage.
+    if (upper < lower) return original;
     float distance = clamp(-origin.y/ray.y, lower, upper);
     float3 flatWorld = pass.cameraPosition.xyz+worldRay*distance;
     float wallContact = oceanWallContact(flatWorld);

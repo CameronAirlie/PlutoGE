@@ -24,3 +24,17 @@ float virtualShadowVolumeVisibility(VirtualShadowParameters parameters,
     // Volumes default to conservative darkness; surfaces may stay lit outside coverage.
     return missingVisibility;
 }
+
+// Fog treats absent residency as unknown/unshadowed. Fade the outer clipmap's
+// spatial coverage before exiting it; cloud visibility keeps its own policy.
+float virtualShadowFogVisibility(VirtualShadowParameters parameters,
+                                Sampler2D atlas, Sampler2D table, float3 world)
+{
+    const float3 coordinate = virtualCoordinate(parameters, PLUTO_VSM_LEVELS - 1, world);
+    const float edge = min(min(min(coordinate.x, 1.0 - coordinate.x),
+                               min(coordinate.y, 1.0 - coordinate.y)),
+                               min(coordinate.z, 1.0 - coordinate.z));
+    const float weight = smoothstep(0.0, 0.1, edge);
+    if (weight <= 0.0) return 1.0;
+    return lerp(1.0, virtualShadowVolumeVisibility(parameters, atlas, table, world, 1.0), weight);
+}

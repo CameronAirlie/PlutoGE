@@ -1,0 +1,7 @@
+#pragma once
+namespace PlutoGE::render
+{
+inline constexpr const char *kFogIntegrationSource = R"GLSL(
+@PLUTO_FOG_INTEGRATION_SOURCE@
+)GLSL";
+}

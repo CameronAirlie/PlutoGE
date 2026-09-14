@@ -236,7 +236,7 @@ namespace PlutoGE::render
                 result.quality = static_cast<std::uint32_t>(settings.stepCount);
                 result.parameters[0] = {settings.color, settings.density};
                 result.parameters[1] = {settings.heightFalloff, settings.heightOffset,
-                                        settings.maxDistance, settings.scattering};
+                                        settings.shadowDetailDistance, settings.scattering};
                 result.parameters[2] = {settings.anisotropy, settings.ambientContribution,
                                         settings.directionalContribution, settings.maxOpacity};
                 result.parameters[3].x = static_cast<float>(settings.shadowStepStride);

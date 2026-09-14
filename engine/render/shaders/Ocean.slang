@@ -9,7 +9,7 @@
 {
     column_major float4x4 localToWorld;
     float4 shallowOpacity, deepSmoothness, foamVisibility, waves;
-    float4 underwater, surface, sunDirectionTime, sunColorIntensity;
+    float4 underwater, surface, sunDirectionTime, crestTintStyle;
     int4 mask;
     int4 areaCounts[8];
     float4 points[256];
@@ -52,6 +52,12 @@ float3 waterTransmission(float path)
     float cutoff = 1.0-smoothstep(fadeStart,fadeEnd,ratio);
     return exp(-float3(2.2,1.4,.8)*ratio*max(surface.w,0.0)*max(underwater.z,0.0))*cutoff;
 }
+// Fade displacement below its useful screen-space scale at grazing distances.
+// Keep the full wave normals for reflection detail; CPU gameplay sampling stays camera-independent.
+float oceanDisplacementLod(float distance)
+{
+    return 1.0-smoothstep(max(waves.y*3.0,60.0),max(waves.y*12.0,240.0),distance);
+}
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
@@ -93,17 +99,18 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     {
         float3 hit = origin + ray * distance;
         wave = sampleWaves(hit.xz);
-        float residual = hit.y-wave.height;
+        float displacementLod = oceanDisplacementLod(distance);
+        float residual = hit.y-wave.height*displacementLod;
         if (abs(residual) < .0005) break;
         if (residual > 0) lower = distance; else upper = distance;
-        float derivative = ray.y-dot(wave.gradient,ray.xz);
+        float derivative = ray.y-dot(wave.gradient,ray.xz)*displacementLod;
         float candidate = distance-residual/(abs(derivative)>.00001 ? derivative : -.00001);
         distance = candidate > lower && candidate < upper ? candidate : (lower+upper)*.5;
     }
     if (distance <= 0 || distance >= sceneDistance) return original;
     float3 localHit = origin + ray * distance;
     wave = sampleWaves(localHit.xz);
-    if (abs(localHit.y-wave.height) > .02 || !waterAt(localHit.xz)) return original;
+    if (abs(localHit.y-wave.height*oceanDisplacementLod(distance)) > .02 || !waterAt(localHit.xz)) return original;
     float dx = wave.gradient.x, dz = wave.gradient.y;
     // Small wind ripples enrich close reflections and fade before becoming subpixel noise.
     float rippleFade = (1.0-smoothstep(20.0, 100.0, distance)) * saturate(abs(waves.x)*5.0);
@@ -122,6 +129,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 ambient = oceanAmbient(normal);
     float3 irradiance = ambient + sunlight * saturate(dot(normal, lightDirection)) / PI;
     float3 tint = lerp(shallowOpacity.xyz, deepSmoothness.xyz, factor) * irradiance;
+    // Art-directed crest/trough separation keeps rolling swells legible even over deep water.
+    float swellHeight = wave.height / max(waves.x,.001);
+    float crestBand = smoothstep(-.08,.42,swellHeight);
+    float facing = saturate(dot(normal,lightDirection)*.5+.5);
+    float3 seaColor = lerp(deepSmoothness.rgb*.65,shallowOpacity.rgb,smoothstep(-.4,.18,swellHeight));
+    seaColor = lerp(seaColor,crestTintStyle.rgb,crestBand*(.35+.45*facing));
+    float3 stylizedTint = seaColor * (ambient + sunlight*(.2+.8*facing)/PI);
+    tint = lerp(tint,stylizedTint,saturate(crestTintStyle.w));
     // Forward scattering makes illuminated wave crests glow without emitting light at night.
     float crest = saturate(localHit.y / max(abs(waves.x), .001)) * (1.0-factor*.5);
     tint += shallowOpacity.rgb * sunlight * crest * pow(saturate(dot(worldRay, lightDirection)), 4.0) * .35;
@@ -148,7 +163,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float variance = dot(ddx(normal), ddx(normal)) + dot(ddy(normal), ddy(normal));
     float roughness = clamp(sqrt(pow(1.0-saturate(deepSmoothness.w), 2.0) + variance), .06, 1.0);
     float3 reflection = oceanEnvironment(reflectedDirection, roughness, ambient);
-    float3 specular = sunlight * oceanSunSpecular(normal, -worldRay, lightDirection, roughness);
+    float3 specular = sunlight * oceanSunSpecular(normal, -worldRay, lightDirection, roughness) * (1.0+.5*crestTintStyle.w);
     float3 color = refracted * (1.0-fresnel) + reflection * fresnel + specular;
     float shoreDepth = depth > .0000001 ? max(wave.height-bottomLocal.y, 0.0) : foamVisibility.w*100.0;
     float shore = (1.0-smoothstep(0.0,max(surface.y,.001),shoreDepth)) * max(surface.z,0.0);

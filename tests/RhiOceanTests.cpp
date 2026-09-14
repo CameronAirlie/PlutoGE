@@ -19,12 +19,13 @@ int main(int argc,char **argv) try
 {
     using namespace PlutoGE;
     const bool vulkan=argc>1&&std::string_view(argv[1])=="--vulkan";
+    const int resolution=argc>2 ? 512 : 128;
     platform::Window window;
     std::unique_ptr<render::rhi::IRenderDevice> device;
     if(vulkan)device=std::make_unique<render::rhi::vulkan::VulkanDevice>();
     else
     {
-        Check(window.Create({.title="Ocean GPU regression",.width=128,.height=128,.visible=false}),"Window failed");
+        Check(window.Create({.title="Ocean GPU regression",.width=resolution,.height=resolution,.visible=false}),"Window failed");
         Check(window.EnsureOpenGLContextCurrent(true),"OpenGL context failed");
         device=std::make_unique<render::rhi::opengl::OpenGLDevice>();
     }
@@ -38,6 +39,8 @@ int main(int argc,char **argv) try
     shaders.maskedShadowFragment=library.Load("DirectionalShadowMasked","fragment");
     shaders.displayOutput={library.Load("DisplayOutput","vertex"),library.Load("DisplayOutput","fragment")};
     shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::Ocean)]={library.Load("Ocean","vertex"),library.Load("Ocean","fragment")};
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::PhysicalSky)]={library.Load("PhysicalSky","vertex"),library.Load("PhysicalSky","fragment")};
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::GammaCorrection)]={library.Load("GammaCorrection","vertex"),library.Load("GammaCorrection","fragment")};
     shaders.virtualShadows=library.LoadBasicRendererPackage().virtualShadows;
     render::RhiSceneRenderer renderer;Check(renderer.Initialize(*device,shaders),"Renderer initialization failed");
     scene::Scene scene;
@@ -45,12 +48,13 @@ int main(int argc,char **argv) try
     auto *ocean=owner->CreateComponent<scene::OceanComponent>();
     render::BasicLighting lighting;lighting.cameraPosition={0,5,9};lighting.directionalIntensity=2;
     render::CameraData camera{glm::lookAt(lighting.cameraPosition,glm::vec3(0),glm::vec3(0,1,0)),glm::perspective(glm::radians(60.f),1.f,100.f,.1f)};
+    std::vector<render::BasicPostProcessEffect> atmosphere;
     std::span<const render::RenderCommand> shadowCasters;
     auto render=[&](std::span<const render::RenderCommand> commands=std::span<const render::RenderCommand>{})
     {
-        Check(renderer.Render(128,128,camera,lighting,commands,shadowCasters, {}, {}, {}, render::PostProcessDebugView::None,true,&scene),"Ocean render failed");
+        Check(renderer.Render(resolution,resolution,camera,lighting,commands,shadowCasters, {}, atmosphere, {}, render::PostProcessDebugView::None,true,&scene),"Ocean render failed");
         if(vulkan)return static_cast<render::rhi::vulkan::VulkanDevice &>(*device).ReadTextureRgba8(renderer.GetColorTexture());
-        std::vector<std::byte> pixels(128*128*4);
+        std::vector<std::byte> pixels(resolution*resolution*4);
         glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(static_cast<render::rhi::opengl::OpenGLDevice &>(*device).GetTextureNativeHandle(renderer.GetColorTexture())));
         glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());return pixels;
     };
@@ -61,12 +65,12 @@ int main(int argc,char **argv) try
         const auto path=std::filesystem::path(argv[2])/(std::string(name)+".ppm");
         std::ofstream output(path,std::ios::binary);
         Check(bool(output),"Cannot write ocean review image");
-        output<<"P6\n128 128\n255\n";
-        for(int y=127;y>=0;--y)
-            for(int x=0;x<128;++x)
-                output.write(reinterpret_cast<const char*>(pixels.data()+(y*128+x)*4),3);
+        output<<"P6\n"<<resolution<<" "<<resolution<<"\n255\n";
+        for(int y=resolution-1;y>=0;--y)
+            for(int x=0;x<resolution;++x)
+                output.write(reinterpret_cast<const char*>(pixels.data()+(y*resolution+x)*4),3);
     };
-    const auto center=[](const auto &pixels){return std::array{pixels[(64*128+64)*4],pixels[(64*128+64)*4+1],pixels[(64*128+64)*4+2]};};
+    const auto center=[&](const auto &pixels){return std::array{pixels[((resolution/2)*resolution+resolution/2)*4],pixels[((resolution/2)*resolution+resolution/2)*4+1],pixels[((resolution/2)*resolution+resolution/2)*4+2]};};
     ocean->SetEnabled(false);const auto dry=render();
     ocean->SetEnabled(true);const auto wet=render();Check(center(wet)!=center(dry),"Ocean absent from RHI output");
     ocean->Update(.8f);const auto waves=render();Check(waves!=wet,"Ocean waves do not animate");
@@ -144,6 +148,26 @@ int main(int argc,char **argv) try
     lighting.physicalSkyParameters[4]={10,.53f,.1f,0};
     const auto skyLit=render();
     capture("ocean-sky",skyLit);
+    ocean->ApplyStylizedSeaPreset();
+    Check(render()!=skyLit,"Stylized sea preset has no visible effect");
+    if(argc>2)
+    {
+        const auto oldCamera=camera;const auto oldLighting=lighting;
+        lighting.cameraPosition={0,3.5f,15};
+        lighting.directionalDirection=glm::normalize(glm::vec3(-.3f,-.45f,.8f));
+        lighting.physicalSkyParameters[0]=glm::vec4(-lighting.directionalDirection,1);
+        lighting.directionalIntensity=3;
+        camera.view=glm::lookAt(lighting.cameraPosition,glm::vec3(0,0,-20),glm::vec3(0,1,0));
+        render::BasicPostProcessEffect sky{render::BasicPostProcessEffectType::PhysicalSky};
+        sky.parameters=lighting.physicalSkyParameters;atmosphere.push_back(sky);
+        atmosphere.push_back(render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection});
+        capture("ocean-stylized-sea",render());
+        lighting.cameraPosition={0,65,65};
+        camera.view=glm::lookAt(lighting.cameraPosition,glm::vec3(0),glm::vec3(0,1,0));
+        capture("ocean-distant-sea",render());
+        atmosphere.clear();camera=oldCamera;lighting=oldLighting;
+    }
+    ocean->Deserialize(originalSettings);
     lighting.physicalSkyExposure=.1f;
     Check(brightness(render())<brightness(skyLit),"Ocean ignores physical sky exposure");
     lighting.physicalSkyEnabled=false;

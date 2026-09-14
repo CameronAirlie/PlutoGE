@@ -13,7 +13,7 @@
 
 `scene/OceanWaveModel.h` is a pure, deterministic model with no graphics or entity dependencies. `OceanComponent` owns authoring settings and simulation time. `RhiOcean` translates the component into an immutable `OceanParameters` packet. `OceanWaves.slang` evaluates that packet; `Ocean.slang` handles visibility, intersections, refraction and composition; `OceanLighting.slang` owns scene-light and shadow evaluation. The inspector uses the component's serialized properties rather than maintaining a separate property list.
 
-The spectrum uses eight directional modes split between swell and wind sea, with finite-depth dispersion `omega² = g k tanh(k depth)`. A bounded second harmonic sharpens crests and broadens troughs. This is a single-valued, Stokes-style procedural height field, not an FFT spectrum, horizontally displaced Gerstner mesh, or fluid solver. Crest foam uses positive dimensionless curvature as an artistic breaking-wave indicator; it is not simulated fluid compression.
+The spectrum uses eight directional modes split between swell and wind sea, with finite-depth dispersion `omega² = g k tanh(k depth)`. A bounded second harmonic sharpens crests and broadens troughs. Nonzero directional spread also introduces smooth spatial phase bending and bounded wave-group envelopes, breaking uninterrupted parallel ridges. The CPU and GPU include their analytical gradient terms. Zero spread intentionally retains planar wave trains. Foam uses broad irregular patches as well as fine breakup so distant coverage does not form continuous rows. This is a single-valued, Stokes-style procedural height field, not an FFT spectrum, horizontally displaced Gerstner mesh, or fluid solver. Crest foam uses positive dimensionless curvature as an artistic breaking-wave indicator; it is not simulated fluid compression.
 
 ## Authoring
 
@@ -32,6 +32,14 @@ Existing Wave Amplitude, Wave Length, Wave Speed and Wave Choppiness remain avai
 | Caustics Intensity / Scale | Strength and frequency of shallow-water focusing patterns |
 
 For calm water, reduce amplitude, wind sea and ripple strength. For a rougher sea, increase amplitude and wind sea, then adjust crest-foam threshold. Set Wave Speed to zero to stop wave and surface-detail animation. Zero amplitude gives a flat displacement surface. Settings and masks survive inspector edits and scene serialization.
+
+## Stylized pirate sea
+
+Select an ocean entity and click **Apply Stylized Sea Preset** in its Ocean inspector. This applies larger rolling swells, a swell-dominated spectrum, turquoise crests, deep blue troughs, warm-white foam, and stronger glints. The action supports scene undo and marks changed prefab properties. Masks, transforms, simulation time and visibility distance are preserved.
+
+**Stylization** blends the art-directed crest/trough palette and elongated foam breakup from 0 (the existing shading) to 1. **Crest Color** controls the turquoise wave tops. Wave controls remain editable after applying the preset. Surface colors still receive scene illumination and directional shadows, so a physical sky and directional light are needed for a bright daytime sea; the preset does not modify scene lights. Deep-floor attenuation remains unchanged.
+
+The visual direction is inspired by stylized pirate-adventure seas rather than recreating a game's assets or entire rendering system. Geometry reflections, wakes, spray, and full fluid simulation remain outside this preset.
 
 ## Visibility through and within water
 

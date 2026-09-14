@@ -27,7 +27,7 @@ namespace PlutoGE::render
                     packet->underwater = {ocean->GetUnderwaterFadeStart(), ocean->GetUnderwaterFadeSoftness(), ocean->GetUnderwaterDepthFalloff(), ocean->GetUnderwaterLightFalloff()};
                     packet->surface = {ocean->GetRefractionStrength(), ocean->GetFoamDistance(), ocean->GetFoamIntensity(), ocean->GetUnderwaterTurbidity()};
                     packet->sunDirectionTime = {lighting.directionalDirection, ocean->GetSimulationTime()};
-                    packet->sunColorIntensity = {lighting.directionalColor, lighting.directionalIntensity};
+                    packet->crestTintStyle = {ocean->GetCrestColor(), ocean->GetStylization()};
                     const auto spectrum = ocean->GetWaveSpectrum();
                     static_assert(scene::OceanWaveCount == std::tuple_size_v<decltype(packet->waveShape)>);
                     packet->waveShape = spectrum.shape;

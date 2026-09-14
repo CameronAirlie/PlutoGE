@@ -25,7 +25,7 @@ namespace PlutoGE::scene
     {
         // Identical lanes are uploaded to OceanWaves.slang; no backend state lives here.
         std::array<glm::vec4, OceanWaveCount> shape{}; // direction XZ, wave number, amplitude
-        std::array<glm::vec4, OceanWaveCount> motion{}; // phase, signed frequency, crest harmonic, unused
+        std::array<glm::vec4, OceanWaveCount> motion{}; // phase, signed frequency, crest harmonic, spatial variation
         float heightBound = 0.f;
     };
 
@@ -42,7 +42,7 @@ namespace PlutoGE::scene
     {
         constexpr double tau = 6.283185307179586;
         constexpr std::array<float, OceanWaveCount> frequency{.55f,.83f,1.21f,1.73f,2.7f,4.1f,6.3f,9.2f};
-        constexpr std::array<float, OceanWaveCount> offset{-.18f,.12f,-.42f,.39f,-.78f,.66f,-1.1f,1.25f};
+        constexpr std::array<float, OceanWaveCount> offset{-.57f,.43f,-1.07f,.91f,-1.38f,1.21f,-1.77f,1.63f};
         constexpr std::array<float, OceanWaveCount> weight{.4f,.3f,.2f,.1f,.4f,.3f,.2f,.1f};
         const auto finite = [](float value, float fallback) { return std::isfinite(value) ? value : fallback; };
         const float amplitude = std::clamp(finite(settings.amplitude, .18f), 0.f, 100.f);
@@ -65,7 +65,7 @@ namespace PlutoGE::scene
             const float harmonic = std::min(.32f, choppiness * k * a * .5f);
             const float phase = static_cast<float>(std::remainder(i * 2.399963229728653 - omega * time, tau));
             result.shape[i] = {std::cos(angle), std::sin(angle), k, a};
-            result.motion[i] = {phase, omega, harmonic, 0.f};
+            result.motion[i] = {phase, omega, harmonic, spread * 2.5f};
             result.heightBound += a * (1.f + harmonic);
         }
         return result;
@@ -79,14 +79,24 @@ namespace PlutoGE::scene
             const auto &shape = spectrum.shape[i];
             const auto &motion = spectrum.motion[i];
             const glm::vec2 direction(shape.x, shape.y);
-            const float phase = glm::dot(position, direction) * shape.z + motion.x;
+            const glm::vec2 across(-direction.y,direction.x);
+            const float q = glm::dot(position,across)*shape.z*.31f + static_cast<float>(i)*1.7f;
+            const float r = glm::dot(position,direction)*shape.z*.13f + static_cast<float>(i)*.8f;
+            const glm::vec2 qGradient = across*shape.z*.31f, rGradient = direction*shape.z*.13f;
+            const float phase = glm::dot(position, direction)*shape.z + motion.x + motion.w*(std::sin(q)+.5f*std::sin(r));
+            const glm::vec2 phaseGradient = direction*shape.z + motion.w*(std::cos(q)*qGradient+.5f*std::cos(r)*rGradient);
+            const float groupPhase = q*.47f+r*.73f;
+            const float variation = .4f*std::min(motion.w,1.f);
+            const float envelope = 1.f-variation+variation*std::sin(groupPhase);
+            const glm::vec2 envelopeGradient = variation*std::cos(groupPhase)*(qGradient*.47f+rGradient*.73f);
             const float sine = std::sin(phase), cosine = std::cos(phase);
             const float cosine2 = cosine*cosine - sine*sine;
             const float derivative = cosine + 4.f*motion.z*sine*cosine;
-            result.height += shape.w * (sine - motion.z*cosine2);
-            result.gradient += direction * (shape.w*shape.z*derivative);
-            result.verticalVelocity -= shape.w*motion.y*derivative;
-            result.crest += shape.w*shape.z*(sine-4.f*motion.z*cosine2);
+            const float height = sine - motion.z*cosine2;
+            result.height += shape.w * envelope * height;
+            result.gradient += shape.w*(envelope*derivative*phaseGradient+height*envelopeGradient);
+            result.verticalVelocity -= shape.w*envelope*motion.y*derivative;
+            result.crest += shape.w*envelope*shape.z*(sine-4.f*motion.z*cosine2);
         }
         result.normal = glm::normalize(glm::vec3(-result.gradient.x, 1.f, -result.gradient.y));
         result.crest = std::max(result.crest, 0.f);

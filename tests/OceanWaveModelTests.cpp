@@ -34,6 +34,18 @@ int main() try
         Check(std::abs(value.height)<=spectrum.heightBound+.00001f,"Wave escaped intersection envelope");
         Check(std::abs(glm::length(value.normal)-1.f)<.00001f && value.normal.y>0,"Invalid wave normal");
     }
+    // Zero spread intentionally remains a planar train; nonzero spread breaks long ridges.
+    auto alignedSettings=settings;
+    alignedSettings.directionalSpread=0;
+    const auto aligned=BuildOceanWaveSpectrum(alignedSettings,7);
+    const glm::vec2 along(aligned.shape[0]);
+    const glm::vec2 across(-along.y,along.x);
+    Check(std::abs(SampleOceanSurface(aligned,position+across*35.f).height-
+                   SampleOceanSurface(aligned,position).height)<.0001f,"Zero spread lost directional control");
+    float ridgeVariation=0;
+    for(int i=1;i<=8;++i)
+        ridgeVariation+=std::abs(SampleOceanSurface(spectrum,position+across*float(i)*9.f).height-sample.height);
+    Check(ridgeVariation>.25f,"Directional sea remains an uninterrupted ridge");
     settings.waterDepth=.2f;
     const auto shallow=BuildOceanWaveSpectrum(settings,0);
     Check(shallow.motion[0].y<spectrum.motion[0].y,"Shallow-water dispersion does not slow long waves");
@@ -48,9 +60,20 @@ int main() try
     ocean.AddArea({{0,0},{1,0},{0,1}});
     ocean.Deserialize({{"WindDirection",PropertyType::Float,"90"},{"WindSea",PropertyType::Float,"0.8"}});
     Check(ocean.GetAreas().size()==1,"Partial property edit destroyed area masks");
+    const auto beforePreset=ocean.GetWaveSpectrum();
+    const auto visibility=ocean.GetMaxVisibilityDepth();
+    ocean.ApplyStylizedSeaPreset();
+    Check(ocean.GetStylization()==1 && ocean.GetAreas().size()==1 && ocean.GetMaxVisibilityDepth()==visibility,
+          "Stylized preset damaged masks or visibility");
+    Check(ocean.GetWaveSpectrum().heightBound>beforePreset.heightBound,"Preset did not create rolling swells");
+    OceanComponent styled;
+    styled.Deserialize(ocean.Serialize());
+    Check(styled.GetCrestColor()==ocean.GetCrestColor() && styled.GetStylization()==1,"Stylization did not round-trip");
+    ocean.Deserialize({{"WindSea",PropertyType::Float,"0.8"}});
     OceanComponent restored;
     restored.Deserialize(ocean.Serialize());
     Check(restored.GetWindDirection()==90 && restored.GetWindSea()==.8f && restored.GetAreas().size()==1,"Ocean controls did not round-trip");
+    ocean.Deserialize({{"WaveAmplitude",PropertyType::Float,"0.18"}});
     ocean.Update(99999.99f);
     const auto old=ocean.SampleLocalSurface(position);
     ocean.Update(.02f);

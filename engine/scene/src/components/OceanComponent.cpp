@@ -47,6 +47,30 @@ namespace PlutoGE::scene
         }
     }
 
+    void OceanComponent::ApplyStylizedSeaPreset()
+    {
+        // Appearance only: preserve entity transform, masks, clock, and visibility settings.
+        m_stylization = 1.f;
+        m_shallowColor = {.025f,.46f,.38f};
+        m_deepColor = {.008f,.065f,.14f};
+        m_crestColor = {.08f,.85f,.6f};
+        m_foamColor = {.9f,.99f,.95f};
+        m_waveAmplitude = 2.4f;
+        m_waveLength = 28.f;
+        m_waveSpeed = .85f;
+        m_waveChoppiness = 2.5f;
+        m_directionalSpread = .4f;
+        m_windSea = .15f;
+        m_opacity = .95f;
+        m_smoothness = .85f;
+        m_crestFoamThreshold = .14f;
+        m_crestFoamIntensity = 1.3f;
+        m_foamScale = .3f;
+        m_foamDistance = 2.f;
+        m_foamIntensity = 1.2f;
+        m_rippleStrength = .016f;
+    }
+
     void OceanComponent::Update(float deltaTime)
     {
         if (std::isfinite(deltaTime) && deltaTime > 0.f)
@@ -62,6 +86,8 @@ namespace PlutoGE::scene
     std::vector<Property> OceanComponent::Serialize() const
     {
         std::vector<Property> properties = {
+            {"Stylization", PropertyType::Float, std::to_string(m_stylization)},
+            {"CrestColor", PropertyType::Color, ToColorString(m_crestColor)},
             {"ShallowColor", PropertyType::Color, ToColorString(m_shallowColor)},
             {"DeepColor", PropertyType::Color, ToColorString(m_deepColor)},
             {"FoamColor", PropertyType::Color, ToColorString(m_foamColor)},
@@ -114,7 +140,14 @@ namespace PlutoGE::scene
 
         for (const auto &property : properties)
         {
-            if (property.name == "ShallowColor")
+            if (property.name == "Stylization")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_stylization = std::clamp(value,0.f,1.f);
+            }
+            else if (property.name == "CrestColor")
+                m_crestColor = glm::max(ParseVec3(property.value,m_crestColor),glm::vec3(0.f));
+            else if (property.name == "ShallowColor")
                 m_shallowColor = glm::max(ParseVec3(property.value, m_shallowColor), glm::vec3(0.0f));
             else if (property.name == "DeepColor")
                 m_deepColor = glm::max(ParseVec3(property.value, m_deepColor), glm::vec3(0.0f));

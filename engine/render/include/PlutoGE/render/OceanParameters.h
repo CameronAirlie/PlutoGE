@@ -8,7 +8,7 @@ namespace PlutoGE::render
     {
         glm::mat4 localToWorld{1};
         glm::vec4 shallowOpacity{}, deepSmoothness{}, foamVisibility{}, waves{};
-        glm::vec4 underwater{}, surface{}, sunDirectionTime{}, sunColorIntensity{};
+        glm::vec4 underwater{}, surface{}, sunDirectionTime{}, crestTintStyle{};
         glm::ivec4 mask{};
         std::array<glm::ivec4, 8> areaCounts{};
         std::array<glm::vec4, 256> points{};

@@ -5536,6 +5536,23 @@ namespace PlutoGE::ui
                         }
                         else if (auto *oceanComponent = dynamic_cast<scene::OceanComponent *>(componentPtr))
                         {
+                            ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+                            if (ImGui::Button("Apply Stylized Sea Preset"))
+                            {
+                                editorShell.ExecuteSceneEdit("Apply Stylized Sea Preset", [&]
+                                {
+                                    const auto before = oceanComponent->Serialize();
+                                    oceanComponent->ApplyStylizedSeaPreset();
+                                    for (const auto &property : oceanComponent->Serialize())
+                                    {
+                                        const auto previous = std::find_if(before.begin(),before.end(),[&](const auto &value) { return value.name==property.name; });
+                                        if (previous==before.end() || previous->value!=property.value)
+                                            entity->AddPrefabOverride("Component:OceanComponent:"+property.name);
+                                    }
+                                });
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::TextWrapped("Rolling swells, turquoise crests and broken whitecaps. Adjust Stylization and Crest Color below.");
                             propertiesProvided = true;
                             properties = oceanComponent->Serialize();
                             std::erase_if(properties, [](const auto &property)

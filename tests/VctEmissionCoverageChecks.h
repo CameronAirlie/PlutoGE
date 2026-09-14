@@ -1,6 +1,7 @@
 #pragma once
 #include "../engine/render/src/postprocess/VctVoxelizationShaders.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/render/Material.h"
 #include <array>
 #include <bit>
 #include <cmath>
@@ -68,7 +69,7 @@ inline bool CheckVctEmissionCoverage()
             glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(size), data, GL_DYNAMIC_DRAW);
             glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffers[slot]);
         };
-        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1)
+        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false)
         {
             constexpr float volumeSize = 16.0f;
             const float voxelSize = volumeSize / float(resolution);
@@ -137,21 +138,33 @@ inline bool CheckVctEmissionCoverage()
             glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,incident.data());
             glActiveTexture(GL_TEXTURE0);
             voxel->Bind();
+            std::shared_ptr<const ShaderGraphProgram> graphProgram;
+            if (useGraph)
+            {
+                ShaderGraph graph;
+                graph.nodes={{.id=1,.kind=ShaderGraphNodeKind::Vec3,.value={emission,emission*.5f,emission*.25f,1}},
+                    {.id=2,.kind=ShaderGraphNodeKind::Output}};
+                graph.links={{1,1,"Vec3",2,"Emission"}};
+                graphProgram=BuildShaderGraphProgram(graph);
+            }
             if (legacy)
             {
+                MaterialConfig config;config.shaderGraphProgram=graphProgram;
+                Material(config).Bind(voxel.get());
                 voxel->SetUniform("uModel",glm::mat4(1)); voxel->SetUniform("uUVScale",glm::vec2(1));
                 voxel->SetUniform("uVolumeOrigin",glm::vec3(0)); voxel->SetUniform("uVolumeSize",volumeSize);
                 voxel->SetUniform("uVoxelResolution",resolution); voxel->SetUniform("uColor",glm::vec4(1));
-                voxel->SetUniform("uEmission",glm::vec3(emission,emission*.5f,emission*.25f));
+                voxel->SetUniform("uEmission",useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f));
                 voxel->SetUniform("uCaptureSurface",1);
                 voxel->SetUniform("uMetallicFactor",metallic);
             }
             else
             {
                 struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
-                struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; } material;
-                static_assert(sizeof(MaterialPass)==64);
-                material.emission = {emission,emission*.5f,emission*.25f};
+                struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; ShaderGraphProgramData graph{}; glm::vec4 cameraTime{0}; glm::vec4 factors{1}; } material;
+                static_assert(sizeof(MaterialPass)==96+sizeof(ShaderGraphProgramData));
+                material.emission = useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f);
+                if(graphProgram)material.graph=graphProgram->data;
                 material.metallic = metallic; material.flags.w = 1;
                 glm::mat4 model(1);
                 upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
@@ -254,6 +267,12 @@ inline bool CheckVctEmissionCoverage()
                                 passed=false;
                             }
                         }
+        const double graphEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true);
+        if (std::abs(graphEnergy-32.0) > 1.28)
+        {
+            std::cerr << "VCT graph emission energy: expected=32 actual=" << graphEnergy << '\n';
+            passed=false;
+        }
         // Unit radiance, matching ordinary emissive materials, must also scale
         // with area. Keep these footprints above fixed-point quantization noise.
         for (int resolution : {16,32})

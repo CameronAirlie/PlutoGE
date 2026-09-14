@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace PlutoGE::render
 {
@@ -48,6 +49,11 @@ namespace PlutoGE::render
         Power = 22,
         OneMinus = 23,
         TextureSample = 24,
+        Subgraph = 25,
+        ScreenUV = 26,
+        SceneColor = 27,
+        SceneDepth = 28,
+        Expression = 29,
     };
 
     enum class ShaderGraphMaterialInput
@@ -61,6 +67,7 @@ namespace PlutoGE::render
         Emission = 6,
     };
 
+    struct ShaderGraph;
     struct ShaderGraphNode
     {
         int id = 0;
@@ -73,6 +80,7 @@ namespace PlutoGE::render
         bool componentPins = false;
         bool collapsed = false;
         std::string parameter;
+        std::shared_ptr<const ShaderGraph> subgraph;
     };
 
     struct ShaderGraphLink
@@ -98,23 +106,32 @@ namespace PlutoGE::render
         glm::vec3 color{0.0f};
     };
 
+    struct ShaderGraphTextureParameter
+    {
+        std::string name, reference;
+        bool nearest=false, clamp=false;
+    };
+
     struct ShaderGraph
     {
         int version = 1;
         ShaderGraphOutline outline;
         bool unlit = false;
+        int tessellation = 0;
         std::vector<ShaderGraphNode> nodes;
         std::vector<ShaderGraphLink> links;
         std::vector<ShaderGraphVariable> variables;
+        std::vector<ShaderGraphTextureParameter> textures;
+        std::vector<std::string> passes;
     };
 
     // std140-compatible bytecode, shared by the OpenGL and Vulkan surface paths.
     constexpr int kMaxShaderGraphInstructions = 64;
     struct alignas(16) ShaderGraphProgramData
     {
-        glm::ivec4 header{0}; // instruction count, unlit, reserved
+        glm::ivec4 header{0}; // instruction count, unlit, vertex instruction count, reserved
         glm::ivec4 outputs0{0}; // albedo, normal, metallic, roughness
-        glm::ivec4 outputs1{0}; // opacity, emission, reserved
+        glm::ivec4 outputs1{0}; // opacity, emission, world-space vertex offset, reserved
         std::array<glm::ivec4, kMaxShaderGraphInstructions> instructions{};
         std::array<glm::vec4, kMaxShaderGraphInstructions> values{};
     };
@@ -122,12 +139,33 @@ namespace PlutoGE::render
     struct ShaderGraphProgram
     {
         ShaderGraphProgramData data;
+        std::vector<ShaderGraphTextureParameter> textures;
         std::uint64_t hash = 0;
+        bool requiresSceneTextures=false, usesTime=false, usesViewDirection=false;
     };
     std::shared_ptr<const ShaderGraphProgram> BuildShaderGraphProgram(
         const ShaderGraph &graph, std::span<const ShaderGraphVariable> overrides = {}, std::string *errorMessage = nullptr);
     bool ValidateShaderGraph(const ShaderGraph &graph, std::string *errorMessage = nullptr);
     float ShaderGraphTimeSeconds();
+    void SetShaderGraphTimeSeconds(float seconds);
+    float ShaderGraphPreviousTimeSeconds();
+    void ResetShaderGraphClock();
+    std::string ShaderGraphRuntimeGlsl(bool vertexStage = false);
+    struct ShaderGraphSample
+    {
+        glm::vec3 worldPosition{0}, worldNormal{0,0,1}, viewDirection{0,0,1};
+        glm::vec2 uv{0}, screenUV{0};
+        float time=0;
+        glm::vec4 color{1};
+        glm::vec3 normal{0,0,1}, emission{0}, vertexOffset{0};
+        float metallic=0, roughness=1;
+    };
+    using ShaderGraphTextureSampler = std::function<glm::vec4(int,glm::vec2)>;
+    ShaderGraphSample EvaluateShaderGraph(const ShaderGraphProgram &program, ShaderGraphSample sample,
+        const ShaderGraphTextureSampler &textures = {}, bool vertexOnly = false);
+    struct MaterialConfig;
+    ShaderGraphSample EvaluateMaterialShaderGraph(const MaterialConfig &material, ShaderGraphSample sample,
+        bool vertexOnly = false);
     std::vector<std::string_view> ShaderGraphInputPins(const ShaderGraphNode &node);
     std::vector<std::string_view> ShaderGraphOutputPins(const ShaderGraphNode &node);
 

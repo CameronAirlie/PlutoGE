@@ -775,6 +775,8 @@ namespace
 
     bool IsCommandRelevantForProjectedLight(const ShadowCasterEntry &shadowCaster, const std::array<FrustumPlane, 6> &planes)
     {
+        if (shadowCaster.command->material && shadowCaster.command->material->GetConfig().shaderGraphProgram &&
+            shadowCaster.command->material->GetConfig().shaderGraphProgram->data.header.z > 0) return true;
         return IsBoundsRelevantForProjectedLight(shadowCaster.bounds, planes);
     }
 
@@ -1209,6 +1211,8 @@ namespace
                                                 int shadowResolution,
                                                 float minCasterTexelRadius)
     {
+        if (shadowCaster.command->material && shadowCaster.command->material->GetConfig().shaderGraphProgram &&
+            shadowCaster.command->material->GetConfig().shaderGraphProgram->data.header.z > 0) return true;
         if (!IsCommandOverlappingDirectionalRegion(
                 shadowCaster, lightView, shadowWorldOrigin, receiverMin, receiverMax))
         {
@@ -1245,18 +1249,7 @@ namespace
             return;
         }
 
-        const auto &config = material->GetConfig();
-        auto *albedoTexture = config.albedoTexture;
-        const bool alphaTested = albedoTexture && config.alphaMode == PlutoGE::render::AlphaMode::Mask;
-        if (alphaTested)
-        {
-            shader->SetUniform("uAlbedoTexture", albedoTexture, 0);
-            shader->SetUniform("uHasAlbedoTexture", 1.0f);
-            shader->SetUniform("uAlphaCutoff", config.alphaCutoff);
-            return;
-        }
-
-        shader->SetUniform("uHasAlbedoTexture", 0.0f);
+        material->Bind(shader);
     }
 
     void UploadShadowJointMatrices(PlutoGE::render::Shader *shader, const std::vector<glm::mat4> *jointMatrices)
@@ -1699,6 +1692,7 @@ namespace PlutoGE::render
 
     bool ShadowPass::CanSkipStaticFrame(const RenderContext &ctx) const
     {
+        if(ctx.renderCommands && std::any_of(ctx.renderCommands->begin(),ctx.renderCommands->end(),[](const auto &c){return c.material && c.material->GetConfig().shaderGraphProgram;})) return false;
         if (!m_hasShadowCasterFingerprint || !m_allCachedShadowCastersStatic ||
             !ctx.lights || !ctx.hasCameraData || !ctx.shadowCasterCommandIndices ||
             ctx.shadowCastersMoved || !ctx.allShadowCastersStatic ||
@@ -1829,6 +1823,8 @@ namespace PlutoGE::render
                                                        const glm::mat4 &model,
                                                        std::size_t instanceIndex)
         {
+            if (command.material && command.material->GetConfig().shaderGraphProgram &&
+                command.material->GetConfig().shaderGraphProgram->data.header.z > 0) return true;
             if (!ctx.hasCameraData || command.maxShadowDistance <= 0.0f ||
                 command.maxShadowDistance == std::numeric_limits<float>::max())
             {
@@ -1856,6 +1852,7 @@ namespace PlutoGE::render
             });
         }
         bool shadowCastersChanged = casterFrameState.hasMovedCaster || shadowCasterTopologyChanged;
+        if(ctx.renderCommands && std::any_of(ctx.renderCommands->begin(),ctx.renderCommands->end(),[](const auto &c){return c.material && c.material->GetConfig().shaderGraphProgram;})) shadowCastersChanged=true;
         const bool cameraDataChanged = ctx.hasCameraData &&
                                        (!ctx.hasPreviousCameraData ||
                                         HasDirectionalCameraOrientationOrProjectionChanged(ctx.cameraData, ctx.previousCameraData));
@@ -1944,6 +1941,7 @@ namespace PlutoGE::render
         Graphics::Disable(GL_POLYGON_OFFSET_FILL);
 
         m_shadowPassShader->Bind();
+        m_shadowPassShader->TrySetUniform("uGraphCameraPosition",glm::vec3(glm::inverse(ctx.cameraData.view)[3]));
         m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
         static thread_local std::vector<ShadowCasterEntry> shadowCasters;
         shadowCasters.clear();
@@ -2569,6 +2567,8 @@ namespace PlutoGE::render
                             { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },
                             [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model, std::size_t instanceIndex)
                             {
+                                if (command.material && command.material->GetConfig().shaderGraphProgram &&
+                                    command.material->GetConfig().shaderGraphProgram->data.header.z > 0) return true;
                                 if (!passesInstanceShadowDistance(command, model, instanceIndex))
                                     return false;
                                 if (!effectiveRegion || !command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())

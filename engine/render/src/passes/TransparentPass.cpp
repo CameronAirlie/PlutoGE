@@ -379,6 +379,8 @@ namespace PlutoGE::render
                       const glm::vec3 offsetB = b->worldBounds.center - cameraPosition;
                       const float distanceA = glm::dot(offsetA, offsetA);
                       const float distanceB = glm::dot(offsetB, offsetB);
+                      if (distanceA == distanceB)
+                          return a->material->GetConfig().graphPassOrder < b->material->GetConfig().graphPassOrder;
                       return distanceA > distanceB;
                   });
 
@@ -410,9 +412,14 @@ namespace PlutoGE::render
         m_transparentShader->SetUniform("uView", ctx.cameraData.view);
         m_transparentShader->SetUniform("uProjection", ctx.cameraData.projection);
         m_transparentShader->SetUniform("uViewPos", cameraPosition);
+        m_transparentShader->TrySetUniform("uGraphCameraPosition",cameraPosition);
         Graphics::ActiveTexture(GL_TEXTURE0 + kTransparentSceneColorTextureSlot);
         Graphics::BindTexture(GL_TEXTURE_2D, m_sceneColorCopy ? m_sceneColorCopy->GetColorTextureID() : 0);
         m_transparentShader->SetUniform("uSceneColorTexture", kTransparentSceneColorTextureSlot);
+        m_transparentShader->TrySetUniform("uGraphSceneColor",kTransparentSceneColorTextureSlot);
+        m_transparentShader->TrySetUniform("uGraphSceneDepth",30);
+        m_transparentShader->SetUniform("uGraphViewProjection",ctx.cameraData.projection*ctx.cameraData.view);
+        glActiveTexture(GL_TEXTURE0+30);glBindTexture(GL_TEXTURE_2D,ctx.gBuffer->GetDepthTextureID());
         m_transparentShader->SetUniform("uSceneColorEnabled", m_sceneColorCopy && m_sceneColorCopy->IsInitialized() ? 1 : 0);
         m_transparentShader->SetUniform("uSceneColorTextureSize", glm::vec2(
                                                                   static_cast<float>(m_sceneColorCopy ? m_sceneColorCopy->GetWidth() : 1),

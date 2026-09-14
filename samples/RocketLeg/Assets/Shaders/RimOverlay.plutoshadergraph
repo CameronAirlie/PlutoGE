@@ -1,0 +1,13 @@
+ShaderGraphVersion=1
+Unlit=1
+Node=1|SceneColor|Opaque scene|0,0|1,1,1,1|Color|0|260,150|0|
+Node=2|Subgraph|Reusable pulsing rim|0,200|1,1,1,1|Color|0|260,150|0|project://Shaders/PulsingRim.plutoshadergraph
+Node=3|Add|Add rim to scene|360,0|1,1,1,1|Color|0|260,150|0|
+Node=100|Output|Overlay|700,0|1,1,1,1|Color|0|260,150|0|
+Link=1|1|R|4|X
+Link=2|2|Emission|3|B
+Link=3|3|Out|100|Albedo
+Node=4|Vec3|Scene RGB|0,-180|1,1,1,1|Color|0|260,150|1|
+Link=4|4|Vec3|3|A
+Link=5|1|G|4|Y
+Link=6|1|B|4|Z

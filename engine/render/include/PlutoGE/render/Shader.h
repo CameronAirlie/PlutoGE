@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/ShaderGraph.h"
 
 #include <glad/glad.h>
 #include <array>
@@ -1400,6 +1401,8 @@ void main()
             uniform mat4 uJointMatrices[128];
 
             out vec3 FragPos;
+            out vec3 Normal;
+            uniform vec2 uUVScale=vec2(1);
             out vec2 UV;
 
             void main()
@@ -1419,8 +1422,11 @@ void main()
                 }
 
                 vec4 worldPosition = aModel * (skinMatrix * vec4(aPos, 1.0));
+                Normal=normalize(mat3(aModel)*mat3(skinMatrix)*aNormal);
+                worldPosition.xyz += shaderGraphVertexOffset(runtimeShaderGraph(),worldPosition.xyz,Normal,
+                    normalize(uGraphCameraPosition-worldPosition.xyz),uGraphTime,aUV*uUVScale,uColor,uMetallicFactor,uRoughnessFactor,uEmission);
                 FragPos = worldPosition.xyz;
-                UV = aUV;
+                UV = aUV*uUVScale;
                 gl_Position = uLightSpaceMatrix * vec4(worldPosition.xyz - uShadowWorldOrigin, 1.0);
             }
         )";
@@ -1429,10 +1435,12 @@ void main()
             #version 330 core
 
             in vec3 FragPos;
+            in vec3 Normal;
+            uniform int uAlphaMode;
             in vec2 UV;
 
-            uniform sampler2D uAlbedoTexture;
-            uniform float uHasAlbedoTexture = 0.0;
+
+
             uniform float uAlphaCutoff = 0.5;
             uniform int uShadowPassMode = 0;
             uniform vec3 uLightPosition = vec3(0.0);
@@ -1440,14 +1448,13 @@ void main()
 
             void main()
             {
-                if (uHasAlbedoTexture > 0.5)
-                {
-                    vec4 albedo = texture(uAlbedoTexture, UV);
-                    if (albedo.a < uAlphaCutoff)
-                    {
-                        discard;
-                    }
-                }
+                vec4 color=uColor;
+                if(uHasAlbedoTexture>0.5)color*=texture(uAlbedoTexture,UV);
+                vec3 normal=normalize(Normal), emission=uEmission;
+                float metallic=uMetallicFactor,roughness=uRoughnessFactor;
+                evaluateShaderGraph(runtimeShaderGraph(),FragPos,normal,normalize(uGraphCameraPosition-FragPos),
+                    uGraphTime,UV,color,normal,metallic,roughness,emission);
+                if(uAlphaMode==1 && color.a<uAlphaCutoff)discard;
 
                 if (uShadowPassMode == 1)
                 {
@@ -1460,6 +1467,8 @@ void main()
             }
         )";
 
+            source.vertexSource.insert(source.vertexSource.find("void main()"),ShaderGraphRuntimeGlsl(true));
+            source.fragmentSource.insert(source.fragmentSource.find("void main()"),ShaderGraphRuntimeGlsl(true));
             return CreateShaderFromSource(source);
         }
 
@@ -2088,10 +2097,6 @@ void main()
                     color *= texture(uAlbedoTexture, UV);
                 }
 
-                if (color.a <= uAlphaCutoff)
-                {
-                    discard;
-                }
 
                 vec3 normal = normalize(Normal);
                 if (uHasNormalTexture > 0.5)
@@ -2121,6 +2126,10 @@ void main()
                 }
                 roughness = clamp(roughness, 0.04, 1.0);
 
+                vec3 emission=max(uEmission,vec3(0));
+                evaluateShaderGraph(runtimeShaderGraph(),FragPos,normalize(Normal),normalize(uViewPos-FragPos),
+                    uGraphTime,UV,color,normal,metallic,roughness,emission);
+                if(color.a<=uAlphaCutoff) discard;
                 vec3 viewDir = normalize(uViewPos - FragPos);
                 if (dot(normal, viewDir) < 0.0)
                 {
@@ -2186,15 +2195,23 @@ void main()
                     outputAlpha = uSceneColorEnabled != 0 ? 1.0 : clamp(max(color.a * (1.0 - transmission * 0.65), fresnelAlpha * 0.55), 0.04, color.a);
                 }
 
-                vec3 emission = max(uEmission, vec3(0.0));
+
                 vec3 litSurface = baseColor + environmentSpecular + directSpecular;
                 if (uSurfaceType == SURFACE_STANDARD)
                 {
                     litSurface += ComputeSubsurfaceLighting(FragPos, normal, viewDir, color.rgb) * (1.0 - metallic);
                 }
-                FragColor = vec4(litSurface + emission, outputAlpha);
+                FragColor = vec4((uGraphHeader.y>0.5?color.rgb:litSurface) + emission, outputAlpha);
             }
         )";
+
+            source.fragmentSource.insert(source.fragmentSource.find("void main()"), ShaderGraphRuntimeGlsl());
+            source.vertexSource.insert(source.vertexSource.find("void main()"), "uniform vec2 uUVScale=vec2(1);\n" + ShaderGraphRuntimeGlsl(true));
+            if (const auto uvAt = source.vertexSource.find("UV = aUV;"); uvAt != std::string::npos)
+                source.vertexSource.replace(uvAt, std::string("UV = aUV;").size(), "UV = aUV*uUVScale;");
+            const auto graphVertexAt=source.vertexSource.find("FragPos = worldPosition.xyz;");
+            source.vertexSource.insert(graphVertexAt,
+                "worldPosition.xyz += shaderGraphVertexOffset(runtimeShaderGraph(),worldPosition.xyz,worldNormal,normalize(uGraphCameraPosition-worldPosition.xyz),uGraphTime,aUV*uUVScale,uColor,uMetallicFactor,uRoughnessFactor,uEmission);\n");
 
             return CreateShaderFromSource(source);
         }

@@ -137,20 +137,39 @@ Sampler2D directionalShadowTexture2 : register(t7, space1);
 [[vk::binding(8, 1)]]
 Sampler2D directionalShadowTexture3 : register(t8, space1);
 
-float4 shaderGraphTexture(int slot, float2 uv)
-{
-    if(slot==0) return baseColorTexture.Sample(uv);
-    if(slot==1) return normalTexture.Sample(uv);
-    if(slot==2) return metallicTexture.Sample(uv);
-    return roughnessTexture.Sample(uv);
-}
-
+[[vk::binding(14,1)]] Sampler2D graphExtra0 : register(t14,space1);
+[[vk::binding(15,1)]] Sampler2D graphExtra1 : register(t15,space1);
+[[vk::binding(16,1)]] Sampler2D graphExtra2 : register(t16,space1);
+[[vk::binding(17,1)]] Sampler2D graphExtra3 : register(t17,space1);
 #ifdef PLUTO_GLASS
 [[vk::binding(9, 1)]]
 Sampler2D glassSceneColor : register(t9, space1);
 [[vk::binding(10, 1)]]
 Sampler2D glassSceneDepth : register(t10, space1);
 
+#endif
+float2 shaderGraphScreenUV(float3 worldPosition) {
+    float4 clip=mul(viewProjection,float4(worldPosition,1));
+    float2 uv=(clip.xy/max(abs(clip.w),.000001)+temporalClipOffset.xy)*.5+.5;
+    if(glassViewport.z>.5)uv.y=1.0-uv.y;return uv;
+}
+float4 shaderGraphTexture(int slot, float2 uv)
+{
+#ifdef PLUTO_GLASS
+    if(slot==8)return glassSceneColor.SampleLevel(uv,0.0);
+    if(slot==9)return float4(glassSceneDepth.SampleLevel(uv,0.0).r);
+#endif
+    if(slot==4)return graphExtra0.SampleLevel(uv,0.0);
+    if(slot==5)return graphExtra1.SampleLevel(uv,0.0);
+    if(slot==6)return graphExtra2.SampleLevel(uv,0.0);
+    if(slot==7)return graphExtra3.SampleLevel(uv,0.0);
+    if(slot==0) return baseColorTexture.SampleLevel(uv, 0.0);
+    if(slot==1) return normalTexture.SampleLevel(uv, 0.0);
+    if(slot==2) return metallicTexture.SampleLevel(uv, 0.0);
+    return roughnessTexture.SampleLevel(uv, 0.0);
+}
+
+#ifdef PLUTO_GLASS
 // Reject opaque foreground samples with the same reversed-Z depth convention
 // as the depth attachment. Every frosted-glass tap also receives this test.
 float3 sampleGlassBackground(float2 uv, float2 originalUv, float surfaceDepth)
@@ -501,11 +520,22 @@ float3 outlineOffset(float4x4 transform, float3 normal, float width)
     return n * (width / max(length(n), 0.000001));
 }
 
+float4 graphWorldPosition(float4x4 transform, float3 position, float3 normal, float2 uv, float time, float width)
+{
+    float4 world = mul(transform,float4(position,1.0));
+    float3 worldNormal = outlineOffset(transform,normal,1.0);
+    world.xyz += shaderGraphVertexOffset(shaderGraph,world.xyz,worldNormal,
+        normalize(cameraPositionAmbient.xyz-world.xyz),time,uv*uvScale,
+        baseColor,metallic,roughness,emission);
+    world.xyz += worldNormal*width;
+    return world;
+}
+
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
-    const float4 worldPosition = mul(model, float4(input.position, 1.0)) + float4(outlineOffset(model, input.normal, objectDebugParameters.y), 0.0);
+    const float4 worldPosition = graphWorldPosition(model,input.position,input.normal,input.uv,shaderGraphFrame.x,objectDebugParameters.y);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -516,7 +546,7 @@ VertexOutput vertexMain(VertexInput input)
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, (mul(previousModel, float4(previousPosition, 1.0)) + float4(outlineOffset(previousModel, input.normal, objectDebugParameters.y), 0.0)));
+    output.previousClip = mul(previousViewProjection, graphWorldPosition(previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,objectDebugParameters.y));
     output.objectDebug = objectDebugParameters.x;
     output.outlineWidth = objectDebugParameters.y;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
@@ -533,7 +563,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 {
     VertexOutput output;
     const InstanceObjectParameters instance = instances[instanceId];
-    const float4 worldPosition = mul(instance.model, float4(input.position, 1.0)) + float4(outlineOffset(instance.model, input.normal, instance.debugParameters.y), 0.0);
+    const float4 worldPosition = graphWorldPosition(instance.model,input.position,input.normal,input.uv,shaderGraphFrame.x,instance.debugParameters.y);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -544,7 +574,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, (mul(instance.previousModel, float4(previousPosition, 1.0)) + float4(outlineOffset(instance.previousModel, input.normal, instance.debugParameters.y), 0.0)));
+    output.previousClip = mul(previousViewProjection, graphWorldPosition(instance.previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,instance.debugParameters.y));
     output.objectDebug = instance.debugParameters.x;
     output.outlineWidth = instance.debugParameters.y;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));

@@ -73,7 +73,7 @@ namespace PlutoGE::render
                 });
         }
 
-        std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &commands)
+        std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &commands, const glm::vec3 &cameraPosition)
         {
             // Render commands are sorted using their camera-selected LOD. Build an
             // order-independent signature which describes world content instead,
@@ -121,6 +121,13 @@ namespace PlutoGE::render
                     commandHash = HashValue(config.alphaMode, commandHash);
                     commandHash = HashValue(config.alphaCutoff, commandHash);
                     commandHash = HashValue(config.surfaceType, commandHash);
+                    if(config.shaderGraphProgram){commandHash=HashValue(config.shaderGraphProgram->hash,commandHash);
+                        if(config.shaderGraphProgram->usesTime)commandHash=HashValue(ShaderGraphTimeSeconds(),commandHash);
+                        if(config.shaderGraphProgram->usesViewDirection)commandHash=HashBytes(glm::value_ptr(cameraPosition),sizeof(cameraPosition),commandHash);
+                        commandHash=HashValue(config.normalTexture,commandHash);
+                        commandHash=HashValue(config.roughnessTexture,commandHash);
+                        commandHash=HashBytes(config.graphSamplers.data(),sizeof(config.graphSamplers),commandHash);}
+                    for(const auto *texture:config.graphTextures)commandHash=HashValue(texture,commandHash);
                 }
                 sum += commandHash;
                 mixed ^= commandHash + 0x9e3779b97f4a7c15ull + (commandHash << 6u) + (commandHash >> 2u);
@@ -823,6 +830,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.pendingSceneSignature = sceneSignature;
         cascade.pendingLightSignature = lightSignature;
         cascade.pendingView = renderContext.cameraData.view;
+        cascade.pendingGraphTime=ShaderGraphTimeSeconds();
         const scene::Light *directionalLight = SelectInjectionLight(renderContext.lights);
         cascade.pendingHasInjectionLight = directionalLight != nullptr;
         cascade.pendingLightDirection = directionalLight ? directionalLight->direction : glm::vec3(0.0f, -1.0f, 0.0f);
@@ -955,18 +963,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                         lodCount - 1);
                 }
             }
-            job.material = VoxelMaterialSnapshot{
-                .color = materialConfig.color,
-                .uvScale = materialConfig.uvScale,
-                .emission = materialConfig.emission,
-                .albedoTexture = materialConfig.albedoTexture,
-                .metallicTexture = materialConfig.metallicTexture,
-                .surfaceType = materialConfig.surfaceType,
-                .alphaMode = materialConfig.alphaMode,
-                .metallicTextureChannel = materialConfig.metallicTextureChannel,
-                .alphaCutoff = materialConfig.alphaCutoff,
-                .metallic = materialConfig.metallic,
-            };
+            job.material = materialConfig;
             job.voxelLod = voxelLod;
         }
         cascade.rebuildInProgress = true;
@@ -1128,6 +1125,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                     continue;
                 }
 
+                Material(job.material).Bind(m_voxelizationShader);
+                m_voxelizationShader->TrySetUniform("uGraphTime",cascade.pendingGraphTime);
+                m_voxelizationShader->TrySetUniform("uGraphCameraPosition",glm::vec3(glm::inverse(cascade.pendingView)[3]));
                 m_voxelizationShader->SetUniform("uColor", job.material.color);
                 m_voxelizationShader->SetUniform("uUVScale", job.material.uvScale);
                 m_voxelizationShader->SetUniform("uEmission", glm::max(job.material.emission, glm::vec3(0.0f)));
@@ -1429,7 +1429,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 renderContext.frameSequence - m_lastContentCheckFrame >= contentCheckInterval;
             if (checkContent)
             {
-                m_cachedSceneSignature = ComputeSceneSignature(*sceneCommands);
+                m_cachedSceneSignature = ComputeSceneSignature(*sceneCommands, glm::vec3(glm::inverse(renderContext.cameraData.view)[3]));
                 m_cachedLightSignature = ComputeLightSignature(renderContext.lights, m_injectLocalLights);
                 m_lastContentCheckFrame = renderContext.frameSequence;
             }

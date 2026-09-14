@@ -33,6 +33,7 @@ namespace PlutoGE::render
     class Texture;
     class Shader;
     struct CameraData;
+    class Material;
     struct MaterialConfig
     {
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
@@ -74,6 +75,11 @@ namespace PlutoGE::render
         std::string shaderGraphReference;
         std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
         std::vector<ShaderGraphVariable> shaderGraphVariables;
+        std::vector<ShaderGraphTextureParameter> shaderGraphTextures;
+        std::array<Texture *,4> graphTextures{};
+        std::array<std::uint32_t,4> graphSamplers{};
+        std::vector<std::shared_ptr<Material>> additionalPasses;
+        unsigned graphPassOrder = 0;
         Shader *compiledShaderGraph = nullptr;
     };
 

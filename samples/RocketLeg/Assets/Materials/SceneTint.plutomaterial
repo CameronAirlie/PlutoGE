@@ -1,0 +1,4 @@
+Color=1,1,1,1
+AlphaMode=Blend
+Roughness=0.6
+ShaderGraph=project://Shaders/SceneTint.plutoshadergraph

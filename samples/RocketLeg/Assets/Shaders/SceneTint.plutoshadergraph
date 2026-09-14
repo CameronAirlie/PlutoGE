@@ -1,0 +1,14 @@
+ShaderGraphVersion=1
+Unlit=1
+Variable=Tint|2|0.3,0.8,1,1
+Node=1|SceneColor|Opaque scene|0,0|1,1,1,1|Color|0|260,150|0|
+Node=2|Parameter|Tint|0,180|1,1,1,1|Color|0|260,150|0|Tint
+Node=3|Multiply|Tint scene|320,0|1,1,1,1|Color|0|260,150|0|
+Node=100|Output|Surface|640,0|1,1,1,1|Color|0|260,150|0|
+Link=1|1|R|4|X
+Link=2|2|Out|3|B
+Link=3|3|Out|100|Albedo
+Node=4|Vec3|Scene RGB|0,-180|1,1,1,1|Color|0|260,150|1|
+Link=4|4|Vec3|3|A
+Link=5|1|G|4|Y
+Link=6|1|B|4|Z

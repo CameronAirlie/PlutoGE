@@ -64,6 +64,20 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 16);
 
+        struct alignas(16) GraphShadowMaterial
+        {
+            glm::vec4 alpha, color, factors, emission, cameraTime;
+            ShaderGraphProgramData graph;
+        };
+        GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time)
+        {
+            GraphShadowMaterial data{glm::vec4(draw.uvScale,draw.alphaCutoff,draw.baseColor.a),
+                draw.baseColor,glm::vec4(draw.metallic,draw.roughness,float(draw.alphaMode),0),
+                glm::vec4(draw.emission,0),glm::vec4(camera,time),{}};
+            if(draw.shaderGraphProgram) data.graph=draw.shaderGraphProgram->data;
+            return data;
+        }
+
         struct alignas(16) BasicFrameParameters
         {
             glm::mat4 viewProjection{1.0f};
@@ -194,6 +208,8 @@ namespace PlutoGE::render
             glm::vec3 emission{0.0f}; std::uint32_t alphaMode = 0;
             std::uint32_t hasAlbedoTexture = 0, hasMetallicTexture = 0;
             std::uint32_t metallicChannel = 0, padding = 0;
+            ShaderGraphProgramData graph;
+            glm::vec4 graphCameraTime{0}, graphFactors{0};
         };
         struct alignas(16) VctResolveParameters
         { std::uint32_t resolution = 1, destinationZOffset = 0; float secondaryGain = 0.0f; std::uint32_t padding = 0; };
@@ -224,7 +240,7 @@ namespace PlutoGE::render
         { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
         static_assert(sizeof(VctVoxelParameters) == 1280);
         static_assert(sizeof(VctObjectParameters) == 64);
-        static_assert(sizeof(VctMaterialParameters) == 64);
+        static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+32);
         static_assert(sizeof(VctResolveParameters) == 16);
         static_assert(sizeof(VctMipParameters) == 32);
         static_assert(sizeof(VctTraceParameters) == 256);
@@ -285,6 +301,13 @@ namespace PlutoGE::render
                 HashVctValue(hash, draw.baseColorTexture);
                 HashVctValue(hash, draw.metallicTexture);
                 HashVctValue(hash, draw.metallicChannel);
+                if(draw.shaderGraphProgram) {
+                    HashVctValue(hash,draw.shaderGraphProgram->hash);
+                    if(draw.shaderGraphProgram->usesTime)HashVctValue(hash,ShaderGraphTimeSeconds());
+                    if(draw.shaderGraphProgram->usesViewDirection)HashVctValue(hash,lighting.cameraPosition);
+                    for(const auto &texture:draw.graphTextures)HashVctValue(hash,texture);
+                    HashVctValue(hash,draw.graphSamplers);
+                }
             }
             return hash;
         }
@@ -410,12 +433,16 @@ namespace PlutoGE::render
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float};
             descriptor.resourceBindings = {
+                {22,1,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {23,1,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {24,1,16,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {25,1,17,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
-                {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
-                {9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                {10, 1, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                {11, 1, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                {12, 1, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                {9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                {10, 1, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                {11, 1, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                {12, 1, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
                 {13, 1, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {14, 1, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {15, 1, 7, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
@@ -522,11 +549,18 @@ namespace PlutoGE::render
             shadowDescriptor.fragmentShader = shaders.shadowFragment;
             shadowDescriptor.colorFormat = rhi::Format::R32Float;
             shadowDescriptor.resourceBindings = {
+                {8,1,0,rhi::ResourceBindingType::UniformBuffer,rhi::ShaderStageMask::AllGraphics},
+                {9,1,1,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {10,1,2,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {11,1,3,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
+                {12,1,4,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex}};
+            for(unsigned i=0;i<4;++i)shadowDescriptor.resourceBindings.push_back({22+i,1,14+i,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
             shadowDescriptor.vertexLayout = {sizeof(BasicVertex), {
                 {0, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
-                {1, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
+                {1, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, normal))},
+                {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
             // Scene assets do not yet carry a normalized winding/two-sided
             // contract into the RHI packet. Front-face culling drops thin and
             // mirrored casters entirely, so preserve correctness here.
@@ -538,7 +572,7 @@ namespace PlutoGE::render
             m_shadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
             auto shadowInstancedDescriptor = shadowDescriptor;
             shadowInstancedDescriptor.vertexShader = shaders.shadowInstancedVertex;
-            shadowInstancedDescriptor.resourceBindings.back() =
+            *std::find_if(shadowInstancedDescriptor.resourceBindings.begin(),shadowInstancedDescriptor.resourceBindings.end(),[](const auto &b){return b.slot==16;}) =
                 {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
             shadowInstancedDescriptor.debugName = "Directional instanced shadow pipeline";
             m_shadowInstancedPipeline = rhi::GraphicsPipeline(
@@ -548,8 +582,6 @@ namespace PlutoGE::render
                 shadowDescriptor.fragmentShader = shadowInstancedDescriptor.fragmentShader = shaders.maskedShadowFragment;
                 for (auto *masked : {&shadowDescriptor, &shadowInstancedDescriptor})
                 {
-                    masked->resourceBindings.push_back({8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
-                    masked->resourceBindings.push_back({9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     masked->debugName = "Alpha masked directional shadows";
                 }
                 m_maskedShadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(shadowDescriptor));
@@ -853,17 +885,20 @@ namespace PlutoGE::render
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                     {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                     {2, 0, 2, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
-                    {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
                     {4, 0, 4, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
                     {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
                     {6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
                     {7, 0, 7, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment},
-                    {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {10, 0, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {11, 0, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {12, 0, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                    {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                    {10, 0, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                    {11, 0, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                    {12, 0, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
+                    {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics}};
                 voxelization.resourceBindings.push_back({0, 0, 8, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Fragment});
+                voxelization.resourceBindings.push_back({14,0,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
+                voxelization.resourceBindings.push_back({15,0,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
+                for(unsigned i=0;i<4;++i)voxelization.resourceBindings.push_back({16+i,0,16+i,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
                 voxelization.vertexLayout = {
                     .stride = sizeof(BasicVertex),
                     .attributes = {
@@ -949,6 +984,7 @@ namespace PlutoGE::render
             m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler(
                                                         {true, true, "BasicRenderer material sampler", true, 0.0f, 16.0f}));
+            for(unsigned i=0;i<4;++i)m_graphSamplers[i]=rhi::Sampler(device,device.CreateSampler({(i&1)==0,(i&2)==0,"Graph texture sampler"}));
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -1021,6 +1057,7 @@ namespace PlutoGE::render
         m_vctVolumeSampler.Reset();
         m_screenSampler.Reset();
         m_fallbackSampler.Reset();
+        for(auto &sampler:m_graphSamplers)sampler.Reset();
         m_materialMipLodBias = 0.0f;
         m_fallbackTexture.Reset();
         m_fallbackNormalTexture.Reset();
@@ -1236,6 +1273,8 @@ namespace PlutoGE::render
     bool BasicRenderer::UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
                                           std::span<const BasicDraw> shadowDraws) const
     {
+        const auto casters = shadowDraws.empty() ? draws : shadowDraws;
+        if (std::any_of(casters.begin(),casters.end(),[](const auto &d){return bool(d.shaderGraphProgram);})) return false;
         return m_device && lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual &&
             m_device->GetImmediateContext().SupportsGpuDrivenShadows() && m_virtualShadowShaders.Complete() &&
             VirtualShadowMaps::CanPrepare(draws, shadowDraws.empty() ? draws : shadowDraws);
@@ -1294,6 +1333,7 @@ namespace PlutoGE::render
         m_postProcessCameraPosition = glm::vec4(lighting.cameraPosition, 1.0f);
 
         auto &commands = m_device->GetImmediateContext();
+        const float graphTime = ShaderGraphTimeSeconds();
         bool virtualShadowsActive = UsesVirtualShadows(lighting, draws, shadowDraws);
         // Retain compiled pipelines and residency across temporary disablement
         // or CSM selection. Inactive VSM records no GPU work; signatures and
@@ -1335,7 +1375,19 @@ namespace PlutoGE::render
             {
                 const auto &draw = shadowDraws[index];
                 if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow && draw.surfaceType != 1 && draw.alphaMode != 2)
+                    {
                     m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
+                    if(draw.shaderGraphProgram) {
+                        HashVctValue(m_shadowDrawSignatures[index],draw.shaderGraphProgram->hash);
+                        HashVctValue(m_shadowDrawSignatures[index],graphTime);
+                        HashVctValue(m_shadowDrawSignatures[index],lighting.cameraPosition);
+                        HashVctValue(m_shadowDrawSignatures[index],draw.normalTexture);
+                        HashVctValue(m_shadowDrawSignatures[index],draw.metallicTexture);
+                        HashVctValue(m_shadowDrawSignatures[index],draw.roughnessTexture);
+                        HashVctValue(m_shadowDrawSignatures[index],draw.graphTextures);
+                        HashVctValue(m_shadowDrawSignatures[index],draw.graphSamplers);
+                    }
+                    }
             }
         }
         if (virtualShadowsActive)
@@ -1530,16 +1582,15 @@ namespace PlutoGE::render
             std::vector<std::size_t> shadowInstanceBufferStarts(shadowUploadCount);
             while (m_shadowMaterialBuffers.size() < shadowUploadCount)
                 m_shadowMaterialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                    {sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Shadow alpha material"}));
+                    {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
             std::size_t shadowInstanceBufferCursor = 0;
             for (std::size_t drawIndex = 0; drawIndex < shadowUploadCount; ++drawIndex)
             {
                 const auto &draw = shadowDraws[drawIndex];
                 if (m_shadowVisibleInAnyCascade[drawIndex] != 0u)
                 {
-                    if (draw.alphaMode == 1)
-                        m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
-                            Bytes(glm::vec4(draw.uvScale, draw.alphaCutoff, draw.baseColor.a)));
+                    m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
+                            Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
                     if (draw.instanceModels && draw.instanceModels->size() > 1)
                     {
                         shadowInstanceBufferStarts[drawIndex] = shadowInstanceBufferCursor;
@@ -1574,10 +1625,13 @@ namespace PlutoGE::render
                     ? (instanced ? m_maskedShadowInstancedPipeline.Get() : m_maskedShadowPipeline.Get())
                     : (instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get()));
                 commands.BindUniformBuffer(0, camera);
-                if (masked)
                 {
                     commands.BindUniformBuffer(8, m_shadowMaterialBuffers[drawIndex].Get());
                     commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                    commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
                 }
                 commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
                 commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
@@ -1686,18 +1740,21 @@ namespace PlutoGE::render
                                                {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
                             m_pointShadowMaterials.emplace_back(
                                 *m_device, m_device->CreateBuffer(
-                                               {sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Point shadow alpha"}));
+                                               {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Point shadow graph"}));
                         }
                         m_device->UpdateBuffer(m_pointShadowObjects[objectIndex].Get(), 0, Bytes(model));
                         commands.BindUniformBuffer(16, m_pointShadowObjects[objectIndex].Get());
-                        if (masked)
                         {
                             m_device->UpdateBuffer(m_pointShadowMaterials[objectIndex].Get(), 0,
-                                                   Bytes(glm::vec4(draw.uvScale, draw.alphaCutoff, draw.baseColor.a)));
+                                                   Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
                             commands.BindUniformBuffer(8, m_pointShadowMaterials[objectIndex].Get());
                             commands.BindTexture(
                                 9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
                                 m_fallbackSampler.Get());
+                    commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
                         }
                         commands.DrawIndexed(count, draw.firstIndex);
                         ++objectIndex;
@@ -1749,7 +1806,6 @@ namespace PlutoGE::render
         std::size_t instanceBufferCursor = 0;
         std::size_t materialBufferCursor = 0;
         BasicMaterialParameters previousMaterialParameters{};
-        const float graphTime = ShaderGraphTimeSeconds();
         bool geometryResourcesBound = false;
         std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
@@ -1805,10 +1861,11 @@ namespace PlutoGE::render
                           std::max(draw.attenuationDistance, 0.0001f)),
                 glm::vec4(1.0f / m_width, 1.0f / m_height,
                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
-            if (draw.shaderGraphProgram && !draw.outlinePass)
+            if (draw.shaderGraphProgram)
             {
                 materialParameters.shaderGraph = draw.shaderGraphProgram->data;
                 materialParameters.shaderGraphFrame.x = graphTime;
+                materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
             }
             if (transparent)
                 for (const auto &effect : postProcessEffects)
@@ -1855,6 +1912,7 @@ namespace PlutoGE::render
                 commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
+            for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
             previousMaterialTextures = materialTextures;
             geometryResourcesBound = true;
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
@@ -1950,7 +2008,8 @@ namespace PlutoGE::render
                     ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
                 return -(lighting.view * glm::vec4(center, 1.0f)).z;
             };
-            return depth(a) > depth(b);
+            const float depthA = depth(a), depthB = depth(b);
+            return depthA == depthB ? a.graphPassOrder < b.graphPassOrder : depthA > depthB;
         });
         commands.EndRendering();
         commands.EndGpuScope();
@@ -2403,6 +2462,7 @@ namespace PlutoGE::render
             if (draw.mesh && draw.mesh->IsValid())
                 m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
+        m_previousGraphTime = graphTime;
         if (submit)
         {
             const auto submitStart = std::chrono::steady_clock::now();
@@ -2567,7 +2627,7 @@ namespace PlutoGE::render
 
     rhi::Buffer &BasicRenderer::AcquireVctBuffer(std::size_t index)
     {
-        constexpr std::size_t vctParameterBufferSize = 1280;
+        constexpr std::size_t vctParameterBufferSize = 4096;
         static_assert(sizeof(VctVoxelParameters) <= vctParameterBufferSize);
         static_assert(sizeof(VctTraceParameters) <= vctParameterBufferSize);
         static_assert(sizeof(VctTemporalParameters) <= vctParameterBufferSize);
@@ -2724,6 +2784,7 @@ namespace PlutoGE::render
                 cascade.nextDraw = 0;
                 cascade.nextVoxelIndex = 0;
                 cascade.pendingSignature = contentSignature;
+                cascade.pendingGraphTime=ShaderGraphTimeSeconds();
                 cascade.pendingDraws.clear();
                 for (const auto &draw : draws)
                 {
@@ -2830,6 +2891,15 @@ namespace PlutoGE::render
                 auto &objectBuffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
                 commands.BindUniformBuffer(16, objectBuffer.Get());
+                auto &graphBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(graphBuffer.Get(),0,Bytes(ShadowMaterial(draw,cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime)));
+                commands.BindPipeline(draw.alphaMode==1 ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
+                commands.BindUniformBuffer(8,graphBuffer.Get());
+                commands.BindTexture(9,draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
+                commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
                 commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get()); commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
                 const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
                 const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
@@ -2921,10 +2991,13 @@ namespace PlutoGE::render
                     m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
                     const auto materialBufferIndex = m_vctBufferCursor++;
                     auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
-                    const VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
+                    VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
                         draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
                         draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
                         draw.metallicChannel, 1u};
+                    if(draw.shaderGraphProgram) material.graph=draw.shaderGraphProgram->data;
+                    material.graphCameraTime={cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime};
+                    material.graphFactors.x=draw.roughness;
                     m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
                     commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
                     commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
@@ -2932,6 +3005,9 @@ namespace PlutoGE::render
                                          m_fallbackSampler.Get());
                     commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
                                          m_fallbackSampler.Get());
+                    commands.BindTexture(14,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(15,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    for(unsigned i=0;i<4;++i)commands.BindTexture(16+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
                     const auto fallbackShadow = m_fallbackDataTexture.Get();
                     for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
                         commands.BindTexture(10 + shadowCascade,

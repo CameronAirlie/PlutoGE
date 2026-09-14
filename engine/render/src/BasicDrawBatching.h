@@ -22,6 +22,8 @@ namespace PlutoGE::render
             && a.normalTexture == b.normalTexture
             && a.metallicTexture == b.metallicTexture
             && a.roughnessTexture == b.roughnessTexture
+            && a.graphTextures==b.graphTextures && a.graphSamplers==b.graphSamplers
+            && a.graphPassOrder == b.graphPassOrder
             && a.metallic == b.metallic
             && a.roughness == b.roughness
             && a.emission == b.emission

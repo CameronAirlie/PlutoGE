@@ -1,0 +1,6 @@
+ShaderGraphVersion=1
+Pass=project://Shaders/RimOverlay.plutoshadergraph
+Variable=Tint|2|0.35,0.35,0.35,1
+Node=1|Parameter|Base tint|0,0|1,1,1,1|Color|0|260,150|0|Tint
+Node=100|Output|Base surface|340,0|1,1,1,1|Color|0|260,150|0|
+Link=1|1|Out|100|Albedo

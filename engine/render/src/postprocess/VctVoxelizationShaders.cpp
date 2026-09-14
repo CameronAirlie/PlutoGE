@@ -1,5 +1,6 @@
 #include "VctVoxelizationShaders.h"
 #include "VctCoverage.h"
+#include "PlutoGE/render/ShaderGraph.h"
 
 namespace PlutoGE::render::detail
 {
@@ -19,6 +20,7 @@ void main(){mat4 skin=mat4(1);if(uUseSkinning!=0){float w=aWeights.x+aWeights.y+
 layout(triangles) in; layout(triangle_strip,max_vertices=4) out;
 in VS { vec3 p; vec3 n; vec2 uv; } vin[];
 out GS { vec3 p; vec3 n; vec2 uv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
+uniform vec4 uGraphHeader=vec4(0);
 uniform vec3 uVolumeOrigin,uEmission;uniform float uVolumeSize;uniform int uVoxelResolution;
 vec2 projected(vec3 p,int axis){return axis==0?p.zy:axis==1?p.xz:p.xy;}
 void main()
@@ -28,7 +30,7 @@ void main()
     int axis=faceNormal.y>faceNormal.x?(faceNormal.z>faceNormal.y?2:1):(faceNormal.z>faceNormal.x?2:0);
     vec3 positions[3];vec2 projection[3];
     for(int i=0;i<3;++i){positions[i]=(vin[i].p-uVolumeOrigin)*(float(uVoxelResolution)/uVolumeSize);projection[i]=projected(positions[i],axis);}
-    bool emissive=any(greaterThan(uEmission,vec3(0)));
+    bool emissive=any(greaterThan(uEmission,vec3(0))) || uGraphHeader.x>0;
     vec2 lo=max(floor(min(projection[0],min(projection[1],projection[2]))),vec2(0));
     vec2 hi=min(ceil(max(projection[0],max(projection[1],projection[2]))),vec2(uVoxelResolution));
     if(emissive && any(lessThanEqual(hi,lo)))return;
@@ -77,7 +79,7 @@ uniform int uCaptureSurface;
 void main(){
  vec3 worldPosition=g.p,worldNormal=g.n;vec2 materialUv=g.uv;
  float areaCoverage=1.0;
- if(any(greaterThan(uEmission,vec3(0)))){
+ if(any(greaterThan(uEmission,vec3(0))) || uGraphHeader.x>0){
   vec3 barycentric;
   areaCoverage=vctTriangleCoverage(vctProject(g.triangleA,g.axis),vctProject(g.triangleB,g.axis),vctProject(g.triangleC,g.axis),floor(g.rasterCell),barycentric);
   if(areaCoverage<=0.0)discard;
@@ -86,9 +88,12 @@ void main(){
   materialUv=g.uvA*barycentric.x+g.uvB*barycentric.y+g.uvC*barycentric.z;
  }
  vec3 tc=(worldPosition-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
- vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,materialUv);if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
+ vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,materialUv);
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,materialUv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
- bool glassSurface=uSurfaceType==1;bool alphaBlend=uAlphaMode==2;float radianceCoverage=areaCoverage*((glassSurface||alphaBlend)?clamp(a.a,0,1):1.0);float opacity=glassSurface?0.0:radianceCoverage;vec3 normal=normalize(worldNormal),directRadiance=vec3(0);if(uHasInjectionLight!=0){vec3 lightDir=normalize(-uLightDirection);float ndl=max(dot(normal,lightDir),0);float shadow=uInjectionLightHasShadow!=0?visibility(worldPosition,worldNormal,uLightDirection):1;directRadiance=uLightColor*uLightIntensity*ndl*shadow;}for(int i=0;i<MAX_LOCAL_LIGHTS;i++){if(i>=uLocalLightCount)break;vec3 toLight=uLocalLightPosition[i]-worldPosition;float distanceToLight=length(toLight),range=max(uLocalLightRange[i],.0001);if(distanceToLight>=range)continue;vec3 lightDir=toLight/max(distanceToLight,.0001);float attenuation=(1.0-smoothstep(range*.9,range,distanceToLight))/max(distanceToLight*distanceToLight,.0001);if(uLocalLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLocalLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}directRadiance+=uLocalLightColor[i]*uLocalLightIntensity[i]*attenuation*max(dot(normal,lightDir),0.0);}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(1.0/3.14159265):vec3(0);vec3 r=diffuseBounce+max(uEmission,vec3(0));
+ vec3 graphNormal=normalize(worldNormal),graphEmission=uEmission;float graphRoughness=uRoughnessFactor;
+ evaluateShaderGraph(runtimeShaderGraph(),worldPosition,graphNormal,normalize(uGraphCameraPosition-worldPosition),uGraphTime,materialUv,a,graphNormal,metallic,graphRoughness,graphEmission);
+ worldNormal=graphNormal;if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
+ bool glassSurface=uSurfaceType==1;bool alphaBlend=uAlphaMode==2;float radianceCoverage=areaCoverage*((glassSurface||alphaBlend)?clamp(a.a,0,1):1.0);float opacity=glassSurface?0.0:radianceCoverage;vec3 normal=normalize(worldNormal),directRadiance=vec3(0);if(uHasInjectionLight!=0){vec3 lightDir=normalize(-uLightDirection);float ndl=max(dot(normal,lightDir),0);float shadow=uInjectionLightHasShadow!=0?visibility(worldPosition,worldNormal,uLightDirection):1;directRadiance=uLightColor*uLightIntensity*ndl*shadow;}for(int i=0;i<MAX_LOCAL_LIGHTS;i++){if(i>=uLocalLightCount)break;vec3 toLight=uLocalLightPosition[i]-worldPosition;float distanceToLight=length(toLight),range=max(uLocalLightRange[i],.0001);if(distanceToLight>=range)continue;vec3 lightDir=toLight/max(distanceToLight,.0001);float attenuation=(1.0-smoothstep(range*.9,range,distanceToLight))/max(distanceToLight*distanceToLight,.0001);if(uLocalLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLocalLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}directRadiance+=uLocalLightColor[i]*uLocalLightIntensity[i]*attenuation*max(dot(normal,lightDir),0.0);}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(1.0/3.14159265):vec3(0);vec3 r=(uGraphHeader.y>0.5?a.rgb:diffuseBounce)+max(graphEmission,vec3(0));
  // Keep invalid or extreme material/light values out of the half-float mip chain.
  // RGB is premultiplied by occupancy so partially occupied mip voxels cannot
  // contribute the radiance of a completely filled voxel.
@@ -99,6 +104,11 @@ void main(){
  imageAtomicMax(uSurfaceRecord,coord,surfaceBits);
  }if(claimSample(coord)){imageAtomicAdd(uAccumulationR,coord,encoded.r);imageAtomicAdd(uAccumulationG,coord,encoded.g);imageAtomicAdd(uAccumulationB,coord,encoded.b);imageAtomicAdd(uAccumulationOpacity,coord,encodedOpacity);}})";
         voxel.fragmentSource.insert(voxel.fragmentSource.find("void main()"), kVctCoverage);
+        voxel.vertexSource.insert(voxel.vertexSource.find("void main()"),ShaderGraphRuntimeGlsl(true));
+        voxel.vertexSource.insert(voxel.vertexSource.find("gl_Position=p;"),
+            "v.p+=shaderGraphVertexOffset(runtimeShaderGraph(),v.p,v.n,normalize(uGraphCameraPosition-v.p),uGraphTime,v.uv,uColor,uMetallicFactor,uRoughnessFactor,uEmission);p.xyz=v.p;");
+        voxel.fragmentSource.insert(voxel.fragmentSource.find("void main()"),
+            "uniform sampler2D uNormalTexture,uRoughnessTexture;uniform float uHasNormalTexture,uHasRoughnessTexture,uRoughnessFactor;\n"+ShaderGraphRuntimeGlsl());
         return voxel;
     }
 

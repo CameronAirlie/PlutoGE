@@ -258,7 +258,7 @@ namespace PlutoGE::ui
                 }
             }
             m_renderer->SetImmediateTextureUploads(true);
-            m_renderer->InvalidateAssetCache();
+
             if (!m_copyPipeline)
             {
                 render::rhi::GraphicsPipelineDescriptor copy;
@@ -277,7 +277,7 @@ namespace PlutoGE::ui
             }
             const auto bounds = mesh.GetBounds();
             render::RenderCommand command;
-            command.mesh = &mesh;
+            command.mesh = material&&material->GetConfig().shaderGraphProgram?mesh.GetTessellated(unsigned(material->GetConfig().shaderGraphProgram->data.header.w)):&mesh;
             command.material = material;
             command.castsShadow = false;
             command.model = glm::rotate(glm::mat4(1), glm::radians(-18.0f), glm::vec3(1, 0, 0));
@@ -293,7 +293,13 @@ namespace PlutoGE::ui
             const std::array effects{
                 render::BasicPostProcessEffect{render::BasicPostProcessEffectType::ToneMapping},
                 render::BasicPostProcessEffect{render::BasicPostProcessEffectType::GammaCorrection}};
-            if (!m_renderer->Render(kSize, kSize, camera, lighting, {&command, 1}, {}, {}, effects, ReadPixels))
+            std::vector<render::RenderCommand> previewCommands{command};
+            for(size_t i=0;i<previewCommands.size()&&previewCommands.size()<32;++i)if(previewCommands[i].material)
+                for(const auto &pass:previewCommands[i].material->GetConfig().additionalPasses){
+                    auto overlay=command;overlay.material=pass.get();overlay.mesh=mesh.GetTessellated(pass->GetConfig().shaderGraphProgram?unsigned(pass->GetConfig().shaderGraphProgram->data.header.w):0);
+                    previewCommands.push_back(overlay);
+                }
+            if (!m_renderer->Render(kSize, kSize, camera, lighting, previewCommands, {}, {}, effects, ReadPixels))
                 return false;
             if (!entry.image)
                 entry.image =

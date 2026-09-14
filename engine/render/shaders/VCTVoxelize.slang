@@ -1,3 +1,6 @@
+float2 shaderGraphScreenUV(float3 p){return float2(0);}
+float4 shaderGraphTexture(int slot, float2 uv);
+#include "ShaderGraphEvaluation.slang"
 #include "VCTCoverage.slang"
 
 struct LocalLight { float4 positionRange; float4 colorIntensity; float4 directionSpot; };
@@ -36,6 +39,9 @@ struct MaterialParameters
     uint hasMetallicTexture;
     uint metallicChannel;
     uint materialPadding;
+    ShaderGraphData graph;
+    float4 graphCameraTime;
+    float4 graphFactors;
 };
 [[vk::binding(0, 0)]] cbuffer VoxelConstants : register(b0, space0) { VoxelParameters voxel; };
 [[vk::binding(1, 0)]] cbuffer ObjectConstants : register(b1, space0) { ObjectParameters object; };
@@ -52,6 +58,24 @@ struct MaterialParameters
 [[vk::binding(7, 0)]] RWTexture3D<uint> accumulationWeight : register(u7, space0);
 
 [[vk::binding(8, 0)]] RWTexture3D<uint> surfaceRecord : register(u8, space0);
+
+[[vk::binding(14, 0)]] Sampler2D graphNormalTexture : register(t14, space0);
+[[vk::binding(15, 0)]] Sampler2D graphRoughnessTexture : register(t15, space0);
+[[vk::binding(16,0)]] Sampler2D graphExtra0 : register(t16,space0);
+[[vk::binding(17,0)]] Sampler2D graphExtra1 : register(t17,space0);
+[[vk::binding(18,0)]] Sampler2D graphExtra2 : register(t18,space0);
+[[vk::binding(19,0)]] Sampler2D graphExtra3 : register(t19,space0);
+float4 shaderGraphTexture(int slot, float2 uv)
+{
+    if(slot==4)return graphExtra0.SampleLevel(uv,0.0);
+    if(slot==5)return graphExtra1.SampleLevel(uv,0.0);
+    if(slot==6)return graphExtra2.SampleLevel(uv,0.0);
+    if(slot==7)return graphExtra3.SampleLevel(uv,0.0);
+    if(slot==0) return albedoTexture.SampleLevel(uv,0.0);
+    if(slot==1) return graphNormalTexture.SampleLevel(uv,0.0);
+    if(slot==2) return metallicTexture.SampleLevel(uv,0.0);
+    return graphRoughnessTexture.SampleLevel(uv,0.0);
+}
 
 struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
 struct VertexOutput { float3 worldPosition : POSITION0; float3 worldNormal : NORMAL0; float2 uv : TEXCOORD0; };
@@ -133,6 +157,9 @@ VertexOutput vertexMain(VertexInput input)
     output.worldPosition = mul(object.model, float4(input.position, 1.0)).xyz;
     output.worldNormal = normalize(mul((float3x3)object.model, input.normal));
     output.uv = input.uv * material.uvScale;
+    output.worldPosition += shaderGraphVertexOffset(material.graph,output.worldPosition,output.worldNormal,
+        normalize(material.graphCameraTime.xyz-output.worldPosition),material.graphCameraTime.w,output.uv,
+        material.baseColor,material.metallic,material.graphFactors.x,material.emission);
     return output;
 }
 
@@ -154,7 +181,7 @@ void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<Geomet
                         (float(voxel.resolution) / voxel.volumeSize);
         projected[i] = vctProject(positions[i], axis);
     }
-    const bool emissive = any(material.emission > 0.0);
+    const bool emissive = (any(material.emission > 0.0) || material.graph.header.x>0);
     // Rasterize intersected cells conservatively; the fragment stage integrates
     // only the original triangle. Bounds also cover arbitrarily thin triangles.
     const float2 lo = max(floor(min(projected[0], min(projected[1], projected[2]))), 0.0);
@@ -182,7 +209,7 @@ void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<Geomet
 void fragmentMain(GeometryOutput input)
 {
     float areaCoverage = 1.0;
-    if (any(material.emission > 0.0))
+    if ((any(material.emission > 0.0) || material.graph.header.x>0))
     {
         float3 barycentric;
         areaCoverage = vctTriangleCoverage(vctProject(input.triangleA, input.axis),
@@ -199,9 +226,15 @@ void fragmentMain(GeometryOutput input)
     if (any(textureCoordinate < 0.0) || any(textureCoordinate >= 1.0)) discard;
     float4 albedo = material.baseColor;
     if (material.hasAlbedoTexture != 0) albedo *= albedoTexture.Sample(input.uv);
+    float3 normal = normalize(input.worldNormal);
+    float metallic = saturate(material.metallic);
+    if (material.hasMetallicTexture != 0) metallic *= metallicTexture.Sample(input.uv)[min(material.metallicChannel,3)];
+    float roughness=material.graphFactors.x;
+    float3 emission=material.emission;
+    evaluateShaderGraph(material.graph,input.worldPosition,normal,normalize(material.graphCameraTime.xyz-input.worldPosition),
+        material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;
     const float coverage = areaCoverage * (material.alphaMode == 2 ? saturate(albedo.a) : 1.0);
-    const float3 normal = normalize(input.worldNormal);
     float3 direct = 0.0;
     if (voxel.hasDirectionalLight != 0)
         direct = voxel.lightColor.rgb * voxel.lightDirectionIntensity.w *
@@ -220,14 +253,8 @@ void fragmentMain(GeometryOutput input)
             attenuation *= smoothstep(0.9, 0.975, dot(-direction, normalize(light.directionSpot.xyz)));
         direct += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * max(dot(normal, direction), 0.0);
     }
-    float metallic = saturate(material.metallic);
-    if (material.hasMetallicTexture != 0)
-    {
-        const float4 packedMetallic = metallicTexture.Sample(input.uv);
-        metallic *= packedMetallic[min(material.metallicChannel, 3)];
-    }
-    float3 radiance = albedo.rgb * (1.0 - metallic) * direct *
-                      (1.0 / 3.14159265) + max(material.emission, 0.0);
+    float3 radiance = material.graph.header.y != 0 ? albedo.rgb+emission :
+        albedo.rgb*(1.0-metallic)*direct*(1.0/3.14159265)+max(emission,0.0);
     // Clamp source radiance before weighting so the storage limit cannot
     // change a source's effective brightness as its voxel footprint changes.
     radiance = clamp(radiance, 0.0, 16.0) * coverage;

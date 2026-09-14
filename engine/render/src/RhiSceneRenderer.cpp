@@ -454,7 +454,6 @@ namespace PlutoGE::render
                         if (!material.castsShadow || material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend)
                             continue;
                     }
-                    else
                     {
                         draw.baseColor = material.color;
                         draw.uvScale = material.uvScale;
@@ -474,6 +473,10 @@ namespace PlutoGE::render
                         draw.outlineWidth = material.outline.enabled ? material.outline.width : 0.0f;
                         draw.outlineColor = material.outline.color;
                         draw.shaderGraphProgram = material.shaderGraphProgram;
+                        draw.graphPassOrder = material.graphPassOrder;
+                        draw.graphSamplers=material.graphSamplers;
+                        for(size_t i=0;i<4;++i)draw.graphTextures[i]=uploadTexture(material.graphTextures[i],rhi::Format::R8G8B8A8Unorm,m_linearTextures,"Graph texture");
+                        if (draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z>0) draw.shadowBoundsRadius=-1.0f;
                         const bool transparent = material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
                         draw.contributesToGi = draw.contributesToGi && !transparent;
                         draw.castsShadow = draw.castsShadow && !transparent;
@@ -485,11 +488,11 @@ namespace PlutoGE::render
                         draw.castsShadow = draw.castsShadow && material.castsShadow;
                         draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
                                                               m_srgbTextures, "Scene albedo");
-                        if (!giOnly) draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
+                        draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
                                                            m_normalTextures, "Scene normal", true);
                         draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
                                                              m_linearTextures, "Scene metallic");
-                        if (!giOnly) draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
+                        draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
                                                               m_linearTextures, "Scene roughness");
                     }
                 }

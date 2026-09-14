@@ -275,6 +275,7 @@ namespace PlutoGE::render
             shader->SetUniform("uView", ctx.cameraData.view);
             shader->SetUniform("uProjection", ctx.cameraData.projection);
             shader->SetUniform("uCurrentViewProjection", currentViewProjection);
+            if(shader->HasUniform("uGraphViewProjection"))shader->SetUniform("uGraphViewProjection",currentViewProjection);
             shader->SetUniform("uPreviousViewProjection", previousViewProjection);
             shader->SetUniform("uUseSkinning", 0);
             activeShader = shader;

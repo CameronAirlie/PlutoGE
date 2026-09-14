@@ -232,6 +232,8 @@ namespace PlutoGE::render
         rhi::TextureHandle normalTexture;
         rhi::TextureHandle metallicTexture;
         rhi::TextureHandle roughnessTexture;
+        std::array<rhi::TextureHandle,4> graphTextures{};
+        std::array<std::uint32_t,4> graphSamplers{};
         float metallic = 0.0f;
         float roughness = 1.0f;
         glm::vec3 emission{0.0f};
@@ -249,6 +251,7 @@ namespace PlutoGE::render
         glm::vec3 outlineColor{0.0f};
         bool outlinePass = false;
         std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
+        unsigned graphPassOrder = 0;
         float alphaCutoff = 0.5f;
         std::uint32_t alphaMode = 0;
         std::uint32_t metallicChannel = 0;
@@ -535,6 +538,7 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackNormalTexture;
         rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
+        std::array<rhi::Sampler,4> m_graphSamplers;
         rhi::Sampler m_screenSampler;
         rhi::Sampler m_shadowSampler;
         rhi::Sampler m_vctVolumeSampler;
@@ -584,6 +588,7 @@ namespace PlutoGE::render
             std::uint64_t lastUpdateFrame = 0;
             std::vector<BasicDraw> pendingDraws;
             BasicLighting pendingLighting;
+            float pendingGraphTime=0;
             bool pendingInjectLocalLights = false;
             float pendingSecondaryBounce = 0.0f;
             bool secondaryPass = false;
@@ -662,6 +667,7 @@ namespace PlutoGE::render
         glm::mat4 m_previousMotionViewProjection{1.0f};
         std::vector<glm::mat4> m_previousModels;
         bool m_hasPreviousFrame = false;
+        float m_previousGraphTime = 0.0f;
         rhi::TextureHandle m_outputColor;
         BasicRendererFrameStats m_frameStats;
         BasicRendererTimingStats m_timingStats;

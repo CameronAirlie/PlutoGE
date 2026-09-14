@@ -68,19 +68,7 @@ namespace PlutoGE::render
         static constexpr std::size_t kDirectionCount = 6;
         static constexpr std::size_t kMaxLocalInjectionLights = 7;
 
-        struct VoxelMaterialSnapshot
-        {
-            glm::vec4 color{1.0f};
-            glm::vec2 uvScale{1.0f};
-            glm::vec3 emission{0.0f};
-            Texture *albedoTexture = nullptr;
-            Texture *metallicTexture = nullptr;
-            MaterialSurfaceType surfaceType = MaterialSurfaceType::Standard;
-            AlphaMode alphaMode = AlphaMode::Opaque;
-            TextureChannel metallicTextureChannel = TextureChannel::Red;
-            float alphaCutoff = 0.5f;
-            float metallic = 0.0f;
-        };
+        using VoxelMaterialSnapshot = MaterialConfig;
 
         struct VoxelizationJob
         {
@@ -115,6 +103,7 @@ namespace PlutoGE::render
                 glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f)};
             std::array<float, 4> pendingShadowSplits{};
             glm::mat4 pendingView{1.0f};
+            float pendingGraphTime=0;
             glm::vec3 pendingLightDirection{0.0f, -1.0f, 0.0f};
             glm::vec3 pendingLightColor{0.0f};
             float pendingLightIntensity = 0.0f;

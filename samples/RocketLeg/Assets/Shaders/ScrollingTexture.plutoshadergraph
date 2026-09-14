@@ -1,0 +1,12 @@
+ShaderGraphVersion=1
+Unlit=1
+TextureParameter=Pattern||0|0
+Node=1|Time|Scene time|0,0|1,1,1,1|Color|0|260,150|0|
+Node=2|MeshUV|Mesh UV|0,180|1,1,1,1|Color|0|260,150|0|
+Node=3|Expression|Scroll UV|300,0|1,1,1,1|Color|0|260,150|0|B + float2(A * 0.1, 0)
+Node=4|TextureSample|Pattern|610,0|1,1,1,1|Color|0|260,150|0|Pattern
+Node=100|Output|Surface|940,0|1,1,1,1|Color|0|260,150|0|
+Link=1|1|Out|3|A
+Link=2|2|Out|3|B
+Link=3|3|Out|4|UV
+Link=4|4|Color|100|Albedo

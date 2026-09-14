@@ -23,6 +23,7 @@ namespace PlutoGE::ui
         std::string m_loadedReference;
         std::string m_shaderGraphReference;
         std::vector<render::ShaderGraphVariable> m_shaderGraphVariables;
+        std::vector<render::ShaderGraphTextureParameter> m_shaderGraphTextures;
         glm::vec4 m_color{1.0f};
         render::MaterialSurfaceType m_surfaceType = render::MaterialSurfaceType::Standard;
         render::AlphaMode m_alphaMode = render::AlphaMode::Opaque;

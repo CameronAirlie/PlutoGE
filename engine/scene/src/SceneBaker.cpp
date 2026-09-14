@@ -315,6 +315,8 @@ namespace PlutoGE::scene
 
         struct BakeTriangle
         {
+            render::MaterialConfig graphMaterial;
+            float graphTime=0;
             glm::vec3 worldPositions[3]{};
             glm::vec3 worldNormals[3]{};
             glm::vec2 primaryUvs[3]{};
@@ -522,8 +524,12 @@ namespace PlutoGE::scene
             return value / std::sqrt(lengthSq);
         }
 
+        render::ShaderGraphSample SampleBakeGraph(const BakeTriangle &triangle, const glm::vec3 &barycentric);
+
         glm::vec3 ResolveInterpolatedNormal(const BakeTriangle &triangle, const glm::vec3 &barycentric)
         {
+            if (triangle.graphMaterial.shaderGraphProgram)
+                return NormalizeOr(SampleBakeGraph(triangle, barycentric).normal, ComputeTriangleNormal(triangle));
             const glm::vec3 interpolatedNormal = triangle.worldNormals[0] * barycentric.x +
                                                  triangle.worldNormals[1] * barycentric.y +
                                                  triangle.worldNormals[2] * barycentric.z;
@@ -1464,6 +1470,11 @@ namespace PlutoGE::scene
 
         bool BuildGpuDirectLightmaps(PreparedSceneBake &preparedBake)
         {
+            if(std::any_of(preparedBake.triangles.begin(),preparedBake.triangles.end(),[](const auto &t){return bool(t.graphMaterial.shaderGraphProgram);}))
+            {
+                LogBakeMessage("Using CPU bake for procedural shader materials.");
+                return false;
+            }
             GLint majorVersion = 0;
             GLint minorVersion = 0;
             glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
@@ -2146,6 +2157,16 @@ namespace PlutoGE::scene
                     }
 
                     const glm::vec3 hitAlbedo = glm::clamp(SampleTriangleAlbedo(triangle, hit->barycentric, textureCache), glm::vec3(0.0f), glm::vec3(1.0f));
+                    if (triangle.graphMaterial.shaderGraphProgram)
+                    {
+                        const auto surface = SampleBakeGraph(triangle, hit->barycentric);
+                        accumulatedIrradiance += throughput * surface.emission * bounceWeight;
+                        if (triangle.graphMaterial.shaderGraphProgram->data.header.y != 0)
+                        {
+                            accumulatedIrradiance += throughput * glm::vec3(surface.color) * bounceWeight;
+                            break;
+                        }
+                    }
                     throughput *= hitAlbedo;
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
                     const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
@@ -2364,10 +2385,25 @@ namespace PlutoGE::scene
                 fy);
         }
 
+        render::ShaderGraphSample SampleBakeGraph(const BakeTriangle &triangle, const glm::vec3 &barycentric)
+        {
+            render::ShaderGraphSample sample;
+            for(int i=0;i<3;++i) {
+                sample.worldPosition+=triangle.worldPositions[i]*barycentric[i];
+                sample.uv+=triangle.primaryUvs[i]*barycentric[i];
+            }
+            sample.worldNormal=NormalizeOr(triangle.worldNormals[0]*barycentric.x+triangle.worldNormals[1]*barycentric.y+
+                triangle.worldNormals[2]*barycentric.z,glm::vec3(0,0,1));
+            sample.viewDirection=sample.worldNormal; // Static bake convention: normal-incidence view.
+            sample.time=triangle.graphTime;
+            return render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample);
+        }
+
         glm::vec3 SampleTriangleAlbedo(const BakeTriangle &triangle,
                                        const glm::vec3 &barycentric,
                                        const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
+            if(triangle.graphMaterial.shaderGraphProgram) return glm::vec3(SampleBakeGraph(triangle,barycentric).color);
             glm::vec3 albedo = triangle.baseColor;
             const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
             if (!textureData)
@@ -2383,6 +2419,7 @@ namespace PlutoGE::scene
                                   const glm::vec3 &barycentric,
                                   const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
+            if(triangle.graphMaterial.shaderGraphProgram) return SampleBakeGraph(triangle,barycentric).color.a;
             float alpha = triangle.baseAlpha;
             const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
             if (textureData)
@@ -2887,8 +2924,9 @@ namespace PlutoGE::scene
                 if (material.GetConfig().alphaMode == render::AlphaMode::Blend ||
                     submeshIndex >= mesh.GetSubmeshCount())
                     return;
-                const auto &meshData = mesh.GetMeshData();
-                const auto &submesh = mesh.GetSubmesh(submeshIndex);
+                auto *renderMesh=mesh.GetTessellated(material.GetConfig().shaderGraphProgram?unsigned(material.GetConfig().shaderGraphProgram->data.header.w):0);
+                const auto &meshData = renderMesh->GetMeshData();
+                const auto &submesh = renderMesh->GetSubmesh(submeshIndex);
                 if (submesh.indexCount < 3)
                     return;
                 const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
@@ -2897,6 +2935,8 @@ namespace PlutoGE::scene
                     BakeTriangle triangle;
                     glm::vec3 localPositions[3]{};
                     triangle.materialSlot = submesh.materialIndex;
+                    triangle.graphMaterial=material.GetConfig();
+                    triangle.graphTime=render::ShaderGraphTimeSeconds();
                     triangle.baseColor = glm::vec3(material.GetConfig().color);
                     triangle.baseAlpha = glm::clamp(material.GetConfig().color.a, 0.0f, 1.0f);
                     triangle.albedoTexture = material.GetConfig().albedoTexture;
@@ -2925,6 +2965,12 @@ namespace PlutoGE::scene
                         triangle.primaryUvs[vertexIndex] =
                             glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material.GetConfig().uvScale;
                         triangle.lightmapUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
+                        if(triangle.graphMaterial.shaderGraphProgram) {
+                            render::ShaderGraphSample sample;
+                            sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];
+                            sample.uv=triangle.primaryUvs[vertexIndex];sample.time=triangle.graphTime;
+                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample,true).vertexOffset;
+                        }
                     }
                     if (!validTriangle)
                         continue;
@@ -3004,8 +3050,10 @@ namespace PlutoGE::scene
 
                 for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
                 {
-                    const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
                     auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
+                    auto *renderMesh=meshComponent->GetMesh()->GetTessellated(material&&material->GetConfig().shaderGraphProgram?unsigned(material->GetConfig().shaderGraphProgram->data.header.w):0);
+                    const auto &meshData=renderMesh->GetMeshData();
+                    const auto &submesh = renderMesh->GetSubmesh(submeshIndex);
                     if (!material || material->GetConfig().alphaMode == render::AlphaMode::Blend || submesh.indexCount < 3)
                     {
                         continue;
@@ -3045,6 +3093,8 @@ namespace PlutoGE::scene
                         glm::vec3 localPositions[3]{};
                         triangle.meshComponent = meshComponent;
                         triangle.materialSlot = submesh.materialIndex;
+                        triangle.graphMaterial=material->GetConfig();
+                        triangle.graphTime=render::ShaderGraphTimeSeconds();
                         triangle.baseColor = glm::vec3(material->GetConfig().color);
                         triangle.baseAlpha = glm::clamp(material->GetConfig().color.a, 0.0f, 1.0f);
                         triangle.albedoTexture = material->GetConfig().albedoTexture;
@@ -3070,6 +3120,12 @@ namespace PlutoGE::scene
                                 glm::vec3(0.0f));
                             const glm::vec2 sourcePrimaryUv(sourceVertex.uv[0], sourceVertex.uv[1]);
                             triangle.primaryUvs[vertexIndex] = sourcePrimaryUv * material->GetConfig().uvScale;
+                        if(triangle.graphMaterial.shaderGraphProgram) {
+                            render::ShaderGraphSample sample;
+                            sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];
+                            sample.uv=triangle.primaryUvs[vertexIndex];sample.time=triangle.graphTime;
+                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample,true).vertexOffset;
+                        }
                             triangle.lightmapUvs[vertexIndex] = useLightmapUvs
                                                                     ? ResolveBakeUv(sourceVertex, true)
                                                                     : sourcePrimaryUv;
@@ -3392,7 +3448,14 @@ namespace PlutoGE::scene
 
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
                     const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
-                    accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache) * (weight * settings.probeBounceStrength);
+                    glm::vec3 radiance = directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache);
+                    if (triangle.graphMaterial.shaderGraphProgram)
+                    {
+                        const auto surface = SampleBakeGraph(triangle, hit->barycentric);
+                        if (triangle.graphMaterial.shaderGraphProgram->data.header.y != 0) radiance = glm::vec3(surface.color);
+                        radiance += surface.emission;
+                    }
+                    accumulatedIrradiance += radiance * (weight * settings.probeBounceStrength);
                     totalWeight += weight;
                 }
 

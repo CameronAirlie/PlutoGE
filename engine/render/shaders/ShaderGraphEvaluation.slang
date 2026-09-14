@@ -1,3 +1,4 @@
+float2 shaderGraphScreenUV(float3 worldPosition);
 // This evaluator is also translated to GLSL for the legacy geometry path.
 // Keep this file free of backend-specific resource declarations.
 struct ShaderGraphData
@@ -25,14 +26,15 @@ float4 shaderGraphSafeDivisor(float4 v)
                   v.z<0.0?-max(abs(v.z),0.0001):max(v.z,0.0001),
                   v.w<0.0?-max(abs(v.w),0.0001):max(v.w,0.0001));
 }
-void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
+float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
                          float3 viewDirection, float time, float2 uv,
                          inout float4 color, inout float3 normal, inout float metallicValue,
-                         inout float roughnessValue, inout float3 emissionValue)
+                         inout float roughnessValue, inout float3 emissionValue, bool vertexOnly)
 {
-    if(graph.header.x==0) return;
+    int count = vertexOnly ? graph.header.z : graph.header.x;
+    if(count==0) return float3(0.0);
     float4 r[64];
-    for(int i=0;i<graph.header.x;++i)
+    for(int i=0;i<count;++i)
     {
         int4 op=graph.instructions[i];
         // Input/constant instructions do not read registers. Every other operand
@@ -55,6 +57,7 @@ void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 wor
             else if(op.y==8) v=float4(worldPosition,1.0);
             else if(op.y==9) v=float4(worldNormal,1.0);
             else if(op.y==10) v=float4(viewDirection,1.0);
+            else if(op.y==11)v=float4(shaderGraphScreenUV(worldPosition),0.0,1.0);
         }
         else if(op.x==2) v=a+b;
         else if(op.x==3) v=a-b;
@@ -82,10 +85,29 @@ void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 wor
         else if(op.x==18) v=float4(a.x,b.x,c.x,r[int(graph.values[i].x)].x);
         r[i]=v;
     }
+    if(vertexOnly) return r[graph.outputs1.z].xyz;
     color=float4(r[graph.outputs0.x].xyz,clamp(r[graph.outputs1.x].x,0.0,1.0));
     float3 finalNormal=r[graph.outputs0.y].xyz;
     if(dot(finalNormal,finalNormal)>0.000001) normal=normalize(finalNormal);
     metallicValue=clamp(r[graph.outputs0.z].x,0.0,1.0);
     roughnessValue=clamp(r[graph.outputs0.w].x,0.04,1.0);
     emissionValue=max(r[graph.outputs1.y].xyz,float3(0.0));
+    return float3(0.0);
+}
+
+void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
+                         float3 viewDirection, float time, float2 uv,
+                         inout float4 color, inout float3 normal, inout float metallicValue,
+                         inout float roughnessValue, inout float3 emissionValue)
+{
+    evaluateShaderGraphProgram(graph,worldPosition,worldNormal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue,false);
+}
+
+float3 shaderGraphVertexOffset(ShaderGraphData graph, float3 position, float3 normal,
+    float3 viewDirection, float time, float2 uv, float4 color, float metallicValue,
+    float roughnessValue, float3 emissionValue)
+{
+    return evaluateShaderGraphProgram(graph,position,normal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue,true);
 }

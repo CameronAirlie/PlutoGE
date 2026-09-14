@@ -1,3 +1,4 @@
+#include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
@@ -2175,6 +2176,8 @@ namespace PlutoGE::scene
         // OnCreate may request additive loads or query the scene generation.
         // Publish the runtime lifetime before invoking gameplay callbacks.
         m_runtimeStarted = true;
+        m_shaderTime=0.0f;
+        render::SetShaderGraphTimeSeconds(0.0f);
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
             scriptComponent->Start();
@@ -2684,6 +2687,8 @@ namespace PlutoGE::scene
         const float simulationDeltaTime = m_runtimeStarted
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
+        m_shaderTime += std::max(simulationDeltaTime,0.0f);
+        render::SetShaderGraphTimeSeconds(m_shaderTime);
         RestoreRuntimePhysicsTransforms();
         ++m_updateSequence;
         if (m_sectionNavigationDirty)

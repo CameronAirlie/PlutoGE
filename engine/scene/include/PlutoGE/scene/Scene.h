@@ -280,6 +280,7 @@ namespace PlutoGE::scene
         float m_environmentIntensity = 1.0f;
         bool m_runtimeStarted = false;
         float m_timeScale = 1.0f;
+        float m_shaderTime = 0.0f;
         float m_physicsTimeAccumulator = 0.0f;
         SceneUpdateTimingStats m_updateTimingStats;
         BakedProbeVolume m_bakedProbeVolume;

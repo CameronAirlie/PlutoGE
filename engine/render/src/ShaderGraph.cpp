@@ -15,6 +15,70 @@
 
 namespace PlutoGE::render
 {
+    static std::string GraphExtraTexturesGlsl()
+    {
+        return R"(
+uniform sampler2D uGraphSceneColor,uGraphSceneDepth;
+uniform mat4 uGraphViewProjection=mat4(1);
+vec2 shaderGraphScreenUV(vec3 p){vec4 clip=uGraphViewProjection*vec4(p,1);return clip.xy/max(abs(clip.w),.000001)*.5+.5;}
+uniform sampler2D uGraphTexture0,uGraphTexture1,uGraphTexture2,uGraphTexture3;
+uniform vec4 uGraphTexturePresent=vec4(0),uGraphSamplerModes=vec4(0);
+ivec2 graphTexelCoord(ivec2 p,ivec2 size,int mode){return mode>=2?clamp(p,ivec2(0),size-1):(p%size+size)%size;}
+vec4 graphSampleExtra(sampler2D tex,vec2 uv,int mode){
+    ivec2 size=textureSize(tex,0);vec2 p=uv*vec2(size)-0.5;ivec2 cell=ivec2(floor(p));vec2 f=fract(p);
+    if((mode%2)==1)return texelFetch(tex,graphTexelCoord(ivec2(floor(uv*vec2(size))),size,mode),0);
+    return mix(mix(texelFetch(tex,graphTexelCoord(cell,size,mode),0),texelFetch(tex,graphTexelCoord(cell+ivec2(1,0),size,mode),0),f.x),
+        mix(texelFetch(tex,graphTexelCoord(cell+ivec2(0,1),size,mode),0),texelFetch(tex,graphTexelCoord(cell+ivec2(1),size,mode),0),f.x),f.y);
+}
+vec4 graphExtraTexture(int slot,vec2 uv){
+    if(slot==8)return textureLod(uGraphSceneColor,uv,0.0);
+    if(slot==9)return vec4(textureLod(uGraphSceneDepth,uv,0.0).r);
+    int i=slot-4;if(i<0||i>=4||uGraphTexturePresent[i]<0.5)return vec4(1);
+    if(i==0)return graphSampleExtra(uGraphTexture0,uv,int(uGraphSamplerModes.x));
+    if(i==1)return graphSampleExtra(uGraphTexture1,uv,int(uGraphSamplerModes.y));
+    if(i==2)return graphSampleExtra(uGraphTexture2,uv,int(uGraphSamplerModes.z));
+    return graphSampleExtra(uGraphTexture3,uv,int(uGraphSamplerModes.w));
+}
+)";
+    }
+    std::string ShaderGraphRuntimeGlsl(bool vertexStage)
+    {
+        std::string evaluator=kShaderGraphEvaluationSource;
+        for(const auto &[from,to]:std::initializer_list<std::pair<std::string,std::string>>{
+            {"float4","vec4"},{"float3","vec3"},{"float2","vec2"},{"int4","ivec4"},{"frac(","fract("},{"lerp(","mix("}})
+            for(size_t at=0;(at=evaluator.find(from,at))!=std::string::npos;at+=to.size())evaluator.replace(at,from.size(),to);
+        std::string code=R"(
+uniform vec4 uGraphHeader=vec4(0), uGraphOutputs0=vec4(0), uGraphOutputs1=vec4(0);
+uniform vec4 uGraphInstructions[64], uGraphValues[64];
+uniform float uGraphTime;
+uniform vec3 uGraphCameraPosition;
+)";
+        if(vertexStage) code+=R"(
+uniform sampler2D uAlbedoTexture,uNormalTexture,uMetallicTexture,uRoughnessTexture;
+uniform float uHasAlbedoTexture,uHasNormalTexture,uHasMetallicTexture,uHasRoughnessTexture;
+uniform vec4 uColor;
+uniform float uMetallicFactor,uRoughnessFactor;
+uniform vec3 uEmission;
+)";
+        code+=GraphExtraTexturesGlsl();
+        code+=R"(
+vec4 shaderGraphTexture(int slot,vec2 uv) {
+    if(slot>=4)return graphExtraTexture(slot,uv);
+    if(slot==0)return uHasAlbedoTexture>0.5?textureLod(uAlbedoTexture,uv,0.0):vec4(1);
+    if(slot==1)return uHasNormalTexture>0.5?textureLod(uNormalTexture,uv,0.0):vec4(.5,.5,1,1);
+    if(slot==2)return uHasMetallicTexture>0.5?textureLod(uMetallicTexture,uv,0.0):vec4(1);
+    return uHasRoughnessTexture>0.5?textureLod(uRoughnessTexture,uv,0.0):vec4(1);
+}
+)" + evaluator + R"(
+ShaderGraphData runtimeShaderGraph() {
+    ShaderGraphData graph;
+    graph.header=ivec4(uGraphHeader);graph.outputs0=ivec4(uGraphOutputs0);graph.outputs1=ivec4(uGraphOutputs1);
+    for(int i=0;i<graph.header.x;++i){graph.instructions[i]=ivec4(uGraphInstructions[i]);graph.values[i]=uGraphValues[i];}
+    return graph;
+}
+)";
+        return code;
+    }
     namespace
     {
         std::string FloatLiteral(float value)
@@ -156,9 +220,10 @@ namespace PlutoGE::render
                 }
             }
 
-        )" + uniforms + R"(
+        )" + uniforms + GraphExtraTexturesGlsl() + R"(
             vec4 shaderGraphTexture(int slot, vec2 uv)
             {
+                if(slot>=4)return graphExtraTexture(slot,uv);
                 if(slot==0) return uHasAlbedoTexture>0.5 ? texture(uAlbedoTexture,uv) : vec4(1.0);
                 if(slot==1) return uHasNormalTexture>0.5 ? texture(uNormalTexture,uv) : vec4(0.5,0.5,1.0,1.0);
                 if(slot==2) return uHasMetallicTexture>0.5 ? texture(uMetallicTexture,uv) : vec4(1.0);
@@ -343,7 +408,9 @@ namespace PlutoGE::render
             hash ^= value;
             hash *= 1099511628211ull;
         };
-        mix(graph.unlit ? 1ull : 0ull);
+        mix(graph.unlit ? 1ull : 0ull);mix(graph.tessellation);
+        for(const auto &pass:graph.passes)mix(std::hash<std::string>{}(pass));
+        for(const auto &t:graph.textures){mix(std::hash<std::string>{}(t.name));mix(std::hash<std::string>{}(t.reference));mix(t.nearest);mix(t.clamp);}
         for (const auto &v : graph.variables)
         {
             mix(std::hash<std::string>{}(v.name));
@@ -358,6 +425,7 @@ namespace PlutoGE::render
             mix(static_cast<std::uint64_t>(node.id));
             mix(static_cast<std::uint64_t>(node.kind));
             mix(std::hash<std::string>{}(node.parameter));
+            if(node.subgraph)mix(HashShaderGraph(*node.subgraph));
             mix(static_cast<std::uint64_t>(node.materialInput));
             mix(node.componentPins ? 1ull : 0ull);
             for (int index = 0; index < 4; ++index)
@@ -482,6 +550,37 @@ namespace PlutoGE::render
             if (errorMessage) *errorMessage = compileError;
             return nullptr;
         }
+        const auto program = BuildShaderGraphProgram(graph);
+        if (program && program->data.header.z > 0)
+        {
+            // Share the generated evaluator and material declarations between stages.
+            const auto &fragment = source.fragmentSource;
+            auto begin = fragment.find("uniform sampler2D uAlbedoTexture;");
+            auto end = fragment.find("float ReadTextureChannel", begin);
+            std::string declarations = fragment.substr(begin, end - begin);
+            for (const std::string duplicate : {"uniform float uOutlineWidth = 0.0;", "uniform vec2 uUVScale = vec2(1.0);"})
+                if (auto at = declarations.find(duplicate); at != std::string::npos) declarations.erase(at, duplicate.size());
+            begin = fragment.find("uniform float uGraphTime;");
+            end = fragment.find("float ToFloat", begin);
+            std::string evaluator = fragment.substr(begin, end - begin);
+            // Vertex texture sampling has no derivatives.
+            for (const std::string sampler : {"uAlbedoTexture", "uNormalTexture", "uMetallicTexture", "uRoughnessTexture"})
+            {
+                const std::string from = "texture(" + sampler + ",uv)";
+                const std::string to = "textureLod(" + sampler + ",uv,0.0)";
+                if (auto at = evaluator.find(from); at != std::string::npos) evaluator.replace(at, from.size(), to);
+            }
+            begin = fragment.find("ShaderGraphData sg;");
+            end = fragment.find("vec4 sgColor=", begin);
+            const std::string helper = declarations + evaluator +
+                "uniform float uGraphPreviousTime;\nvec3 graphOffset(vec3 p, vec3 n,float time) {\n" + fragment.substr(begin,end-begin) +
+                "return shaderGraphVertexOffset(sg,p,n,normalize(uGraphCameraPosition-p),time,aUV*uUVScale,uColor,uMetallicFactor,uRoughnessFactor,uEmission);\n}\n";
+            source.vertexSource.insert(source.vertexSource.find("void main()"), helper);
+            const auto at = source.vertexSource.find("FragPos = currentWorldPos.xyz;", source.vertexSource.find("previousWorldPos.xyz +="));
+            source.vertexSource.insert(at,
+                "currentWorldPos.xyz += graphOffset(currentWorldPos.xyz,worldNormal,uGraphTime);\n"
+                "previousWorldPos.xyz += graphOffset(previousWorldPos.xyz,normalize(previousNormal),uGraphPreviousTime);\n");
+        }
         auto *shader = Shader::Create(source);
         if (!shader && errorMessage) *errorMessage = "GPU shader compilation failed; see the shader compiler log.";
         return shader;
@@ -529,6 +628,11 @@ namespace PlutoGE::render
         case ShaderGraphNodeKind::Power: return "Power";
         case ShaderGraphNodeKind::OneMinus: return "OneMinus";
         case ShaderGraphNodeKind::TextureSample: return "TextureSample";
+        case ShaderGraphNodeKind::Subgraph: return "Subgraph";
+        case ShaderGraphNodeKind::ScreenUV:return "ScreenUV";
+        case ShaderGraphNodeKind::SceneColor:return "SceneColor";
+        case ShaderGraphNodeKind::SceneDepth:return "SceneDepth";
+        case ShaderGraphNodeKind::Expression:return "Expression";
         case ShaderGraphNodeKind::Output:
             return "Output";
         default:
@@ -596,6 +700,11 @@ namespace PlutoGE::render
         if (value == "Power") return ShaderGraphNodeKind::Power;
         if (value == "OneMinus") return ShaderGraphNodeKind::OneMinus;
         if (value == "TextureSample") return ShaderGraphNodeKind::TextureSample;
+        if (value == "Subgraph") return ShaderGraphNodeKind::Subgraph;
+        if(value=="ScreenUV")return ShaderGraphNodeKind::ScreenUV;
+        if(value=="SceneColor")return ShaderGraphNodeKind::SceneColor;
+        if(value=="SceneDepth")return ShaderGraphNodeKind::SceneDepth;
+        if(value=="Expression")return ShaderGraphNodeKind::Expression;
         if (value == "Output")
             return ShaderGraphNodeKind::Output;
         if (value == "Float") return ShaderGraphNodeKind::Float;

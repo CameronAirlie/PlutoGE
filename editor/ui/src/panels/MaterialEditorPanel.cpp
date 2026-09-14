@@ -410,7 +410,7 @@ namespace PlutoGE::ui
         if (!material)
         {
             m_color = glm::vec4(1.0f);
-            m_shaderGraphVariables.clear();
+            m_shaderGraphVariables.clear();m_shaderGraphTextures.clear();
             m_shaderGraphReference = std::string(assets::Project::kBuiltinDefaultShaderGraphReference);
             m_surfaceType = render::MaterialSurfaceType::Standard;
             m_alphaMode = render::AlphaMode::Opaque;
@@ -441,6 +441,7 @@ namespace PlutoGE::ui
 
         const auto &config = material->GetConfig();
         m_shaderGraphVariables = config.shaderGraphVariables;
+        m_shaderGraphTextures=config.shaderGraphTextures;
         m_shaderGraphReference = config.shaderGraphReference.empty()
                                      ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
                                      : config.shaderGraphReference;
@@ -516,6 +517,10 @@ namespace PlutoGE::ui
         previewConfig.attenuationColor = m_attenuationColor;
         previewConfig.uvScale = m_uvScale;
         previewConfig.flipNormalY = m_flipNormalY;
+        previewConfig.shaderGraphReference = m_shaderGraphReference;
+        previewConfig.shaderGraphVariables = m_shaderGraphVariables;
+        previewConfig.shaderGraphTextures=m_shaderGraphTextures;
+        editorShell.GetEngine().GetAssetManager().ResolveMaterialShaderGraph(previewConfig);
         std::size_t previewRevision = 0;
         for (const float value : {m_color.r, m_color.g, m_color.b, m_color.a, m_metallic, m_roughness,
                                   m_emission.r, m_emission.g, m_emission.b, m_uvScale.x, m_uvScale.y,
@@ -530,6 +535,11 @@ namespace PlutoGE::ui
         HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
         HashPreviewValue(previewRevision, m_flipNormalY);
         HashPreviewValue(previewRevision, m_twoSided);
+        if (previewConfig.shaderGraphProgram)
+        {
+            HashPreviewValue(previewRevision, previewConfig.shaderGraphProgram->hash);
+            HashPreviewValue(previewRevision, static_cast<std::uint64_t>(ImGui::GetTime() * 30.0));
+        }
 
         const float previewExtent = (std::min)(ImGui::GetContentRegionAvail().x, 280.0f);
         const ImVec2 previewSize(previewExtent, previewExtent);
@@ -593,6 +603,20 @@ namespace PlutoGE::ui
             ImGui::PopID();
         }
 
+        const auto textureProgram=render::BuildShaderGraphProgram(shaderGraph);
+        if(textureProgram)for(const auto &parameter:textureProgram->textures) {
+            ImGui::PushID(parameter.name.c_str());
+            auto replacement=std::find_if(m_shaderGraphTextures.begin(),m_shaderGraphTextures.end(),[&](const auto &t){return t.name==parameter.name;});
+            bool overridden=replacement!=m_shaderGraphTextures.end();
+            if(ImGui::Checkbox("Override texture",&overridden)) {
+                if(overridden)m_shaderGraphTextures.push_back(parameter);else m_shaderGraphTextures.erase(replacement);
+                replacement=std::find_if(m_shaderGraphTextures.begin(),m_shaderGraphTextures.end(),[&](const auto &t){return t.name==parameter.name;});m_dirty=true;
+            }
+            auto path=overridden?replacement->reference:parameter.reference;
+            ImGui::BeginDisabled(!overridden);
+            if(RenderTexturePathControl(reference,parameter.name.c_str(),parameter.name.c_str(),path)) {replacement->reference=path;m_dirty=true;}
+            ImGui::EndDisabled();ImGui::PopID();
+        }
         float color[4] = {m_color.r, m_color.g, m_color.b, m_color.a};
         if (ImGui::ColorEdit4("Color", color))
         {
@@ -755,6 +779,7 @@ namespace PlutoGE::ui
                                               ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
                                               : m_shaderGraphReference;
             config.shaderGraphVariables = m_shaderGraphVariables;
+            config.shaderGraphTextures=m_shaderGraphTextures;
             config.color = m_color;
             config.surfaceType = m_surfaceType;
             config.alphaMode = m_alphaMode;

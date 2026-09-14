@@ -46,10 +46,26 @@ namespace PlutoGE::render
             activeShader->TrySetUniform(name, texture, slot);
         };
 
+        const int graphTextureStart=activeShader->HasUniform("uSceneColorTexture")?4:activeShader->HasUniform("uShadow0")?8:5;
+        glm::vec4 present(0),samplers(0);
+        for(int i=0;i<4;++i){
+            if(m_config.graphTextures[i]){setTexture(("uGraphTexture"+std::to_string(i)).c_str(),m_config.graphTextures[i],graphTextureStart+i);present[i]=1;}
+            samplers[i]=float(m_config.graphSamplers[i]);
+        }
+        setVec4("uGraphTexturePresent",present);setVec4("uGraphSamplerModes",samplers);
         setFloat("uGraphTime", ShaderGraphTimeSeconds());
+        setFloat("uGraphPreviousTime",ShaderGraphPreviousTimeSeconds());
+        setVec4("uGraphHeader", m_config.shaderGraphProgram ? glm::vec4(m_config.shaderGraphProgram->data.header) : glm::vec4(0));
         if (m_config.shaderGraphProgram)
+        {
+            setVec4("uGraphOutputs0",glm::vec4(m_config.shaderGraphProgram->data.outputs0));
+            setVec4("uGraphOutputs1",glm::vec4(m_config.shaderGraphProgram->data.outputs1));
             for (int i=0;i<m_config.shaderGraphProgram->data.header.x;++i)
+            {
                 setVec4(("uGraphValues["+std::to_string(i)+"]").c_str(), m_config.shaderGraphProgram->data.values[i]);
+                setVec4(("uGraphInstructions["+std::to_string(i)+"]").c_str(),glm::vec4(m_config.shaderGraphProgram->data.instructions[i]));
+            }
+        }
         setVec4("uColor", m_config.color);
         setInt("uSurfaceType", static_cast<int>(m_config.surfaceType));
         setInt("uAlphaMode", static_cast<int>(m_config.alphaMode));

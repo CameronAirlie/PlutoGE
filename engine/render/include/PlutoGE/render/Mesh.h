@@ -745,6 +745,7 @@ namespace PlutoGE::render
                 }
             }
 
+            m_tessellated.fill(nullptr);
             m_meshData = std::move(rebuilt);
             m_config.data = m_meshData;
             m_config.hasLightmapUvs = true;
@@ -773,6 +774,7 @@ namespace PlutoGE::render
             return true;
         }
         const MeshData &GetMeshData() const { return m_meshData; }
+        Mesh *GetTessellated(unsigned level);
         void UpdateVertexData(const std::vector<MeshVertexData> &vertices)
         {
             if (vertices.size() != m_meshData.vertices.size())
@@ -1071,6 +1073,7 @@ namespace PlutoGE::render
         }
 
         MeshConfig m_config;
+        std::array<std::shared_ptr<Mesh>,3> m_tessellated;
         GLuint m_VAO = 0;    // Vertex Array Object
         GLuint m_VBO = 0;    // Vertex Buffer Object
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)

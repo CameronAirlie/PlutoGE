@@ -1,3 +1,5 @@
+#include <unordered_set>
+#include <functional>
 #include "PlutoGE/platform/ContentPack.h"
 #include <PlutoGE/assets/AssetManager.h>
 #include <PlutoGE/assets/ModelAsset.h>
@@ -1455,6 +1457,9 @@ namespace PlutoGE::assets
 
     render::ShaderGraph AssetManager::LoadShaderGraphAsset(const std::string &assetReference, bool *loaded)
     {
+        static thread_local int graphLoadDepth=0;
+        if(graphLoadDepth>=8){if(loaded)*loaded=false;return {};}
+        struct DepthGuard { int &depth; DepthGuard(int &d):depth(d){++depth;} ~DepthGuard(){--depth;} } depthGuard(graphLoadDepth);
         if (loaded)
         {
             *loaded = false;
@@ -1510,7 +1515,9 @@ namespace PlutoGE::assets
 
             const std::string key = line.substr(0, delimiter);
             const std::string value = line.substr(delimiter + 1);
-            if (key == "ShaderGraphVersion")
+            if(key=="Pass")graph.passes.push_back(value);
+            else if(key=="Tessellation")graph.tessellation=ParseIntOr(value,0);
+            else if (key == "ShaderGraphVersion")
             {
                 graph.version = ParseIntOr(value, 1);
             }
@@ -1568,6 +1575,10 @@ namespace PlutoGE::assets
                     .toPin = fields[4],
                 });
             }
+            else if(key=="TextureParameter") {
+                const auto fields=SplitFields(value);
+                if(fields.size()>=4)graph.textures.push_back({fields[0],fields[1],ParseIntOr(fields[2],0)!=0,ParseIntOr(fields[3],0)!=0});
+            }
             else if (key == "Variable")
             {
                 const auto fields = SplitFields(value);
@@ -1585,6 +1596,11 @@ namespace PlutoGE::assets
         }
 
 
+        for(auto &node:graph.nodes)if(node.kind==render::ShaderGraphNodeKind::Subgraph) {
+            bool childLoaded=false;
+            auto child=LoadShaderGraphAsset(node.parameter,&childLoaded);
+            if(childLoaded)node.subgraph=std::make_shared<const render::ShaderGraph>(std::move(child));
+        }
         m_shaderGraphCache[assetReference] = graph;
         if (loaded)
         {
@@ -1593,8 +1609,25 @@ namespace PlutoGE::assets
         return graph;
     }
 
-    bool AssetManager::SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage)
+    bool AssetManager::SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &requestedGraph, std::string *errorMessage)
     {
+        render::ShaderGraph graph=requestedGraph;
+        std::unordered_set<std::string> dependencies{assetReference};
+        size_t dependencyCount=0;
+        std::function<bool(render::ShaderGraph &)> resolve=[&](render::ShaderGraph &current){
+            const auto child=[&](const std::string &reference,render::ShaderGraph &value){
+                if(reference.empty() || !dependencies.insert(reference).second || ++dependencyCount>32)return false;
+                bool loaded=false;value=LoadShaderGraphAsset(reference,&loaded);
+                const bool valid=loaded&&resolve(value);dependencies.erase(reference);return valid;
+            };
+            for(auto &node:current.nodes)if(node.kind==render::ShaderGraphNodeKind::Subgraph){
+                render::ShaderGraph value;if(!child(node.parameter,value))return false;
+                node.subgraph=std::make_shared<const render::ShaderGraph>(std::move(value));
+            }
+            for(const auto &reference:current.passes){render::ShaderGraph value;if(!child(reference,value))return false;}
+            return render::ValidateShaderGraph(current,errorMessage);
+        };
+        if(!resolve(graph)){if(errorMessage&&errorMessage->empty())*errorMessage="Missing, recursive or excessive shader dependencies.";return false;}
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -1640,6 +1673,9 @@ namespace PlutoGE::assets
         output.imbue(std::locale::classic());
         output << std::setprecision(std::numeric_limits<float>::max_digits10);
         output << "ShaderGraphVersion=1\n";
+        output << "Tessellation=" << graph.tessellation << "\n";
+        for(const auto &pass:graph.passes)output<<"Pass="<<pass<<"\n";
+        for(const auto &t:graph.textures)output<<"TextureParameter="<<t.name<<'|'<<t.reference<<'|'<<int(t.nearest)<<'|'<<int(t.clamp)<<'\n';
         output << "Unlit=" << (graph.unlit ? 1 : 0) << "\n";
         output << "OutlineEnabled=" << (graph.outline.enabled ? 1 : 0) << "\n";
         output << "OutlineWidth=" << graph.outline.width << "\n";
@@ -1680,6 +1716,12 @@ namespace PlutoGE::assets
             return false;
         }
 
+        output.close();
+        if (!output.good())
+        {
+            if (errorMessage) *errorMessage = "Failed to finish writing shader graph asset.";
+            return false;
+        }
         m_shaderGraphCache[assetReference] = graph;
         RefreshCachedMaterialsForShaderGraph(assetReference);
         return true;
@@ -2106,6 +2148,8 @@ namespace PlutoGE::assets
 
     void AssetManager::RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference)
     {
+        // Parents embed resolved subgraphs. Reload dependencies before refreshing materials.
+        m_shaderGraphCache.clear();
         for (auto &[materialReference, material] : m_materialCache)
         {
             (void)materialReference;
@@ -2118,7 +2162,7 @@ namespace PlutoGE::assets
             const std::string effectiveReference = config.shaderGraphReference.empty()
                                                        ? std::string(Project::kBuiltinDefaultShaderGraphReference)
                                                        : config.shaderGraphReference;
-            if (effectiveReference == shaderGraphReference)
+            if (effectiveReference == shaderGraphReference || effectiveReference != Project::kBuiltinDefaultShaderGraphReference)
             {
                 config.shaderGraphReference = effectiveReference;
                 ResolveMaterialShaderGraph(config);
@@ -2128,17 +2172,42 @@ namespace PlutoGE::assets
 
     bool AssetManager::ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage)
     {
+        static thread_local int passDepth=0,passCount=0;
+        if(passDepth==0)passCount=0;
+        if(passDepth>=8 || ++passCount>32){if(errorMessage)*errorMessage="Recursive material passes or more than eight levels.";return false;}
+        struct Guard { int &depth;Guard(int &d):depth(d){++depth;}~Guard(){--depth;} } guard(passDepth);
+        render::MaterialConfig resolved=config;
+        resolved.graphPassOrder = static_cast<unsigned>(passCount - 1);
+
         bool loaded=false;
-        auto graph = LoadShaderGraphAsset(config.shaderGraphReference, &loaded);
-        if (!loaded) { if(errorMessage) *errorMessage="Shader asset could not be loaded: " + config.shaderGraphReference; return false; }
-        auto program = render::BuildShaderGraphProgram(graph, config.shaderGraphVariables, errorMessage);
+        auto graph = LoadShaderGraphAsset(resolved.shaderGraphReference, &loaded);
+        if (!loaded) { if(errorMessage) *errorMessage="Shader asset could not be loaded: " + resolved.shaderGraphReference; return false; }
+        auto program = render::BuildShaderGraphProgram(graph, resolved.shaderGraphVariables, errorMessage);
         if (!program) return false;
-        config.outline = graph.outline;
-        config.shaderGraphProgram = program;
-        if (config.shaderGraphReference.empty() || config.shaderGraphReference == Project::kBuiltinDefaultShaderGraphReference)
-            config.shaderGraphProgram.reset(); // Ordinary materials keep the direct surface path.
-        config.compiledShaderGraph = CompileShaderGraphAsset(config.shaderGraphReference, errorMessage);
-        return true; // A valid portable program does not require an active legacy GL context.
+        resolved.outline = graph.outline;
+        resolved.shaderGraphProgram = program;
+        if(program->requiresSceneTextures)resolved.alphaMode=render::AlphaMode::Blend;
+        resolved.graphTextures.fill(nullptr);resolved.graphSamplers.fill(0);
+        for(size_t i=0;i<program->textures.size();++i){
+            auto texture=program->textures[i];
+            const auto replacement=std::find_if(resolved.shaderGraphTextures.begin(),resolved.shaderGraphTextures.end(),[&](const auto &t){return t.name==texture.name;});
+            if(replacement!=resolved.shaderGraphTextures.end())texture.reference=replacement->reference;
+            if(!texture.reference.empty())resolved.graphTextures[i]=LoadTexture(ResolveAssetPath(texture.reference).c_str());
+            resolved.graphSamplers[i]=(texture.nearest?1u:0u)|(texture.clamp?2u:0u);
+        }
+        if (resolved.shaderGraphReference.empty() || resolved.shaderGraphReference == Project::kBuiltinDefaultShaderGraphReference)
+            resolved.shaderGraphProgram.reset(); // Ordinary materials keep the direct surface path.
+        resolved.compiledShaderGraph = CompileShaderGraphAsset(resolved.shaderGraphReference, errorMessage);
+        resolved.additionalPasses.clear();
+        for(const auto &reference:graph.passes){
+            render::MaterialConfig pass=resolved;pass.additionalPasses.clear();pass.shaderGraphReference=reference;
+            if(!ResolveMaterialShaderGraph(pass,errorMessage))return false;
+            pass.alphaMode=render::AlphaMode::Blend;pass.castsShadow=false;
+            resolved.additionalPasses.push_back(std::make_shared<render::Material>(pass));
+        }
+        config=std::move(resolved);
+        if(errorMessage)errorMessage->clear();
+        return true;
     }
 
     render::Shader *AssetManager::CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage)
@@ -2351,6 +2420,10 @@ namespace PlutoGE::assets
                     {
                         config.shaderGraphReference = value;
                     }
+                    else if(key=="ShaderGraphTexture") {
+                        const auto fields=SplitFields(value);
+                        if(fields.size()>=2)config.shaderGraphTextures.push_back({fields[0],fields[1]});
+                    }
                     else if (key == "ShaderGraphVariable")
                     {
                         const auto fields = SplitFields(value);
@@ -2382,6 +2455,16 @@ namespace PlutoGE::assets
 
     bool AssetManager::SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage)
     {
+        std::unordered_set<std::string> textureNames;
+        for (const auto &texture : config.shaderGraphTextures)
+            if (texture.name.empty() || !textureNames.insert(texture.name).second ||
+                texture.name.find_first_of("|\r\n") != std::string::npos || texture.reference.find_first_of("|\r\n") != std::string::npos)
+            {
+                if (errorMessage) *errorMessage = "Invalid or duplicate shader texture override.";
+                return false;
+            }
+        auto resolvedConfig = config;
+        if (!ResolveMaterialShaderGraph(resolvedConfig, errorMessage)) return false;
         bool graphLoaded=false;
         auto materialGraph=LoadShaderGraphAsset(config.shaderGraphReference,&graphLoaded);
         if(!graphLoaded) { if(errorMessage) *errorMessage="Shader asset could not be loaded: " + config.shaderGraphReference; return false; }
@@ -2455,6 +2538,7 @@ namespace PlutoGE::assets
         output << "RoughnessTexture=" << (config.roughnessTexture ? PersistMaterialTexturePath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
         output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
         output << "ShaderGraph=" << (config.shaderGraphReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : config.shaderGraphReference) << "\n";
+        for(const auto &t:config.shaderGraphTextures)output<<"ShaderGraphTexture="<<t.name<<'|'<<t.reference<<'\n';
         for (const auto &variable : config.shaderGraphVariables)
         {
             output << "ShaderGraphVariable=" << variable.name << '|'

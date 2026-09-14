@@ -1,0 +1,17 @@
+ShaderGraphVersion=1
+Tessellation=3
+Variable=Amplitude|0|0.15,0,0,0
+Variable=Tint|2|0.12,0.45,0.28,1
+Node=1|Time|Scene time|0,0|1,1,1,1|Color|0|260,150|0|
+Node=2|WorldPosition|World position|0,180|1,1,1,1|Color|0|260,150|0|
+Node=3|Vec3|Split position|300,180|1,1,1,1|Color|0|260,150|0|
+Node=4|Parameter|Amplitude|0,360|1,1,1,1|Color|0|260,150|0|Amplitude
+Node=5|Expression|Wave displacement|620,180|1,1,1,1|Color|0|260,150|0|float3(0, sin(A * 2 + B * 6) * C, 0)
+Node=6|Parameter|Tint|620,0|1,1,1,1|Color|0|260,150|0|Tint
+Node=100|Output|Surface|940,0|1,1,1,1|Color|0|260,150|0|
+Link=1|2|Out|3|Vec3
+Link=2|1|Out|5|A
+Link=3|3|X|5|B
+Link=4|4|Out|5|C
+Link=5|5|Out|100|Vertex Offset
+Link=6|6|Out|100|Albedo

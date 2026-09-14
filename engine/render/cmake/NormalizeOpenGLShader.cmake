@@ -26,6 +26,10 @@ string(REGEX REPLACE "binding[ \t]*=[ \t]*10,[ \t]*set[ \t]*=[ \t]*1" "binding =
 string(REGEX REPLACE "binding[ \t]*=[ \t]*11,[ \t]*set[ \t]*=[ \t]*1" "binding = 19" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*12,[ \t]*set[ \t]*=[ \t]*1" "binding = 20" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*13,[ \t]*set[ \t]*=[ \t]*1" "binding = 21" shader_source "${shader_source}")
+foreach(graph_binding RANGE 14 17)
+    math(EXPR flattened_binding "${graph_binding} + 8")
+    string(REGEX REPLACE "binding[ \t]*=[ \t]*${graph_binding},[ \t]*set[ \t]*=[ \t]*1" "binding = ${flattened_binding}" shader_source "${shader_source}")
+endforeach()
 string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_source}")
 # VSM's Vulkan descriptors 8/9 share a descriptor namespace with its buffers.
 # OpenGL images have a separate namespace with only eight guaranteed units.

@@ -4,6 +4,8 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/GraphEditorPanelUtils.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/render/Material.h"
 
 #include <algorithm>
 #include <array>
@@ -58,7 +60,8 @@ namespace PlutoGE::ui
         constexpr const char *kPinsValue[] = {"Value"};
         constexpr const char *kPinsNoise[] = {"UV", "Scale", "Strength"};
         constexpr const char *kPinsNoiseOutput[] = {"Value", "Color"};
-        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity", "Emission"};
+        constexpr const char *kPinsSubgraph[] = {"A","B","C","D"};
+        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity", "Emission", "Vertex Offset"};
 
         constexpr ImU32 kPinAnyColor = IM_COL32(170, 176, 188, 255);
         constexpr ImU32 kPinFloatColor = IM_COL32(230, 190, 92, 255);
@@ -85,7 +88,7 @@ namespace PlutoGE::ui
         ImU32 kPinColorComponentColors[] = {kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseInputColors[] = {kPinVec2Color, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseOutputColors[] = {kPinFloatColor, kPinColorColor};
-        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinVec3Color};
+        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinVec3Color, kPinVec3Color};
 
         bool SupportsComponentPins(render::ShaderGraphNodeKind kind)
         {
@@ -126,14 +129,18 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::Normalize:
                 count = 1;
                 return const_cast<const char **>(kPinsValue);
+            case render::ShaderGraphNodeKind::SceneColor: case render::ShaderGraphNodeKind::SceneDepth:
             case render::ShaderGraphNodeKind::TextureSample:
                 count = 1;
                 return const_cast<const char **>(kPinsTexture);
             case render::ShaderGraphNodeKind::NoiseTexture:
                 count = 3;
                 return const_cast<const char **>(kPinsNoise);
+            case render::ShaderGraphNodeKind::Expression:
+            case render::ShaderGraphNodeKind::Subgraph:
+                count=4; return const_cast<const char **>(kPinsSubgraph);
             case render::ShaderGraphNodeKind::Output:
-                count = 6;
+                count = 7;
                 return const_cast<const char **>(kPinsOutput);
             default:
                 count = 0;
@@ -148,7 +155,8 @@ namespace PlutoGE::ui
 
         const char **OutputPins(render::ShaderGraphNodeKind kind, bool componentPins, ImU8 &count)
         {
-            if (kind == render::ShaderGraphNodeKind::TextureSample)
+            if(kind==render::ShaderGraphNodeKind::Subgraph){count=7;return const_cast<const char **>(kPinsOutput);}
+            if (kind == render::ShaderGraphNodeKind::TextureSample || kind==render::ShaderGraphNodeKind::SceneColor)
             {
                 count = 5;
                 return const_cast<const char **>(kPinsTextureOutput);
@@ -231,9 +239,12 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::OneMinus:
             case render::ShaderGraphNodeKind::Normalize:
                 return kPinNormalizeColors;
+            case render::ShaderGraphNodeKind::SceneColor: case render::ShaderGraphNodeKind::SceneDepth:
             case render::ShaderGraphNodeKind::TextureSample: return kPinOutVec2Colors;
             case render::ShaderGraphNodeKind::NoiseTexture:
                 return kPinNoiseInputColors;
+            case render::ShaderGraphNodeKind::Expression:
+            case render::ShaderGraphNodeKind::Subgraph: return kPinTextureOutputColors;
             case render::ShaderGraphNodeKind::Output:
                 return kPinOutputColors;
             default:
@@ -245,6 +256,8 @@ namespace PlutoGE::ui
         {
             switch (kind)
             {
+            case render::ShaderGraphNodeKind::Subgraph: return kPinOutputColors;
+            case render::ShaderGraphNodeKind::SceneColor:
             case render::ShaderGraphNodeKind::TextureSample: return kPinTextureOutputColors;
             case render::ShaderGraphNodeKind::Time:
             case render::ShaderGraphNodeKind::Dot:
@@ -1253,21 +1266,21 @@ namespace PlutoGE::ui
                 {
                     if (node.kind == render::ShaderGraphNodeKind::Vec2)
                     {
-                        return 25;
+                        return 30;
                     }
                     if (node.kind == render::ShaderGraphNodeKind::Vec3)
                     {
-                        return 26;
+                        return 31;
                     }
                     if (node.kind == render::ShaderGraphNodeKind::Color)
                     {
-                        return 27;
+                        return 32;
                     }
                 }
                 return static_cast<GraphEditor::TemplateIndex>(std::clamp(static_cast<int>(node.kind), 0, static_cast<int>(m_templates.size() - 1)));
             }
 
-            static const std::array<GraphEditor::Template, 28> m_templates;
+            static const std::array<GraphEditor::Template, 33> m_templates;
 
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
@@ -1282,7 +1295,7 @@ namespace PlutoGE::ui
             bool &m_dirty;
         };
 
-        const std::array<GraphEditor::Template, 28> ShaderGraphDelegate::m_templates = {
+        const std::array<GraphEditor::Template, 33> ShaderGraphDelegate::m_templates = {
             BuildTemplate(render::ShaderGraphNodeKind::MaterialInput),
             BuildTemplate(render::ShaderGraphNodeKind::Float),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2),
@@ -1308,6 +1321,11 @@ namespace PlutoGE::ui
             BuildTemplate(render::ShaderGraphNodeKind::Power),
             BuildTemplate(render::ShaderGraphNodeKind::OneMinus),
             BuildTemplate(render::ShaderGraphNodeKind::TextureSample),
+            BuildTemplate(render::ShaderGraphNodeKind::Subgraph),
+            BuildTemplate(render::ShaderGraphNodeKind::ScreenUV),
+            BuildTemplate(render::ShaderGraphNodeKind::SceneColor),
+            BuildTemplate(render::ShaderGraphNodeKind::SceneDepth),
+            BuildTemplate(render::ShaderGraphNodeKind::Expression),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2, true),
             BuildTemplate(render::ShaderGraphNodeKind::Vec3, true),
             BuildTemplate(render::ShaderGraphNodeKind::Color, true),
@@ -1329,6 +1347,7 @@ namespace PlutoGE::ui
                 .size = {kDefaultNodeWidth, NodeHeight(kind)},
             };
 
+            if(kind==render::ShaderGraphNodeKind::Expression)node.parameter="A";
             if (kind == render::ShaderGraphNodeKind::Parameter && !graph.variables.empty()) node.parameter = graph.variables.front().name;
             if (kind == render::ShaderGraphNodeKind::NoiseTexture)
             {
@@ -1443,6 +1462,7 @@ namespace PlutoGE::ui
         ImGui::SameLine();
         ImGui::Checkbox("Previews", &m_showNodePreviews);
         if (ImGui::Checkbox("Unlit surface", &m_graph.unlit)) m_dirty = true;
+        if(ImGui::SliderInt("Tessellation subdivisions",&m_graph.tessellation,0,3))m_dirty=true;
         if (ImGui::Checkbox("Outline pass", &m_graph.outline.enabled)) m_dirty = true;
         if (m_graph.outline.enabled)
         {
@@ -1457,6 +1477,61 @@ namespace PlutoGE::ui
         std::string validationError;
         const bool graphValid = render::ValidateShaderGraph(m_graph, &validationError);
         if (!graphValid) ImGui::TextWrapped("Graph error: %s", validationError.c_str());
+        if(ImGui::CollapsingHeader("Additional material passes")) {
+            ImGui::BeginDisabled(engineGraph);
+            ImGui::TextWrapped("Additional shader assets render as transparent surface overlays after opaque geometry.");
+            if(m_graph.passes.size()<4 && ImGui::Button("Add pass")){m_graph.passes.push_back({});m_dirty=true;}
+            for(size_t i=0;i<m_graph.passes.size();++i){
+                ImGui::PushID(int(i));char path[512]{};std::strncpy(path,m_graph.passes[i].c_str(),sizeof(path)-1);
+                if(ImGui::InputText("Pass shader asset",path,sizeof(path))){m_graph.passes[i]=path;m_dirty=true;}
+                if(ImGui::Button("Remove pass")){m_graph.passes.erase(m_graph.passes.begin()+i);m_dirty=true;ImGui::PopID();break;}
+                ImGui::PopID();
+            }
+            ImGui::EndDisabled();
+        }
+        if(ImGui::CollapsingHeader("Texture parameters")) {
+            ImGui::BeginDisabled(engineGraph);
+            if(m_graph.textures.size()<4 && ImGui::Button("Add texture parameter")) {
+                int suffix=1;std::string name;
+                do{name="Texture"+std::to_string(suffix++);}while(std::any_of(m_graph.textures.begin(),m_graph.textures.end(),[&](const auto &t){return t.name==name;}));
+                m_graph.textures.push_back({name,{}});m_dirty=true;
+            }
+            for(size_t i=0;i<m_graph.textures.size();++i) {
+                auto &texture=m_graph.textures[i];ImGui::PushID(int(i));
+                char name[128]{},path[512]{};std::strncpy(name,texture.name.c_str(),sizeof(name)-1);std::strncpy(path,texture.reference.c_str(),sizeof(path)-1);
+                if(ImGui::InputText("Name",name,sizeof(name))) {
+                    for(auto &node:m_graph.nodes)if(node.kind==render::ShaderGraphNodeKind::TextureSample && node.parameter==texture.name)node.parameter=name;
+                    texture.name=name;m_dirty=true;
+                }
+                if(ImGui::InputText("Default texture asset",path,sizeof(path))){texture.reference=path;m_dirty=true;}
+                if(ImGui::Checkbox("Nearest filtering",&texture.nearest))m_dirty=true;
+                if(ImGui::Checkbox("Clamp UV",&texture.clamp))m_dirty=true;
+                if(ImGui::Button("Remove texture")){m_graph.textures.erase(m_graph.textures.begin()+i);m_dirty=true;ImGui::PopID();break;}
+                ImGui::PopID();
+            }
+            ImGui::EndDisabled();
+        }
+        if (ImGui::CollapsingHeader("Live material preview") && render::ValidateShaderGraph(m_graph))
+        {
+            render::MaterialConfig preview;
+            preview.shaderGraphProgram = render::BuildShaderGraphProgram(m_graph);
+            preview.outline = m_graph.outline;
+            if(preview.shaderGraphProgram->requiresSceneTextures)preview.alphaMode=render::AlphaMode::Blend;
+            for(size_t i=0;i<preview.shaderGraphProgram->textures.size();++i){
+                const auto &t=preview.shaderGraphProgram->textures[i];
+                if(!t.reference.empty() && editorShell.GetProject())preview.graphTextures[i]=editorShell.GetEngine().GetAssetManager().LoadTexture(editorShell.GetProject()->ResolveAssetReference(t.reference).string().c_str());
+                preview.graphSamplers[i]=(t.nearest?1:0)|(t.clamp?2:0);
+            }
+            for(const auto &reference:m_graph.passes){render::MaterialConfig pass=preview;pass.additionalPasses.clear();pass.shaderGraphReference=reference;
+                if(editorShell.GetEngine().GetAssetManager().ResolveMaterialShaderGraph(pass)){pass.alphaMode=render::AlphaMode::Blend;preview.additionalPasses.push_back(std::make_shared<render::Material>(pass));}}
+            const auto revision = render::HashShaderGraph(m_graph) ^
+                static_cast<std::uint64_t>(ImGui::GetTime() * 30.0);
+            const auto texture = GetCachedMaterialPreview(editorShell.GetEngine(),
+                "shader-editor:" + reference, preview, revision);
+            if (texture)
+                ImGui::Image(static_cast<ImTextureID>(texture), ImVec2(192,192), ImVec2(0,1), ImVec2(1,0));
+            else ImGui::TextDisabled("Preview renderer unavailable.");
+        }
 
         const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
         ImGui::BeginChild("ShaderGraphEditorBody", ImVec2(0.0f, -footerHeight), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -1511,6 +1586,11 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("Textures"))
                 {
+                    AddNodeMenuItem("Code Expression",m_graph,render::ShaderGraphNodeKind::Expression,"Expression",m_addNodePosition,m_dirty);
+                    AddNodeMenuItem("Screen UV",m_graph,render::ShaderGraphNodeKind::ScreenUV,"Screen UV",m_addNodePosition,m_dirty);
+                    AddNodeMenuItem("Scene Color",m_graph,render::ShaderGraphNodeKind::SceneColor,"Scene Color",m_addNodePosition,m_dirty);
+                    AddNodeMenuItem("Scene Depth",m_graph,render::ShaderGraphNodeKind::SceneDepth,"Scene Depth",m_addNodePosition,m_dirty);
+                    AddNodeMenuItem("Reusable Subgraph",m_graph,render::ShaderGraphNodeKind::Subgraph,"Subgraph",m_addNodePosition,m_dirty);
                     AddNodeMenuItem("Material Texture Sample", m_graph, render::ShaderGraphNodeKind::TextureSample, "Texture Sample", m_addNodePosition, m_dirty);
                     AddNodeMenuItem("Noise Texture", m_graph, render::ShaderGraphNodeKind::NoiseTexture, "Noise Texture", m_addNodePosition, m_dirty);
                     ImGui::EndMenu();
@@ -1612,8 +1692,29 @@ namespace PlutoGE::ui
                     }
                     ImGui::TextDisabled("Create defaults in Parameters below.");
                 }
+                else if(selectedNode->kind==render::ShaderGraphNodeKind::Expression) {
+                    char code[4096]{};std::strncpy(code,selectedNode->parameter.c_str(),sizeof(code)-1);
+                    if(ImGui::InputText("Expression",code,sizeof(code))){selectedNode->parameter=code;m_dirty=true;}
+                    ImGui::TextWrapped("Inputs A-D. Arithmetic, sin, pow, dot, normalize, clamp, saturate, mix/lerp and vec2/3/4 or float2/3/4 constructors.");
+                }
+                else if(selectedNode->kind==render::ShaderGraphNodeKind::Subgraph)
+                {
+                    char path[512]{};std::strncpy(path,selectedNode->parameter.c_str(),sizeof(path)-1);
+                    if(ImGui::InputText("Graph asset",path,sizeof(path),ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        selectedNode->parameter=path;bool loaded=false;
+                        auto child=editorShell.GetEngine().GetAssetManager().LoadShaderGraphAsset(path,&loaded);
+                        selectedNode->subgraph=loaded?std::make_shared<const render::ShaderGraph>(std::move(child)):nullptr;m_dirty=true;
+                    }
+                    if(selectedNode->subgraph)for(size_t i=0;i<selectedNode->subgraph->variables.size()&&i<4;++i)
+                        ImGui::Text("%c: %s",int('A'+i),selectedNode->subgraph->variables[i].name.c_str());
+                }
                 else if (selectedNode->kind == render::ShaderGraphNodeKind::TextureSample)
                 {
+                    if(ImGui::BeginCombo("Texture parameter",selectedNode->parameter.empty()?"Material slot":selectedNode->parameter.c_str())) {
+                        if(ImGui::Selectable("Material slot",selectedNode->parameter.empty())){selectedNode->parameter.clear();m_dirty=true;}
+                        for(const auto &texture:m_graph.textures)if(ImGui::Selectable(texture.name.c_str(),selectedNode->parameter==texture.name)){selectedNode->parameter=texture.name;m_dirty=true;}
+                        ImGui::EndCombo();
+                    }
                     int slot = int(selectedNode->materialInput);
                     const char *slots[]{"Albedo","Normal","Metallic","Roughness"};
                     if (ImGui::Combo("Material texture", &slot, slots, 4))

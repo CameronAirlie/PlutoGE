@@ -57,6 +57,11 @@ namespace PlutoGE::render
             seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
         }
 
+        bool HasVertexGraph(const RenderCommand &command)
+        {
+            return command.material && command.material->GetConfig().shaderGraphProgram &&
+                command.material->GetConfig().shaderGraphProgram->data.header.z>0;
+        }
         bool IsShadowCasterCommand(const RenderCommand &command)
         {
             return command.mesh && command.material && command.castsShadow &&
@@ -1029,8 +1034,16 @@ namespace PlutoGE::render
         if (!m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
             m_renderCommandsDirty = true;
         const std::size_t commandIndex = m_renderCommands.size();
-        m_renderCommands.push_back(command);
-        TrackShadowCommand(commandIndex, command);
+        auto submitted=command;
+        if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
+            submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
+        m_renderCommands.push_back(submitted);
+        TrackShadowCommand(commandIndex, submitted);
+        if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
+        if(command.material)for(const auto &pass:command.material->GetConfig().additionalPasses){
+            auto overlay=command;overlay.material=pass.get();overlay.castsShadow=false;
+            SubmitRenderCommand(overlay);m_renderCommandsDirty=true;
+        }
         if (m_config.enableProfiling)
             ++m_cpuFrameStats.submittedRenderCommandCount;
     }
@@ -1059,8 +1072,21 @@ namespace PlutoGE::render
                 m_renderCommandsDirty = true;
             }
             const std::size_t commandIndex = m_renderCommands.size();
-            m_renderCommands.push_back(command);
-            TrackShadowCommand(commandIndex, command);
+            auto submitted=command;
+            if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
+                submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
+            m_renderCommands.push_back(submitted);
+            TrackShadowCommand(commandIndex, submitted);
+            if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
+            if (command.material)
+                for (const auto &pass : command.material->GetConfig().additionalPasses)
+                {
+                    auto overlay = command;
+                    overlay.material = pass.get();
+                    overlay.castsShadow = false;
+                    SubmitRenderCommand(overlay);
+                    m_renderCommandsDirty = true;
+                }
             if (m_config.enableProfiling)
                 ++m_cpuFrameStats.submittedRenderCommandCount;
             insertedAny = true;
@@ -1248,6 +1274,10 @@ namespace PlutoGE::render
                 }
             }
 
+            if(HasVertexGraph(command)) {
+                m_visibilityCandidates.emplace_back(commandIndex,false);
+                continue;
+            }
             const FrustumContainment containment = ClassifyBounds(command.worldBounds, frustumPlanes);
             if (containment != FrustumContainment::Outside &&
                 PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
@@ -1265,6 +1295,7 @@ namespace PlutoGE::render
 
     bool Renderer::IsRenderCommandAcceptedForSubmission(const RenderCommand &command) const
     {
+        if(HasVertexGraph(command))return true;
         if (m_submissionFrustums.empty())
         {
             return true;

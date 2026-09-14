@@ -1612,7 +1612,8 @@ namespace PlutoGE::render::rhi::vulkan
         struct DescriptorSetKey
         {
             VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-            std::array<std::uint64_t, 32> resources{};
+            // Each of the 32 supported bindings may contribute a texture and sampler.
+            std::array<std::uint64_t, 64> resources{};
             std::uint8_t resourceCount = 0;
             bool operator==(const DescriptorSetKey &) const = default;
         };

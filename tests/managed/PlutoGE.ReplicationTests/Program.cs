@@ -83,3 +83,64 @@ Check(lateReplica.Entities[cooperativeEntity].Position == Vector3.One, "Late joi
 await first.DisconnectAsync();
 await PumpUntil(() => lateReplica.Entities.Count == 0);
 Console.WriteLine("Replication validation and two-client late-join/disconnect tests passed.");
+
+// Session wrappers negotiate IDs rather than relying on a shared hard-coded session.
+reservation.Start(); port = (ushort)((IPEndPoint)reservation.LocalEndpoint).Port; reservation.Stop();
+await using var sessionServer = new NetworkServer();
+await using var sessionClient = new NetworkClient();
+await using var joiningClient = new NetworkClient();
+using var serverSession = new ReplicationServerSession(sessionServer, 987);
+using var clientSession = new ReplicationClientSession(sessionClient);
+using var joiningSession = new ReplicationClientSession(joiningClient);
+int starts = 0, ends = 0;
+clientSession.SessionStarted += () => starts++;
+clientSession.SessionEnded += () => ends++;
+sessionServer.Start(port, bindAddress: "127.0.0.1");
+await sessionClient.ConnectAsync("127.0.0.1", port);
+async Task PumpSessions(Func<bool> done)
+{
+    var deadline = DateTime.UtcNow.AddSeconds(5);
+    while (!done())
+    {
+        Check(DateTime.UtcNow < deadline, "Negotiated session timeout");
+        time += 0.01;
+        sessionServer.Poll(); clientSession.Poll(time); joiningSession.Poll(time);
+        await Task.Delay(1);
+    }
+}
+await PumpSessions(() => clientSession.Replica is not null);
+Check(starts == 1 && clientSession.LocalPeerId > 0 && clientSession.Replica!.Session == 987, "Session negotiation failed");
+var owned = serverSession.Authority.Spawn(1, clientSession.LocalPeerId, 5, Vector3.One, Quaternion.Identity);
+serverSession.Publish();
+await PumpSessions(() => clientSession.Replica!.Entities.ContainsKey(owned));
+// An established connection cannot be switched to a different session by traffic.
+var establishedReplica = clientSession.Replica;
+var forgedWelcome = new byte[18];
+System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(forgedWelcome, 0x534c5550);
+System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(forgedWelcome.AsSpan(4), 1);
+System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(forgedWelcome.AsSpan(6), 555);
+System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(forgedWelcome.AsSpan(14), 999);
+sessionServer.Send(clientSession.LocalPeerId, 80, forgedWelcome);
+sessionServer.Send(clientSession.LocalPeerId, 80, new EntityReplicationAuthority(555).Snapshot());
+// A subsequent ordered snapshot acts as a delivery barrier for rejected packets.
+serverSession.Authority.Update(owned, 0, new Vector3(2, 0, 0), Quaternion.Identity);
+serverSession.Publish();
+await PumpSessions(() => clientSession.Replica!.Entities[owned].Position.X == 2);
+Check(ReferenceEquals(establishedReplica, clientSession.Replica) && starts == 1, "Traffic replaced established session");
+await joiningClient.ConnectAsync("127.0.0.1", port);
+await PumpSessions(() => joiningSession.Replica?.Entities.ContainsKey(owned) == true);
+Check(joiningSession.LocalPeerId != clientSession.LocalPeerId, "Peer identity collision");
+serverSession.UnloadSection(5);
+await PumpSessions(() => joiningSession.Replica!.Entities.Count == 0 && clientSession.Replica!.Entities.Count == 0);
+owned = serverSession.Authority.Spawn(1, clientSession.LocalPeerId, 0, Vector3.Zero, Quaternion.Identity);
+serverSession.Publish();
+await PumpSessions(() => joiningSession.Replica!.Entities.ContainsKey(owned));
+await sessionClient.DisconnectAsync();
+await PumpSessions(() => ends == 1 && joiningSession.Replica!.Entities.Count == 0);
+Check(clientSession.Replica is null && clientSession.LocalPeerId == 0, "Disconnect retained session state");
+await sessionClient.ConnectAsync("127.0.0.1", port);
+await PumpSessions(() => starts == 2);
+Check(clientSession.Replica!.Session == 987 && ends == 1, "Reconnect negotiation failed");
+Console.WriteLine("Negotiated session, section unload, disconnect and reconnect tests passed.");
+await CooperativeSampleTests.Run();
+ReplicatedSceneTests.Run();

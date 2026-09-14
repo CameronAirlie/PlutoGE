@@ -3787,6 +3787,15 @@ namespace PlutoGE::ui
                 shouldOpenProjectSettingsPopup = false;
             }
 
+            // Settings are modal to the editor, not an independent native window.
+            // Explicitly override saved viewport placement: the GLFW backend does
+            // not handle native window creation failure before using its handle.
+            const auto *settingsViewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowViewport(settingsViewport->ID);
+            ImGui::SetNextWindowPos(settingsViewport->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
+                ImVec2((std::max)(1.0f, settingsViewport->WorkSize.x - 32.0f),
+                       (std::max)(1.0f, settingsViewport->WorkSize.y - 32.0f)));
             if (ImGui::BeginPopupModal("Project Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             {
                 if (!m_project)

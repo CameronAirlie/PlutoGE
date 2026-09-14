@@ -63,10 +63,10 @@ namespace PlutoGE::scene
             if (meshEntity && meshEntity->GetComponent<NavigationMeshComponent>())
                 m_config.navigationMeshEntityId = meshEntity->GetID();
         }
-        if (meshEntity)
-            if (auto *mesh = meshEntity->GetComponent<NavigationMeshComponent>())
+        if (meshEntity && meshEntity->IsActive())
+            if (auto *mesh = meshEntity->GetComponent<NavigationMeshComponent>(); mesh && mesh->IsEnabled())
             {
-                if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake()) mesh->Bake();
+                if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake()) mesh->Update(0);
                 navigation = &mesh->GetNavigation();
             }
         if (!navigation || !navigation->IsBaked())
@@ -116,6 +116,17 @@ namespace PlutoGE::scene
         m_steeringDirection = {};
         m_avoidanceDirection = {};
         m_repathTimer = 0.0f;
+    }
+
+    void NavAgentComponent::InvalidatePath()
+    {
+        m_path.clear();
+        m_nextPoint = 0;
+        m_velocity = {};
+        m_steeringDirection = {};
+        m_avoidanceDirection = {};
+        m_hasPreviousPosition = false;
+        m_repathTimer = 0;
     }
 
     glm::vec3 NavAgentComponent::ApplyLocalAvoidance(const glm::vec3 &desiredDirection)

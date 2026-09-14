@@ -55,10 +55,11 @@ endif()
 add_test(NAME PlutoGEEngineGraphicsApiTests COMMAND PlutoGEEngineGraphicsApiTests)
 
 add_executable(PlutoGEOpenGLRhiTests OpenGLRhiTests.cpp)
-target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Platform PlutoGE::Scene)
 target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEOpenGLRhiTests COMMAND PlutoGEOpenGLRhiTests)
+add_test(NAME PlutoGEMeshReplacementRenderingTests COMMAND PlutoGEOpenGLRhiTests --mesh-replacement)
 add_test(NAME PlutoGEOpenGLRenderOptimizationTests COMMAND PlutoGEOpenGLRhiTests --render-optimizations)
 add_test(NAME PlutoGEOpenGLSsrTests COMMAND PlutoGEOpenGLRhiTests --ssr-only)
 add_test(NAME PlutoGEOpenGLVsmOnlyTests COMMAND PlutoGEOpenGLRhiTests --vsm-only)

@@ -13,6 +13,13 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         bool Bake();
+        // Section topology changes invalidate paths immediately, while preserving
+        // the user's bake intent for the next scene-thread update.
+        void InvalidateBake()
+        {
+            m_navigation.Clear();
+            m_rebuildPending = m_shouldHaveBake;
+        }
         void Clear()
         {
             m_navigation.Clear();

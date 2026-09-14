@@ -69,6 +69,11 @@ int main()
         Write(assets / "Main.plutoscene", "PROPERTY\tMaterial\t2\tproject://Stone.plutomaterial\t0\n");
         Write(assets / "Stone.plutomaterial", "AlbedoTexture=Stone texture.png\n");
         Write(assets / "Stone texture.png", "fixture");
+        Write(assets / "Section.plutoscene", "SCENE\t1\nPROPERTY\tMaterial\t2\tproject://Section.plutomaterial\t0\n");
+        Write(assets / "Section.plutomaterial", "AlbedoTexture=Section.png\n");
+        Write(assets / "Section.png", "fixture");
+        { std::ofstream scene(assets / "Main.plutoscene", std::ios::app);
+          scene << "PROPERTY\tField.sceneAsset\t2\tproject://Section.plutoscene\t0\n"; }
         Write(assets / "Unused.png", "fixture");
         Write(assets / "Paladin.glb", "direct model fixture");
         { std::ofstream scene(assets / "Main.plutoscene", std::ios::app);
@@ -84,6 +89,7 @@ int main()
         auto success = CookProjectContent(project, cooked, options, &error);
         Require(success, "Cook failed: " + error);
         Require(std::filesystem::exists(cooked / "Stone texture.png"), "Transitive asset-relative material texture omitted");
+        Require(std::filesystem::exists(cooked / "Section.plutoscene") && std::filesystem::exists(cooked / "Section.png"), "Additive scene or transitive section assets omitted from pruned cook");
         Require(std::filesystem::exists(cooked / "Paladin.glb"), "Direct runtime model was omitted");
         Require(!std::filesystem::exists(cooked / "Unused.png"), "Unreferenced asset was cooked");
         Require(!std::filesystem::exists(cooked / "Robot.fbx"), "Source model shipped");

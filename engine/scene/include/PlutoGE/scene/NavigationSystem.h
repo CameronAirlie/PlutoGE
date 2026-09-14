@@ -11,7 +11,7 @@ class NavigationSystem {
 public:
  bool Bake(const Scene&, const NavigationBakeSettings&); void Clear();
  NavigationPath FindPath(const glm::vec3&, const glm::vec3&, float agentRadius=0.0f, float agentHeight=0.0f) const; bool ProjectPoint(const glm::vec3&, glm::vec3&, float agentRadius=0.0f, float agentHeight=0.0f) const;
- bool IsBaked() const{return !m_cells.empty();} const NavigationBakeSettings& GetSettings()const{return m_settings;}
+ bool IsBaked() const{return !m_debugPoints.empty();} const NavigationBakeSettings& GetSettings()const{return m_settings;}
  int GetWidth()const{return m_width;} int GetDepth()const{return m_depth;} const std::vector<glm::vec3>& GetDebugWalkablePoints()const{return m_debugPoints;}
 private:
  struct Cell{float height=0;float clearance=0;bool walkable=false;}; int FindNearestCell(const glm::vec3&,float,float)const; glm::vec3 CellPosition(int)const; bool ComputeCellWalkableForAgent(int,float,float)const; bool IsCellWalkableForAgent(int,float,float)const; const std::vector<std::uint8_t>& GetAgentWalkability(float,float)const; bool IsSegmentWalkable(const glm::vec3&,const glm::vec3&,float,float)const;

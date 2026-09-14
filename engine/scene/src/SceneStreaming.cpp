@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/platform/ContentPack.h"
 #include <atomic>
 #include <fstream>
 #include <map>
@@ -46,11 +47,13 @@ namespace PlutoGE::scene
         {
             try
             {
-                if (!std::filesystem::is_regular_file(path)) throw std::runtime_error("Scene section is not a regular file");
-                std::ifstream input(path, std::ios::binary | std::ios::ate);
-                if (!input) throw std::runtime_error("Cannot open scene section");
-                const auto size = input.tellg();
-                if (size <= 0 || size > 64 * 1024 * 1024) throw std::runtime_error("Scene section size must be between 1 byte and 64 MiB");
+                std::error_code fileError;
+                if (!content::IsRegularFile(path, fileError) || fileError) throw std::runtime_error("Scene section is not a regular file");
+                const auto size = content::FileSize(path, fileError);
+                if (fileError || size == 0 || size > 64 * 1024 * 1024) throw std::runtime_error("Scene section size must be between 1 byte and 64 MiB");
+                if (stop.stop_requested()) { raw->done.store(true, std::memory_order_release); return; }
+                content::InputFile input(path, std::ios::binary);
+                if (!input.is_open()) throw std::runtime_error("Cannot open scene section");
                 raw->size = static_cast<std::uint64_t>(size);
                 raw->data.resize(static_cast<std::size_t>(size));
                 input.seekg(0);

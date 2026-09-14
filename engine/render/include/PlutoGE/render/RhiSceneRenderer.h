@@ -150,9 +150,15 @@ namespace PlutoGE::render
       bool m_immediateTextureUploads = false;
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
-      std::unordered_map<const Mesh *, BasicMesh> m_meshes;
+      struct CachedMesh
+      {
+          std::weak_ptr<const void> lifetime;
+          BasicMesh mesh;
+      };
+      std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh
       {
+          std::weak_ptr<const void> lifetime;
           BasicMesh mesh;
           std::vector<BasicVertex> vertices;
           std::vector<glm::mat4> pose;

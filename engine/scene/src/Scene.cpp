@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
@@ -1463,11 +1464,23 @@ namespace PlutoGE::scene
         source.m_rootEntities.clear();
         source.m_entitiesById.clear();
         InvalidatePhysicsQueryCache();
+        InvalidateSectionNavigation();
+    }
+    void Scene::InvalidateSectionNavigation()
+    {
+        m_sectionNavigationDirty = true;
+        for (const auto &entity : m_entityStorage)
+        {
+            for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
+                navigation->InvalidateBake();
+            for (auto *agent : entity->GetComponents<NavAgentComponent>()) agent->InvalidatePath();
+        }
     }
     void Scene::UnloadSectionEntities(std::uint64_t section)
     {
         for (auto *root : m_rootEntities)
             if (GetSectionOwner(root->GetID()) == section) DestroyEntity(root->GetID());
+        InvalidateSectionNavigation();
     }
 
 
@@ -2150,7 +2163,8 @@ namespace PlutoGE::scene
             if (auto *navigationMesh = entity->GetComponent<NavigationMeshComponent>();
                 navigationMesh && navigationMesh->IsEnabled() && navigationMesh->ShouldHaveBake())
             {
-                navigationMesh->Bake();
+                navigationMesh->InvalidateBake();
+                navigationMesh->Update(0);
             }
             for (auto *child : entity->GetChildren())
                 self(child, self);
@@ -2158,6 +2172,9 @@ namespace PlutoGE::scene
         for (auto *rootEntity : m_rootEntities)
             bakeNavigationMeshes(rootEntity, bakeNavigationMeshes);
 
+        // OnCreate may request additive loads or query the scene generation.
+        // Publish the runtime lifetime before invoking gameplay callbacks.
+        m_runtimeStarted = true;
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
             scriptComponent->Start();
@@ -2184,7 +2201,6 @@ namespace PlutoGE::scene
                 (void)audioSystem.PreloadClip(clipPath);
         }
 
-        m_runtimeStarted = true;
     }
 
     void Scene::StopRuntime()
@@ -2670,6 +2686,16 @@ namespace PlutoGE::scene
                                               : deltaTime;
         RestoreRuntimePhysicsTransforms();
         ++m_updateSequence;
+        if (m_sectionNavigationDirty)
+        {
+            m_sectionNavigationDirty = false;
+            // Refresh persistent navigation before scripts can request paths,
+            // independent of the order of roots/components in the scene.
+            for (const auto &entity : m_entityStorage)
+                if (entity->IsActive())
+                    for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
+                        if (navigation->IsEnabled()) navigation->Update(0);
+        }
         // Continuous forces are state sampled by scripts each render frame. If
         // no fixed step occurred after the previous sample, replace that stale
         // sample rather than accumulating another full-strength copy. Impulses

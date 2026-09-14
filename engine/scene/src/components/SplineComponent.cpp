@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/SplineComponent.h"
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -190,7 +191,8 @@ namespace PlutoGE::scene
 
         std::vector<glm::vec3> BuildSplineCenters(const std::vector<SplineControlPoint> &points,
                                                   bool closed,
-                                                  int samplesPerSegment, std::vector<glm::quat> *rotations = nullptr)
+                                                  int samplesPerSegment, std::vector<glm::quat> *rotations = nullptr,
+                                                  int onlySegment = -1, std::vector<glm::vec3> *tangents = nullptr)
         {
             if (rotations) rotations->clear();
             std::vector<glm::vec3> centers;
@@ -205,12 +207,14 @@ namespace PlutoGE::scene
                 return centers;
             }
 
-            centers.reserve(static_cast<std::size_t>(segmentCount * samplesPerSegment + 1));
-            for (int segment = 0; segment < segmentCount; ++segment)
+            centers.reserve(static_cast<std::size_t>((onlySegment < 0 ? segmentCount : 1) * samplesPerSegment + 1));
+            for (int segment = onlySegment < 0 ? 0 : onlySegment; segment < (onlySegment < 0 ? segmentCount : onlySegment + 1); ++segment)
             {
                 for (int sample = 0; sample < samplesPerSegment; ++sample)
                 {
                     const float t = static_cast<float>(sample) / static_cast<float>(samplesPerSegment);
+                    if (tangents) tangents->push_back(CatmullRomDerivative(GetWrappedPoint(points, segment - 1, closed),
+                        GetWrappedPoint(points, segment, closed), GetWrappedPoint(points, segment + 1, closed), GetWrappedPoint(points, segment + 2, closed), t));
                     if (rotations) rotations->push_back(glm::slerp(
                         RotationQuaternion(GetWrappedControlPoint(points, segment, closed).rotation),
                         RotationQuaternion(GetWrappedControlPoint(points, segment + 1, closed).rotation), t));
@@ -223,10 +227,12 @@ namespace PlutoGE::scene
                 }
             }
 
-            if (!closed)
+            if (!closed || onlySegment >= 0)
             {
-                centers.push_back(points.back().position);
-                if (rotations) rotations->push_back(RotationQuaternion(points.back().rotation));
+                const int end = onlySegment < 0 ? segmentCount : onlySegment + 1;
+                centers.push_back(GetWrappedPoint(points, end, closed));
+                if (rotations) rotations->push_back(RotationQuaternion(GetWrappedControlPoint(points, end, closed).rotation));
+                if (tangents) tangents->push_back(0.5f * (GetWrappedPoint(points, end + 1, closed) - GetWrappedPoint(points, end - 1, closed)));
             }
 
             return centers;
@@ -238,7 +244,8 @@ namespace PlutoGE::scene
                                         float maxChordError,
                                         float maxTangentAngleDegrees,
                                         std::vector<glm::vec3> &centers,
-                                        std::vector<glm::quat> &rotations)
+                                        std::vector<glm::quat> &rotations, int onlySegment = -1,
+                                        std::vector<glm::vec3> *tangents = nullptr)
         {
             centers.clear();
             rotations.clear();
@@ -253,10 +260,10 @@ namespace PlutoGE::scene
                 return;
             }
 
-            centers.reserve(static_cast<std::size_t>(segmentCount * maxSamplesPerSegment + 1));
-            rotations.reserve(static_cast<std::size_t>(segmentCount * maxSamplesPerSegment + 1));
+            centers.reserve(static_cast<std::size_t>((onlySegment < 0 ? segmentCount : 1) * maxSamplesPerSegment + 1));
+            rotations.reserve(centers.capacity());
             const float maxTangentAngleRadians = glm::radians(std::clamp(maxTangentAngleDegrees, 0.1f, 90.0f));
-            for (int segment = 0; segment < segmentCount; ++segment)
+            for (int segment = onlySegment < 0 ? 0 : onlySegment; segment < (onlySegment < 0 ? segmentCount : onlySegment + 1); ++segment)
             {
                 const glm::vec3 p0 = GetWrappedPoint(points, segment - 1, closed);
                 const glm::vec3 p1 = GetWrappedPoint(points, segment, closed);
@@ -286,15 +293,18 @@ namespace PlutoGE::scene
                 for (const AdaptiveInterval &interval : intervals)
                 {
                     const float t = interval.start;
+                    if (tangents) tangents->push_back(CatmullRomDerivative(p0, p1, p2, p3, t));
                     centers.push_back(CatmullRom(p0, p1, p2, p3, t));
                     rotations.push_back(glm::normalize(glm::slerp(startRotation, endRotation, t)));
                 }
             }
 
-            if (!closed)
+            if (!closed || onlySegment >= 0)
             {
-                centers.push_back(points.back().position);
-                rotations.push_back(RotationQuaternion(points.back().rotation));
+                const int end = onlySegment < 0 ? segmentCount : onlySegment + 1;
+                centers.push_back(GetWrappedPoint(points, end, closed));
+                rotations.push_back(RotationQuaternion(GetWrappedControlPoint(points, end, closed).rotation));
+                if (tangents) tangents->push_back(0.5f * (GetWrappedPoint(points, end + 1, closed) - GetWrappedPoint(points, end - 1, closed)));
             }
         }
 
@@ -304,7 +314,8 @@ namespace PlutoGE::scene
                                                       float thickness,
                                                       float uvMetersPerTile,
                                                       bool closed,
-                                                      bool includeSideFaces = true, float guardrailHeight = 0, bool initializeGraphics = true)
+                                                      bool includeSideFaces = true, float guardrailHeight = 0, bool initializeGraphics = true, int lodCount = 1,
+                                                      const std::vector<glm::vec3> *tangents = nullptr)
         {
             if (centers.size() < 2)
             {
@@ -327,7 +338,7 @@ namespace PlutoGE::scene
             {
                 const glm::vec3 previous = index == 0 ? (closed ? centers[centers.size() - 1] : centers[index]) : centers[index - 1];
                 const glm::vec3 next = index + 1 < centers.size() ? centers[index + 1] : (closed ? centers[0] : centers[index]);
-                glm::vec3 tangent = next - previous;
+                glm::vec3 tangent = tangents && tangents->size() == centers.size() ? (*tangents)[index] : next - previous;
                 if (glm::dot(tangent, tangent) <= 0.000001f)
                 {
                     tangent = glm::vec3(0.0f, 0.0f, 1.0f);
@@ -357,10 +368,11 @@ namespace PlutoGE::scene
                 const float v = distances[index] / uvMetersPerTile;
                 AddVertex(meshData, centers[index] - right * halfWidth, surfaceNormal, glm::vec2(0.0f, v), right);
                 AddVertex(meshData, centers[index] + right * halfWidth, surfaceNormal, glm::vec2(1.0f, v), right);
-                AddVertex(meshData, centers[index] - right * halfWidth - surfaceNormal * bottomOffset, -right, glm::vec2(0.0f, v), right);
-                AddVertex(meshData, centers[index] + right * halfWidth - surfaceNormal * bottomOffset, right, glm::vec2(1.0f, v), right);
+                AddVertex(meshData, centers[index] - right * halfWidth - surfaceNormal * bottomOffset, -surfaceNormal, glm::vec2(0.0f, v), right);
+                AddVertex(meshData, centers[index] + right * halfWidth - surfaceNormal * bottomOffset, -surfaceNormal, glm::vec2(1.0f, v), right);
             }
 
+            const auto sideBase = static_cast<unsigned>(centers.size() * (guardrailHeight > 0 ? 8 : 4));
             const std::size_t edgeCount = closed ? centers.size() : centers.size() - 1;
             for (std::size_t index = 0; index < edgeCount; ++index)
             {
@@ -370,8 +382,8 @@ namespace PlutoGE::scene
                 AddQuad(meshData, base + 0, base + 1, nextBase + 0, nextBase + 1);
                 if (includeSideFaces && bottomOffset > 0.0f)
                 {
-                    AddQuad(meshData, base + 2, base + 0, nextBase + 2, nextBase + 0);
-                    AddQuad(meshData, base + 1, base + 3, nextBase + 1, nextBase + 3);
+                    AddQuad(meshData, sideBase + base, sideBase + base + 1, sideBase + nextBase, sideBase + nextBase + 1);
+                    AddQuad(meshData, sideBase + base + 2, sideBase + base + 3, sideBase + nextBase + 2, sideBase + nextBase + 3);
                     AddQuad(meshData, base + 3, base + 2, nextBase + 3, nextBase + 2);
                 }
             }
@@ -405,6 +417,23 @@ namespace PlutoGE::scene
                 }
             }
 
+            // Hard edges require separate side vertices; sharing top/bottom
+            // normals across vertical faces produces diagonal shading artifacts.
+            constexpr std::array<unsigned, 4> sideCorners{2, 0, 1, 3};
+            if (includeSideFaces && bottomOffset > 0)
+                for (std::size_t row = 0; row < centers.size(); ++row)
+                    for (unsigned corner : sideCorners)
+                    {
+                        auto vertex = meshData.vertices[row * 4 + corner];
+                        const auto &edge = meshData.vertices[row * 4];
+                        const float sign = (corner == 0 || corner == 2) ? -1.0f : 1.0f;
+                        for (unsigned axis = 0; axis < 3; ++axis)
+                            vertex.normal[axis] = sign * edge.tangent[axis];
+                        vertex.uv[0] = (corner >= 2 ? bottomOffset / uvMetersPerTile : 0.0f);
+                        vertex.tangent = {0, 0, 0, 1}; // Recompute from face UVs.
+                        meshData.vertices.push_back(vertex);
+                    }
+
             render::MeshConfig config;
             config.data = std::move(meshData);
             config.submeshes.push_back(render::Submesh{
@@ -414,11 +443,70 @@ namespace PlutoGE::scene
                 .name = "Spline Track",
             });
 
+            // LODs reuse the original cross-sections: bank, UVs and endpoints
+            // cannot drift as the renderer changes detail. Collision stays at
+            // its independently configured sampling resolution.
+            auto &submesh = config.submeshes.front();
+            submesh.lods.push_back({0, submesh.indexCount});
+            for (int level = 1; level < lodCount; ++level)
+            {
+                const std::size_t stride = std::size_t{1} << level;
+                std::vector<std::size_t> rows;
+                for (std::size_t row = 0; row < centers.size(); row += stride) rows.push_back(row);
+                if (!closed && rows.back() != centers.size() - 1) rows.push_back(centers.size() - 1);
+                if (rows.size() < (closed ? 3u : 2u)) break;
+                const auto offset = static_cast<uint32_t>(config.data.indices.size());
+                const auto edges = closed ? rows.size() : rows.size() - 1;
+                for (std::size_t edge = 0; edge < edges; ++edge)
+                {
+                    const auto row = rows[edge], next = rows[(edge + 1) % rows.size()];
+                    const auto a = static_cast<unsigned>(row * 4), b = static_cast<unsigned>(next * 4);
+                    AddQuad(config.data, a, a + 1, b, b + 1);
+                    if (includeSideFaces && bottomOffset > 0)
+                    {
+                        AddQuad(config.data, sideBase + a, sideBase + a + 1, sideBase + b, sideBase + b + 1);
+                        AddQuad(config.data, sideBase + a + 2, sideBase + a + 3, sideBase + b + 2, sideBase + b + 3);
+                        AddQuad(config.data, a + 3, a + 2, b + 3, b + 2);
+                    }
+                    if (guardrailHeight > 0)
+                        for (unsigned side = 0; side < 2; ++side)
+                        {
+                            const auto rail = static_cast<unsigned>(centers.size() * (4 + side * 2));
+                            const auto c = rail + static_cast<unsigned>(row * 2), d = rail + static_cast<unsigned>(next * 2);
+                            AddQuad(config.data, c, c + 1, d, d + 1);
+                            AddQuad(config.data, c + 1, c, d + 1, d);
+                        }
+                }
+                const auto count = static_cast<uint32_t>(config.data.indices.size()) - offset;
+                if (count >= submesh.lods.back().indexCount)
+                {
+                    config.data.indices.resize(offset);
+                    break;
+                }
+                submesh.lods.push_back({offset, count, 0.0f, 256.0f / static_cast<float>(stride)});
+            }
             return initializeGraphics ? std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config))
                                       : std::make_unique<render::Mesh>(config);
         }
 
     }
+
+    struct SplineBuildCache
+    {
+        struct Segment
+        {
+            std::array<SplineControlPoint, 4> controlPoints;
+            bool valid = false;
+            std::unique_ptr<render::Mesh> visual, collision;
+            std::vector<glm::vec3> collisionPath;
+            std::size_t visualRows = 0;
+            float visualLength = 0, collisionLength = 0;
+        };
+        std::vector<double> settings;
+        std::vector<Segment> segments;
+    };
+
+    SplineComponent::~SplineComponent() = default;
 
     SplineComponent::SplineComponent(const SplineComponentConfig &config)
         : m_points(config.points),
@@ -436,6 +524,7 @@ namespace PlutoGE::scene
           m_materialAssetReference(config.materialAssetReference)
     {
         SetGuardrailHeight(config.guardrailHeight);
+        SetLodCount(config.lodCount);
         EnsureDefaultPoints();
         RebuildMaterialFromReference();
     }
@@ -493,8 +582,10 @@ namespace PlutoGE::scene
             for (int sample = 0; sample < samplesPerSegment; ++sample)
             {
                 const float t = static_cast<float>(sample) / static_cast<float>(samplesPerSegment);
-                const glm::quat rotation = glm::normalize(glm::slerp(startRotation, endRotation, t));
-                sampledPoints.push_back({CatmullRom(p0, p1, p2, p3, t), glm::degrees(glm::eulerAngles(rotation))});
+                    const glm::quat rotation = glm::normalize(glm::slerp(startRotation, endRotation, t));
+                glm::vec3 euler;
+                glm::extractEulerAngleXYZ(glm::mat4_cast(rotation), euler.x, euler.y, euler.z);
+                sampledPoints.push_back({CatmullRom(p0, p1, p2, p3, t), glm::degrees(euler)});
             }
         }
 
@@ -561,6 +652,12 @@ namespace PlutoGE::scene
     {
         if (!std::isfinite(height)) return;
         m_guardrailHeight = std::clamp(height, 0.0f, 10.0f);
+        MarkDirty();
+    }
+
+    void SplineComponent::SetLodCount(int count)
+    {
+        m_lodCount = std::clamp(count, 1, 4);
         MarkDirty();
     }
 
@@ -643,60 +740,116 @@ namespace PlutoGE::scene
 
     void SplineComponent::Rebuild()
     {
-        m_dirty = false;
         EnsureDefaultPoints();
-
-        if (m_points.size() < 2)
+        m_lastRebuiltSegmentCount = 0;
+        if (!m_buildCache) m_buildCache = std::make_unique<SplineBuildCache>();
+        const std::vector<double> settings = {m_width, m_thickness, m_guardrailHeight,
+            double(m_lodCount), double(m_samplesPerSegment), double(m_collisionSamplesPerSegment),
+            m_maxChordError, m_maxTangentAngleDegrees, m_uvMetersPerTile,
+            double(m_closed), double(m_generateMesh), double(m_generateCollision)};
+        if (m_buildCache->settings != settings)
         {
-            m_generatedMesh.reset();
-            m_generatedCollisionMesh.reset();
-            m_collisionPathPoints.clear();
-            ApplyGeneratedComponents();
-            return;
+            m_buildCache->segments.clear();
+            m_buildCache->settings = settings;
         }
-
-        if (m_generateMesh)
+        const auto count = m_points.size() < 2 ? 0 : m_points.size() - (m_closed ? 0 : 1);
+        m_buildCache->segments.resize(count);
+        render::MeshConfig visual, collision;
+        m_collisionPathPoints.clear();
+        float visualOffset = 0, collisionOffset = 0;
+        const auto pathLength = [](const std::vector<glm::vec3> &path)
         {
-            std::vector<glm::vec3> renderCenters;
-            std::vector<glm::quat> renderRotations;
-            BuildAdaptiveSplineCenters(m_points,
-                                       m_closed,
-                                       m_samplesPerSegment,
-                                       m_maxChordError,
-                                       m_maxTangentAngleDegrees,
-                                       renderCenters,
-                                       renderRotations);
-            m_generatedMesh = BuildSplineMesh(renderCenters,
-                                              &renderRotations,
-                                              m_width,
-                                              m_thickness,
-                                              m_uvMetersPerTile,
-                                              m_closed,
-                                              true, m_guardrailHeight);
-        }
-        else
+            float length = 0;
+            for (std::size_t i = 1; i < path.size(); ++i) length += glm::length(path[i] - path[i - 1]);
+            return length;
+        };
+        const auto append = [&](const render::Mesh &mesh, std::size_t rows, float distance, render::MeshConfig &output)
         {
-            m_generatedMesh.reset();
-        }
-
-        if (m_generateCollision)
+            const auto vertexOffset = static_cast<unsigned>(output.data.vertices.size());
+            const auto indexOffset = static_cast<uint32_t>(output.data.indices.size());
+            const auto &data = mesh.GetMeshData();
+            for (std::size_t index = 0; index < data.vertices.size(); ++index)
+            {
+                auto vertex = data.vertices[index];
+                // Longitudinal road UV is V; guardrails use U. Applying the
+                // prefix distance at assembly keeps cached geometry local.
+                vertex.uv[index < rows * 4 || index >= rows * (m_guardrailHeight > 0 ? 8 : 4) ? 1 : 0] += distance / m_uvMetersPerTile;
+                output.data.vertices.push_back(vertex);
+            }
+            for (auto index : data.indices) output.data.indices.push_back(index + vertexOffset);
+            for (std::size_t index = 0; index < mesh.GetSubmeshCount(); ++index)
+            {
+                auto submesh = mesh.GetSubmesh(index);
+                submesh.indexOffset += indexOffset;
+                for (auto &lod : submesh.lods) lod.indexOffset += indexOffset;
+                output.submeshes.push_back(std::move(submesh));
+            }
+        };
+        for (std::size_t index = 0; index < count; ++index)
         {
-            std::vector<glm::quat> collisionRotations;
-            m_collisionPathPoints = BuildSplineCenters(m_points, m_closed, std::min(m_samplesPerSegment, m_collisionSamplesPerSegment), &collisionRotations);
-            m_generatedCollisionMesh = BuildSplineMesh(m_collisionPathPoints,
-                                                       &collisionRotations,
-                                                       m_width,
-                                                       m_thickness,
-                                                       m_uvMetersPerTile,
-                                                       m_closed,
-                                                       false, m_guardrailHeight, false);
+            auto &segment = m_buildCache->segments[index];
+            std::array<SplineControlPoint, 4> points;
+            for (int offset = -1; offset <= 2; ++offset)
+                points[offset + 1] = GetWrappedControlPoint(m_points, static_cast<int>(index) + offset, m_closed);
+            const bool same = segment.valid && std::equal(points.begin(), points.end(), segment.controlPoints.begin(),
+                [](const auto &a, const auto &b) { return a.position == b.position && a.rotation == b.rotation; });
+            if (!same)
+            {
+                segment.valid = false;
+                segment.visual.reset(); segment.collision.reset(); segment.collisionPath.clear();
+                std::vector<glm::vec3> centers, tangents;
+                std::vector<glm::quat> rotations;
+                if (m_generateMesh)
+                {
+                    BuildAdaptiveSplineCenters(m_points, m_closed, m_samplesPerSegment, m_maxChordError,
+                        m_maxTangentAngleDegrees, centers, rotations, static_cast<int>(index), &tangents);
+                    segment.visual = BuildSplineMesh(centers, &rotations, m_width, m_thickness, m_uvMetersPerTile,
+                        false, true, m_guardrailHeight, false, m_lodCount, &tangents);
+                    segment.visualRows = centers.size();
+                    segment.visualLength = pathLength(centers);
+                }
+                if (m_generateCollision)
+                {
+                    tangents.clear(); rotations.clear();
+                    segment.collisionPath = BuildSplineCenters(m_points, m_closed,
+                        std::min(m_samplesPerSegment, m_collisionSamplesPerSegment), &rotations, static_cast<int>(index), &tangents);
+                    segment.collision = BuildSplineMesh(segment.collisionPath, &rotations, m_width, m_thickness, m_uvMetersPerTile,
+                        false, false, m_guardrailHeight, false, 1, &tangents);
+                    segment.collisionLength = pathLength(segment.collisionPath);
+                }
+                segment.controlPoints = points;
+                segment.valid = true;
+                ++m_lastRebuiltSegmentCount;
+            }
+            if (segment.visual) append(*segment.visual, segment.visualRows, visualOffset, visual);
+            if (segment.collision) append(*segment.collision, segment.collisionPath.size(), collisionOffset, collision);
+            visualOffset += segment.visualLength;
+            collisionOffset += segment.collisionLength;
+            m_collisionPathPoints.insert(m_collisionPathPoints.end(),
+                segment.collisionPath.begin() + (index > 0 && !segment.collisionPath.empty() ? 1 : 0), segment.collisionPath.end());
         }
-        else
-        {
-            m_generatedCollisionMesh.reset();
-            m_collisionPathPoints.clear();
-        }
+        if (m_closed && !m_collisionPathPoints.empty()) m_collisionPathPoints.pop_back();
+        // CPU geometry is rebuilt only for changed Catmull-Rom neighbourhoods.
+        // GPU publication is a single owning-thread mesh replacement; each cached
+        // segment becomes a submesh with independent renderer-selected LODs.
+        m_generatedMesh.reset(visual.data.indices.empty() ? nullptr : render::Mesh::CreateInitialized(visual));
+        m_generatedCollisionMesh = collision.data.indices.empty() ? nullptr : std::make_unique<render::Mesh>(collision);
+        m_dirty = false;
         ApplyGeneratedComponents();
+    }
+
+    bool SplineComponent::GetEndpointEdge(bool atEnd, std::array<glm::vec3, 2> &edge, bool bottom) const
+    {
+        if (m_closed || !m_buildCache || m_buildCache->segments.empty()) return false;
+        const auto &segment = atEnd ? m_buildCache->segments.back() : m_buildCache->segments.front();
+        if (!segment.visual || segment.visualRows < 2) return false;
+        const auto row = atEnd ? segment.visualRows - 1 : 0;
+        for (unsigned side = 0; side < 2; ++side)
+        {
+            const auto &position = segment.visual->GetMeshData().vertices[row * 4 + side + (bottom ? 2 : 0)].position;
+            edge[side] = {position[0], position[1], position[2]};
+        }
+        return true;
     }
 
     void SplineComponent::ApplyGeneratedComponents()
@@ -716,7 +869,10 @@ namespace PlutoGE::scene
         if (meshComponent)
         {
             meshComponent->SetMesh(m_generateMesh ? m_generatedMesh.get() : nullptr);
-            meshComponent->SetMaterial(m_material);
+            meshComponent->SetSubmeshIndex(-1);
+            // An unassigned spline material must not clear a material chosen in
+            // the Mesh inspector when control points regenerate the geometry.
+            if (m_material) meshComponent->SetMaterial(m_material);
             if (!m_materialAssetReference.empty())
             {
                 meshComponent->SetMaterialAssetForMaterialSlot(0, m_materialAssetReference);
@@ -736,12 +892,28 @@ namespace PlutoGE::scene
         }
     }
 
+    bool SplineComponent::ExportMeshAsset(assets::AssetManager &assets, const std::string &reference, std::string *error)
+    {
+        if (m_dirty) Rebuild();
+        if (!m_generatedMesh)
+        {
+            if (error) *error = "Enable road mesh generation before exporting.";
+            return false;
+        }
+        render::MeshConfig config;
+        config.data = m_generatedMesh->GetMeshData();
+        for (std::size_t index = 0; index < m_generatedMesh->GetSubmeshCount(); ++index)
+            config.submeshes.push_back(m_generatedMesh->GetSubmesh(index));
+        return assets.SaveMeshAsset(reference, config, {m_materialAssetReference}, error);
+    }
+
     std::vector<Property> SplineComponent::Serialize() const
     {
         std::vector<Property> properties = {
             {"Width", PropertyType::Float, std::to_string(m_width)},
             {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
             {"GuardrailHeight", PropertyType::Float, std::to_string(m_guardrailHeight)},
+            {"LodCount", PropertyType::Int, std::to_string(m_lodCount)},
             {"SamplesPerSegment", PropertyType::Int, std::to_string(m_samplesPerSegment)},
             {"CollisionSamplesPerSegment", PropertyType::Int, std::to_string(m_collisionSamplesPerSegment)},
             {"MaxChordError", PropertyType::Float, std::to_string(m_maxChordError)},
@@ -774,6 +946,8 @@ namespace PlutoGE::scene
                 m_width = std::max(std::stof(property.value), 0.05f);
             else if (property.name == "GuardrailHeight")
                 SetGuardrailHeight(std::stof(property.value));
+            else if (property.name == "LodCount")
+                SetLodCount(std::stoi(property.value));
             else if (property.name == "Thickness")
                 m_thickness = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "SamplesPerSegment")

@@ -35,10 +35,10 @@ that a milestone is complete.
 | M08 | Camera rigs | Medium | Implemented; automated checks passed |
 | M09 | Surface response assets | Medium | Implemented; automated checks passed |
 | M10 | Prefab variants | Medium–large | Property variants implemented; automated checks passed |
-| M11 | Sequencer/timeline | Large | Partial: authoring, runtime and restored preview; interactive checks pending |
-| M12 | Additive scene loading and streaming | Large | Partial: native/managed section loading and ownership |
-| M13 | Networked entity replication | Large | Partial: snapshots, authority, interpolation and scene adapter |
-| M14 | Procedural spline roads | Large | Partial: banked collision and guardrail geometry |
+| M11 | Sequencer/timeline | Large | Implemented; automated verification and interactive acceptance tracked below |
+| M12 | Additive scene loading and streaming | Large | Implemented: packed streaming and lifecycle cleanup; interactive acceptance pending |
+| M13 | Networked entity replication | Large | Implemented: sessions, cooperative sample and lifetime checks; playtest pending |
+| M14 | Procedural spline roads | Large | Implemented: junctions, placement, LODs, local CPU rebuilds and export; visual checks pending |
 
 ### M01 — Keep selected play-mode changes
 
@@ -330,3 +330,32 @@ OpenGL/Vulkan verification remains pending.
   All eight combined native/managed regression suites passed (4.25 seconds); the
   existing networking smoke test also passed. git diff --check passed.
   Interactive OpenGL/Vulkan and Linux validation remain pending.
+
+
+### 2026-09-14: M11-M14 implementation completion pass
+
+- M11: added entity-picker/drag-drop binding repair and full continuous-channel
+  preview restoration checks. Script-event dispatch now stops when a callback
+  stops runtime; native callback tests cover ordering and payloads.
+- M12: fixed packaged sections bypassing the content reader, runtime lifetime not
+  being available during OnCreate, and stale navigation/agent paths after section
+  changes. Tests cover packed reads without extraction, pruned section dependencies,
+  persistent navigation restoration, light/physics removal and script destruction.
+- M13: reusable negotiated transport sessions, a two-player pressure-pad sample
+  with server-controlled movement and a replicated gate, and ABI-level scene
+  adapter lifetime tests. Factories/property callbacks cannot continue applying
+  state after a scene generation change or reentrant disposal.
+- M14: deterministic per-segment CPU geometry caches, closed-seam neighbourhood
+  invalidation, independent segment LODs, roadside prefab bakes, convex junction
+  mesh/collider bakes and mesh export retaining LODs/material references. Existing
+  terrain conformity is documented as an explicit undoable authoring bake.
+- Validation: final MSVC Release editor/runtime and managed SDK builds passed.
+  All nine combined regression suites passed (9.52 seconds), including scene
+  history, camera rigs, prefab variants, timeline, sequencer, streaming, roads,
+  replication and asset-reference cooking. Existing networking smoke tests and
+  git diff --check passed. Build log: out/m11-m14-completion-validation.log.
+- Implementation coverage is now recorded separately from final acceptance.
+  Interactive OpenGL/Vulkan authoring, audio and cooperative playtests, plus Linux
+  validation, remain pending. Activation/navigation baking remains synchronous;
+  cached road geometry is published through combined GPU buffer replacement.
+  Road bakes are explicit and network-section IDs require application mapping.

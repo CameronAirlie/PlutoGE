@@ -37,6 +37,8 @@ namespace PlutoGE::scene
         void SetTargetEntity(std::uint32_t entityId);
         std::uint32_t GetTargetEntity() const { return m_config.targetEntityId; }
         void Stop();
+        // Preserve the destination and vertical motion while discarding topology-dependent steering.
+        void InvalidatePath();
         bool HasPath() const { return m_nextPoint < m_path.size(); }
         const std::vector<glm::vec3> &GetPath() const { return m_path; }
         std::size_t GetNextPathPointIndex() const { return m_nextPoint; }

@@ -1,4 +1,5 @@
 #include "RenderOptimizationChecks.h"
+#include "MeshReplacementRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
@@ -206,6 +207,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             shaders.vctPostProcess[index].vertex.glsl = ReadText((std::string(vctModules[index]) + ".vertex.glsl").c_str());
             shaders.vctPostProcess[index].fragment.glsl = ReadText((std::string(vctModules[index]) + ".fragment.glsl").c_str());
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--mesh-replacement")
+        {
+            CheckMeshReplacementRendering(device, shaders);
+            return 0;
         }
         try
         {

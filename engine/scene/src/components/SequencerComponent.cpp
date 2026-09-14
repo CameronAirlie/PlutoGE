@@ -85,6 +85,7 @@ namespace PlutoGE::scene
         }
         for (const auto &event : dispatch)
         {
+            if (!scene->IsRuntimeStarted()) break;
             auto *entity = scene->FindEntityByID(event.entity);
             if (!entity || !entity->IsActive()) continue;
             if (event.channel == TimelineChannel::AudioPlay)

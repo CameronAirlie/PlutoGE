@@ -249,11 +249,12 @@ namespace PlutoGE::render
 
         m_sceneCommandCount = commands.size();
         ++m_skinningFrame;
+        std::erase_if(m_meshes, [](const auto &entry) { return entry.second.lifetime.expired(); });
         // Retain offscreen poses briefly, but do not accumulate destroyed
         // animators indefinitely in scenes that spawn disposable characters.
         for (auto model = m_skinnedMeshes.begin(); model != m_skinnedMeshes.end(); )
         {
-            std::erase_if(model->second, [&](const auto &entry) { return m_skinningFrame - entry.second.lastFrame > 120; });
+            std::erase_if(model->second, [&](const auto &entry) { return entry.second.lifetime.expired() || m_skinningFrame - entry.second.lastFrame > 120; });
             if (model->second.empty()) model = m_skinnedMeshes.erase(model);
             else ++model;
         }
@@ -343,6 +344,7 @@ namespace PlutoGE::render
                 if (command.jointMatrices && !command.jointMatrices->empty())
                 {
                     auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
+                    entry.lifetime = command.mesh->GetLifetimeToken();
                     deformed = &entry;
                     if (entry.lastFrame != m_skinningFrame)
                     {
@@ -407,10 +409,10 @@ namespace PlutoGE::render
                     vertices.reserve(source.vertices.size());
                     for (const auto &vertex : source.vertices)
                         vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
-                    mesh = m_meshes.emplace(command.mesh, m_renderer->CreateMesh({vertices, source.indices})).first;
+                    mesh = m_meshes.emplace(command.mesh, CachedMesh{command.mesh->GetLifetimeToken(), m_renderer->CreateMesh({vertices, source.indices})}).first;
                     m_timingStats.meshUploadMs += millisecondsBetween(meshStart, std::chrono::steady_clock::now());
                     }
-                    renderMesh = &mesh->second;
+                    renderMesh = &mesh->second.mesh;
                 }
 
                 std::uint32_t firstIndex = 0;

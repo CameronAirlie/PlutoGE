@@ -65,8 +65,21 @@ each milestone status only when its stated acceptance criteria have been met.
 
 ## Current checkpoint
 
-M11 now has restored render-scoped preview and capture-value authoring. M12 has
-section loading/ownership and managed controls; M13 has snapshot replication and
-a scene adapter; M14 has banked collision and guardrail ribbons. Each milestone
-is still partial. The feature milestone log and feature guides identify the
-remaining acceptance work and the latest validation results.
+The implementation now covers the scoped feature criteria. Final milestone
+acceptance still requires interactive backend verification.
+
+- M11: all continuous channels have restoration tests; bindings support entity
+  selection/drag-drop. Runtime events stop dispatching if a callback stops play.
+- M12: packed and loose section loading, pruned cooking, startup/runtime script
+  lifetime, light/physics cleanup, persistent navigation and agent invalidation.
+- M13: negotiated transport sessions, two-player cooperative pressure-pad sample,
+  real multi-client tests, and native ABI adapter lifetime/reentrancy tests.
+- M14: cached local CPU segment rebuilding, per-segment LODs, junction mesh/collider
+  bakes, roadside prefab bakes, terrain conformity through the existing editor
+  action, and mesh asset export with LOD/material retention.
+
+The guides record boundaries: synchronous scene activation/navigation baking,
+combined GPU buffer replacement, explicit road/terrain/junction bakes, and explicit
+logical network-section mapping. Interactive OpenGL/Vulkan authoring, audio and
+cooperative playtests, plus Linux validation, remain pending and are not implied
+by the automated tests.

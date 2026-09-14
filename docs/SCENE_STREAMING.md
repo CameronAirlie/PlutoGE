@@ -45,7 +45,25 @@ worker can join. Scene shutdown joins workers. Failed validation publishes no
 section entities. Section data must use the supported scene format and registered
 component types; Windows CRLF and LF records are accepted.
 
+Loose and content-pack sections use the same content reader on the worker thread.
+Packed sections do not require extraction. Their decoded size is checked against
+the limit before opening; decoding the packed asset itself is not interruptible,
+and may temporarily hold another copy of its bytes. The subsequent read loop is
+cancellable. Pruned cooking follows serialized section references and their
+transitive assets; dynamically constructed paths require explicit cooker roots.
+
+Section topology changes immediately clear persistent navigation meshes and agent
+paths. Requested navigation bakes are rebuilt on the scene thread before script
+updates, including after an empty world receives ground again. Disabled/inactive
+navigation owners are excluded. Runtime lifetime is published before `OnCreate`,
+so scripts can request section loading during startup. Streamed scripts use the
+normal startup/destruction path; lights and colliders become inactive immediately
+on unload. Audio uses normal active-emitter collection and voice cleanup.
+
 Automated checks cover activation, cross-root references, ownership, spawned
-children, cancellation, failures, reload, physics registration and unload queries.
-M12 remains partial pending broader navigation/audio/script lifetime and cooked
-project integration checks, activation budgeting and interactive backend tests.
+children, cancellation, failures, reload, physics/light removal, navigation and
+agent invalidation, script creation/destruction, startup lifetime, packed-section
+loading without extraction, and transitive pruned cooking. Interactive audio,
+rendering and transition stress tests remain to be run on OpenGL/Vulkan. Activation
+and navigation baking are synchronous scene-thread work; frame-budgeted activation
+is not supplied by this implementation.

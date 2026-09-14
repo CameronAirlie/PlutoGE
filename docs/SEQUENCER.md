@@ -1,11 +1,12 @@
 # Sequencer runtime and authoring
 
-This is a partial M11 delivery. The runtime component and inspector authoring are
+The M11 runtime component and inspector authoring are
 implemented, including render-scoped editor preview and automatic restoration.
 Interactive backend validation is still pending; M11 is not marked complete.
 
-Add **Sequencer** through the Inspector's component menu. Add a track, enter the
-target entity ID, select its channel and add keys in increasing time order. Entity
+Add **Sequencer** through the Inspector's component menu. Add a track, choose the
+target using the entity picker or a hierarchy drag/drop, select its channel and
+add keys in increasing time order. A numeric ID field remains available. Entity
 IDs refer to the current scene; a missing entity or required component displays a
 binding warning and that track is skipped. Repair the ID or add the required
 component. Duplicating a prefab hierarchy remaps bindings within that hierarchy.
@@ -54,8 +55,10 @@ saving and scene-history work. It does not dispatch script/audio events. Capture
 Current Value fills a key from its bound authoring value. Editing/replacing the
 sequencer, removing its owner or starting runtime invalidates the preview.
 
-Outstanding M11 work: timeline-focused UI polish and interactive OpenGL/Vulkan
-checks, including gizmo interaction while a preview is visible. Camera cuts and audio sample-accurate seeking
+Automated preview checks cover camera FOV, audio volume, transforms and lighting,
+byte-identical restoration, silent audio events and disabled/revised components.
+Interactive OpenGL/Vulkan checks remain, including gizmo interaction while a
+preview is visible. Camera cuts and audio sample-accurate seeking
 are not supplied by the current channels.
 
 Checks:

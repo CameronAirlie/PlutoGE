@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <memory>
 
 namespace PlutoGE::render
 {
@@ -146,6 +147,11 @@ namespace PlutoGE::render
     class Mesh
     {
     public:
+        Mesh(const Mesh &) = delete;
+        Mesh &operator=(const Mesh &) = delete;
+        // Render caches must not confuse a new allocation with a destroyed mesh
+        // at the same address. The token never owns the mesh itself.
+        std::weak_ptr<const void> GetLifetimeToken() const { return m_lifetimeToken; }
         Mesh(const MeshConfig &config) : m_config(config)
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
@@ -1070,6 +1076,7 @@ namespace PlutoGE::render
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
         MeshBounds m_bounds;
+        std::shared_ptr<const void> m_lifetimeToken = std::make_shared<const int>(0);
 
         void Initialize()
         {

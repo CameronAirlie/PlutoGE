@@ -26,7 +26,10 @@ namespace PlutoGE::scene
         {
             m_rebuildPending = false;
             if (m_shouldHaveBake)
+            {
                 Bake();
+                m_shouldHaveBake = true; // An empty streamed world may acquire ground later.
+            }
         }
     }
     std::vector<Property> NavigationMeshComponent::Serialize() const

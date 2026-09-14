@@ -2,6 +2,8 @@ add_library(PlutoGEScene
     src/Timeline.cpp
     src/TimelineBindings.cpp
     src/SceneStreaming.cpp
+    src/RoadPlacement.cpp
+    src/RoadJunction.cpp
     src/components/SequencerComponent.cpp
     src/Entity.cpp
     src/FoliageTypeAsset.cpp

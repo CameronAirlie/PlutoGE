@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,8 +14,11 @@ namespace PlutoGE::render
         class Mesh;
 }
 
+namespace PlutoGE::assets { class AssetManager; }
+
 namespace PlutoGE::scene
 {
+        struct SplineBuildCache;
         struct SplineControlPoint
         {
                 glm::vec3 position{0.0f};
@@ -27,6 +31,7 @@ namespace PlutoGE::scene
                 float width = 8.0f;
                 float thickness = 0.25f;
                 float guardrailHeight = 0.0f;
+                int lodCount = 3;
                 float samplesPerSegment = 12.0f;
                 float collisionSamplesPerSegment = 4.0f;
                 float maxChordError = 0.1f;
@@ -43,7 +48,7 @@ namespace PlutoGE::scene
         {
         public:
                 explicit SplineComponent(const SplineComponentConfig &config = {});
-                ~SplineComponent() override = default;
+                ~SplineComponent() override;
 
                 void Update(float deltaTime) override;
                 std::vector<Property> Serialize() const override;
@@ -62,6 +67,8 @@ namespace PlutoGE::scene
                 void SetWidth(float width);
                 float GetGuardrailHeight() const { return m_guardrailHeight; }
                 void SetGuardrailHeight(float height);
+                int GetLodCount() const { return m_lodCount; }
+                void SetLodCount(int count);
                 float GetThickness() const { return m_thickness; }
                 void SetThickness(float thickness);
                 int GetSamplesPerSegment() const { return m_samplesPerSegment; }
@@ -89,6 +96,10 @@ namespace PlutoGE::scene
                 const std::vector<glm::vec3> &GetCollisionPathPoints() const { return m_collisionPathPoints; }
 
                 void Rebuild();
+                std::size_t GetLastRebuiltSegmentCount() const { return m_lastRebuiltSegmentCount; }
+                bool GetEndpointEdge(bool atEnd, std::array<glm::vec3, 2> &edge, bool bottom = false) const;
+                // Exports local-space geometry, material references and render LODs.
+                bool ExportMeshAsset(assets::AssetManager &assets, const std::string &reference, std::string *error = nullptr);
 
         private:
                 void MarkDirty() { m_dirty = true; }
@@ -100,6 +111,7 @@ namespace PlutoGE::scene
                 float m_width = 8.0f;
                 float m_thickness = 0.25f;
                 float m_guardrailHeight = 0.0f;
+                int m_lodCount = 3;
                 int m_samplesPerSegment = 12;
                 int m_collisionSamplesPerSegment = 4;
                 float m_maxChordError = 0.1f;
@@ -114,5 +126,7 @@ namespace PlutoGE::scene
                 std::unique_ptr<render::Mesh> m_generatedCollisionMesh;
                 std::vector<glm::vec3> m_collisionPathPoints;
                 bool m_dirty = true;
+                std::unique_ptr<SplineBuildCache> m_buildCache;
+                std::size_t m_lastRebuiltSegmentCount = 0;
         };
 }

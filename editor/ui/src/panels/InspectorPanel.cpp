@@ -16,6 +16,8 @@
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
+#include "PlutoGE/scene/RoadPlacement.h"
+#include "PlutoGE/scene/RoadJunction.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
@@ -5195,6 +5197,12 @@ namespace PlutoGE::ui
                                 if (ImGui::TreeNode("Track", "Track %u", static_cast<unsigned>(ti + 1)))
                                 {
                                     auto &track = data.tracks[ti];
+                                    scene::Property binding{"Target", scene::PropertyType::Entity, std::to_string(track.entity)};
+                                    if (RenderPropertyEditor(binding))
+                                    {
+                                        const auto targetId = static_cast<scene::EntityID>(std::stoul(binding.value));
+                                        if (targetId != 0) { track.entity = targetId; edited = true; }
+                                    }
                                     edited |= ImGui::InputScalar("Entity ID", ImGuiDataType_U32, &track.entity);
                                     int channel = static_cast<int>(track.channel);
                                     if (ImGui::Combo("Channel", &channel, "Position\0Rotation (Euler)\0Scale\0Camera FOV\0Light Color\0Light Intensity\0Audio Volume\0Audio Play\0Script Event\0")) { track.channel = static_cast<scene::TimelineChannel>(channel); edited = true; }
@@ -5274,6 +5282,7 @@ namespace PlutoGE::ui
                                 {"Width", scene::PropertyType::Float, std::to_string(splineComponent->GetWidth())},
                                 {"Thickness", scene::PropertyType::Float, std::to_string(splineComponent->GetThickness())},
                                 {"GuardrailHeight", scene::PropertyType::Float, std::to_string(splineComponent->GetGuardrailHeight())},
+                                {"LodCount", scene::PropertyType::Int, std::to_string(splineComponent->GetLodCount())},
                                 {"SamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetSamplesPerSegment())},
                                 {"CollisionSamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetCollisionSamplesPerSegment())},
                                 {"MaxChordError", scene::PropertyType::Float, std::to_string(splineComponent->GetMaxChordError())},
@@ -5321,6 +5330,65 @@ namespace PlutoGE::ui
                             }
 
                             const auto &points = splineComponent->GetPoints();
+                            static char roadExportPath[512] = "project://Meshes/Road.plutomesh";
+                            static std::string roadExportStatus;
+                            ImGui::InputText("Road Mesh Asset", roadExportPath, sizeof(roadExportPath));
+                            if (ImGui::Button("Export Road Mesh"))
+                            {
+                                roadExportStatus.clear();
+                                if (splineComponent->ExportMeshAsset(editorShell.GetEngine().GetAssetManager(), roadExportPath, &roadExportStatus))
+                                    roadExportStatus = "Road mesh exported with materials and LODs.";
+                            }
+                            if (!roadExportStatus.empty()) ImGui::TextWrapped("%s", roadExportStatus.c_str());
+                            static char roadsidePrefab[512] = "";
+                            static float roadsideSpacing = 5, roadsideOffset = 1;
+                            static bool roadsideBothSides = true;
+                            static std::string roadsideStatus;
+                            ImGui::InputText("Roadside Prefab", roadsidePrefab, sizeof(roadsidePrefab));
+                            ImGui::DragFloat("Placement Spacing", &roadsideSpacing, 0.1f, 0.1f, 1000.0f);
+                            ImGui::DragFloat("Offset From Edge", &roadsideOffset, 0.1f, 0.0f, 1000.0f);
+                            ImGui::Checkbox("Both Road Sides", &roadsideBothSides);
+                            ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+                            if (ImGui::Button("Bake Roadside Prefabs"))
+                            {
+                                editorShell.ExecuteSceneEdit("Bake Roadside Prefabs", [&]
+                                {
+                                    if (scene::BakeRoadsidePrefabs(*entity, roadsidePrefab, roadsideSpacing, roadsideOffset, roadsideBothSides, roadsideStatus))
+                                        roadsideStatus = "Created prefab children; undo with Ctrl+Z.";
+                                });
+                            }
+                            ImGui::EndDisabled();
+                            if (!roadsideStatus.empty()) ImGui::TextWrapped("%s", roadsideStatus.c_str());
+                            if (ImGui::TreeNode("Road Junction"))
+                            {
+                                static std::vector<scene::RoadJunctionEndpoint> entrances;
+                                static char junctionPath[512] = "project://Meshes/Junction.plutomesh";
+                                static std::string junctionStatus;
+                                if (entrances.empty()) entrances = {{entity->GetID(), true}, {0, false}};
+                                for (std::size_t index = 0; index < entrances.size(); ++index)
+                                {
+                                    ImGui::PushID(static_cast<int>(index));
+                                    scene::Property target{"Road", scene::PropertyType::Entity, std::to_string(entrances[index].entity)};
+                                    if (RenderPropertyEditor(target)) entrances[index].entity = static_cast<scene::EntityID>(std::stoul(target.value));
+                                    ImGui::Checkbox("Use End (otherwise Start)", &entrances[index].atEnd);
+                                    if (ImGui::Button("Remove Entrance") && entrances.size() > 2)
+                                    { entrances.erase(entrances.begin() + index); ImGui::PopID(); break; }
+                                    ImGui::PopID();
+                                }
+                                if (ImGui::Button("Add Entrance") && entrances.size() < 8) entrances.push_back({});
+                                ImGui::InputText("Junction Asset", junctionPath, sizeof(junctionPath));
+                                ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+                                if (ImGui::Button("Bake Junction Mesh"))
+                                    editorShell.ExecuteSceneEdit("Bake Road Junction", [&]
+                                    {
+                                        if (scene::BakeRoadJunction(*entity, entrances, editorShell.GetEngine().GetAssetManager(), junctionPath, junctionStatus))
+                                            junctionStatus = "Saved junction asset and created a collidable child. Undo removes the child.";
+                                    });
+                                ImGui::EndDisabled();
+                                ImGui::TextWrapped("Entrances must form separate edges of a convex junction. Re-bake after editing roads.");
+                                if (!junctionStatus.empty()) ImGui::TextWrapped("%s", junctionStatus.c_str());
+                                ImGui::TreePop();
+                            }
                             ImGui::Text("Control Points: %zu", points.size());
                             for (std::size_t pointIndex = 0; pointIndex < points.size(); ++pointIndex)
                             {

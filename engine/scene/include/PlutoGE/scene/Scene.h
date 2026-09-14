@@ -247,6 +247,8 @@ namespace PlutoGE::scene
     private:
         friend class SceneStreaming;
         void AdoptSectionEntities(Scene &source, std::uint64_t section);
+        void InvalidateSectionNavigation();
+        bool m_sectionNavigationDirty = false;
         void UnloadSectionEntities(std::uint64_t section);
         std::unordered_map<EntityID, std::uint64_t> m_sectionOwners;
         std::unique_ptr<SceneStreaming> m_streaming;

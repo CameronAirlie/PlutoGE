@@ -1,3 +1,4 @@
+#include "PlutoGE/render/RhiOcean.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
@@ -652,6 +653,11 @@ namespace PlutoGE::render
             }
         }
         std::vector<BasicPostProcessEffect> basicEffects(atmosphereEffects.begin(), atmosphereEffects.end());
+        if (scene)
+        {
+            auto oceans = CollectRhiOceans(*scene, effectiveLighting);
+            basicEffects.insert(basicEffects.end(), std::make_move_iterator(oceans.begin()), std::make_move_iterator(oceans.end()));
+        }
         for (const auto *effect : postProcessEffects)
         {
             if (!effect || !effect->IsEnabled())

@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include "PlutoGE/render/OceanParameters.h"
 
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/RenderDebugView.h"
@@ -41,6 +42,7 @@ namespace PlutoGE::render
         VolumetricCloud,
         SceneComposite,
         VCTGI,
+        Ocean,
         Count,
     };
 
@@ -60,6 +62,7 @@ namespace PlutoGE::render
         LightingComposite,
         AmbientOcclusion,
         ScreenSpaceAtmosphere,
+        WaterComposite,
         TemporalResolve,
         CameraOptics,
         Exposure,
@@ -81,6 +84,8 @@ namespace PlutoGE::render
         case BasicPostProcessEffectType::PhysicalSky:
         case BasicPostProcessEffectType::VolumetricCloud:
             return BasicPostProcessStage::ScreenSpaceAtmosphere;
+        case BasicPostProcessEffectType::Ocean:
+            return BasicPostProcessStage::WaterComposite;
         case BasicPostProcessEffectType::TAA:
             return BasicPostProcessStage::TemporalResolve;
         case BasicPostProcessEffectType::MotionBlur:
@@ -114,6 +119,7 @@ namespace PlutoGE::render
         {
         case BasicPostProcessEffectType::MotionBlur:
             return BasicPostProcessInput::Motion;
+        case BasicPostProcessEffectType::Ocean:
         case BasicPostProcessEffectType::DepthOfField:
             return BasicPostProcessInput::Depth;
         case BasicPostProcessEffectType::TAA:
@@ -362,6 +368,7 @@ namespace PlutoGE::render
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
         // Volumetric trace resolution; 1 retains the full-resolution reference.
         std::uint32_t volumetricResolutionDivisor = 2;
+        std::shared_ptr<const OceanParameters> ocean;
     };
 
     struct BasicRendererFrameStats
@@ -510,6 +517,8 @@ namespace PlutoGE::render
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;
+        std::vector<rhi::Buffer> m_oceanBuffers;
+        std::size_t m_oceanBufferCursor = 0;
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;

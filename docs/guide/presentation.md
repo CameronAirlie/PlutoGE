@@ -152,6 +152,32 @@ polygons. Shallow/deep colors, opacity, smoothness, visibility depth, refraction
 and foam control the surface; underwater fade, turbidity, and light falloff affect
 the view below it. Wave amplitude, length, speed, and choppiness shape motion.
 
+The RHI renderer supports OceanComponent on both OpenGL and Vulkan. Add an enabled
+Ocean component to an active entity and position its local Y=0 plane at water
+level. No mesh or post-process component is required. With no area polygons the
+water is infinite; polygons normally exclude water, while **Invert Area Mask**
+restricts it to their union. Polygon coordinates follow the entity's local XZ
+plane. The renderer supports up to eight polygons with 32 points each.
+
+RHI water includes animated waves, depth-based refraction, shoreline foam, and
+underwater fading. It receives filtered directional shadows from cascaded or
+virtual shadow maps. Enable shadows on the scene's directional light and enable
+shadow casting on objects above the water. Water does not itself cast shadows.
+
+Surface reflections use the same physical-sky environment as opaque materials,
+including sun direction, atmospheric colors, night lighting, and sky exposure.
+Without a physical sky, scene ambient intensity supplies the environment light.
+Smoothness controls the GGX sun highlight and approximate environment filtering;
+Fresnel reflectance increases toward grazing angles. Scattering, wave-crest
+lighting, foam, and underwater tint respond to directional and ambient lighting.
+Shadowing attenuates direct light while preserving sky illumination.
+
+Reflected scene geometry and local point/spot lighting are not yet supported by
+the ocean pass. Virtual shadows can use coarse fallback pages where water has no
+opaque receiver requesting finer pages. Water composites before temporal resolve
+and transparent geometry without writing water depth or motion vectors; temporal
+effects and submerged transparent objects do not yet have full water integration.
+
 **Example: a shallow bay.** Place the water at shoreline height and author its
 area/mask to match the bay. Start with modest wave amplitude and adjust shallow
 color and visibility depth until the shoreline reads clearly. Move the game camera

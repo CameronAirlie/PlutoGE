@@ -1118,7 +1118,8 @@ namespace PlutoGE::ui
             else
             {
                 const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshAssetReference);
-                if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0) return false;
+                if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0)
+                    return false;
                 meshComponent.SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
             }
             meshComponent.SetUseGeneratedLods(false);
@@ -1611,8 +1612,10 @@ namespace PlutoGE::ui
             {
                 return "Skeleton Attachment Component";
             }
-            if (dynamic_cast<const scene::SequencerComponent *>(&component)) return "Sequencer";
-            if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "Camera Rig";
+            if (dynamic_cast<const scene::SequencerComponent *>(&component))
+                return "Sequencer";
+            if (dynamic_cast<const scene::CameraRigComponent *>(&component))
+                return "Camera Rig";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
             {
                 return "Camera Component";
@@ -1657,7 +1660,8 @@ namespace PlutoGE::ui
             {
                 return "Sound Listener Component";
             }
-            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component)) return "Audio Environment Volume Component";
+            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component))
+                return "Audio Environment Volume Component";
             if (const auto *canvas = dynamic_cast<const scene::CanvasComponent *>(&component))
             {
                 return canvas->GetBackend() == scene::UIRenderBackend::RmlUi
@@ -1706,8 +1710,10 @@ namespace PlutoGE::ui
                 return "ActiveRagdollComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
-            if (dynamic_cast<const scene::SequencerComponent *>(&component)) return "SequencerComponent";
-            if (dynamic_cast<const scene::CameraRigComponent *>(&component)) return "CameraRigComponent";
+            if (dynamic_cast<const scene::SequencerComponent *>(&component))
+                return "SequencerComponent";
+            if (dynamic_cast<const scene::CameraRigComponent *>(&component))
+                return "CameraRigComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const scene::LightComponent *>(&component))
@@ -1732,7 +1738,8 @@ namespace PlutoGE::ui
                 return "SoundEmitterComponent";
             if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
                 return "SoundListenerComponent";
-            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component)) return "AudioEnvironmentVolumeComponent";
+            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component))
+                return "AudioEnvironmentVolumeComponent";
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
                 return "CanvasComponent";
             if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
@@ -1899,20 +1906,32 @@ namespace PlutoGE::ui
         std::optional<AddableComponentType> RenderAddComponentMenu(const scene::Entity &entity)
         {
             std::optional<AddableComponentType> selectedType;
+            static ImGuiTextFilter search;
+            if (ImGui::IsWindowAppearing())
+            {
+                search.Clear();
+                ImGui::SetKeyboardFocusHere();
+            }
+            search.Draw("Search components", 260.0f);
+            ImGui::Separator();
+            int matches = 0;
             const auto renderItem = [&](const char *label, AddableComponentType type)
             {
+                if (!search.PassFilter(label))
+                    return;
+                ++matches;
                 if (ImGui::MenuItem(label, nullptr, false, CanAddComponentType(entity, type)))
                 {
                     selectedType = type;
                 }
             };
 
-            if (ImGui::BeginMenu("Rendering"))
+            if (search.IsActive() || ImGui::BeginMenu("Rendering"))
             {
                 renderItem("Mesh", AddableComponentType::Mesh);
                 renderItem("Decal", AddableComponentType::Decal);
                 renderItem("Terrain", AddableComponentType::Terrain);
-                renderItem("Spline Track", AddableComponentType::Spline);
+                renderItem("Road / Spline Track", AddableComponentType::Spline);
                 renderItem("Ocean", AddableComponentType::Ocean);
                 renderItem("Foliage", AddableComponentType::Foliage);
                 renderItem("Cloth", AddableComponentType::Cloth);
@@ -1921,60 +1940,71 @@ namespace PlutoGE::ui
                 renderItem("Camera Rig", AddableComponentType::CameraRig);
                 renderItem("Sequencer", AddableComponentType::Sequencer);
                 renderItem("Light", AddableComponentType::Light);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Animation"))
+            if (search.IsActive() || ImGui::BeginMenu("Animation"))
             {
                 renderItem("Animation", AddableComponentType::Animation);
                 renderItem("Active Ragdoll", AddableComponentType::ActiveRagdoll);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Physics"))
+            if (search.IsActive() || ImGui::BeginMenu("Physics"))
             {
                 renderItem("Rigidbody", AddableComponentType::Rigidbody);
                 renderItem("Collider", AddableComponentType::Collider);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("AI"))
+            if (search.IsActive() || ImGui::BeginMenu("AI"))
             {
                 renderItem("Navigation Agent", AddableComponentType::NavAgent);
                 renderItem("Navigation Mesh", AddableComponentType::NavigationMesh);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Environment"))
+            if (search.IsActive() || ImGui::BeginMenu("Environment"))
             {
                 renderItem("IBL Capture", AddableComponentType::IblCapture);
                 renderItem("Physical Sky", AddableComponentType::PhysicalSky);
                 renderItem("Volumetric Cloud", AddableComponentType::VolumetricCloud);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Scripting"))
+            if (search.IsActive() || ImGui::BeginMenu("Scripting"))
             {
                 renderItem("Script", AddableComponentType::Script);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("Audio"))
+            if (search.IsActive() || ImGui::BeginMenu("Audio"))
             {
                 renderItem("Sound Emitter", AddableComponentType::SoundEmitter);
                 renderItem("Sound Listener", AddableComponentType::SoundListener);
                 renderItem("Environment Volume", AddableComponentType::AudioEnvironmentVolume);
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu("UI"))
+            if (search.IsActive() || ImGui::BeginMenu("UI"))
             {
                 renderItem("RmlUi Canvas", AddableComponentType::Canvas);
-                if (ImGui::BeginMenu("Legacy Native UI"))
+                if (search.IsActive() || ImGui::BeginMenu("Legacy Native UI"))
                 {
                     renderItem("Native Canvas", AddableComponentType::LegacyCanvas);
                     renderItem("Rect Transform", AddableComponentType::RectTransform);
                     renderItem("Image", AddableComponentType::UIImage);
                     renderItem("Text", AddableComponentType::UIText);
                     renderItem("Button", AddableComponentType::UIButton);
-                    ImGui::EndMenu();
+                    if (!search.IsActive())
+                        ImGui::EndMenu();
                 }
-                ImGui::EndMenu();
+                if (!search.IsActive())
+                    ImGui::EndMenu();
             }
 
+            if (search.IsActive() && matches == 0)
+                ImGui::TextDisabled("No matching components.");
             return selectedType;
         }
 
@@ -2348,8 +2378,14 @@ namespace PlutoGE::ui
         case scene::PropertyType::Entity:
         {
             scene::EntityID selectedId = 0;
-            try { selectedId = static_cast<scene::EntityID>(std::stoul(property.value)); }
-            catch (...) { property.value = "0"; }
+            try
+            {
+                selectedId = static_cast<scene::EntityID>(std::stoul(property.value));
+            }
+            catch (...)
+            {
+                property.value = "0";
+            }
 
             auto *currentScene = core::Engine::GetInstance().GetScene();
             auto *selectedEntity = currentScene && selectedId != 0 ? currentScene->FindEntityByID(selectedId) : nullptr;
@@ -2364,17 +2400,20 @@ namespace PlutoGE::ui
                 }
                 const auto renderEntities = [&](scene::Entity *entity, const auto &self) -> void
                 {
-                    if (!entity) return;
+                    if (!entity)
+                        return;
                     const bool selected = entity->GetID() == selectedId;
                     if (ImGui::Selectable((entity->GetName() + "##" + std::to_string(entity->GetID())).c_str(), selected))
                     {
                         property.value = std::to_string(entity->GetID());
                         changed = true;
                     }
-                    for (auto *child : entity->GetChildren()) self(child, self);
+                    for (auto *child : entity->GetChildren())
+                        self(child, self);
                 };
                 if (currentScene)
-                    for (auto *root : currentScene->GetRootEntities()) renderEntities(root, renderEntities);
+                    for (auto *root : currentScene->GetRootEntities())
+                        renderEntities(root, renderEntities);
                 ImGui::EndCombo();
             }
             if (ImGui::BeginDragDropTarget())
@@ -2784,7 +2823,8 @@ namespace PlutoGE::ui
                         const bool selected = option.reference == value;
                         if (ImGui::Selectable(option.displayName.c_str(), selected))
                             changed |= scriptComponent.SetFieldValue(field.name, option.reference);
-                        if (selected) ImGui::SetItemDefaultFocus();
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
                     }
                     ImGui::EndCombo();
                 }
@@ -3490,24 +3530,35 @@ namespace PlutoGE::ui
         ImGui::TextDisabled("Mixed fields show the first entity's value. Editing applies to all.");
         char name[256];
         strncpy_s(name, sizeof(name), selection.front()->GetName().c_str(), _TRUNCATE);
-        const bool nameMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return e->GetName() != selection.front()->GetName(); });
+        const bool nameMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e)
+                                           { return e->GetName() != selection.front()->GetName(); });
         if (ImGui::InputText(nameMixed ? "Name (mixed)###SelectionName" : "Name###SelectionName", name, sizeof(name)))
         {
-            for (auto *e : selection) { e->SetName(name); e->AddPrefabOverride("Name"); }
+            for (auto *e : selection)
+            {
+                e->SetName(name);
+                e->AddPrefabOverride("Name");
+            }
             shell.MarkSceneDirty();
         }
         bool active = selection.front()->IsSelfActive();
-        const bool activeMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return e->IsSelfActive() != active; });
+        const bool activeMixed = std::any_of(selection.begin(), selection.end(), [&](auto *e)
+                                             { return e->IsSelfActive() != active; });
         if (ImGui::Checkbox(activeMixed ? "Active (mixed)###SelectionActive" : "Active###SelectionActive", &active))
         {
-            for (auto *e : selection) { e->SetActive(active); e->AddPrefabOverride("Active"); }
+            for (auto *e : selection)
+            {
+                e->SetActive(active);
+                e->AddPrefabOverride("Active");
+            }
             shell.MarkSceneDirty();
         }
         if (ImGui::CollapsingHeader("Local Transform", ImGuiTreeNodeFlags_DefaultOpen))
         {
             const char *names[] = {"Position", "Rotation", "Scale"};
             const auto value = [](scene::Entity *e, int kind)
-            { return kind == 0 ? e->GetPosition() : kind == 1 ? e->GetRotation() : e->GetScale(); };
+            { return kind == 0 ? e->GetPosition() : kind == 1 ? e->GetRotation()
+                                                              : e->GetScale(); };
             for (int kind = 0; kind < 3; ++kind)
             {
                 ImGui::PushID(kind);
@@ -3516,7 +3567,8 @@ namespace PlutoGE::ui
                 {
                     ImGui::PushID(axis);
                     float component = value(selection.front(), kind)[axis];
-                    const bool mixed = std::any_of(selection.begin(), selection.end(), [&](auto *e) { return value(e, kind)[axis] != component; });
+                    const bool mixed = std::any_of(selection.begin(), selection.end(), [&](auto *e)
+                                                   { return value(e, kind)[axis] != component; });
                     const char *axisNames[] = {"X", "Y", "Z"};
                     const std::string label = std::string(axisNames[axis]) + (mixed ? " (mixed)" : "") + "###Axis";
                     if (ImGui::DragFloat(label.c_str(), &component, kind == 1 ? 0.5f : 0.1f) && std::isfinite(component))
@@ -3525,9 +3577,12 @@ namespace PlutoGE::ui
                         {
                             auto updated = value(e, kind);
                             updated[axis] = component;
-                            if (kind == 0) e->SetPosition(updated);
-                            else if (kind == 1) e->SetRotation(updated);
-                            else e->SetScale(updated);
+                            if (kind == 0)
+                                e->SetPosition(updated);
+                            else if (kind == 1)
+                                e->SetRotation(updated);
+                            else
+                                e->SetScale(updated);
                             e->AddPrefabOverride(std::string("Transform.") + names[kind]);
                         }
                         shell.MarkSceneDirty();
@@ -3547,7 +3602,8 @@ namespace PlutoGE::ui
             if (ImGui::CollapsingHeader(group.name.c_str()))
             {
                 bool enabled = group.instances.front()->IsEnabled();
-                const bool mixed = std::any_of(group.instances.begin(), group.instances.end(), [&](auto *c) { return c->IsEnabled() != enabled; });
+                const bool mixed = std::any_of(group.instances.begin(), group.instances.end(), [&](auto *c)
+                                               { return c->IsEnabled() != enabled; });
                 if (ImGui::Checkbox(mixed ? "Enabled (mixed)###SelectionEnabled" : "Enabled###SelectionEnabled", &enabled))
                 {
                     for (auto *c : group.instances)
@@ -3563,7 +3619,8 @@ namespace PlutoGE::ui
                     bool mixedValue = false;
                     for (auto *c : group.instances)
                         for (const auto &p : c->Serialize())
-                            if (p.name == property.name && p.value != property.value) mixedValue = true;
+                            if (p.name == property.name && p.value != property.value)
+                                mixedValue = true;
                     ImGui::TextDisabled("%s", mixedValue ? "Mixed values" : "Shared value");
                     if (property.type == scene::PropertyType::Vec2 || property.type == scene::PropertyType::Vec3)
                     {
@@ -3595,7 +3652,8 @@ namespace PlutoGE::ui
             }
             ImGui::PopID();
         }
-        if (groups.empty()) ImGui::TextDisabled("No components shared by every selected entity.");
+        if (groups.empty())
+            ImGui::TextDisabled("No components shared by every selected entity.");
     }
 
     void InspectorPanel::Render()
@@ -3679,9 +3737,11 @@ namespace PlutoGE::ui
             ImGui::TextDisabled(entity->IsPrefabInstanceRoot() ? "Instance Root" : "Nested Prefab Entity");
             ImGui::TextDisabled("Overrides: %zu", entity->GetPrefabOverrides().size());
             const auto variantBase = scene::Prefab::GetVariantBase(entity->GetPrefabSource());
-            if (!variantBase.empty()) ImGui::TextWrapped("Variant base: %s", variantBase.c_str());
+            if (!variantBase.empty())
+                ImGui::TextWrapped("Variant base: %s", variantBase.c_str());
             ImGui::BeginDisabled(!entity->IsPrefabInstanceRoot());
-            if (ImGui::Button("Create Variant")) ImGui::OpenPopup("Create Prefab Variant");
+            if (ImGui::Button("Create Variant"))
+                ImGui::OpenPopup("Create Prefab Variant");
             if (ImGui::BeginPopupModal("Create Prefab Variant", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             {
                 static char variantName[128] = "Variant";
@@ -3697,27 +3757,31 @@ namespace PlutoGE::ui
                     if (scene::Prefab::SaveVariant(*entity, path, &error))
                     {
                         const auto reference = project->MakeAssetReference(path);
-                        editorShell.ExecuteSceneEdit("Create prefab variant", [&] {
+                        editorShell.ExecuteSceneEdit("Create prefab variant", [&]
+                                                     {
                             entity->SetPrefabLink(reference, entity->GetPrefabEntityID(), true);
-                            scene::Prefab::RevertInstance(*entity, &error);
-                        });
+                            scene::Prefab::RevertInstance(*entity, &error); });
                         project->RefreshAssetRegistry();
                         editorShell.MarkProjectDirty();
                         ImGui::CloseCurrentPopup();
                     }
-                    if (!error.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
+                    if (!error.empty())
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel"))
+                    ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("Revert Instance Overrides"))
             {
                 std::string error;
-                editorShell.ExecuteSceneEdit("Revert prefab overrides", [&] { scene::Prefab::RevertInstance(*entity, &error); });
-                if (!error.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
+                editorShell.ExecuteSceneEdit("Revert prefab overrides", [&]
+                                             { scene::Prefab::RevertInstance(*entity, &error); });
+                if (!error.empty())
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
             }
             if (ImGui::Button("Update From Prefab"))
             {
@@ -4738,7 +4802,7 @@ namespace PlutoGE::ui
             }
 
             // Components
-            if (ImGui::CollapsingHeader("Components"))
+            if (ImGui::CollapsingHeader("Components", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 if (ImGui::Button("Add Component...", ImVec2(-1.0f, 0.0f)))
                 {
@@ -4765,40 +4829,54 @@ namespace PlutoGE::ui
                     ImGui::EndPopup();
                 }
 
+                static ImGuiTextFilter componentFilter;
+                componentFilter.Draw("Filter", -50.0f);
+                int componentExpansion = 0;
+                if (ImGui::SmallButton("Expand all"))
+                    componentExpansion = 1;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Collapse all"))
+                    componentExpansion = -1;
                 int componentIndex = 0;
                 scene::Component *componentToRemove = nullptr;
                 for (const auto &component : entity->GetComponentBuckets())
                 {
                     for (auto *componentPtr : component)
                     {
-                        ImGui::PushID(componentIndex++);
-                        const bool isComponentOpen = ImGui::TreeNodeEx(GetComponentDisplayName(*componentPtr), ImGuiTreeNodeFlags_DefaultOpen);
-                        ImGui::SameLine();
-                        if (ImGui::Button("Remove"))
+                        ++componentIndex;
+                        if (!componentFilter.PassFilter(GetComponentDisplayName(*componentPtr)))
+                            continue;
+                        ImGui::PushID(componentPtr);
+                        ImGui::Separator();
+                        bool isEnabled = componentPtr->IsEnabled();
+                        if (ImGui::Checkbox("##Enabled", &isEnabled))
                         {
-                            componentToRemove = componentPtr;
+                            componentPtr->SetEnabled(isEnabled);
+                            const auto typeName = GetComponentPrefabTypeName(*componentPtr);
+                            if (!typeName.empty())
+                                entity->AddPrefabOverride("Component:" + typeName + ":Enabled");
+                            editorShell.MarkSceneDirty();
                         }
-
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Enable or disable this component");
+                        ImGui::SameLine();
+                        if (componentExpansion)
+                            ImGui::SetNextItemOpen(componentExpansion > 0);
+                        const bool isComponentOpen = ImGui::TreeNodeEx(GetComponentDisplayName(*componentPtr), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed);
+                        if (ImGui::BeginPopupContextItem("ComponentActions"))
+                        {
+                            if (ImGui::MenuItem("Remove Component"))
+                                componentToRemove = componentPtr;
+                            ImGui::EndPopup();
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Click to expand. Right-click for component actions.");
                         if (!isComponentOpen)
                         {
                             ImGui::PopID();
                             if (componentToRemove)
-                            {
                                 break;
-                            }
                             continue;
-                        }
-
-                        bool isEnabled = componentPtr->IsEnabled();
-                        if (ImGui::Checkbox("Enabled", &isEnabled))
-                        {
-                            componentPtr->SetEnabled(isEnabled);
-                            const auto componentTypeName = GetComponentPrefabTypeName(*componentPtr);
-                            if (!componentTypeName.empty())
-                            {
-                                entity->AddPrefabOverride("Component:" + componentTypeName + ":Enabled");
-                            }
-                            editorShell.MarkSceneDirty();
                         }
 
                         std::vector<scene::Property> properties;
@@ -4859,8 +4937,8 @@ namespace PlutoGE::ui
                             {
                                 const bool baked = navigationMesh->Bake();
                                 editorShell.SetStatusMessage(baked
-                                    ? "Navigation mesh baked: " + std::to_string(navigationMesh->GetNavigation().GetDebugWalkablePoints().size()) + " walkable cells."
-                                    : "Navigation mesh bake produced no walkable cells. Check its bounds and scene colliders.");
+                                                                 ? "Navigation mesh baked: " + std::to_string(navigationMesh->GetNavigation().GetDebugWalkablePoints().size()) + " walkable cells."
+                                                                 : "Navigation mesh bake produced no walkable cells. Check its bounds and scene colliders.");
                                 entity->AddPrefabOverride("Component:NavigationMeshComponent:Baked");
                                 editorShell.MarkSceneDirty();
                             }
@@ -4878,7 +4956,7 @@ namespace PlutoGE::ui
                         {
                             properties = canvas->Serialize();
                             std::erase_if(properties, [canvas](const scene::Property &property)
-                            {
+                                          {
                                 if (property.name == "DocumentPath") return true;
                                 if (canvas->GetBackend() != scene::UIRenderBackend::RmlUi && property.name == "ContentSource")
                                     return true;
@@ -4895,8 +4973,7 @@ namespace PlutoGE::ui
                                                        canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
                                 if (!worldMode && (property.name == "WorldSizeMode" || property.name == "FaceCamera"))
                                     return true;
-                                return false;
-                            });
+                                return false; });
                             propertiesProvided = true;
 
                             if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
@@ -4907,12 +4984,15 @@ namespace PlutoGE::ui
                                 if (canvas->GetContentSource() == scene::RmlUiContentSource::Text)
                                 {
                                     const auto currentMode = canvas->GetRenderMode();
-                                    const char *preview = currentMode == scene::CanvasRenderMode::WorldSpace ? "World Space" :
-                                                          currentMode == scene::CanvasRenderMode::WorldSpaceOverlay ? "World Screen Space" :
-                                                          "Screen Space";
+                                    const char *preview = currentMode == scene::CanvasRenderMode::WorldSpace ? "World Space" : currentMode == scene::CanvasRenderMode::WorldSpaceOverlay ? "World Screen Space"
+                                                                                                                                                                                         : "Screen Space";
                                     if (ImGui::BeginCombo("Display Space", preview))
                                     {
-                                        struct DisplayMode { const char *name; scene::CanvasRenderMode mode; };
+                                        struct DisplayMode
+                                        {
+                                            const char *name;
+                                            scene::CanvasRenderMode mode;
+                                        };
                                         constexpr DisplayMode modes[] = {
                                             {"Screen Space", scene::CanvasRenderMode::ScreenSpaceOverlay},
                                             {"World Space", scene::CanvasRenderMode::WorldSpace},
@@ -4927,7 +5007,8 @@ namespace PlutoGE::ui
                                                 entity->AddPrefabOverride("Component:CanvasComponent:RenderMode");
                                                 editorShell.MarkSceneDirty();
                                             }
-                                            if (selected) ImGui::SetItemDefaultFocus();
+                                            if (selected)
+                                                ImGui::SetItemDefaultFocus();
                                         }
                                         ImGui::EndCombo();
                                     }
@@ -4955,7 +5036,8 @@ namespace PlutoGE::ui
                                                 entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
                                                 editorShell.MarkSceneDirty();
                                             }
-                                            if (selected) ImGui::SetItemDefaultFocus();
+                                            if (selected)
+                                                ImGui::SetItemDefaultFocus();
                                         }
                                         ImGui::EndCombo();
                                     }
@@ -5188,95 +5270,24 @@ namespace PlutoGE::ui
                         {
                             propertiesProvided = true;
                             properties = {{"Play On Start", scene::PropertyType::Bool, sequencer->GetPlayOnStart() ? "true" : "false"}};
-                            auto data = sequencer->GetTimeline();
-                            bool edited = ImGui::InputDouble("Duration", &data.duration, 0.1, 1.0);
-                            edited |= ImGui::Checkbox("Loop", &data.loop);
-                            for (std::size_t ti = 0; ti < data.tracks.size(); ++ti)
-                            {
-                                ImGui::PushID(static_cast<int>(ti));
-                                if (ImGui::TreeNode("Track", "Track %u", static_cast<unsigned>(ti + 1)))
-                                {
-                                    auto &track = data.tracks[ti];
-                                    scene::Property binding{"Target", scene::PropertyType::Entity, std::to_string(track.entity)};
-                                    if (RenderPropertyEditor(binding))
-                                    {
-                                        const auto targetId = static_cast<scene::EntityID>(std::stoul(binding.value));
-                                        if (targetId != 0) { track.entity = targetId; edited = true; }
-                                    }
-                                    edited |= ImGui::InputScalar("Entity ID", ImGuiDataType_U32, &track.entity);
-                                    int channel = static_cast<int>(track.channel);
-                                    if (ImGui::Combo("Channel", &channel, "Position\0Rotation (Euler)\0Scale\0Camera FOV\0Light Color\0Light Intensity\0Audio Volume\0Audio Play\0Script Event\0")) { track.channel = static_cast<scene::TimelineChannel>(channel); edited = true; }
-                                    int interpolation = static_cast<int>(track.interpolation);
-                                    if (ImGui::Combo("Interpolation", &interpolation, "Step\0Linear\0Smooth\0")) { track.interpolation = static_cast<scene::TimelineInterpolation>(interpolation); edited = true; }
-                                    for (std::size_t ki = 0; ki < track.keys.size(); ++ki)
-                                    {
-                                        ImGui::PushID(static_cast<int>(ki));
-                                        auto &key = track.keys[ki];
-                                        edited |= ImGui::InputDouble("Time", &key.time);
-                                        edited |= ImGui::InputFloat3("Value", key.value.data());
-                                        if (ImGui::Button("Capture Current Value") && entity->GetScene())
-                                            edited |= scene::ReadTimelineValue(*entity->GetScene(), track, key.value);
-                                        char eventText[1025]{};
-                                        std::snprintf(eventText, sizeof(eventText), "%s", key.event.c_str());
-                                        if (ImGui::InputText("Event", eventText, sizeof(eventText))) { key.event = eventText; edited = true; }
-                                        if (ImGui::Button("Remove Key")) { track.keys.erase(track.keys.begin() + ki); edited = true; ImGui::PopID(); break; }
-                                        ImGui::Separator();
-                                        ImGui::PopID();
-                                    }
-                                    if (ImGui::Button("Add Key") && (track.keys.empty() || track.keys.back().time < data.duration))
-                                    {
-                                        scene::TimelineKey key;
-                                        key.time = track.keys.empty() ? 0 : (std::min)(data.duration, track.keys.back().time + 1);
-                                        track.keys.push_back(key); edited = true;
-                                    }
-                                    ImGui::SameLine();
-                                    const bool remove = ImGui::Button("Remove Track");
-                                    ImGui::TreePop();
-                                    if (remove) { data.tracks.erase(data.tracks.begin() + ti); edited = true; ImGui::PopID(); break; }
-                                }
-                                ImGui::PopID();
-                            }
-                            if (ImGui::Button("Add Track") && data.tracks.size() < 256)
-                            {
-                                scene::TimelineTrack track; track.entity = entity->GetID();
-                                data.tracks.push_back(track); edited = true;
-                            }
-                            if (edited)
-                            {
-                                std::string timelineError;
-                                if (data.Validate(&timelineError) && sequencer->SetTimeline(data))
-                                {
-                                    entity->AddPrefabOverride("Component:SequencerComponent:Timeline");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                else ImGui::TextWrapped("Edit rejected: %s", timelineError.c_str());
-                            }
-                            if (!sequencer->MissingBindings().empty()) ImGui::TextUnformatted("Missing bindings: repair the track entity ID or component.");
-                            if (entity->GetScene() && !entity->GetScene()->IsRuntimeStarted())
-                            {
-                                auto &preview = editorShell.GetTimelinePreview();
-                                if (ImGui::Button("Preview Timeline")) preview.Begin(*entity->GetScene(), entity->GetID(), true);
-                                ImGui::SameLine();
-                                if (ImGui::Button("Stop Preview")) preview.Stop();
-                                double time = preview.Owner() == entity->GetID() ? preview.Time() : 0;
-                                const double minimum = 0, maximum = sequencer->GetTimeline().duration;
-                                if (ImGui::SliderScalar("Preview Time", ImGuiDataType_Double, &time, &minimum, &maximum, "%.3f s"))
-                                {
-                                    if (preview.Owner() != entity->GetID()) preview.Begin(*entity->GetScene(), entity->GetID(), false);
-                                    preview.Seek(time);
-                                }
-                                ImGui::TextDisabled("Visual preview; audio and script events are muted.");
-                            }
+                            if (ImGui::Button("Open Sequencer Editor"))
+                                editorShell.OpenSequencerEditor();
+                            ImGui::Text("%.3f seconds | %zu tracks", sequencer->GetTimeline().duration, sequencer->GetTimeline().tracks.size());
+                            if (!sequencer->MissingBindings().empty())
+                                ImGui::TextWrapped("Missing bindings: repair targets in the Sequencer Editor.");
                             if (entity->GetScene() && entity->GetScene()->IsRuntimeStarted())
                             {
-                                if (ImGui::Button("Play Timeline")) sequencer->Play();
+                                if (ImGui::Button("Play Timeline"))
+                                    sequencer->Play();
                                 ImGui::SameLine();
-                                if (ImGui::Button("Stop Timeline")) sequencer->Stop();
+                                if (ImGui::Button("Stop Timeline"))
+                                    sequencer->Stop();
                                 ImGui::Text("Time: %.3f", sequencer->GetTime());
                             }
                         }
                         else if (auto *splineComponent = dynamic_cast<scene::SplineComponent *>(componentPtr))
                         {
+                            ImGui::TextWrapped("Select a point in the viewport to move or rotate it with the gizmo. Click a + handle to insert a point.");
                             propertiesProvided = true;
                             properties = {
                                 {"Width", scene::PropertyType::Float, std::to_string(splineComponent->GetWidth())},
@@ -5332,61 +5343,96 @@ namespace PlutoGE::ui
                             const auto &points = splineComponent->GetPoints();
                             static char roadExportPath[512] = "project://Meshes/Road.plutomesh";
                             static std::string roadExportStatus;
-                            ImGui::InputText("Road Mesh Asset", roadExportPath, sizeof(roadExportPath));
-                            if (ImGui::Button("Export Road Mesh"))
+                            if (ImGui::TreeNode("Export road mesh"))
                             {
-                                roadExportStatus.clear();
-                                if (splineComponent->ExportMeshAsset(editorShell.GetEngine().GetAssetManager(), roadExportPath, &roadExportStatus))
-                                    roadExportStatus = "Road mesh exported with materials and LODs.";
+                                ImGui::InputText("Road Mesh Asset", roadExportPath, sizeof(roadExportPath));
+                                if (ImGui::Button("Export Road Mesh"))
+                                {
+                                    roadExportStatus.clear();
+                                    if (splineComponent->ExportMeshAsset(editorShell.GetEngine().GetAssetManager(), roadExportPath, &roadExportStatus))
+                                        roadExportStatus = "Road mesh exported with materials and LODs.";
+                                }
+                                if (!roadExportStatus.empty())
+                                    ImGui::TextWrapped("%s", roadExportStatus.c_str());
+                                ImGui::TreePop();
                             }
-                            if (!roadExportStatus.empty()) ImGui::TextWrapped("%s", roadExportStatus.c_str());
                             static char roadsidePrefab[512] = "";
                             static float roadsideSpacing = 5, roadsideOffset = 1;
                             static bool roadsideBothSides = true;
                             static std::string roadsideStatus;
-                            ImGui::InputText("Roadside Prefab", roadsidePrefab, sizeof(roadsidePrefab));
-                            ImGui::DragFloat("Placement Spacing", &roadsideSpacing, 0.1f, 0.1f, 1000.0f);
-                            ImGui::DragFloat("Offset From Edge", &roadsideOffset, 0.1f, 0.0f, 1000.0f);
-                            ImGui::Checkbox("Both Road Sides", &roadsideBothSides);
-                            ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
-                            if (ImGui::Button("Bake Roadside Prefabs"))
+                            if (ImGui::TreeNode("Roadside objects"))
                             {
-                                editorShell.ExecuteSceneEdit("Bake Roadside Prefabs", [&]
+                                ImGui::InputText("Roadside Prefab", roadsidePrefab, sizeof(roadsidePrefab));
+                                ImGui::DragFloat("Placement Spacing", &roadsideSpacing, 0.1f, 0.1f, 1000.0f);
+                                ImGui::DragFloat("Offset From Edge", &roadsideOffset, 0.1f, 0.0f, 1000.0f);
+                                ImGui::Checkbox("Both Road Sides", &roadsideBothSides);
+                                ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+                                if (ImGui::Button("Bake Roadside Prefabs"))
                                 {
+                                    editorShell.ExecuteSceneEdit("Bake Roadside Prefabs", [&]
+                                                                 {
                                     if (scene::BakeRoadsidePrefabs(*entity, roadsidePrefab, roadsideSpacing, roadsideOffset, roadsideBothSides, roadsideStatus))
-                                        roadsideStatus = "Created prefab children; undo with Ctrl+Z.";
-                                });
+                                        roadsideStatus = "Created prefab children; undo with Ctrl+Z."; });
+                                }
+                                ImGui::EndDisabled();
+                                if (!roadsideStatus.empty())
+                                    ImGui::TextWrapped("%s", roadsideStatus.c_str());
+                                ImGui::TreePop();
                             }
-                            ImGui::EndDisabled();
-                            if (!roadsideStatus.empty()) ImGui::TextWrapped("%s", roadsideStatus.c_str());
                             if (ImGui::TreeNode("Road Junction"))
                             {
-                                static std::vector<scene::RoadJunctionEndpoint> entrances;
+                                static std::unordered_map<scene::EntityID, std::vector<scene::RoadJunctionEndpoint>> junctionEntrances;
+                                auto &entrances = junctionEntrances[entity->GetID()];
+                                ImGui::TextWrapped("Choose the roads meeting here and the start or end of each road. Then bake the junction.");
                                 static char junctionPath[512] = "project://Meshes/Junction.plutomesh";
                                 static std::string junctionStatus;
-                                if (entrances.empty()) entrances = {{entity->GetID(), true}, {0, false}};
+                                if (entrances.empty())
+                                    entrances = {{entity->GetID(), true}, {0, false}};
                                 for (std::size_t index = 0; index < entrances.size(); ++index)
                                 {
                                     ImGui::PushID(static_cast<int>(index));
                                     scene::Property target{"Road", scene::PropertyType::Entity, std::to_string(entrances[index].entity)};
-                                    if (RenderPropertyEditor(target)) entrances[index].entity = static_cast<scene::EntityID>(std::stoul(target.value));
-                                    ImGui::Checkbox("Use End (otherwise Start)", &entrances[index].atEnd);
+                                    if (RenderPropertyEditor(target))
+                                        entrances[index].entity = static_cast<scene::EntityID>(std::stoul(target.value));
+                                    int endpoint = entrances[index].atEnd ? 1 : 0;
+                                    if (ImGui::Combo("Endpoint", &endpoint, "Start\0End\0"))
+                                        entrances[index].atEnd = endpoint == 1;
                                     if (ImGui::Button("Remove Entrance") && entrances.size() > 2)
-                                    { entrances.erase(entrances.begin() + index); ImGui::PopID(); break; }
+                                    {
+                                        entrances.erase(entrances.begin() + index);
+                                        ImGui::PopID();
+                                        break;
+                                    }
                                     ImGui::PopID();
                                 }
-                                if (ImGui::Button("Add Entrance") && entrances.size() < 8) entrances.push_back({});
+                                ImGui::BeginDisabled(entrances.size() >= 8);
+                                if (ImGui::Button("Add Entrance"))
+                                    entrances.push_back({});
+                                ImGui::EndDisabled();
                                 ImGui::InputText("Junction Asset", junctionPath, sizeof(junctionPath));
-                                ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+                                std::string entranceError;
+                                for (std::size_t i = 0; i < entrances.size(); ++i)
+                                {
+                                    auto *road = entity->GetScene() ? entity->GetScene()->FindEntityByID(entrances[i].entity) : nullptr;
+                                    auto *spline = road ? road->GetComponent<scene::SplineComponent>() : nullptr;
+                                    if (!spline || spline->IsClosed())
+                                        entranceError = "Choose an open spline road for every entrance.";
+                                    for (std::size_t j = 0; j < i; ++j)
+                                        if (entrances[i].entity == entrances[j].entity && entrances[i].atEnd == entrances[j].atEnd)
+                                            entranceError = "Each road endpoint can only be used once.";
+                                }
+                                if (!entranceError.empty())
+                                    ImGui::TextWrapped("%s", entranceError.c_str());
+                                ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning() || !entranceError.empty());
                                 if (ImGui::Button("Bake Junction Mesh"))
                                     editorShell.ExecuteSceneEdit("Bake Road Junction", [&]
-                                    {
+                                                                 {
                                         if (scene::BakeRoadJunction(*entity, entrances, editorShell.GetEngine().GetAssetManager(), junctionPath, junctionStatus))
-                                            junctionStatus = "Saved junction asset and created a collidable child. Undo removes the child.";
-                                    });
+                                            junctionStatus = "Saved junction asset and created a collidable child. Undo removes the child."; });
                                 ImGui::EndDisabled();
                                 ImGui::TextWrapped("Entrances must form separate edges of a convex junction. Re-bake after editing roads.");
-                                if (!junctionStatus.empty()) ImGui::TextWrapped("%s", junctionStatus.c_str());
+                                if (!junctionStatus.empty())
+                                    ImGui::TextWrapped("%s", junctionStatus.c_str());
                                 ImGui::TreePop();
                             }
                             ImGui::Text("Control Points: %zu", points.size());
@@ -5428,7 +5474,7 @@ namespace PlutoGE::ui
                             {
                                 const glm::vec3 newPoint = points.empty()
                                                                ? glm::vec3(0.0f)
-                                                               : points.back().position + glm::vec3(8.0f, 0.0f, 0.0f);
+                                                               : points.back().position + (points.size() > 1 ? points.back().position - points[points.size() - 2].position : glm::vec3(8.0f, 0.0f, 0.0f));
                                 splineComponent->AddPoint(newPoint);
                                 entity->AddPrefabOverride("Component:SplineComponent:PointCount");
                                 editorShell.MarkSceneDirty();
@@ -6235,9 +6281,11 @@ namespace PlutoGE::ui
                                             entity->AddPrefabOverride("Component:ColliderComponent:Surface Asset");
                                             editorShell.MarkSceneDirty();
                                         };
-                                        if (ImGui::Selectable("None", current.empty())) assign({});
+                                        if (ImGui::Selectable("None", current.empty()))
+                                            assign({});
                                         for (const auto &option : options)
-                                            if (ImGui::Selectable(option.reference.c_str(), option.reference == current)) assign(option.reference);
+                                            if (ImGui::Selectable(option.reference.c_str(), option.reference == current))
+                                                assign(option.reference);
                                         ImGui::EndCombo();
                                     }
                                     continue;

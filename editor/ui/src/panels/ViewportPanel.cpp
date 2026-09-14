@@ -1656,76 +1656,6 @@ namespace PlutoGE::ui
             return frame;
         }
 
-        int DrawAndPickSplineControlPoints(scene::Entity &entity,
-                                           scene::SplineComponent &spline,
-                                           int selectedPointIndex,
-                                           const render::CameraData &cameraData,
-                                           const ImVec2 &viewportMin,
-                                           const ImVec2 &viewportSize,
-                                           bool pickPoint)
-        {
-            const auto &points = spline.GetPoints();
-            if (points.empty())
-            {
-                return -1;
-            }
-
-            auto *drawList = ImGui::GetWindowDrawList();
-            const glm::mat4 worldTransform = entity.GetWorldTransform();
-            std::vector<glm::vec3> worldPoints;
-            worldPoints.reserve(points.size());
-            for (const auto &point : points)
-            {
-                worldPoints.push_back(glm::vec3(worldTransform * glm::vec4(point.position, 1.0f)));
-            }
-
-            drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
-            for (std::size_t index = 1; index < worldPoints.size(); ++index)
-            {
-                DrawWorldLine(drawList, worldPoints[index - 1], worldPoints[index], cameraData, viewportMin, viewportSize,
-                              IM_COL32(255, 196, 64, 190), 1.5f);
-            }
-            if (spline.IsClosed() && worldPoints.size() > 2)
-            {
-                DrawWorldLine(drawList, worldPoints.back(), worldPoints.front(), cameraData, viewportMin, viewportSize,
-                              IM_COL32(255, 196, 64, 190), 1.5f);
-            }
-
-            int pickedIndex = -1;
-            float closestDistanceSquared = 12.0f * 12.0f;
-            const ImVec2 mousePosition = ImGui::GetIO().MousePos;
-            for (std::size_t index = 0; index < worldPoints.size(); ++index)
-            {
-                const ProjectedPoint projected = ProjectWorldPoint(worldPoints[index], cameraData, viewportMin, viewportSize);
-                if (!projected.visible)
-                {
-                    continue;
-                }
-
-                const bool selected = static_cast<int>(index) == selectedPointIndex;
-                drawList->AddCircleFilled(projected.screen, selected ? 7.0f : 5.0f,
-                                          selected ? IM_COL32(255, 232, 128, 255) : IM_COL32(255, 172, 32, 235));
-                drawList->AddCircle(projected.screen, selected ? 8.0f : 6.0f, IM_COL32(32, 24, 12, 255), 0, 1.5f);
-                const std::string pointLabel = std::to_string(index);
-                drawList->AddText(ImVec2(projected.screen.x + 9.0f, projected.screen.y - 8.0f),
-                                  IM_COL32(255, 232, 180, 255), pointLabel.c_str());
-
-                if (pickPoint)
-                {
-                    const float dx = mousePosition.x - projected.screen.x;
-                    const float dy = mousePosition.y - projected.screen.y;
-                    const float distanceSquared = dx * dx + dy * dy;
-                    if (distanceSquared <= closestDistanceSquared)
-                    {
-                        closestDistanceSquared = distanceSquared;
-                        pickedIndex = static_cast<int>(index);
-                    }
-                }
-            }
-            drawList->PopClipRect();
-            return pickedIndex;
-        }
-
         void FrameSelectedEntity(EditorShell &editorShell)
         {
             auto *selectedEntity = editorShell.GetSelectedEntity();
@@ -3054,19 +2984,7 @@ namespace PlutoGE::ui
                 {
                     m_selectedSplinePointIndex = -1;
                 }
-                const bool canPickPoint = viewportClicked && m_isViewportHovered && !controlsHovered && !ImGuizmo::IsUsing();
-                const int pickedPoint = DrawAndPickSplineControlPoints(*selectedEntity,
-                                                                       *splineComponent,
-                                                                       m_selectedSplinePointIndex,
-                                                                       cameraData,
-                                                                       viewportMin,
-                                                                       viewportSize,
-                                                                       canPickPoint);
-                if (pickedPoint >= 0)
-                {
-                    m_selectedSplinePointIndex = pickedPoint;
-                    splinePointClickConsumed = true;
-                }
+
             }
 
             bool terrainPaintActive = false;
@@ -3543,8 +3461,8 @@ namespace PlutoGE::ui
 
                 drawList->PopClipRect();
 
-                const bool insertPointClicked = viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertAreaIndex >= 0 && hoveredInsertSegmentIndex >= 0;
-                if (!insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredAreaIndex >= 0 && hoveredPointIndex >= 0)
+                const bool insertPointClicked = !ImGuizmo::IsUsing() && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertAreaIndex >= 0 && hoveredInsertSegmentIndex >= 0;
+                if (!ImGuizmo::IsUsing() && !insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredAreaIndex >= 0 && hoveredPointIndex >= 0)
                 {
                     m_selectedOceanAreaIndex = hoveredAreaIndex;
                     m_selectedOceanPointIndex = hoveredPointIndex;
@@ -3660,11 +3578,12 @@ namespace PlutoGE::ui
                     }
                 }
 
-                const bool insertPointClicked = viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertSegment >= 0;
-                if (!insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredPoint >= 0)
+                const bool insertPointClicked = !ImGuizmo::IsUsing() && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertSegment >= 0;
+                if (!ImGuizmo::IsUsing() && !insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredPoint >= 0)
                 {
                     m_selectedSplinePoint = hoveredPoint;
-                    splineHandleClicked = true;
+                    m_selectedSplinePointIndex = hoveredPoint;
+                    return;
                 }
 
                 for (std::size_t segmentIndex = 0; segmentIndex < projectedInsertPoints.size(); ++segmentIndex)
@@ -3720,49 +3639,22 @@ namespace PlutoGE::ui
                                                      splineComponent->InsertPoint(insertionIndex, newPointPosition);
                                                      selectedEntity->AddPrefabOverride("Component:SplineComponent:PointCount"); });
                     m_selectedSplinePoint = static_cast<int>(insertionIndex);
+                    m_selectedSplinePointIndex = m_selectedSplinePoint;
                     splineHandleClicked = true;
                     return;
                 }
 
-                if (m_selectedSplinePoint >= 0)
+                if (editingSplinePoint)
                 {
-                    glm::mat4 pointTransform = entityWorldTransform;
-                    pointTransform[3] = glm::vec4(worldPoints[static_cast<std::size_t>(m_selectedSplinePoint)], 1.0f);
-                    const glm::vec3 originalPointPosition(pointTransform[3]);
-                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                         glm::value_ptr(gizmoProjection),
-                                         ImGuizmo::TRANSLATE,
-                                         m_gizmoMode,
-                                         glm::value_ptr(pointTransform),
-                                         nullptr,
-                                         m_enableSnap ? &m_translateSnap.x : nullptr);
-                    constrainOrthographicTranslation(pointTransform, originalPointPosition);
-
-                    const bool pointGizmoUsing = ImGuizmo::IsUsing();
-                    const bool pointGizmoHovered = ImGuizmo::IsOver();
-                    gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
-                    if (pointGizmoUsing && !m_isSplinePointGizmoUsing)
-                    {
-                        editorShell.BeginSceneEdit("Move Spline Point");
-                    }
-                    if (pointGizmoUsing)
-                    {
-                        m_isTransformGizmoUsing = true;
-                        const glm::vec3 worldPosition(pointTransform[3]);
-                        const glm::vec3 localPosition(glm::inverse(entityWorldTransform) * glm::vec4(worldPosition, 1.0f));
-                        splineComponent->SetPointPosition(static_cast<std::size_t>(m_selectedSplinePoint), localPosition);
-                        selectedEntity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(m_selectedSplinePoint));
-                        editorShell.MarkSceneDirty();
-                    }
-                    if (!pointGizmoUsing && m_isSplinePointGizmoUsing)
-                    {
-                        editorShell.EndSceneEdit();
-                    }
-                    m_isSplinePointGizmoUsing = pointGizmoUsing;
-
-                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !pointGizmoHovered && !controlsHovered)
+                    const glm::vec3 originalPosition(entityTransform[3]);
+                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view), glm::value_ptr(gizmoProjection),
+                                         m_gizmoOperation, m_gizmoMode, glm::value_ptr(entityTransform), nullptr, snapValues);
+                    constrainOrthographicTranslation(entityTransform, originalPosition);
+                    entityGizmoSubmitted = true;
+                    if (viewportClicked && !splineHandleClicked && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !controlsHovered)
                     {
                         m_selectedSplinePoint = -1;
+                        m_selectedSplinePointIndex = -1;
                     }
                 }
                 else
@@ -3940,7 +3832,7 @@ namespace PlutoGE::ui
                     m_isOceanPointGizmoUsing = false;
                 }
             }
-            else if (m_splinePointEditActive)
+            if (m_splinePointEditActive && !ImGuizmo::IsUsing())
             {
                 editorShell.EndSceneEdit();
                 m_splinePointEditActive = false;

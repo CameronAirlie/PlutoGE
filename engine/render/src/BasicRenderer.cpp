@@ -35,7 +35,7 @@ namespace PlutoGE::render
             "RHI Tone Mapping", "RHI Gamma Correction", "RHI FXAA", "RHI Color Grading", "RHI Chromatic Aberration",
             "RHI Bloom", "RHI Lens Flare", "RHI Motion Blur", "RHI Depth of Field", "RHI Auto Exposure",
             "RHI TAA", "RHI SSAO", "RHI SSGI", "RHI SSR", "RHI Volumetric Fog", "RHI Physical Sky",
-            "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI"};
+            "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean"};
 
         struct alignas(16) BasicMaterialParameters
         {
@@ -585,6 +585,8 @@ namespace PlutoGE::render
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 };
+                if (type == BasicPostProcessEffectType::Ocean)
+                    postDescriptor.resourceBindings.push_back({15, 0, 15, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
                 const auto inputs = InputsFor(type);
                 const auto addInput = [&](BasicPostProcessInput input, std::uint32_t slot)
                 {
@@ -602,14 +604,14 @@ namespace PlutoGE::render
                 if (type == BasicPostProcessEffectType::SSR)
                     postDescriptor.resourceBindings.push_back(
                         {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                if (type == BasicPostProcessEffectType::VolumetricFog)
+                if (type == BasicPostProcessEffectType::VolumetricFog || type == BasicPostProcessEffectType::Ocean)
                 {
                     postDescriptor.resourceBindings.push_back(
                         {12, 0, 12, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
                     for (std::uint32_t slot = 13; slot <= 14; ++slot)
                         postDescriptor.resourceBindings.push_back(
                             {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    // Fog is the only post-process that consumes scene lighting.
+                    // Fog and water consume the same scene lighting resources.
                     // Reuse the frame buffer and shadow cascades from opaque
                     // lighting so both paths share one authoritative light state.
                     postDescriptor.resourceBindings.push_back(
@@ -1024,6 +1026,7 @@ namespace PlutoGE::render
         m_shadowObjectBuffers.clear();
         m_shadowInstanceBuffers.clear();
         m_postProcessBuffers.clear();
+        m_oceanBuffers.clear();
         m_postProcessResourcePool.reset();
         for (auto &pipeline : m_bloomPipelines)
             pipeline.Reset();
@@ -1064,6 +1067,7 @@ namespace PlutoGE::render
         m_previousMotionViewProjection = glm::mat4(1.0f);
         m_outputColor = {};
         m_postProcessBufferCursor = 0;
+        m_oceanBufferCursor = 0;
         m_taaHistoryIndex = 0;
         m_taaHistoryValid = false;
         m_exposureHistoryIndex = 0;
@@ -1928,6 +1932,7 @@ namespace PlutoGE::render
         const auto postProcessRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;
+        m_oceanBufferCursor = 0;
         m_postProcessWidth = m_width;
         m_postProcessHeight = m_height;
         std::size_t targetIndex = 0;
@@ -2264,6 +2269,16 @@ namespace PlutoGE::render
                 destination = &AcquirePostProcessTarget(targetIndex++, passWidth, passHeight);
             if (!destination)
                 continue;
+            rhi::BufferHandle oceanBuffer{};
+            if (effect.type == BasicPostProcessEffectType::Ocean)
+            {
+                if (!effect.ocean) continue;
+                if (m_oceanBufferCursor == m_oceanBuffers.size())
+                    m_oceanBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                        {sizeof(OceanParameters), rhi::BufferUsage::Uniform, "Ocean parameters"}));
+                oceanBuffer = m_oceanBuffers[m_oceanBufferCursor++].Get();
+                m_device->UpdateBuffer(oceanBuffer, 0, Bytes(*effect.ocean));
+            }
             rhi::RenderingInfo postInfo;
             postInfo.colorAttachments = {destination->Get()};
             postInfo.width = passWidth;
@@ -2272,6 +2287,7 @@ namespace PlutoGE::render
             commands.BeginRendering(postInfo);
             commands.BindPipeline(pipeline);
             commands.BindUniformBuffer(0, parameterBuffer.Get());
+            if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
             commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
             const auto inputs = InputsFor(effect.type);
             if (HasInput(inputs, BasicPostProcessInput::Depth))
@@ -2287,7 +2303,7 @@ namespace PlutoGE::render
             if (HasInput(inputs, BasicPostProcessInput::History))
                 commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
                                      m_screenSampler.Get());
-            if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+            if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
             {
                 commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
                 commands.BindTexture(13, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());

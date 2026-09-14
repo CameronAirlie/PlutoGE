@@ -531,3 +531,28 @@ if (TARGET OpenAL)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESequencerTests>/$<TARGET_FILE_NAME:OpenAL>)
 endif()
+
+add_executable(PlutoGETimelineEditingTests TimelineEditingTests.cpp ../engine/scene/src/Timeline.cpp)
+target_include_directories(PlutoGETimelineEditingTests PRIVATE ../engine/scene/include ../editor/ui/include)
+target_compile_features(PlutoGETimelineEditingTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGETimelineEditingTests COMMAND PlutoGETimelineEditingTests)
+
+add_executable(PlutoGESequencerInteractionTests SequencerInteractionTests.cpp)
+target_include_directories(PlutoGESequencerInteractionTests PRIVATE ../editor/ui/include)
+target_link_libraries(PlutoGESequencerInteractionTests PRIVATE PlutoGE::Scene PlutoGE::imgui PlutoGE::imguizmo)
+add_test(NAME PlutoGESequencerInteractionTests COMMAND PlutoGESequencerInteractionTests)
+set_tests_properties(PlutoGESequencerInteractionTests PROPERTIES TIMEOUT 30)
+
+add_executable(PlutoGEGenerateRoadCity EXCLUDE_FROM_ALL ../tools/GenerateRoadCity.cpp)
+target_link_libraries(PlutoGEGenerateRoadCity PRIVATE PlutoGE::Scene)
+
+add_executable(PlutoGERenderRoadCity EXCLUDE_FROM_ALL ../tools/RenderRoadCity.cpp)
+target_link_libraries(PlutoGERenderRoadCity PRIVATE PlutoGE::Scene PlutoGE::Platform)
+target_compile_definitions(PlutoGERenderRoadCity PRIVATE PLUTO_CITY_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+
+add_executable(PlutoGERhiOceanTests RhiOceanTests.cpp)
+target_link_libraries(PlutoGERhiOceanTests PRIVATE PlutoGE::Scene PlutoGE::Platform)
+target_compile_definitions(PlutoGERhiOceanTests PRIVATE PLUTO_OCEAN_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+add_test(NAME PlutoGEOpenGLOceanTests COMMAND PlutoGERhiOceanTests)
+add_test(NAME PlutoGEVulkanOceanTests COMMAND PlutoGERhiOceanTests --vulkan)
+set_tests_properties(PlutoGEOpenGLOceanTests PlutoGEVulkanOceanTests PROPERTIES TIMEOUT 60)

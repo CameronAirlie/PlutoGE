@@ -75,6 +75,7 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         addPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         addPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
+        addPostProcess(BasicPostProcessEffectType::Ocean, "Ocean");
         addPostProcess(BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
         addPostProcess(BasicPostProcessEffectType::SceneComposite, "SceneComposite");
         result.autoExposure[0] = {.vertex = Load("AutoExposureMeter", "vertex"),

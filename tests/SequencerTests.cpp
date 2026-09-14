@@ -69,7 +69,13 @@ int main()
         Check(!preview.RenderPose(scene, 0) && !preview.Owner(), "Stale preview invalidation");
         Check(preview.Begin(scene, root->GetID(), true), "Preview playback");
         { auto pose = preview.RenderPose(scene, 0.25); Check(pose && target->GetPosition().x == 2.5f, "Preview advances"); }
+        preview.Pause();
+        Check(!preview.IsPlaying() && preview.Time() == 0.25, "Pause preserves playhead");
+        { auto pose = preview.RenderPose(scene, 0.25); Check(pose && preview.Time() == 0.25, "Paused preview advanced"); }
+        Check(preview.Resume() && preview.Time() == 0.25, "Resume reset playhead");
+        { auto pose = preview.RenderPose(scene, 0.25); Check(pose && preview.Time() == 0.5, "Resume did not advance from pause"); }
         preview.Stop();
+        Check(!preview.Resume(), "Stopped preview resumed without initialization");
         Check(target->GetPosition().x == 5, "Preview stop preserves authoring");
         // All continuous channels restore their authoring values. Preview events
         // must remain silent, even when their keys fall inside the rendered interval.

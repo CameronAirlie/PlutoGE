@@ -1,7 +1,8 @@
 // Single-tap visibility for volumetric integration. Surface filtering lives in
 // BasicLit; fog needs visibility along the camera ray, not a receiver plane.
 float virtualShadowVolumeVisibility(VirtualShadowParameters parameters,
-                                    Sampler2D atlas, Sampler2D table, float3 world)
+                                    Sampler2D atlas, Sampler2D table, float3 world,
+                                    float missingVisibility = 0.0)
 {
     for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
@@ -20,6 +21,6 @@ float virtualShadowVolumeVisibility(VirtualShadowParameters parameters,
         const float bias = max(0.0000005, parameters.metrics[level].x * 0.25 / parameters.metrics[level].y);
         return coordinate.z - bias <= atlas.SampleLevel(atlasUv, 0).r ? 1.0 : 0.0;
     }
-    // Do not create bright shafts where the budget has not supplied depth.
-    return 0.0;
+    // Volumes default to conservative darkness; surfaces may stay lit outside coverage.
+    return missingVisibility;
 }

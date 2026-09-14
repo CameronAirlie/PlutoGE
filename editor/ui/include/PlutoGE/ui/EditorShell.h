@@ -178,6 +178,7 @@ namespace PlutoGE::ui
         }
         [[nodiscard]] bool IsEditorCameraSelected() const { return m_isEditorCameraSelected; }
         [[nodiscard]] EditorViewportCamera &GetEditorCamera() { return m_editorCamera; }
+        [[nodiscard]] std::uint64_t GetSceneRevision() const { return m_sceneRevision; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene.get(); }
         [[nodiscard]] const scene::Scene *GetScene() const { return m_scene.get(); }
         [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
@@ -227,6 +228,13 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openAnimationGraphEditorRequested;
             m_openAnimationGraphEditorRequested = false;
+            return requested;
+        }
+        void OpenSequencerEditor() { m_openSequencerEditorRequested = true; }
+        bool ConsumeSequencerEditorOpenRequest()
+        {
+            const bool requested = m_openSequencerEditorRequested;
+            m_openSequencerEditorRequested = false;
             return requested;
         }
         bool ConsumeAnimationClipEditorOpenRequest()
@@ -334,6 +342,7 @@ namespace PlutoGE::ui
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;
         std::unique_ptr<assets::Project> m_project;
+        std::uint64_t m_sceneRevision = 0;
         std::unique_ptr<scene::Scene> m_scene;
         std::unique_ptr<scene::Scene> m_entityClipboardScene;
         scene::EntityID m_entityClipboardRootId = 0;
@@ -403,6 +412,7 @@ namespace PlutoGE::ui
         bool m_openShaderGraphEditorRequested = false;
         bool m_openAnimationGraphEditorRequested = false;
         bool m_openAnimationClipEditorRequested = false;
+        bool m_openSequencerEditorRequested = false;
         bool m_openParticleSystemEditorRequested = false;
         bool m_openInputMappingEditorRequested = false;
         std::optional<std::filesystem::path> m_pendingProjectLoad;

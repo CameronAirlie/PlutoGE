@@ -23,6 +23,13 @@ namespace PlutoGE::ui
             m_playing = playing;
             return true;
         }
+        void Pause() { m_playing = false; }
+        bool Resume()
+        {
+            if (!m_owner || !m_player.IsPlaying() || m_player.Time() >= m_player.Data().duration) return false;
+            m_playing = true;
+            return true;
+        }
         void Stop() { m_owner = 0; m_playing = false; m_player.Stop(); }
         bool Seek(double time) { m_playing = false; return m_owner && m_player.Seek(time); }
         scene::EntityID Owner() const { return m_owner; }

@@ -6,6 +6,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/panels/AnimationGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/AnimationClipEditorPanel.h"
+#include "PlutoGE/ui/panels/SequencerEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
@@ -2092,6 +2093,7 @@ namespace PlutoGE::ui
         // Keep the previous scene alive until Engine::SetScene has stopped its
         // runtime and switched the non-owning scene pointer.
         auto previousScene = std::move(m_scene);
+        ++m_sceneRevision;
         m_scene = std::move(scene);
         std::string prefabErrorMessage;
         const int updatedPrefabCount = updatePrefabs ? scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage) : 0;
@@ -2785,6 +2787,7 @@ namespace PlutoGE::ui
         {
             m_editorCamera.postProcessEffects.clear();
             m_scene.reset();
+            ++m_sceneRevision;
             m_gameSceneRenderService.reset();
             m_editorSceneRenderService.reset();
             m_engine.Shutdown();
@@ -2888,6 +2891,10 @@ namespace PlutoGE::ui
         auto animationGraphEditorPanel = new AnimationGraphEditorPanel(PanelConfig{"Animation Graph Editor", false});
         animationGraphEditorPanel->Initialize();
         m_panelManager.AddPanel(animationGraphEditorPanel);
+
+        auto sequencerEditorPanel = new SequencerEditorPanel(PanelConfig{"Sequencer Editor", false});
+        sequencerEditorPanel->Initialize();
+        m_panelManager.AddPanel(sequencerEditorPanel);
 
         auto animationClipEditorPanel = new AnimationClipEditorPanel(PanelConfig{"Animation Clip Editor", false});
         animationClipEditorPanel->Initialize();
@@ -3413,6 +3420,8 @@ namespace PlutoGE::ui
                 {
                     animationGraphEditorPanel->SetOpen(true);
                 }
+                if (ConsumeSequencerEditorOpenRequest())
+                    sequencerEditorPanel->SetOpen(true);
                 if (ConsumeAnimationClipEditorOpenRequest())
                     animationClipEditorPanel->SetOpen(true);
                 if (ConsumeParticleSystemEditorOpenRequest())
@@ -3678,6 +3687,8 @@ namespace PlutoGE::ui
                     {
                         meshEditorPanel->SetOpen(!meshEditorPanel->IsOpen());
                     }
+                    if (ImGui::MenuItem("Sequencer Editor", nullptr, sequencerEditorPanel->IsOpen()))
+                        sequencerEditorPanel->SetOpen(!sequencerEditorPanel->IsOpen());
                     if (ImGui::MenuItem("Profiler", NULL, profilerPanel->IsOpen()))
                     {
                         profilerPanel->SetOpen(!profilerPanel->IsOpen());
@@ -4291,6 +4302,7 @@ namespace PlutoGE::ui
         m_engine.SetScene(nullptr);
         m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
         m_scene.reset();
+        ++m_sceneRevision;
         m_project.reset();
         m_editorCamera.postProcessEffects.clear();
         m_engine.GetAssetManager().ClearProjectContext();

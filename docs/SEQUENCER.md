@@ -67,3 +67,25 @@ Checks:
 cmake --build out/build/msvc-nvidia --config Release --target PlutoGEEditor PlutoGERuntime PlutoGETimelineTests PlutoGESequencerTests -j 1
 ctest --test-dir out/build/msvc-nvidia -C Release -R '^PlutoGE(Timeline|Sequencer)Tests$' --output-on-failure
 ```
+
+## Sequencer Editor
+
+Select an entity with a Sequencer component and click **Open Sequencer Editor**
+in the Inspector, or open **Sequencer Editor** from the panel menu. The dockable
+ImSequencer view follows the selected sequence entity. Scene saving persists edits.
+
+- Select tracks using the **Track** dropdown or by clicking a timeline row label,
+  including empty tracks. Target, Channel and Interpolation controls stay above
+  the timeline. Add, duplicate or delete tracks. Bind each track with the target entity picker,
+  then choose its channel and interpolation.
+- Scrub the ruler or enter a frame at 60 fps. **Add Key at Playhead** captures the
+  target's current value where supported. Select a key diamond to edit its value,
+  event text or exact time in seconds, or delete it.
+- Drag diamonds to retime keys with frame snapping. Keys remain ordered and cannot
+  cross neighbours. A drag or field edit commits as one undoable scene edit after
+  release; invalid edits remain pending with an error and can be discarded.
+- **Play Preview**, **Pause**, **Resume**, and **Stop** preview visual channels without firing
+  audio or script events. Resume continues at the paused or scrubbed time; Stop
+  resets the playhead. Stop game Play mode before authoring.
+- Duration changes never silently delete keys: moving the end before existing keys
+  is rejected until those keys are moved or deleted.

@@ -1,3 +1,6 @@
+#include "ShaderGraphRenderingChecks.h"
+#include "OutlineRenderingChecks.h"
+#include "PlutoGE/render/ShaderGraph.h"
 #include "RenderOptimizationChecks.h"
 #include "MeshReplacementRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
@@ -217,7 +220,9 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             // This focused path does not use VSM. Keep unrelated compute binding
             // limits on older OpenGL drivers from blocking particle/point checks.
-            if (argc > 1 && (std::string_view(argv[1]) == "--temporal-motion" ||
+            if (argc > 1 && (std::string_view(argv[1]) == "--shader-graphs" ||
+                             std::string_view(argv[1]) == "--outline" ||
+                             std::string_view(argv[1]) == "--temporal-motion" ||
                              std::string_view(argv[1]) == "--particles-points-only" ||
                              std::string_view(argv[1]) == "--opaque-batching" ||
                              std::string_view(argv[1]) == "--render-optimizations"))
@@ -242,6 +247,38 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 });
             } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
             return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--shader-graphs")
+        {
+            CheckShaderGraphRendering(basicRenderer, device, [&](auto texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth()*basicRenderer.GetHeight()*4);
+                glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());return pixels;
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--outline")
+        {
+            auto graph = render::CreateDefaultShaderGraph();
+            const auto originalHash = render::HashShaderGraph(graph);
+            graph.outline.enabled = true;
+            if (render::HashShaderGraph(graph) == originalHash) throw std::runtime_error("Outline not hashed");
+            const auto enabledHash = render::HashShaderGraph(graph);
+            graph.outline.width += .1f;
+            if (render::HashShaderGraph(graph) == enabledHash) throw std::runtime_error("Outline width not hashed");
+            const auto widthHash = render::HashShaderGraph(graph);
+            graph.outline.color.r = 1.0f;
+            if (render::HashShaderGraph(graph) == widthHash) throw std::runtime_error("Outline colour not hashed");
+            if (!render::CompileShaderGraphToGeometryShader(graph)) throw std::runtime_error("Legacy outline shader compilation failed");
+            CheckOutlineRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")
         {

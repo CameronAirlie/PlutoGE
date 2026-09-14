@@ -70,7 +70,9 @@ namespace PlutoGE::render
         Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
         glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f}; // scale.xy, offset.zw
 
+        ShaderGraphOutline outline; // Resolved from the shader asset, not serialized in the material.
         std::string shaderGraphReference;
+        std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
         std::vector<ShaderGraphVariable> shaderGraphVariables;
         Shader *compiledShaderGraph = nullptr;
     };

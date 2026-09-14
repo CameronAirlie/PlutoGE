@@ -2,6 +2,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <type_traits>
 #include <unordered_map>
 
@@ -33,6 +34,12 @@ namespace PlutoGE::render
             && a.thickness == b.thickness
             && a.attenuationColor == b.attenuationColor
             && a.attenuationDistance == b.attenuationDistance
+            && (a.shaderGraphProgram == b.shaderGraphProgram ||
+                (a.shaderGraphProgram && b.shaderGraphProgram && a.shaderGraphProgram->hash == b.shaderGraphProgram->hash &&
+                 std::memcmp(&a.shaderGraphProgram->data, &b.shaderGraphProgram->data, sizeof(ShaderGraphProgramData)) == 0))
+            && a.outlineWidth == b.outlineWidth
+            && a.outlineColor == b.outlineColor
+            && a.outlinePass == b.outlinePass
             && a.twoSided == b.twoSided
             && a.alphaCutoff == b.alphaCutoff
             && a.alphaMode == b.alphaMode
@@ -105,6 +112,10 @@ namespace PlutoGE::render
                 HashBatchValue(hash, draw.thickness);
                 HashBatchValue(hash, draw.attenuationColor);
                 HashBatchValue(hash, draw.attenuationDistance);
+                HashBatchValue(hash, draw.shaderGraphProgram ? draw.shaderGraphProgram->hash : 0ull);
+                HashBatchValue(hash, draw.outlineWidth);
+                HashBatchValue(hash, draw.outlineColor);
+                HashBatchValue(hash, draw.outlinePass);
                 HashBatchValue(hash, draw.twoSided);
                 HashBatchValue(hash, draw.alphaCutoff);
                 HashBatchValue(hash, draw.alphaMode);

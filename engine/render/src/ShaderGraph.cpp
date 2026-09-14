@@ -1,6 +1,10 @@
 #include "PlutoGE/render/ShaderGraph.h"
 
 #include "PlutoGE/render/Shader.h"
+#include "ShaderGraphEvaluation.h"
+#include <iomanip>
+#include <limits>
+#include <locale>
 
 #include <algorithm>
 #include <functional>
@@ -16,7 +20,8 @@ namespace PlutoGE::render
         std::string FloatLiteral(float value)
         {
             std::ostringstream output;
-            output << value;
+            output.imbue(std::locale::classic());
+            output << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
             const std::string text = output.str();
             return text.find_first_of(".eE") == std::string::npos ? text + ".0" : text;
         }
@@ -37,230 +42,31 @@ namespace PlutoGE::render
             return output.str();
         }
 
-        const ShaderGraphNode *FindNode(const ShaderGraph &graph, int id)
-        {
-            const auto found = std::find_if(graph.nodes.begin(), graph.nodes.end(),
-                                            [id](const ShaderGraphNode &node)
-                                            {
-                                                return node.id == id;
-                                            });
-            return found == graph.nodes.end() ? nullptr : &*found;
-        }
-
-        const ShaderGraphLink *FindInputLink(const ShaderGraph &graph, int nodeId, std::string_view pin)
-        {
-            const auto found = std::find_if(graph.links.begin(), graph.links.end(),
-                                            [nodeId, pin](const ShaderGraphLink &link)
-                                            {
-                                                return link.toNodeId == nodeId && link.toPin == pin;
-                                            });
-            return found == graph.links.end() ? nullptr : &*found;
-        }
-
-        std::string MaterialInputExpression(ShaderGraphMaterialInput input)
-        {
-            switch (input)
-            {
-            case ShaderGraphMaterialInput::Normal:
-                return "graphNormal";
-            case ShaderGraphMaterialInput::Metallic:
-                return "graphMetallic";
-            case ShaderGraphMaterialInput::Roughness:
-                return "graphRoughness";
-            case ShaderGraphMaterialInput::Opacity:
-                return "graphOpacity";
-            case ShaderGraphMaterialInput::UV:
-                return "UV";
-            case ShaderGraphMaterialInput::Emission:
-                return "graphEmission";
-            case ShaderGraphMaterialInput::Color:
-            default:
-                return "vec4(graphAlbedo, graphOpacity)";
-            }
-        }
-
-        const char *ComponentName(int index)
-        {
-            constexpr const char *kNames[] = {"X", "Y", "Z", "W"};
-            return index >= 0 && index < 4 ? kNames[index] : "X";
-        }
-
-        std::string BuildComponentExpression(const ShaderGraphNode &node, std::string_view pin, int componentCount)
-        {
-            for (int index = 0; index < componentCount; ++index)
-            {
-                if (pin == ComponentName(index))
-                {
-                    return FloatLiteral(node.value[index]);
-                }
-            }
-            return FloatLiteral(node.value.x);
-        }
-
-        std::string BuildExpression(const ShaderGraph &graph,
-                                    int nodeId,
-                                    std::string_view pin,
-                                    std::unordered_set<int> &visiting,
-                                    std::string &errorMessage)
-        {
-            const ShaderGraphNode *node = FindNode(graph, nodeId);
-            if (!node)
-            {
-                errorMessage = "Shader graph link references a missing node.";
-                return {};
-            }
-
-            if (visiting.find(nodeId) != visiting.end())
-            {
-                errorMessage = "Shader graph contains a cycle.";
-                return {};
-            }
-
-            visiting.insert(nodeId);
-            auto input = [&](const char *inputPin, const char *fallback)
-            {
-                if (const auto *link = FindInputLink(graph, nodeId, inputPin))
-                {
-                    std::string expression = BuildExpression(graph, link->fromNodeId, link->fromPin, visiting, errorMessage);
-                    return expression.empty() ? std::string(fallback) : expression;
-                }
-                return std::string(fallback);
-            };
-
-            std::string expression;
-            switch (node->kind)
-            {
-            case ShaderGraphNodeKind::MaterialInput:
-                expression = MaterialInputExpression(node->materialInput);
-                break;
-            case ShaderGraphNodeKind::Float:
-                expression = FloatLiteral(node->value.x);
-                break;
-            case ShaderGraphNodeKind::Vec2:
-                if (node->componentPins)
-                {
-                    expression = input(std::string(pin).c_str(), BuildComponentExpression(*node, pin, 2).c_str());
-                }
-                else
-                {
-                    expression = input("Vec2", VecLiteral(node->value, 2).c_str());
-                }
-                break;
-            case ShaderGraphNodeKind::Vec3:
-                if (node->componentPins)
-                {
-                    expression = input(std::string(pin).c_str(), BuildComponentExpression(*node, pin, 3).c_str());
-                }
-                else
-                {
-                    expression = input("Vec3", VecLiteral(node->value, 3).c_str());
-                }
-                break;
-            case ShaderGraphNodeKind::Color:
-                if (node->componentPins)
-                {
-                    const char *componentNames[] = {"R", "G", "B", "A"};
-                    for (int index = 0; index < 4; ++index)
-                    {
-                        if (pin == componentNames[index])
-                        {
-                            expression = input(componentNames[index], FloatLiteral(node->value[index]).c_str());
-                            break;
-                        }
-                    }
-                    if (expression.empty())
-                    {
-                        expression = FloatLiteral(node->value.x);
-                    }
-                }
-                else
-                {
-                    expression = input("Color", VecLiteral(node->value, 4).c_str());
-                }
-                break;
-            case ShaderGraphNodeKind::Add:
-                expression = "(" + input("A", "0.0") + " + " + input("B", "0.0") + ")";
-                break;
-            case ShaderGraphNodeKind::Subtract:
-                expression = "(" + input("A", "0.0") + " - " + input("B", "0.0") + ")";
-                break;
-            case ShaderGraphNodeKind::Multiply:
-                expression = "(" + input("A", "1.0") + " * " + input("B", "1.0") + ")";
-                break;
-            case ShaderGraphNodeKind::Divide:
-                expression = "(" + input("A", "1.0") + " / max(" + input("B", "1.0") + ", 0.0001))";
-                break;
-            case ShaderGraphNodeKind::Lerp:
-                expression = "mix(" + input("A", "0.0") + ", " + input("B", "1.0") + ", " + input("T", "0.5") + ")";
-                break;
-            case ShaderGraphNodeKind::Clamp:
-                expression = "clamp(" + input("Value", "0.0") + ", " + input("Min", "0.0") + ", " + input("Max", "1.0") + ")";
-                break;
-            case ShaderGraphNodeKind::Normalize:
-                expression = "normalize(" + input("Value", "graphNormal") + ")";
-                break;
-            case ShaderGraphNodeKind::NoiseTexture:
-            {
-                const std::string scaleFallback = FloatLiteral(node->value.x <= 0.0f ? 8.0f : node->value.x);
-                const std::string strengthFallback = FloatLiteral(node->value.y <= 0.0f ? 1.0f : node->value.y);
-                const std::string uv = "ToVec2(" + input("UV", "UV") + ")";
-                const std::string scale = "ToFloat(" + input("Scale", scaleFallback.c_str()) + ")";
-                const std::string strength = "ToFloat(" + input("Strength", strengthFallback.c_str()) + ")";
-                const std::string noise = "(ShaderGraphNoise(" + uv + " * " + scale + ") * " + strength + ")";
-                expression = pin == "Color" ? "vec4(vec3(" + noise + "), 1.0)" : noise;
-                break;
-            }
-            case ShaderGraphNodeKind::MeshUV:
-                expression = "UV";
-                break;
-            case ShaderGraphNodeKind::Output:
-                if (const auto *link = FindInputLink(graph, nodeId, pin))
-                {
-                    expression = BuildExpression(graph, link->fromNodeId, link->fromPin, visiting, errorMessage);
-                }
-                break;
-            }
-
-            visiting.erase(nodeId);
-            return expression;
-        }
-
-        std::string BuildOutputExpression(const ShaderGraph &graph, const ShaderGraphNode &outputNode, const char *pin, const char *fallback, std::string &errorMessage)
-        {
-            std::unordered_set<int> visiting;
-            if (const auto *link = FindInputLink(graph, outputNode.id, pin))
-            {
-                std::string expression = BuildExpression(graph, link->fromNodeId, link->fromPin, visiting, errorMessage);
-                return expression.empty() ? std::string(fallback) : expression;
-            }
-            return fallback;
-        }
-
-        const ShaderGraphNode *FindOutputNode(const ShaderGraph &graph)
-        {
-            const auto found = std::find_if(graph.nodes.begin(), graph.nodes.end(),
-                                            [](const ShaderGraphNode &node)
-                                            {
-                                                return node.kind == ShaderGraphNodeKind::Output;
-                                            });
-            return found == graph.nodes.end() ? nullptr : &*found;
-        }
-
         std::string BuildFragmentSource(const ShaderGraph &graph, bool unlit, std::string &errorMessage)
         {
-            const ShaderGraphNode *outputNode = FindOutputNode(graph);
-            if (!outputNode)
+            auto program = BuildShaderGraphProgram(graph, {}, &errorMessage);
+            if (!program) return {};
+            std::string evaluator = kShaderGraphEvaluationSource;
+            const auto replaceAll = [](std::string &text, const std::string &from, const std::string &to)
             {
-                errorMessage = "Shader graph has no output node.";
+                for (size_t at = 0; (at = text.find(from, at)) != std::string::npos; at += to.size()) text.replace(at, from.size(), to);
+            };
+            for (const auto &[from,to] : std::initializer_list<std::pair<std::string,std::string>>{
+                {"float4","vec4"},{"float3","vec3"},{"float2","vec2"},{"int4","ivec4"},{"frac(","fract("},{"lerp(","mix("}})
+                replaceAll(evaluator,from,to);
+            const auto integerVector = [](glm::ivec4 v) { return "ivec4(" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "," + std::to_string(v.w) + ")"; };
+            std::string uniforms = "uniform float uGraphTime;\nuniform vec3 uGraphCameraPosition;\nuniform vec4 uGraphValues[64] = vec4[64](";
+            for (int i=0;i<64;++i) uniforms += (i ? "," : "") + VecLiteral(program->data.values[i],4);
+            uniforms += ");\n";
+            std::string setup = "ShaderGraphData sg;\nsg.header=" + integerVector(program->data.header) + ";\nsg.outputs0=" + integerVector(program->data.outputs0) + ";\nsg.outputs1=" + integerVector(program->data.outputs1) + ";\n";
+            for(int i=0;i<program->data.header.x;++i)
+            {
+                auto index=std::to_string(i);
+                setup += "sg.instructions["+index+"]="+integerVector(program->data.instructions[i])+"; sg.values["+index+"]=uGraphValues["+index+"];\n";
             }
-
-            const std::string albedo = outputNode ? BuildOutputExpression(graph, *outputNode, "Albedo", "graphAlbedo", errorMessage) : "graphAlbedo";
-            const std::string normal = outputNode ? BuildOutputExpression(graph, *outputNode, "Normal", "graphNormal", errorMessage) : "graphNormal";
-            const std::string metallic = outputNode ? BuildOutputExpression(graph, *outputNode, "Metallic", "graphMetallic", errorMessage) : "graphMetallic";
-            const std::string roughness = outputNode ? BuildOutputExpression(graph, *outputNode, "Roughness", "graphRoughness", errorMessage) : "graphRoughness";
-            const std::string opacity = outputNode ? BuildOutputExpression(graph, *outputNode, "Opacity", "graphOpacity", errorMessage) : "graphOpacity";
-            const std::string emission = outputNode ? BuildOutputExpression(graph, *outputNode, "Emission", "graphEmission", errorMessage) : "graphEmission";
-
+            setup += "vec4 sgColor=vec4(graphAlbedo,graphOpacity);\nevaluateShaderGraph(sg,FragPos,normalize(Normal),normalize(uGraphCameraPosition-FragPos),uGraphTime,UV,sgColor,graphNormal,graphMetallic,graphRoughness,graphEmission);\ngraphAlbedo=sgColor.rgb; graphOpacity=sgColor.a;\n";
+            const std::string albedo="graphAlbedo", normal="graphNormal", metallic="graphMetallic", roughness="graphRoughness", opacity="graphOpacity", emission="graphEmission";
+            unlit = unlit || graph.unlit;
             const char *initialBakedLightingAlpha = unlit ? "2.0" : "0.0";
             const char *allowLightmap = unlit ? "false" : "true";
 
@@ -287,6 +93,8 @@ namespace PlutoGE::render
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
+            uniform float uOutlineWidth = 0.0;
+            uniform vec3 uOutlineColor = vec3(0.0);
             uniform vec4 uColor = vec4(1.0, 1.0, 1.0, 1.0);
             uniform int uAlphaMode = 0;
             uniform int uTwoSided = 0;
@@ -348,6 +156,15 @@ namespace PlutoGE::render
                 }
             }
 
+        )" + uniforms + R"(
+            vec4 shaderGraphTexture(int slot, vec2 uv)
+            {
+                if(slot==0) return uHasAlbedoTexture>0.5 ? texture(uAlbedoTexture,uv) : vec4(1.0);
+                if(slot==1) return uHasNormalTexture>0.5 ? texture(uNormalTexture,uv) : vec4(0.5,0.5,1.0,1.0);
+                if(slot==2) return uHasMetallicTexture>0.5 ? texture(uMetallicTexture,uv) : vec4(1.0);
+                return uHasRoughnessTexture>0.5 ? texture(uRoughnessTexture,uv) : vec4(1.0);
+            }
+        )" + evaluator + R"(
             float ToFloat(float value) { return value; }
             float ToFloat(vec2 value) { return value.x; }
             float ToFloat(vec3 value) { return value.x; }
@@ -382,6 +199,18 @@ namespace PlutoGE::render
             {
                 ApplyLodDither();
                 gPosition = FragPos;
+                if (uOutlineWidth > 0.0)
+                {
+                    gNormalRoughness = vec4(normalize(Normal), 1.0);
+                    gAlbedoMetallic = vec4(0.0);
+                    gEmission = uOutlineColor;
+                    gSubsurface = vec4(0.0);
+                    gBakedLighting = vec4(0.0, 0.0, 0.0, 2.0);
+                    gDebug = -1.0;
+                    gMotionVector = CurrentClipPos.xy / max(abs(CurrentClipPos.w), 0.00001) * 0.5 -
+                                    PreviousClipPos.xy / max(abs(PreviousClipPos.w), 0.00001) * 0.5;
+                    return;
+                }
                 vec3 graphAlbedo = uColor.rgb;
                 float graphOpacity = uColor.a;
                 float graphMetallic = clamp(uMetallicFactor, 0.0, 1.0);
@@ -417,6 +246,7 @@ namespace PlutoGE::render
                     graphRoughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
                 }
 
+        )" + setup + R"(
                 vec3 finalAlbedo = ToVec3()" +
                                albedo + ");\n"
                                         "                vec3 finalNormal = normalize(ToVec3(" +
@@ -500,7 +330,9 @@ namespace PlutoGE::render
 
     ShaderGraph CreateDefaultUnlitShaderGraph()
     {
-        return CreateDefaultShaderGraph();
+        auto graph = CreateDefaultShaderGraph();
+        graph.unlit = true;
+        return graph;
     }
 
     std::uint64_t HashShaderGraph(const ShaderGraph &graph)
@@ -511,10 +343,21 @@ namespace PlutoGE::render
             hash ^= value;
             hash *= 1099511628211ull;
         };
+        mix(graph.unlit ? 1ull : 0ull);
+        for (const auto &v : graph.variables)
+        {
+            mix(std::hash<std::string>{}(v.name));
+            mix(static_cast<unsigned>(v.type));
+            for(int i=0;i<4;++i) mix(std::hash<float>{}(v.value[i]));
+        }
+        mix(graph.outline.enabled ? 1ull : 0ull);
+        mix(std::hash<float>{}(graph.outline.width));
+        for (int i = 0; i < 3; ++i) mix(std::hash<float>{}(graph.outline.color[i]));
         for (const auto &node : graph.nodes)
         {
             mix(static_cast<std::uint64_t>(node.id));
             mix(static_cast<std::uint64_t>(node.kind));
+            mix(std::hash<std::string>{}(node.parameter));
             mix(static_cast<std::uint64_t>(node.materialInput));
             mix(node.componentPins ? 1ull : 0ull);
             for (int index = 0; index < 4; ++index)
@@ -536,6 +379,8 @@ namespace PlutoGE::render
     Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, bool unlit, std::string *errorMessage)
     {
         std::string compileError;
+        if (errorMessage) errorMessage->clear();
+        if (!ValidateShaderGraph(graph, errorMessage)) return nullptr;
         ShaderSource source;
         source.vertexSource = R"(
             #version 330 core
@@ -554,6 +399,7 @@ namespace PlutoGE::render
             uniform mat4 uProjection;
             uniform mat4 uCurrentViewProjection;
             uniform mat4 uPreviousViewProjection;
+            uniform float uOutlineWidth = 0.0;
             uniform int uUseSkinning = 0;
             uniform mat4 uJointMatrices[128];
             uniform vec2 uUVScale = vec2(1.0, 1.0);
@@ -614,6 +460,12 @@ namespace PlutoGE::render
                 worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
                 vec3 worldBitangent = cross(worldNormal, worldTangent) * aTangent.w;
 
+                currentWorldPos.xyz += worldNormal * uOutlineWidth;
+                mat3 previous3 = mat3(aPreviousModel);
+                mat3 previousCofactor = mat3(cross(previous3[1], previous3[2]), cross(previous3[2], previous3[0]), cross(previous3[0], previous3[1]));
+                vec3 previousNormal = previousCofactor * skinnedNormal * (determinant(previous3) < 0.0 ? -1.0 : 1.0);
+                previousWorldPos.xyz += previousNormal * (uOutlineWidth / max(length(previousNormal), 0.000001));
+                FragPos = currentWorldPos.xyz;
                 Normal = worldNormal;
                 UV = aUV * uUVScale;
                 UV2 = aUV2 * uUVScale;
@@ -625,11 +477,14 @@ namespace PlutoGE::render
             }
         )";
         source.fragmentSource = BuildFragmentSource(graph, unlit, compileError);
-        if (errorMessage && !compileError.empty())
+        if (!compileError.empty())
         {
-            *errorMessage = compileError;
+            if (errorMessage) *errorMessage = compileError;
+            return nullptr;
         }
-        return Shader::Create(source);
+        auto *shader = Shader::Create(source);
+        if (!shader && errorMessage) *errorMessage = "GPU shader compilation failed; see the shader compiler log.";
+        return shader;
     }
 
     const char *ToString(ShaderGraphNodeKind kind)
@@ -664,6 +519,16 @@ namespace PlutoGE::render
             return "NoiseTexture";
         case ShaderGraphNodeKind::MeshUV:
             return "MeshUV";
+        case ShaderGraphNodeKind::Parameter: return "Parameter";
+        case ShaderGraphNodeKind::Time: return "Time";
+        case ShaderGraphNodeKind::WorldPosition: return "WorldPosition";
+        case ShaderGraphNodeKind::WorldNormal: return "WorldNormal";
+        case ShaderGraphNodeKind::ViewDirection: return "ViewDirection";
+        case ShaderGraphNodeKind::Dot: return "Dot";
+        case ShaderGraphNodeKind::Sine: return "Sine";
+        case ShaderGraphNodeKind::Power: return "Power";
+        case ShaderGraphNodeKind::OneMinus: return "OneMinus";
+        case ShaderGraphNodeKind::TextureSample: return "TextureSample";
         case ShaderGraphNodeKind::Output:
             return "Output";
         default:
@@ -721,9 +586,20 @@ namespace PlutoGE::render
             return ShaderGraphNodeKind::NoiseTexture;
         if (value == "MeshUV")
             return ShaderGraphNodeKind::MeshUV;
+        if (value == "Parameter") return ShaderGraphNodeKind::Parameter;
+        if (value == "Time") return ShaderGraphNodeKind::Time;
+        if (value == "WorldPosition") return ShaderGraphNodeKind::WorldPosition;
+        if (value == "WorldNormal") return ShaderGraphNodeKind::WorldNormal;
+        if (value == "ViewDirection") return ShaderGraphNodeKind::ViewDirection;
+        if (value == "Dot") return ShaderGraphNodeKind::Dot;
+        if (value == "Sine") return ShaderGraphNodeKind::Sine;
+        if (value == "Power") return ShaderGraphNodeKind::Power;
+        if (value == "OneMinus") return ShaderGraphNodeKind::OneMinus;
+        if (value == "TextureSample") return ShaderGraphNodeKind::TextureSample;
         if (value == "Output")
             return ShaderGraphNodeKind::Output;
-        return ShaderGraphNodeKind::Float;
+        if (value == "Float") return ShaderGraphNodeKind::Float;
+        return static_cast<ShaderGraphNodeKind>(-1);
     }
 
     ShaderGraphMaterialInput ParseShaderGraphMaterialInput(std::string_view value)
@@ -740,6 +616,7 @@ namespace PlutoGE::render
             return ShaderGraphMaterialInput::UV;
         if (value == "Emission")
             return ShaderGraphMaterialInput::Emission;
-        return ShaderGraphMaterialInput::Color;
+        if (value == "Color") return ShaderGraphMaterialInput::Color;
+        return static_cast<ShaderGraphMaterialInput>(-1);
     }
 }

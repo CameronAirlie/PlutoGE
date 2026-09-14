@@ -1,0 +1,5 @@
+Color=0.25,0.55,0.9,1
+AlphaMode=Opaque
+Roughness=0.7
+Metallic=0
+ShaderGraph=project://Shaders/Outline.plutoshadergraph

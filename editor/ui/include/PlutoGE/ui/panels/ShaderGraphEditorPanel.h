@@ -24,6 +24,8 @@ namespace PlutoGE::ui
 
         std::string m_loadedReference;
         render::ShaderGraph m_graph;
+        std::vector<render::ShaderGraph> m_undo, m_redo;
+        bool m_editGesture = false;
         int m_selectedNodeId = 0;
         std::vector<int> m_selectedNodeIds;
         GraphEditor::Options m_graphOptions;

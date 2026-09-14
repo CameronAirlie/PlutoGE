@@ -3,6 +3,9 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <array>
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -35,6 +38,16 @@ namespace PlutoGE::render
         NoiseTexture = 12,
         MeshUV = 13,
         Output = 14,
+        Parameter = 15,
+        Time = 16,
+        WorldPosition = 17,
+        WorldNormal = 18,
+        ViewDirection = 19,
+        Dot = 20,
+        Sine = 21,
+        Power = 22,
+        OneMinus = 23,
+        TextureSample = 24,
     };
 
     enum class ShaderGraphMaterialInput
@@ -59,6 +72,7 @@ namespace PlutoGE::render
         glm::vec2 size{0.0f};
         bool componentPins = false;
         bool collapsed = false;
+        std::string parameter;
     };
 
     struct ShaderGraphLink
@@ -77,13 +91,45 @@ namespace PlutoGE::render
         glm::vec4 value{0.0f};
     };
 
+    struct ShaderGraphOutline
+    {
+        bool enabled = false;
+        float width = 0.02f; // World units.
+        glm::vec3 color{0.0f};
+    };
+
     struct ShaderGraph
     {
         int version = 1;
+        ShaderGraphOutline outline;
+        bool unlit = false;
         std::vector<ShaderGraphNode> nodes;
         std::vector<ShaderGraphLink> links;
         std::vector<ShaderGraphVariable> variables;
     };
+
+    // std140-compatible bytecode, shared by the OpenGL and Vulkan surface paths.
+    constexpr int kMaxShaderGraphInstructions = 64;
+    struct alignas(16) ShaderGraphProgramData
+    {
+        glm::ivec4 header{0}; // instruction count, unlit, reserved
+        glm::ivec4 outputs0{0}; // albedo, normal, metallic, roughness
+        glm::ivec4 outputs1{0}; // opacity, emission, reserved
+        std::array<glm::ivec4, kMaxShaderGraphInstructions> instructions{};
+        std::array<glm::vec4, kMaxShaderGraphInstructions> values{};
+    };
+    static_assert(sizeof(ShaderGraphProgramData) == 2096);
+    struct ShaderGraphProgram
+    {
+        ShaderGraphProgramData data;
+        std::uint64_t hash = 0;
+    };
+    std::shared_ptr<const ShaderGraphProgram> BuildShaderGraphProgram(
+        const ShaderGraph &graph, std::span<const ShaderGraphVariable> overrides = {}, std::string *errorMessage = nullptr);
+    bool ValidateShaderGraph(const ShaderGraph &graph, std::string *errorMessage = nullptr);
+    float ShaderGraphTimeSeconds();
+    std::vector<std::string_view> ShaderGraphInputPins(const ShaderGraphNode &node);
+    std::vector<std::string_view> ShaderGraphOutputPins(const ShaderGraphNode &node);
 
     ShaderGraph CreateDefaultShaderGraph();
     ShaderGraph CreateDefaultUnlitShaderGraph();

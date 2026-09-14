@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/OceanParameters.h"
 
 #include "PlutoGE/render/VctProbeCache.h"
@@ -244,6 +245,10 @@ namespace PlutoGE::render
         glm::vec3 attenuationColor{1.0f};
         float attenuationDistance = 1.0f;
         bool twoSided = false;
+        float outlineWidth = 0.0f;
+        glm::vec3 outlineColor{0.0f};
+        bool outlinePass = false;
+        std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
         float alphaCutoff = 0.5f;
         std::uint32_t alphaMode = 0;
         std::uint32_t metallicChannel = 0;
@@ -493,6 +498,7 @@ namespace PlutoGE::render
         rhi::Texture m_glassDepthCopy;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_instancedPipeline;
+        rhi::GraphicsPipeline m_outlinePipeline, m_outlineInstancedPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;
         rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;

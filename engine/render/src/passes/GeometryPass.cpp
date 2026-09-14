@@ -271,6 +271,7 @@ namespace PlutoGE::render
             }
 
             shader->Bind();
+            shader->TrySetUniform("uGraphCameraPosition", glm::vec3(glm::inverse(ctx.cameraData.view)[3]));
             shader->SetUniform("uView", ctx.cameraData.view);
             shader->SetUniform("uProjection", ctx.cameraData.projection);
             shader->SetUniform("uCurrentViewProjection", currentViewProjection);
@@ -662,6 +663,28 @@ namespace PlutoGE::render
             }
         }
 
+        // Shells are a separate draw of the same deformed and instanced mesh.
+        glColorMaski(4, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(6, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        Graphics::Enable(GL_CULL_FACE);
+        glCullFace(GL_FRONT);
+        for (const auto &draw : draws)
+        {
+            const auto &command = *draw.command;
+            const auto &config = command.material->GetConfig();
+            if (!config.outline.enabled || config.outline.width <= 0.0f ||
+                config.alphaMode != AlphaMode::Opaque || config.surfaceType != MaterialSurfaceType::Standard ||
+                !command.material->GetShader()) continue;
+            Shader *shader = bindGeometryShader(command.material->GetShader());
+            command.material->Bind(shader);
+            shader->SetUniform("uOutlineWidth", config.outline.width);
+            shader->SetUniform("uOutlineColor", config.outline.color);
+            UploadJointMatrices(shader, command.jointMatrices);
+            BindGeometryInstanceAttributes(*command.mesh, draw.staticResident ? m_staticInstanceBuffer : instanceBuffer, 0);
+            command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex, draw.instanceCount, draw.firstInstance, draw.lodIndex);
+            shader->SetUniform("uOutlineWidth", 0.0f);
+            ++apiDrawCalls;
+        }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         // Color masks are context state and must not leak into later passes or
         // the next frame's G-buffer clear.

@@ -46,7 +46,7 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     require(total==343,"Batching lost visible instances");
     // Material edits, LOD ranges, transparency and packets without authoritative
     // history must not accidentally reuse an incompatible instance group.
-    for (int variant=0;variant<9;++variant)
+    for (int variant=0;variant<11;++variant)
     {
         auto a=original[0], b=a;
         if (variant==0) b.emission.x=1;
@@ -57,6 +57,8 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
         if (variant==5) b.previousModel.reset();
         if (variant==6) b.contributesToGi=false;
         if (variant==7) b.surfaceType=1;
+        if (variant==9) b.outlineWidth=.1f;
+        if (variant==10) b.outlineColor={1,0,0};
         if (variant==8) b.instanceModels=std::make_shared<const std::vector<glm::mat4>>(std::vector{b.model});
         std::vector<BasicDraw> separate{a,b}; BatchOpaqueDraws(separate);
         require(separate.size()==2,"Incompatible draws were batched");

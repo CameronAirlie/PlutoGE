@@ -1,3 +1,5 @@
+float4 shaderGraphTexture(int slot, float2 uv);
+#include "ShaderGraphEvaluation.slang"
 #include "VirtualShadowCommon.slang"
 [[vk::binding(1, 0)]]
 cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
@@ -26,6 +28,7 @@ struct VertexOutput
     float4 currentClip : TEXCOORD3;
     float4 previousClip : TEXCOORD4;
     float objectDebug : TEXCOORD5;
+    float outlineWidth : TEXCOORD6;
 };
 
 struct FragmentOutput
@@ -113,6 +116,8 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 attenuationColorDistance;
     float4 glassViewport; // inverse dimensions, Vulkan Y orientation
     float4 glassFog[4];
+    ShaderGraphData shaderGraph;
+    float4 shaderGraphFrame;
 };
 
 [[vk::binding(1, 1)]]
@@ -131,6 +136,14 @@ Sampler2D directionalShadowTexture1 : register(t6, space1);
 Sampler2D directionalShadowTexture2 : register(t7, space1);
 [[vk::binding(8, 1)]]
 Sampler2D directionalShadowTexture3 : register(t8, space1);
+
+float4 shaderGraphTexture(int slot, float2 uv)
+{
+    if(slot==0) return baseColorTexture.Sample(uv);
+    if(slot==1) return normalTexture.Sample(uv);
+    if(slot==2) return metallicTexture.Sample(uv);
+    return roughnessTexture.Sample(uv);
+}
 
 #ifdef PLUTO_GLASS
 [[vk::binding(9, 1)]]
@@ -476,11 +489,23 @@ float4 glassAtmosphere(float3 worldPosition)
 }
 #endif
 
+// Cofactor normal transform keeps shell thickness in world units under nonuniform scale.
+float3 outlineOffset(float4x4 transform, float3 normal, float width)
+{
+    if (width <= 0.0) return float3(0.0);
+    float3 c0 = transform[0].xyz;
+    float3 c1 = transform[1].xyz;
+    float3 c2 = transform[2].xyz;
+    float3x3 cofactors = float3x3(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+    float3 n = mul(cofactors, normal) * (dot(c0, cross(c1, c2)) < 0.0 ? -1.0 : 1.0);
+    return n * (width / max(length(n), 0.000001));
+}
+
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
-    const float4 worldPosition = mul(model, float4(input.position, 1.0));
+    const float4 worldPosition = mul(model, float4(input.position, 1.0)) + float4(outlineOffset(model, input.normal, objectDebugParameters.y), 0.0);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -491,8 +516,9 @@ VertexOutput vertexMain(VertexInput input)
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, mul(previousModel, float4(previousPosition, 1.0)));
+    output.previousClip = mul(previousViewProjection, (mul(previousModel, float4(previousPosition, 1.0)) + float4(outlineOffset(previousModel, input.normal, objectDebugParameters.y), 0.0)));
     output.objectDebug = objectDebugParameters.x;
+    output.outlineWidth = objectDebugParameters.y;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
@@ -507,7 +533,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 {
     VertexOutput output;
     const InstanceObjectParameters instance = instances[instanceId];
-    const float4 worldPosition = mul(instance.model, float4(input.position, 1.0));
+    const float4 worldPosition = mul(instance.model, float4(input.position, 1.0)) + float4(outlineOffset(instance.model, input.normal, instance.debugParameters.y), 0.0);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -518,8 +544,9 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, mul(instance.previousModel, float4(previousPosition, 1.0)));
+    output.previousClip = mul(previousViewProjection, (mul(instance.previousModel, float4(previousPosition, 1.0)) + float4(outlineOffset(instance.previousModel, input.normal, instance.debugParameters.y), 0.0)));
     output.objectDebug = instance.debugParameters.x;
+    output.outlineWidth = instance.debugParameters.y;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
@@ -529,9 +556,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 
 FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 {
-    const float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
-    if (alphaMode == 1 && sampledColor.a < alphaCutoff)
-        discard;
+    float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
 
     const bool glass = transparentPass && glassParameters.x > 0.5;
     float3 normal = normalize(input.worldNormal);
@@ -552,8 +577,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float sampledRoughness = 1.0;
     if (hasRoughnessTexture != 0)
         sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
-    const float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
-    const float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
+    float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
+    float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
+    float3 surfaceEmission = emission;
+    evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
+                        normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
+                        input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
+    if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float3 halfDirection = normalize(lightDirection + viewDirection);
@@ -737,7 +767,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
     }
     FragmentOutput output;
-    output.color = float4(ambient + pointLighting + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + emission,
+    output.color = float4(ambient + pointLighting + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + surfaceEmission,
                           sampledColor.a);
 #ifdef PLUTO_GLASS
     if (glass)
@@ -779,7 +809,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                       ndotl * shadowVisibility;
         const float3 transmissionWeight = (1.0 - viewFresnel) * transmission * absorption * saturate(sampledColor.rgb);
         const float3 surface = (1.0 - viewFresnel) * (1.0 - transmission) * surfaceDiffuse +
-                               viewFresnel * environment + directSpecular + emission + pointSpecularLighting +
+                               viewFresnel * environment + directSpecular + surfaceEmission + pointSpecularLighting +
                                (pointLighting - pointSpecularLighting) * (1.0 - transmission);
         const float4 fog = glassAtmosphere(input.worldPosition);
         output.color = float4(transmissionWeight * background + fog.a * surface +
@@ -791,8 +821,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         output.color.rgb = output.color.rgb * fog.a + fog.rgb;
     }
 #endif
+    if (shaderGraph.header.y != 0) output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
     output.normal = float4(normal * 0.5 + 0.5, 1.0);
-    output.material = float4(materialMetallic, materialRoughness, length(emission), sampledColor.a);
+    output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
     // Signed current-minus-previous displacement in normalized Y-up units.
@@ -808,6 +839,18 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 [shader("fragment")]
 FragmentOutput fragmentMain(VertexOutput input)
 {
+    if (input.outlineWidth > 0.0)
+    {
+        FragmentOutput output;
+        output.color = float4(baseColor.rgb, 1.0);
+        output.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1.0);
+        output.material = float4(0.0, 1.0, length(baseColor.rgb), 1.0);
+        output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
+                               input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0.0, 1.0);
+        output.albedo = float4(0.0, 0.0, 0.0, 1.0);
+        output.debug = float4(0.0, 0.0, 1.0, 1.0);
+        return output;
+    }
     return shadeSurface(input, false);
 }
 

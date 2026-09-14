@@ -410,6 +410,7 @@ namespace PlutoGE::ui
         if (!material)
         {
             m_color = glm::vec4(1.0f);
+            m_shaderGraphVariables.clear();
             m_shaderGraphReference = std::string(assets::Project::kBuiltinDefaultShaderGraphReference);
             m_surfaceType = render::MaterialSurfaceType::Standard;
             m_alphaMode = render::AlphaMode::Opaque;
@@ -439,6 +440,7 @@ namespace PlutoGE::ui
         }
 
         const auto &config = material->GetConfig();
+        m_shaderGraphVariables = config.shaderGraphVariables;
         m_shaderGraphReference = config.shaderGraphReference.empty()
                                      ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
                                      : config.shaderGraphReference;
@@ -565,6 +567,30 @@ namespace PlutoGE::ui
         if (RenderShaderGraphReferenceControl(reference, m_shaderGraphReference))
         {
             m_dirty = true;
+        }
+
+        const auto shaderGraph = core::Engine::GetInstance().GetAssetManager().LoadShaderGraphAsset(m_shaderGraphReference);
+        if (!shaderGraph.variables.empty()) ImGui::SeparatorText("Shader parameters");
+        for (const auto &parameter : shaderGraph.variables)
+        {
+            ImGui::PushID(parameter.name.c_str());
+            auto overrideValue = std::find_if(m_shaderGraphVariables.begin(), m_shaderGraphVariables.end(), [&](const auto &v) { return v.name == parameter.name; });
+            bool overridden = overrideValue != m_shaderGraphVariables.end();
+            if (ImGui::Checkbox("Override", &overridden))
+            {
+                if (overridden) m_shaderGraphVariables.push_back(parameter);
+                else m_shaderGraphVariables.erase(overrideValue);
+                m_dirty = true;
+                overrideValue = std::find_if(m_shaderGraphVariables.begin(), m_shaderGraphVariables.end(), [&](const auto &v) { return v.name == parameter.name; });
+            }
+            auto value = overridden ? overrideValue->value : parameter.value;
+            ImGui::BeginDisabled(!overridden);
+            int type=int(parameter.type);
+            bool changed=type==0?ImGui::DragFloat(parameter.name.c_str(),&value.x,.01f):type==1?ImGui::DragFloat2(parameter.name.c_str(),&value.x,.01f):type==2?ImGui::DragFloat3(parameter.name.c_str(),&value.x,.01f):ImGui::ColorEdit4(parameter.name.c_str(),&value.x);
+            if(changed) { overrideValue->type=parameter.type;overrideValue->value=value;m_dirty=true; }
+            if(overridden && overrideValue->type!=parameter.type) ImGui::TextWrapped("Parameter type changed; disable Override to reset it.");
+            ImGui::EndDisabled();
+            ImGui::PopID();
         }
 
         float color[4] = {m_color.r, m_color.g, m_color.b, m_color.a};
@@ -728,7 +754,7 @@ namespace PlutoGE::ui
             config.shaderGraphReference = m_shaderGraphReference.empty()
                                               ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
                                               : m_shaderGraphReference;
-            config.compiledShaderGraph = core::Engine::GetInstance().GetAssetManager().CompileShaderGraphAsset(config.shaderGraphReference);
+            config.shaderGraphVariables = m_shaderGraphVariables;
             config.color = m_color;
             config.surfaceType = m_surfaceType;
             config.alphaMode = m_alphaMode;

@@ -13,6 +13,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <locale>
 #include <sstream>
 #include <unordered_map>
 
@@ -889,7 +891,7 @@ namespace PlutoGE::assets
         render::MaterialConfig defaultConfig;
         defaultConfig.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); // Default to white color
         defaultConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
-        defaultConfig.compiledShaderGraph = CompileShaderGraphAsset(defaultConfig.shaderGraphReference);
+        ResolveMaterialShaderGraph(defaultConfig);
         render::Material *material = new render::Material(defaultConfig);
         // render::Shader *defaultShader = render::Shader::CreateDefault();
         // material->SetShader(defaultShader);
@@ -903,7 +905,7 @@ namespace PlutoGE::assets
         defaultConfig.metallic = 0.0f;
         defaultConfig.roughness = 0.55f;
         defaultConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
-        defaultConfig.compiledShaderGraph = CompileShaderGraphAsset(defaultConfig.shaderGraphReference);
+        ResolveMaterialShaderGraph(defaultConfig);
         return new render::Material(defaultConfig);
     }
 
@@ -1512,6 +1514,14 @@ namespace PlutoGE::assets
             {
                 graph.version = ParseIntOr(value, 1);
             }
+            else if (key == "Unlit")
+                graph.unlit = value == "1";
+            else if (key == "OutlineEnabled")
+                graph.outline.enabled = value == "1";
+            else if (key == "OutlineWidth")
+                graph.outline.width = std::clamp(ParseFloatOr(value, 0.02f), 0.0f, 10.0f);
+            else if (key == "OutlineColor")
+                graph.outline.color = glm::vec3(ParseVec4Or(value, glm::vec4(0.0f)));
             else if (key == "Node")
             {
                 const auto fields = SplitFields(value);
@@ -1536,6 +1546,7 @@ namespace PlutoGE::assets
                 {
                     node.componentPins = fields[8] == "1" || fields[8] == "true" || fields[8] == "True";
                 }
+                if (fields.size() >= 10) node.parameter = fields[9];
                 if (node.id != 0)
                 {
                     graph.nodes.push_back(std::move(node));
@@ -1573,10 +1584,6 @@ namespace PlutoGE::assets
             }
         }
 
-        if (graph.nodes.empty())
-        {
-            graph = render::CreateDefaultShaderGraph();
-        }
 
         m_shaderGraphCache[assetReference] = graph;
         if (loaded)
@@ -1596,6 +1603,8 @@ namespace PlutoGE::assets
             }
             return false;
         }
+
+        if (!render::ValidateShaderGraph(graph, errorMessage)) return false;
 
         const std::string graphPath = ResolveAssetPath(assetReference);
         if (graphPath.empty())
@@ -1628,7 +1637,13 @@ namespace PlutoGE::assets
             return false;
         }
 
+        output.imbue(std::locale::classic());
+        output << std::setprecision(std::numeric_limits<float>::max_digits10);
         output << "ShaderGraphVersion=1\n";
+        output << "Unlit=" << (graph.unlit ? 1 : 0) << "\n";
+        output << "OutlineEnabled=" << (graph.outline.enabled ? 1 : 0) << "\n";
+        output << "OutlineWidth=" << graph.outline.width << "\n";
+        output << "OutlineColor=" << graph.outline.color.x << ',' << graph.outline.color.y << ',' << graph.outline.color.z << ",1\n";
         for (const auto &node : graph.nodes)
         {
             output << "Node=" << node.id << '|'
@@ -1639,7 +1654,7 @@ namespace PlutoGE::assets
                    << render::ToString(node.materialInput) << '|'
                    << (node.collapsed ? "1" : "0") << '|'
                    << node.size.x << ',' << node.size.y << '|'
-                   << (node.componentPins ? "1" : "0") << "\n";
+                   << (node.componentPins ? "1" : "0") << '|' << node.parameter << "\n";
         }
         for (const auto &link : graph.links)
         {
@@ -1666,7 +1681,6 @@ namespace PlutoGE::assets
         }
 
         m_shaderGraphCache[assetReference] = graph;
-        m_shaderGraphShaderCache.erase(assetReference);
         RefreshCachedMaterialsForShaderGraph(assetReference);
         return true;
     }
@@ -2107,9 +2121,24 @@ namespace PlutoGE::assets
             if (effectiveReference == shaderGraphReference)
             {
                 config.shaderGraphReference = effectiveReference;
-                config.compiledShaderGraph = CompileShaderGraphAsset(effectiveReference);
+                ResolveMaterialShaderGraph(config);
             }
         }
+    }
+
+    bool AssetManager::ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage)
+    {
+        bool loaded=false;
+        auto graph = LoadShaderGraphAsset(config.shaderGraphReference, &loaded);
+        if (!loaded) { if(errorMessage) *errorMessage="Shader asset could not be loaded: " + config.shaderGraphReference; return false; }
+        auto program = render::BuildShaderGraphProgram(graph, config.shaderGraphVariables, errorMessage);
+        if (!program) return false;
+        config.outline = graph.outline;
+        config.shaderGraphProgram = program;
+        if (config.shaderGraphReference.empty() || config.shaderGraphReference == Project::kBuiltinDefaultShaderGraphReference)
+            config.shaderGraphProgram.reset(); // Ordinary materials keep the direct surface path.
+        config.compiledShaderGraph = CompileShaderGraphAsset(config.shaderGraphReference, errorMessage);
+        return true; // A valid portable program does not require an active legacy GL context.
     }
 
     render::Shader *AssetManager::CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage)
@@ -2130,10 +2159,11 @@ namespace PlutoGE::assets
 
         const bool isUnlitBuiltin = cacheKey == Project::kBuiltinDefaultUnlitShaderGraphReference;
         render::Shader *shader = render::CompileShaderGraphToGeometryShader(graph, isUnlitBuiltin, errorMessage);
-        if (!shader && cacheKey != Project::kBuiltinDefaultShaderGraphReference)
+        if (!shader)
         {
-            graph = render::CreateDefaultShaderGraph();
-            shader = render::CompileShaderGraphToGeometryShader(graph, false, errorMessage);
+            // Keep a previously compiled shader alive when an external edit is invalid.
+            if (auto previous = m_shaderGraphShaderCache.find(cacheKey); previous != m_shaderGraphShaderCache.end())
+                return previous->second.second;
         }
 
         if (shader)
@@ -2338,7 +2368,7 @@ namespace PlutoGE::assets
                 {
                     config.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
                 }
-                config.compiledShaderGraph = CompileShaderGraphAsset(config.shaderGraphReference);
+                ResolveMaterialShaderGraph(config);
                 material = new render::Material(config);
             }
         }
@@ -2352,6 +2382,11 @@ namespace PlutoGE::assets
 
     bool AssetManager::SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage)
     {
+        bool graphLoaded=false;
+        auto materialGraph=LoadShaderGraphAsset(config.shaderGraphReference,&graphLoaded);
+        if(!graphLoaded) { if(errorMessage) *errorMessage="Shader asset could not be loaded: " + config.shaderGraphReference; return false; }
+        if (!render::BuildShaderGraphProgram(materialGraph, config.shaderGraphVariables, errorMessage)) return false;
+
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -2464,7 +2499,7 @@ namespace PlutoGE::assets
             {
                 cachedConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
             }
-            cachedConfig.compiledShaderGraph = CompileShaderGraphAsset(cachedConfig.shaderGraphReference);
+            ResolveMaterialShaderGraph(cachedConfig);
             cachedMaterial->second->GetConfig() = cachedConfig;
         }
 

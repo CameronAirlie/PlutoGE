@@ -1,0 +1,7 @@
+ShaderGraphVersion=1
+OutlineEnabled=1
+OutlineWidth=0.03
+OutlineColor=0,0,0,1
+Node=1|MaterialInput|Material Color|40,40|1,1,1,1|Color|0|0,0|0
+Node=100|Output|Geometry Output|430,180|1,1,1,1|Color|0|0,0|0
+Link=1|1|Out|100|Albedo

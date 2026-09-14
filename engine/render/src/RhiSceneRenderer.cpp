@@ -471,6 +471,9 @@ namespace PlutoGE::render
                         draw.attenuationColor = material.attenuationColor;
                         draw.attenuationDistance = material.attenuationDistance;
                         draw.twoSided = material.twoSided;
+                        draw.outlineWidth = material.outline.enabled ? material.outline.width : 0.0f;
+                        draw.outlineColor = material.outline.color;
+                        draw.shaderGraphProgram = material.shaderGraphProgram;
                         const bool transparent = material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
                         draw.contributesToGi = draw.contributesToGi && !transparent;
                         draw.castsShadow = draw.castsShadow && !transparent;

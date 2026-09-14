@@ -89,6 +89,7 @@ namespace PlutoGE::assets
         bool SaveParticleSystemAsset(const std::string &assetReference, const ParticleSystemAsset &asset, std::string *errorMessage = nullptr);
         PostProcessPresetAsset LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage = nullptr);
+        bool ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
         render::Material *CreateMaterial();
         render::Material *CreateDefaultMaterial();

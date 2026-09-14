@@ -1,3 +1,5 @@
+#include "ShaderGraphRenderingChecks.h"
+#include "OutlineRenderingChecks.h"
 #include "RenderOptimizationChecks.h"
 #include "SkinningRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
@@ -116,6 +118,22 @@ int main(int argc, char **argv)
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--shader-graphs")
+        {
+            CheckShaderGraphRendering(renderer, device, [&](auto texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--outline")
+        {
+            CheckOutlineRendering(renderer, [&](rhi::TextureHandle texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")
         {
             CheckRenderOptimizations(renderer, device, shaders,

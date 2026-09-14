@@ -59,8 +59,10 @@ namespace PlutoGE::render
             glm::vec4 attenuationColorDistance{1.0f};
             glm::vec4 glassViewport{0.0f};
             std::array<glm::vec4, 4> glassFog{};
+            ShaderGraphProgramData shaderGraph;
+            glm::vec4 shaderGraphFrame{0};
         };
-        static_assert(sizeof(BasicMaterialParameters) == 224);
+        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 16);
 
         struct alignas(16) BasicFrameParameters
         {
@@ -446,6 +448,13 @@ namespace PlutoGE::render
             instancedDescriptor.debugName = "BasicRenderer instanced opaque pipeline";
             m_instancedPipeline = rhi::GraphicsPipeline(
                 device, device.CreateGraphicsPipeline(instancedDescriptor));
+            auto outlineDescriptor = descriptor;
+            outlineDescriptor.cullMode = rhi::CullMode::Front;
+            outlineDescriptor.debugName = "Outline shell";
+            m_outlinePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
+            outlineDescriptor.vertexShader = shaders.instancedVertex;
+            outlineDescriptor.resourceBindings.back() = instancedDescriptor.resourceBindings.back();
+            m_outlineInstancedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1053,6 +1062,8 @@ namespace PlutoGE::render
         m_glassSceneCopyPipeline.Reset();
         m_glassDepthCopy.Reset();
         m_pipeline.Reset();
+        m_outlinePipeline.Reset();
+        m_outlineInstancedPipeline.Reset();
         m_instancedPipeline.Reset();
         m_device = nullptr;
         m_width = 0;
@@ -1738,6 +1749,7 @@ namespace PlutoGE::render
         std::size_t instanceBufferCursor = 0;
         std::size_t materialBufferCursor = 0;
         BasicMaterialParameters previousMaterialParameters{};
+        const float graphTime = ShaderGraphTimeSeconds();
         bool geometryResourcesBound = false;
         std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
@@ -1746,7 +1758,8 @@ namespace PlutoGE::render
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
             commands.BindPipeline(transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
-                                  (instanced ? m_instancedPipeline.Get() : m_pipeline.Get()));
+                                  (draw.outlinePass ? (instanced ? m_outlineInstancedPipeline.Get() : m_outlinePipeline.Get()) :
+                                   (instanced ? m_instancedPipeline.Get() : m_pipeline.Get())));
             if (transparent || !geometryResourcesBound)
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             if (!instanced)
@@ -1761,7 +1774,7 @@ namespace PlutoGE::render
                 const BasicObjectParameters objectParameters{
                     model,
                     m_hasPreviousFrame ? previousModel : model,
-                    glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
+                    glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, 0.0f, 0.0f)};
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
                 // each draw's history even when current transforms match.
@@ -1792,6 +1805,11 @@ namespace PlutoGE::render
                           std::max(draw.attenuationDistance, 0.0001f)),
                 glm::vec4(1.0f / m_width, 1.0f / m_height,
                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
+            if (draw.shaderGraphProgram && !draw.outlinePass)
+            {
+                materialParameters.shaderGraph = draw.shaderGraphProgram->data;
+                materialParameters.shaderGraphFrame.x = graphTime;
+            }
             if (transparent)
                 for (const auto &effect : postProcessEffects)
                     if (effect.type == BasicPostProcessEffectType::VolumetricFog)
@@ -1865,7 +1883,7 @@ namespace PlutoGE::render
                             const auto &model = (*draw.instanceModels)[first + instance];
                             const auto &previous = hasPrevious ? (*draw.previousInstanceModels)[first + instance] : model;
                             parameters.instances[instance] = {model, previous,
-                                glm::vec4(draw.normalizedLod, 0.0f, 0.0f, 0.0f)};
+                                glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, 0.0f, 0.0f)};
                         }
                         auto &instanceBuffer = m_instanceBuffers[instanceBufferCursor++];
                         m_device->UpdateBuffer(instanceBuffer.Get(), 0, Bytes(parameters));
@@ -1909,6 +1927,19 @@ namespace PlutoGE::render
             }
             else
                 recordDraw(draw, false, historyIndex);
+            ++historyIndex;
+        }
+        // Draw shells after all opaque surfaces so foreground geometry occludes them.
+        historyIndex = 0;
+        for (const auto &draw : draws)
+        {
+            if (draw.outlineWidth > 0.0f && draw.alphaMode == 0 && draw.surfaceType == 0)
+            {
+                auto shell = draw;
+                shell.outlinePass = true;
+                shell.baseColor = glm::vec4(draw.outlineColor, 1.0f);
+                recordDraw(shell, false, historyIndex);
+            }
             ++historyIndex;
         }
         std::stable_sort(transparentDraws.begin(), transparentDraws.end(), [&](const auto &a, const auto &b)

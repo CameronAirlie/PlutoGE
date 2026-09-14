@@ -560,3 +560,9 @@ set_tests_properties(PlutoGEOpenGLOceanTests PlutoGEVulkanOceanTests PROPERTIES 
 add_executable(PlutoGEOceanWaveModelTests OceanWaveModelTests.cpp)
 target_link_libraries(PlutoGEOceanWaveModelTests PRIVATE PlutoGE::Scene)
 add_test(NAME PlutoGEOceanWaveModelTests COMMAND PlutoGEOceanWaveModelTests)
+
+add_test(NAME PlutoGEOpenGLOutlineTests COMMAND PlutoGEOpenGLRhiTests --outline)
+add_test(NAME PlutoGEVulkanOutlineTests COMMAND PlutoGEVulkanRhiTests --outline)
+
+add_test(NAME PlutoGEOpenGLShaderGraphTests COMMAND PlutoGEOpenGLRhiTests --shader-graphs)
+add_test(NAME PlutoGEVulkanShaderGraphTests COMMAND PlutoGEVulkanRhiTests --shader-graphs)

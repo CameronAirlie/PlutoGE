@@ -9,7 +9,7 @@ namespace PlutoGE::render
 {
     void Material::Bind(Shader *shader)
     {
-        Shader *activeShader = shader ? shader : m_overrideShader;
+        Shader *activeShader = shader ? shader : GetShader();
         if (!activeShader)
         {
             std::cerr << "Material has no shader assigned!" << std::endl;
@@ -46,6 +46,10 @@ namespace PlutoGE::render
             activeShader->TrySetUniform(name, texture, slot);
         };
 
+        setFloat("uGraphTime", ShaderGraphTimeSeconds());
+        if (m_config.shaderGraphProgram)
+            for (int i=0;i<m_config.shaderGraphProgram->data.header.x;++i)
+                setVec4(("uGraphValues["+std::to_string(i)+"]").c_str(), m_config.shaderGraphProgram->data.values[i]);
         setVec4("uColor", m_config.color);
         setInt("uSurfaceType", static_cast<int>(m_config.surfaceType));
         setInt("uAlphaMode", static_cast<int>(m_config.alphaMode));

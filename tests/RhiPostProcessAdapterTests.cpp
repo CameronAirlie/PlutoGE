@@ -213,7 +213,9 @@ int main()
     if (StageFor(BasicPostProcessEffectType::SceneComposite) != BasicPostProcessStage::LightingComposite ||
         StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::AmbientOcclusion ||
         StageFor(BasicPostProcessEffectType::PhysicalSky) != BasicPostProcessStage::ScreenSpaceAtmosphere ||
-        StageFor(BasicPostProcessEffectType::VolumetricCloud) != BasicPostProcessStage::ScreenSpaceAtmosphere ||
+        StageFor(BasicPostProcessEffectType::VolumetricCloud) != BasicPostProcessStage::CloudComposite ||
+        !(StageFor(BasicPostProcessEffectType::Ocean) < StageFor(BasicPostProcessEffectType::VolumetricCloud) &&
+          StageFor(BasicPostProcessEffectType::VolumetricCloud) < StageFor(BasicPostProcessEffectType::VolumetricFog)) ||
         StageFor(BasicPostProcessEffectType::TAA) != BasicPostProcessStage::TemporalResolve ||
         StageFor(BasicPostProcessEffectType::ToneMapping) != BasicPostProcessStage::ToneAndColor ||
         !(StageFor(BasicPostProcessEffectType::SceneComposite) < StageFor(BasicPostProcessEffectType::SSAO) &&

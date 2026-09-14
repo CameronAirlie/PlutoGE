@@ -42,6 +42,10 @@ int main(int argc,char **argv) try
     shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::PhysicalSky)]={library.Load("PhysicalSky","vertex"),library.Load("PhysicalSky","fragment")};
     shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::GammaCorrection)]={library.Load("GammaCorrection","vertex"),library.Load("GammaCorrection","fragment")};
     shaders.virtualShadows=library.LoadBasicRendererPackage().virtualShadows;
+    shaders.volumetricTrace=library.LoadBasicRendererPackage().volumetricTrace;
+    shaders.volumetricComposite=library.LoadBasicRendererPackage().volumetricComposite;
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::VolumetricFog)]={library.Load("VolumetricFog","vertex"),library.Load("VolumetricFog","fragment")};
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::VolumetricCloud)]={library.Load("VolumetricCloud","vertex"),library.Load("VolumetricCloud","fragment")};
     render::RhiSceneRenderer renderer;Check(renderer.Initialize(*device,shaders),"Renderer initialization failed");
     scene::Scene scene;
     auto *owner=scene.AddEntity(std::make_unique<scene::Entity>());
@@ -73,7 +77,65 @@ int main(int argc,char **argv) try
     const auto center=[&](const auto &pixels){return std::array{pixels[((resolution/2)*resolution+resolution/2)*4],pixels[((resolution/2)*resolution+resolution/2)*4+1],pixels[((resolution/2)*resolution+resolution/2)*4+2]};};
     ocean->SetEnabled(false);const auto dry=render();
     ocean->SetEnabled(true);const auto wet=render();Check(center(wet)!=center(dry),"Ocean absent from RHI output");
+    // Dense black fog must extinguish the water even when there is no opaque
+    // geometry behind it. Drawing the ocean after fog used to replace it.
+    render::BasicPostProcessEffect fog{render::BasicPostProcessEffectType::VolumetricFog};
+    fog.parameters[0]={0,0,0,10};
+    fog.parameters[1]={0,0,100,1};
+    fog.parameters[2]={0,0,0,1};
+    fog.parameters[3].x=1;
+    fog.quality=16;
+    atmosphere.push_back(fog);
+    const auto fogged=center(render());
+    Check(fogged[0]==std::byte{0} && fogged[1]==std::byte{0} && fogged[2]==std::byte{0},"Volumetric fog does not cover ocean");
+    atmosphere.clear();
+    // Fog concentrated below sea level must not be integrated through water.
+    fog.parameters[0].w=.01f;
+    fog.parameters[1]={10,-3,100,1};
+    for(unsigned divisor:{1u,2u,4u})
+    {
+        fog.volumetricResolutionDivisor=divisor;
+        atmosphere={fog};
+        const auto aboveWater=center(render());
+        for(int channel=0;channel<3;++channel)
+            Check(std::abs(std::to_integer<int>(aboveWater[channel])-std::to_integer<int>(center(wet)[channel]))<=2,
+                  "Fog below the ocean obscures its surface");
+        // Excluded water must leave the original scene depth available to fog.
+        ocean->AddArea({{-20,-20},{20,-20},{20,20},{-20,20}});
+        const auto masked=center(render());
+        ocean->SetEnabled(false);
+        Check(center(render())==masked,"Ocean fog depth ignores exclusion mask");
+        ocean->SetEnabled(true);ocean->RemoveArea(0);
+    }
+    atmosphere.clear();
     ocean->Update(.8f);const auto waves=render();Check(waves!=wet,"Ocean waves do not animate");
+    // Looking down through a cloud layer must composite it over the ocean,
+    // while an otherwise identical layer below the water must be occluded.
+    render::BasicPostProcessEffect cloud{render::BasicPostProcessEffectType::VolumetricCloud};
+    cloud.quality=64u | (4u<<8u);
+    cloud.parameters[0]={1,1,1,1};
+    cloud.parameters[1]={0,0,0,10};
+    cloud.parameters[2]={0,1,0,5};
+    cloud.parameters[3]={1,1,1,0};
+    cloud.parameters[4]={1,0,1,.08f};
+    cloud.parameters[5]={.18f,0,0,0};
+    for(unsigned divisor:{1u,2u,4u})
+    {
+        cloud.volumetricResolutionDivisor=divisor;
+        cloud.worldToLocal=glm::inverse(glm::scale(glm::translate(glm::mat4(1),glm::vec3(0,2.5f,0)),glm::vec3(200,2,200)));
+        atmosphere={cloud};
+        const auto above=center(render());
+        Check(std::to_integer<int>(above[0])>std::to_integer<int>(center(waves)[0])+20,
+              "Ocean hides clouds between camera and water");
+        cloud.worldToLocal=glm::inverse(glm::scale(glm::translate(glm::mat4(1),glm::vec3(0,-10,0)),glm::vec3(200,2,200)));
+        atmosphere={cloud};
+        Check(center(render())==center(waves),"Submerged cloud layer obscures ocean");
+        ocean->AddArea({{-20,-20},{20,-20},{20,20},{-20,20}});
+        const auto hole=center(render());
+        Check(std::to_integer<int>(hole[0])>200,"Ocean mask still clips cloud layer");
+        ocean->RemoveArea(0);
+    }
+    atmosphere.clear();
     ocean->AddArea({{-20,-20},{20,-20},{20,20},{-20,20}});
     Check(center(render())==center(dry),"Ocean exclusion mask ignored");
     auto properties=ocean->Serialize();
@@ -173,6 +235,11 @@ int main(int argc,char **argv) try
     lighting.physicalSkyEnabled=false;
     lighting.cameraPosition={0,-2,9};camera.view=glm::lookAt(lighting.cameraPosition,glm::vec3(0,-2,0),glm::vec3(0,1,0));
     ocean->SetEnabled(false);const auto belowDry=render();ocean->SetEnabled(true);Check(center(render())!=center(belowDry),"Underwater fading missing");
+    const auto underwaterWithoutFog=center(render());
+    fog.parameters[0].w=10;fog.parameters[1]={0,0,100,1};
+    atmosphere={fog};
+    Check(center(render())==underwaterWithoutFog,"Atmospheric fog is applied inside water");
+    atmosphere.clear();
     // A floor's color must disappear at the same water-path distance from either side.
     const auto savedCamera=camera;
     const auto savedLighting=lighting;
@@ -248,6 +315,16 @@ int main(int argc,char **argv) try
             Check(std::abs(std::to_integer<int>(actual[channel])/255.f-encoded[channel])<.008f,
                   "CPU and GPU ocean heights/slopes disagree");
     }
+    renderer.Shutdown();
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::Ocean)]={library.Load("OceanNoiseProbe","vertex"),library.Load("OceanNoiseProbe","fragment")};
+    Check(renderer.Initialize(*device,shaders),"Noise probe initialization failed");
+    const auto seams=render();
+    int largestSeam=0;
+    for(std::size_t pixel=0;pixel<seams.size();pixel+=4)
+        for(int channel=0;channel<3;++channel)
+            largestSeam=std::max(largestSeam,std::to_integer<int>(seams[pixel+channel]));
+    std::cout<<"Largest noise boundary discontinuity: "<<largestSeam<<"/255\n";
+    Check(largestSeam<=1,"Ocean/shader-graph noise has cell seams or inconsistent values");
     renderer.Shutdown();
     std::cout<<(vulkan?"Vulkan":"OpenGL")<<" ocean: surface, animation, masks, transforms, disable, depth occlusion, sun lighting, shadows, physical sky and underwater passed\n";
 }

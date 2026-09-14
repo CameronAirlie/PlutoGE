@@ -106,9 +106,16 @@ float4 integrateCloud(FullscreenVertexOutput input)
     const float depth = depthTexture.Sample(uv).r;
     if (depth > 0.000001)
     {
-        const float3 opaquePosition = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
-                                                                pass.flipY, pass.zeroToOneDepth);
-        end = min(end, max(dot(opaquePosition - pass.cameraPosition.xyz, rayDirection), 0.0));
+        // Water contributes reciprocal ray distance to the shared volumetric
+        // depth buffer. Clip clouds at that surface, not at the seabed.
+        if (pass.parameters[5].w > .5)
+            end = min(end, max(1.0/depth-1.0, 0.0));
+        else
+        {
+            const float3 opaquePosition = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                                    pass.flipY, pass.zeroToOneDepth);
+            end = min(end, max(dot(opaquePosition - pass.cameraPosition.xyz, rayDirection), 0.0));
+        }
     }
     const float start = max(hit.x, 0.0);
     if (end <= start)

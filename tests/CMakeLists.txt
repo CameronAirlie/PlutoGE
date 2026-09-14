@@ -79,6 +79,8 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
+add_test(NAME PlutoGEVulkanFogTests COMMAND PlutoGEVulkanRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)
 add_test(NAME PlutoGEVulkanSkinningTests COMMAND PlutoGEVulkanRhiTests --skinning)
 if (PLUTO_ENABLE_FSR2)

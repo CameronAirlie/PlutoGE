@@ -1,3 +1,4 @@
+#include "FogRenderingChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "RenderOptimizationChecks.h"
@@ -77,6 +78,10 @@ int main(int argc, char **argv)
         loadPostProcess(BasicPostProcessEffectType::TAA, "TAA");
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
+        shaders.volumetricTrace[0].vertex.spirv = ReadSpirv("VolumetricFogTrace.vertex.spv");
+        shaders.volumetricTrace[0].fragment.spirv = ReadSpirv("VolumetricFogTrace.fragment.spv");
+        shaders.volumetricComposite.vertex.spirv = ReadSpirv("VolumetricComposite.vertex.spv");
+        shaders.volumetricComposite.fragment.spirv = ReadSpirv("VolumetricComposite.fragment.spv");
         loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(BasicPostProcessEffectType::FXAA, "FXAA");
@@ -213,6 +218,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")
         {
             CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--fog-only")
+        {
+            CheckFogRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ssr-only")

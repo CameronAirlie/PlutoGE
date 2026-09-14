@@ -1927,16 +1927,6 @@ namespace PlutoGE::ui
             return;
         }
         const bool command = io.KeyCtrl || io.KeySuper;
-        if (command && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O))
-        {
-            if (!m_activeBakeTask && ConfirmContinueWithUnsavedChanges())
-            {
-                const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
-                if (!projectPath.empty())
-                    LoadProjectFromPath(projectPath);
-            }
-            return;
-        }
         if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             if (profilerPanel)
@@ -2438,6 +2428,10 @@ namespace PlutoGE::ui
             return false;
         }
 
+        // New projects use the live graphics host. The manifest's legacy
+        // OpenGL default would otherwise switch both viewports away from a
+        // Vulkan host without recreating its window and render device.
+        createdProject->GetManifest().graphicsApi = m_engine.GetConfig().graphicsApi;
         m_project = std::move(createdProject);
         ApplyProjectContext();
         m_project->GetManifest().editorFontSize = m_panelManager.GetEditorFontSize();
@@ -3431,6 +3425,143 @@ namespace PlutoGE::ui
                 if (ConsumeInputMappingEditorOpenRequest())
                     inputMappingEditorPanel->SetOpen(true);
 
+                const auto newProject = [&]()
+                {
+                    if (ConfirmContinueWithUnsavedChanges())
+                    {
+                        const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                        if (!projectPath.empty())
+                        {
+                            CreateProjectAtPath(projectPath);
+                        }
+                    }
+                };
+                const auto openProject = [&]()
+                {
+                    if (ConfirmContinueWithUnsavedChanges())
+                    {
+                        const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
+                        if (!projectPath.empty())
+                        {
+                            LoadProjectFromPath(projectPath);
+                        }
+                    }
+                };
+                const auto saveProject = [&]()
+                {
+                    SaveProjectToDisk();
+                };
+                const auto buildProject = [&]()
+                {
+                    const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
+                                                          ? std::string(kRuntimeExecutableName)
+                                                          : GetDefaultExportExecutablePath().string();
+                    const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+#ifdef _WIN32
+                                                                      "exe"
+#else
+                                                                      nullptr
+#endif
+                    );
+                    if (!exportPath.empty())
+                    {
+                        BuildProjectToPath(exportPath);
+                    }
+                };
+                const auto buildAndRunProject = [&]()
+                {
+                    const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
+                                                          ? std::string(kRuntimeExecutableName)
+                                                          : GetDefaultExportExecutablePath().string();
+                    const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+#ifdef _WIN32
+                                                                      "exe"
+#else
+                                                                      nullptr
+#endif
+                    );
+                    if (!exportPath.empty())
+                    {
+                        BuildAndRunProjectToPath(exportPath);
+                    }
+                };
+                const auto newScene = [&]()
+                {
+                    if (ConfirmContinueWithUnsavedChanges())
+                    {
+                        SetScene(CreateEmptyScene());
+                        m_undoStack.clear();
+                        m_redoStack.clear();
+                        MarkSceneDirty();
+                        m_statusMessage = "Created new scene";
+                        Log(ConsoleSeverity::Info, m_statusMessage);
+                    }
+                };
+                const auto openScene = [&]()
+                {
+                    const std::string filePath = ShowOpenFileDialog(kSceneFileFilter);
+                    if (!filePath.empty())
+                    {
+                        OpenSceneFromPath(filePath);
+                    }
+                };
+                const auto saveScene = [&]()
+                {
+                    if (m_scene)
+                    {
+                        std::string savePath = m_scene->GetFilePath();
+                        if (savePath.empty())
+                        {
+                            savePath = ShowSaveFileDialog(kSceneFileFilter,
+                                                          m_project ? GetDefaultProjectScenePath().string() : std::string("scene.plutoscene"),
+                                                          "plutoscene");
+                        }
+
+                        if (!savePath.empty())
+                        {
+                            SaveSceneToPath(savePath);
+                        }
+                    }
+                };
+                const auto saveSceneAs = [&]()
+                {
+                    if (m_scene)
+                    {
+                        const std::string suggestedPath = m_scene->GetFilePath().empty() ? "scene.plutoscene" : m_scene->GetFilePath();
+                        const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath, "plutoscene");
+                        if (!savePath.empty())
+                        {
+                            SaveSceneToPath(savePath);
+                        }
+                    }
+                };
+
+                // Use the same actions for menu clicks and keyboard shortcuts.
+                const ImGuiIO &fileShortcutIO = ImGui::GetIO();
+                if (!isBakeRunning && !fileShortcutIO.WantTextInput &&
+                    !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
+                    (fileShortcutIO.KeyCtrl || fileShortcutIO.KeySuper))
+                {
+                    if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N, false))
+                        newProject();
+                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
+                        openProject();
+                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                        saveProject();
+                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))
+                        buildProject();
+                    else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))
+                        buildAndRunProject();
+                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N, false))
+                        newScene();
+                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
+                        openScene();
+                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                        saveScene();
+                    else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                        saveSceneAs();
+                }
+
                 if (ImGui::BeginMenu("File"))
                 {
                     if (isBakeRunning && ImGui::MenuItem("Cancel Bake"))
@@ -3444,27 +3575,13 @@ namespace PlutoGE::ui
                     }
 
                     ImGui::BeginDisabled(isBakeRunning);
-                    if (ImGui::MenuItem("New Project..."))
+                    if (ImGui::MenuItem("New Project...", "Ctrl+N"))
                     {
-                        if (ConfirmContinueWithUnsavedChanges())
-                        {
-                            const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
-                            if (!projectPath.empty())
-                            {
-                                CreateProjectAtPath(projectPath);
-                            }
-                        }
+                        newProject();
                     }
                     if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
                     {
-                        if (ConfirmContinueWithUnsavedChanges())
-                        {
-                            const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
-                            if (!projectPath.empty())
-                            {
-                                LoadProjectFromPath(projectPath);
-                            }
-                        }
+                        openProject();
                     }
                     std::filesystem::path recentProjectToOpen;
                     if (ImGui::BeginMenu("Open Recent", !m_recentProjects.empty()))
@@ -3487,99 +3604,39 @@ namespace PlutoGE::ui
                     }
                     if (!recentProjectToOpen.empty() && ConfirmContinueWithUnsavedChanges())
                         LoadProjectFromPath(recentProjectToOpen);
-                    if (ImGui::MenuItem("Save Project", nullptr, false, m_project != nullptr))
+                    if (ImGui::MenuItem("Save Project", "Ctrl+S", false, m_project != nullptr))
                     {
-                        SaveProjectToDisk();
+                        saveProject();
                     }
                     if (ImGui::MenuItem("Project Settings...", nullptr, false, m_project != nullptr))
                     {
                         loadProjectSettingsDraft();
                         shouldOpenProjectSettingsPopup = true;
                     }
-                    if (ImGui::MenuItem("Build Project...", nullptr, false, m_project != nullptr))
+                    if (ImGui::MenuItem("Build Project...", "Ctrl+B", false, m_project != nullptr))
                     {
-                        const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
-                                                              ? std::string(kRuntimeExecutableName)
-                                                              : GetDefaultExportExecutablePath().string();
-                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
-#ifdef _WIN32
-                                                                          "exe"
-#else
-                                                                          nullptr
-#endif
-                        );
-                        if (!exportPath.empty())
-                        {
-                            BuildProjectToPath(exportPath);
-                        }
+                        buildProject();
                     }
-                    if (ImGui::MenuItem("Build and Run Project...", nullptr, false, m_project != nullptr))
+                    if (ImGui::MenuItem("Build and Run Project...", "Ctrl+Shift+B", false, m_project != nullptr))
                     {
-                        const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
-                                                              ? std::string(kRuntimeExecutableName)
-                                                              : GetDefaultExportExecutablePath().string();
-                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
-#ifdef _WIN32
-                                                                          "exe"
-#else
-                                                                          nullptr
-#endif
-                        );
-                        if (!exportPath.empty())
-                        {
-                            BuildAndRunProjectToPath(exportPath);
-                        }
+                        buildAndRunProject();
                     }
                     ImGui::Separator();
-                    if (ImGui::MenuItem("New Scene"))
+                    if (ImGui::MenuItem("New Scene", "Ctrl+Alt+N"))
                     {
-                        if (ConfirmContinueWithUnsavedChanges())
-                        {
-                            SetScene(CreateEmptyScene());
-                            m_undoStack.clear();
-                            m_redoStack.clear();
-                            MarkSceneDirty();
-                            m_statusMessage = "Created new scene";
-                            Log(ConsoleSeverity::Info, m_statusMessage);
-                        }
+                        newScene();
                     }
-                    if (ImGui::MenuItem("Open Scene..."))
+                    if (ImGui::MenuItem("Open Scene...", "Ctrl+Alt+O"))
                     {
-                        const std::string filePath = ShowOpenFileDialog(kSceneFileFilter);
-                        if (!filePath.empty())
-                        {
-                            OpenSceneFromPath(filePath);
-                        }
+                        openScene();
                     }
-                    if (ImGui::MenuItem("Save Scene"))
+                    if (ImGui::MenuItem("Save Scene", "Ctrl+Alt+S"))
                     {
-                        if (m_scene)
-                        {
-                            std::string savePath = m_scene->GetFilePath();
-                            if (savePath.empty())
-                            {
-                                savePath = ShowSaveFileDialog(kSceneFileFilter,
-                                                              m_project ? GetDefaultProjectScenePath().string() : std::string("scene.plutoscene"),
-                                                              "plutoscene");
-                            }
-
-                            if (!savePath.empty())
-                            {
-                                SaveSceneToPath(savePath);
-                            }
-                        }
+                        saveScene();
                     }
-                    if (ImGui::MenuItem("Save Scene As..."))
+                    if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S"))
                     {
-                        if (m_scene)
-                        {
-                            const std::string suggestedPath = m_scene->GetFilePath().empty() ? "scene.plutoscene" : m_scene->GetFilePath();
-                            const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath, "plutoscene");
-                            if (!savePath.empty())
-                            {
-                                SaveSceneToPath(savePath);
-                            }
-                        }
+                        saveSceneAs();
                     }
                     if (ImGui::MenuItem("Bake Scene"))
                     {

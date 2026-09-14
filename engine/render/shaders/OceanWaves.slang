@@ -35,13 +35,22 @@ OceanWaveSample sampleWaves(float2 position)
     result.crest = max(result.crest, 0.0);
     return result;
 }
+float waterNoiseHash(float2 cell)
+{
+    // Integer arithmetic gives a shared lattice corner the same value from
+    // every neighboring cell, independent of floating-point contraction.
+    uint h = uint(int(cell.x)) * 0x8da6b343u ^ uint(int(cell.y)) * 0xd8163841u;
+    h ^= h >> 16; h *= 0x7feb352du;
+    h ^= h >> 15; h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return float(h >> 8) * (1.0 / 16777216.0);
+}
 float waterNoise(float2 p)
 {
     float2 cell = floor(p), f = frac(p);
     f = f*f*(3.0-2.0*f);
-    float4 corners = float4(dot(cell,float2(127.1,311.7)), dot(cell+float2(1,0),float2(127.1,311.7)),
-                           dot(cell+float2(0,1),float2(127.1,311.7)), dot(cell+1.0,float2(127.1,311.7)));
-    float4 values = frac(sin(corners)*43758.5453);
+    float4 values = float4(waterNoiseHash(cell), waterNoiseHash(cell+float2(1,0)),
+                           waterNoiseHash(cell+float2(0,1)), waterNoiseHash(cell+1.0));
     return lerp(lerp(values.x,values.y,f.x),lerp(values.z,values.w,f.x),f.y);
 }
 float waterFoamPattern(float2 p, float time)

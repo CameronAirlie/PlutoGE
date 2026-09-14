@@ -64,6 +64,8 @@ namespace PlutoGE::render
         AmbientOcclusion,
         ScreenSpaceAtmosphere,
         WaterComposite,
+        CloudComposite,
+        FogComposite,
         TemporalResolve,
         CameraOptics,
         Exposure,
@@ -81,12 +83,14 @@ namespace PlutoGE::render
         case BasicPostProcessEffectType::SSAO:
             return BasicPostProcessStage::AmbientOcclusion;
         case BasicPostProcessEffectType::SSR:
-        case BasicPostProcessEffectType::VolumetricFog:
         case BasicPostProcessEffectType::PhysicalSky:
-        case BasicPostProcessEffectType::VolumetricCloud:
             return BasicPostProcessStage::ScreenSpaceAtmosphere;
         case BasicPostProcessEffectType::Ocean:
             return BasicPostProcessStage::WaterComposite;
+        case BasicPostProcessEffectType::VolumetricCloud:
+            return BasicPostProcessStage::CloudComposite;
+        case BasicPostProcessEffectType::VolumetricFog:
+            return BasicPostProcessStage::FogComposite;
         case BasicPostProcessEffectType::TAA:
             return BasicPostProcessStage::TemporalResolve;
         case BasicPostProcessEffectType::MotionBlur:
@@ -467,7 +471,7 @@ namespace PlutoGE::render
             std::size_t bufferIndex, std::size_t &targetIndex);
         [[nodiscard]] rhi::TextureHandle CompositeVolumetric(rhi::TextureHandle source,
             rhi::TextureHandle trace, std::uint32_t traceWidth, std::uint32_t traceHeight,
-            rhi::ICommandContext &commands, std::size_t &targetIndex);
+            rhi::ICommandContext &commands, std::size_t &targetIndex, rhi::TextureHandle oceanVolumeDepth = {});
         [[nodiscard]] rhi::TextureHandle RenderBloom(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect);
         [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,

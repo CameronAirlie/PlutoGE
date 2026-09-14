@@ -2026,6 +2026,10 @@ namespace PlutoGE::render
         m_postProcessWidth = m_width;
         m_postProcessHeight = m_height;
         std::size_t targetIndex = 0;
+        rhi::TextureHandle oceanVolumeDepth{};
+        const bool needsOceanVolumeDepth = std::any_of(postProcessEffects.begin(), postProcessEffects.end(), [](const auto &effect)
+            { return effect.type == BasicPostProcessEffectType::VolumetricFog ||
+                     effect.type == BasicPostProcessEffectType::VolumetricCloud; });
         bool transparencyPending = !transparentDraws.empty();
         const auto renderTransparency = [&]()
         {
@@ -2282,6 +2286,11 @@ namespace PlutoGE::render
             if (!pipeline)
                 continue;
             auto effectParameters = effect.parameters;
+            const auto volumeDepth = volumetric ? oceanVolumeDepth : rhi::TextureHandle{};
+            if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                effectParameters[4].x = volumeDepth ? 1.0f : 0.0f;
+            if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
+                effectParameters[5].w = volumeDepth ? 1.0f : 0.0f;
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
@@ -2370,48 +2379,67 @@ namespace PlutoGE::render
                 m_device->UpdateBuffer(oceanBuffer, 0, Bytes(*effect.ocean));
             }
             rhi::RenderingInfo postInfo;
-            postInfo.colorAttachments = {destination->Get()};
-            postInfo.width = passWidth;
-            postInfo.height = passHeight;
-            postInfo.clearDepth = false;
-            commands.BeginRendering(postInfo);
-            commands.BindPipeline(pipeline);
-            commands.BindUniformBuffer(0, parameterBuffer.Get());
-            if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
-            commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
-            const auto inputs = InputsFor(effect.type);
-            if (HasInput(inputs, BasicPostProcessInput::Depth))
-                commands.BindTexture(2, m_depthTarget.Get(), reducedVolume ? m_shadowSampler.Get() : m_screenSampler.Get());
-            if (HasInput(inputs, BasicPostProcessInput::Normal))
-                commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-            if (HasInput(inputs, BasicPostProcessInput::Material))
-                commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
-            if (HasInput(inputs, BasicPostProcessInput::Albedo))
-                commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
-            if (HasInput(inputs, BasicPostProcessInput::Motion))
-                commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
-            if (HasInput(inputs, BasicPostProcessInput::History))
-                commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
-                                     m_screenSampler.Get());
-            if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
+            const auto colorDestination = destination->Get();
+            auto drawParameterBuffer = parameterBuffer.Get();
+            // Keep opaque depth intact for refraction and other scene effects.
+            // Reuse the ocean intersection in a depth-only draw for fog/clouds,
+            // accumulating the nearest surface across all enabled oceans.
+            const bool writeOceanDepth = effect.type == BasicPostProcessEffectType::Ocean && needsOceanVolumeDepth;
+            const auto depthDestination = writeOceanDepth
+                ? AcquirePostProcessTarget(targetIndex++, passWidth, passHeight).Get() : rhi::TextureHandle{};
+            for (int drawPass = 0; drawPass < (writeOceanDepth ? 2 : 1); ++drawPass)
             {
-                commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
-                commands.BindTexture(13, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                commands.BindTexture(14, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
-                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
-                const auto fallbackShadow = m_fallbackDataTexture.Get();
-                for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
-                    commands.BindTexture(8 + cascade,
-                                         m_shadowDepthTargets[cascade]
-                                             ? m_shadowDepthTargets[cascade].Get()
-                                             : fallbackShadow,
-                                         m_shadowSampler.Get());
+                if (drawPass == 1)
+                {
+                    parameters.parameters[4] = {1, oceanVolumeDepth ? 1.0f : 0.0f, 0, 0};
+                    auto &depthBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
+                    m_device->UpdateBuffer(depthBuffer.Get(), 0, Bytes(parameters));
+                    drawParameterBuffer = depthBuffer.Get();
+                }
+                postInfo.colorAttachments = {drawPass == 0 ? colorDestination : depthDestination};
+                postInfo.width = passWidth;
+                postInfo.height = passHeight;
+                postInfo.clearDepth = false;
+                commands.BeginRendering(postInfo);
+                commands.BindPipeline(pipeline);
+                commands.BindUniformBuffer(0, drawParameterBuffer);
+                if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
+                commands.BindTexture(1, drawPass == 1 && oceanVolumeDepth ? oceanVolumeDepth : m_outputColor, m_screenSampler.Get());
+                const auto inputs = InputsFor(effect.type);
+                if (HasInput(inputs, BasicPostProcessInput::Depth))
+                    commands.BindTexture(2, volumeDepth ? volumeDepth : m_depthTarget.Get(), reducedVolume || volumeDepth ? m_shadowSampler.Get() : m_screenSampler.Get());
+                if (HasInput(inputs, BasicPostProcessInput::Normal))
+                    commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+                if (HasInput(inputs, BasicPostProcessInput::Material))
+                    commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+                if (HasInput(inputs, BasicPostProcessInput::Albedo))
+                    commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
+                if (HasInput(inputs, BasicPostProcessInput::Motion))
+                    commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
+                if (HasInput(inputs, BasicPostProcessInput::History))
+                    commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
+                                         m_screenSampler.Get());
+                if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
+                {
+                    commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
+                    commands.BindTexture(13, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                    commands.BindTexture(14, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                    commands.BindUniformBuffer(7, m_cameraBuffer.Get());
+                    const auto fallbackShadow = m_fallbackDataTexture.Get();
+                    for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+                        commands.BindTexture(8 + cascade,
+                                             m_shadowDepthTargets[cascade]
+                                                 ? m_shadowDepthTargets[cascade].Get()
+                                                 : fallbackShadow,
+                                             m_shadowSampler.Get());
+                }
+                commands.Draw(3);
+                commands.EndRendering();
             }
-            commands.Draw(3);
-            commands.EndRendering();
+            if (writeOceanDepth) oceanVolumeDepth = depthDestination;
             m_outputColor = reducedVolume
-                ? CompositeVolumetric(m_outputColor, destination->Get(), passWidth, passHeight, commands, targetIndex)
-                : destination->Get();
+                ? CompositeVolumetric(m_outputColor, colorDestination, passWidth, passHeight, commands, targetIndex, volumeDepth)
+                : colorDestination;
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
                 m_taaHistoryIndex = 1u - m_taaHistoryIndex;
@@ -2538,7 +2566,7 @@ namespace PlutoGE::render
 
     rhi::TextureHandle BasicRenderer::CompositeVolumetric(rhi::TextureHandle source,
         rhi::TextureHandle trace, std::uint32_t traceWidth, std::uint32_t traceHeight,
-        rhi::ICommandContext &commands, std::size_t &targetIndex)
+        rhi::ICommandContext &commands, std::size_t &targetIndex, rhi::TextureHandle oceanVolumeDepth)
     {
         BasicPostProcessParameters parameters;
         parameters.flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
@@ -2546,6 +2574,7 @@ namespace PlutoGE::render
         parameters.inverseViewProjection = m_inverseViewProjection;
         parameters.view = m_postProcessView;
         parameters.parameters[5] = {static_cast<float>(traceWidth), static_cast<float>(traceHeight), 0, 0};
+        parameters.parameters[4].x = oceanVolumeDepth ? 1.0f : 0.0f;
         auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
         const auto destination = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth, m_postProcessHeight).Get();
@@ -2558,7 +2587,7 @@ namespace PlutoGE::render
         commands.BindPipeline(m_volumetricCompositePipeline.Get());
         commands.BindUniformBuffer(0, buffer.Get());
         commands.BindTexture(1, source, m_screenSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+        commands.BindTexture(2, oceanVolumeDepth ? oceanVolumeDepth : m_depthTarget.Get(), m_shadowSampler.Get());
         commands.BindTexture(6, trace, m_shadowSampler.Get());
         commands.Draw(3);
         commands.EndRendering();

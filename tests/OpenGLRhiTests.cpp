@@ -1,3 +1,4 @@
+#include "FogRenderingChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -182,6 +183,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::TAA, "TAA");
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
+        shaders.volumetricTrace[0].vertex.glsl = ReadText("VolumetricFogTrace.vertex.glsl");
+        shaders.volumetricTrace[0].fragment.glsl = ReadText("VolumetricFogTrace.fragment.glsl");
+        shaders.volumetricComposite.vertex.glsl = ReadText("VolumetricComposite.vertex.glsl");
+        shaders.volumetricComposite.fragment.glsl = ReadText("VolumetricComposite.fragment.glsl");
         loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");
         loadPostProcess(render::BasicPostProcessEffectType::GammaCorrection, "GammaCorrection");
         loadPostProcess(render::BasicPostProcessEffectType::FXAA, "FXAA");
@@ -336,6 +341,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string(argv[1]) == "--vsm-only")
         {
             CheckVsmOnlyRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--fog-only")
+        {
+            CheckFogRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));

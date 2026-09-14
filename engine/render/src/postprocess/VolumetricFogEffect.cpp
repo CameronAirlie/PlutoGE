@@ -381,10 +381,17 @@ namespace PlutoGE::render
                 return (uInverseViewMatrix * vec4(viewPosition.xyz, 1.0)).xyz;
             }
 
-            float ComputeDensity(vec3 worldPosition)
+            float ComputeOpticalDepth(vec3 startPosition, vec3 rayDirection, float stepLength)
             {
-                float heightTerm = exp(-(worldPosition.y - uHeightOffset) * uHeightFalloff);
-                return max(uFogDensity * heightTerm, 0.0);
+                float falloff = max(uHeightFalloff, 0.0);
+                float span = abs(falloff * rayDirection.y * stepLength);
+                float average = span < 0.001
+                    ? 1.0 - span * 0.5 + span * span / 6.0
+                    : (1.0 - exp(-span)) / span;
+                float denseHeight = min(startPosition.y, startPosition.y + rayDirection.y * stepLength);
+                float logDepth = log(max(uFogDensity, 1e-30)) + log(stepLength) +
+                    log(average) - falloff * (denseHeight - uHeightOffset);
+                return exp(clamp(logDepth, -80.0, 80.0));
             }
 
             float ComputePhase(float cosTheta)
@@ -571,14 +578,12 @@ namespace PlutoGE::render
                     // world-space interval. This costs no additional density
                     // or shadow samples and TAA integrates the changing pattern.
                     float cellJitter = fract(rayJitter + float(stepIndex) * 0.61803398875);
-                    // Extinction controls the stable body of the fog, so keep
-                    // it at the cell midpoint. Only decorrelate the shadow
-                    // query that causes visible banding.
-                    float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+                    // Integrate height density across the complete segment so
+                    // long rays cannot skip a thin fog layer near the camera.
+                    float sampleDistance = float(stepIndex) * stepLength;
                     vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
                     float sampleViewDepth = viewDepthScale * sampleDistance;
-                    float density = ComputeDensity(samplePosition);
-                    float extinction = max(density * stepLength, 0.0);
+                    float extinction = ComputeOpticalDepth(samplePosition, rayDirection, stepLength);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
                     // Shadow lookups dominate this ray march. Adjacent samples
@@ -623,11 +628,7 @@ namespace PlutoGE::render
                 }
 
                 vec3 fogRadiance = accumulatedLight / max(totalFog, 0.0001);
-                // Max Opacity is an artistic cap for finite scene surfaces.
-                // Applying it to HDR sky pixels guarantees a persistent clear
-                // sky contribution which tone mapping and bloom amplify. Sky
-                // must retain the march's actual transmittance instead.
-                float fogFactor = isSky ? totalFog : min(totalFog, uMaxOpacity);
+                float fogFactor = min(totalFog, clamp(uMaxOpacity, 0.0, 1.0));
                 FragColor = vec4(fogRadiance, fogFactor);
             }
         )";

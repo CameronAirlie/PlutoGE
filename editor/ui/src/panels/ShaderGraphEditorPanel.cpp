@@ -6,6 +6,7 @@
 #include "PlutoGE/ui/GraphEditorPanelUtils.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/NoiseHash.h"
 
 #include <algorithm>
 #include <array>
@@ -381,8 +382,7 @@ namespace PlutoGE::ui
 
         float PreviewHash(float x, float y)
         {
-            const float value = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
-            return value - floorf(value);
+            return render::NoiseHash(x, y);
         }
 
         float PreviewShaderNoise(const glm::vec2 &value)

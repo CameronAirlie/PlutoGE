@@ -1,4 +1,5 @@
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/NoiseHash.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include <algorithm>
@@ -15,7 +16,7 @@ namespace PlutoGE::render
         std::array<glm::vec4,64> r{};
         const auto noise=[](glm::vec2 p) {
             const glm::vec2 cell=glm::floor(p), local=glm::fract(p), t=local*local*(3.0f-2.0f*local);
-            const auto hash=[](glm::vec2 v){return glm::fract(std::sin(glm::dot(v,glm::vec2(127.1f,311.7f)))*43758.5453123f);};
+            const auto hash=[](glm::vec2 v){return NoiseHash(v.x, v.y);};
             return glm::mix(glm::mix(hash(cell),hash(cell+glm::vec2(1,0)),t.x),
                 glm::mix(hash(cell+glm::vec2(0,1)),hash(cell+glm::vec2(1)),t.x),t.y);
         };

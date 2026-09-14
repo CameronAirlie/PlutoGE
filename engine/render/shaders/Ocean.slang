@@ -72,10 +72,17 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 ray = mul(pass.worldToLocal, float4(worldRay, 0)).xyz;
     float3 scenePosition = reconstructWorldPosition(uv, max(depth, 0.0000001), pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
     float sceneDistance = depth <= 0.0000001 ? 100000.0 : max(dot(scenePosition - pass.cameraPosition.xyz, worldRay), 0.0);
+    // Fog-only depth pass: reciprocal ray distance retains useful precision in
+    // an HDR target. Zero denotes sky; one stops atmospheric fog at the camera.
+    bool fogDepthPass = pass.parameters[4].x > .5;
+    if (fogDepthPass)
+        original = float4(max(pass.parameters[4].y > .5 ? original.r : 0.0,
+                              depth > .0000001 ? 1.0/(1.0+sceneDistance) : 0.0), 0, 0, 1);
     float visibility = max(foamVisibility.w, .01);
     float cameraHeight = sampleWaves(origin.xz).height;
     if (origin.y < cameraHeight && waterAt(origin.xz))
     {
+        if (fogDepthPass) return float4(1, 0, 0, 1);
         float path = sceneDistance;
         if (ray.y > .000001) path = min(path, (cameraHeight-origin.y) / ray.y);
         float ratio = path / visibility;
@@ -117,6 +124,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 localHit = origin + ray * distance;
     wave = sampleWaves(localHit.xz);
     if (abs(localHit.y-wave.height*oceanDisplacementLod(distance)*damping) > .02 || !waterAt(localHit.xz)) return original;
+    if (fogDepthPass) return float4(max(original.r, 1.0/(1.0+distance)), 0, 0, 1);
     float dx = wave.gradient.x*damping, dz = wave.gradient.y*damping;
     // Small wind ripples enrich close reflections and fade before becoming subpixel noise.
     float rippleFade = (1.0-smoothstep(20.0, 100.0, distance)) * saturate(abs(waves.x)*5.0);

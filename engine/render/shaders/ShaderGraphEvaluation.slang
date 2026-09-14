@@ -9,14 +9,24 @@ struct ShaderGraphData
     int4 instructions[64];
     float4 values[64];
 };
+float shaderGraphNoiseHash(float2 cell)
+{
+    // Match waterNoiseHash and NoiseHash.h; floating sine hashes can develop
+    // cell seams when the backend contracts/reassociates corner arithmetic.
+    uint h = uint(int(cell.x)) * 0x8da6b343u ^ uint(int(cell.y)) * 0xd8163841u;
+    h ^= h >> 16; h *= 0x7feb352du;
+    h ^= h >> 15; h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return float(h >> 8) * (1.0 / 16777216.0);
+}
 float shaderGraphNoise(float2 p)
 {
     float2 cell=floor(p), local=frac(p);
     float2 t=local*local*(3.0-2.0*local);
-    float a=frac(sin(dot(cell,float2(127.1,311.7)))*43758.5453123);
-    float b=frac(sin(dot(cell+float2(1,0),float2(127.1,311.7)))*43758.5453123);
-    float c=frac(sin(dot(cell+float2(0,1),float2(127.1,311.7)))*43758.5453123);
-    float d=frac(sin(dot(cell+float2(1,1),float2(127.1,311.7)))*43758.5453123);
+    float a=shaderGraphNoiseHash(cell);
+    float b=shaderGraphNoiseHash(cell+float2(1,0));
+    float c=shaderGraphNoiseHash(cell+float2(0,1));
+    float d=shaderGraphNoiseHash(cell+float2(1,1));
     return lerp(lerp(a,b,t.x),lerp(c,d,t.x),t.y);
 }
 float4 shaderGraphSafeDivisor(float4 v)

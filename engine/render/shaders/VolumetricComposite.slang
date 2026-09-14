@@ -12,6 +12,7 @@ FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVert
 
 float viewDistance(float2 uv, float depth)
 {
+    if (pass.parameters[4].x > .5) return max(1.0/max(depth, .000001)-1.0, 0.0);
     return abs(mul(pass.view, float4(reconstructWorldPosition(uv, depth,
         pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth), 1)).z);
 }

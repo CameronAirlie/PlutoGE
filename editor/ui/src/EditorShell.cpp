@@ -3352,6 +3352,12 @@ namespace PlutoGE::ui
             core::CpuScope uiScope("Editor.UI", core::CpuCategory::UI);
             const auto editorUiStart = beginFrameEnd;
 
+            // Reserve controller input for the game throughout play mode, even
+            // when an editor window has focus or the cursor is unlocked.
+            if (m_engine.IsRuntimeRunning())
+                ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+            else
+                ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
             m_panelManager.BeginPanelUpdate();
             const auto editorChromeStart = std::chrono::high_resolution_clock::now();
 

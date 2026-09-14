@@ -173,6 +173,43 @@ int main(int argc,char **argv) try
             std::cout << "Ocean fog altitude difference (divisor " << divisor << "): " << maximumDifference << '\n';
             Check(maximumDifference <= 3, "Ocean fog develops altitude-dependent depth quantization bands");
         }
+        // An elevated horizontal view straddles the flat height layer. Haze
+        // must join both sides without washing out the upper sky.
+        camera.view = glm::lookAt(lighting.cameraPosition,
+            lighting.cameraPosition + glm::vec3(0,0,-1), glm::vec3(0,1,0));
+        lighting.directionalIntensity=4;
+        altitudeFog.parameters[2].z=6;
+        altitudeFog.parameters[2].w=.92f; // Existing artistic fog caps must not retain the seam.
+        atmosphere = {sky, altitudeFog};
+        const auto hardHorizon = render();
+        capture("horizon-before", hardHorizon);
+        const auto horizonJump = [&](const auto &pixels)
+        {
+            int jump=0;
+            for (int x=resolution/4;x<resolution*3/4;++x)
+                for (int c=0;c<3;++c)
+                    jump=std::max(jump,std::abs(int(pixels[((resolution/2-1)*resolution+x)*4+c])-
+                                               int(pixels[((resolution/2)*resolution+x)*4+c])));
+            return jump;
+        };
+        Check(horizonJump(hardHorizon)>20,"Horizon regression did not reproduce the height-fog discontinuity");
+        for (unsigned divisor : {1u,2u,4u})
+        {
+            altitudeFog.volumetricResolutionDivisor=divisor;
+            altitudeFog.parameters[3]={1,1,4,2000};
+            atmosphere={sky,altitudeFog};
+            const auto softened=render();
+            std::cout<<"Haze horizon jump (divisor "<<divisor<<"): "<<horizonJump(softened)<<'\n';
+            Check(horizonJump(softened)<=3,"Horizon haze leaves a visible sky/ocean seam");
+            // Preserve the upper sky away from the band. Distant water below
+            // the horizon deliberately receives blue aerial perspective.
+            for(int x=resolution/4;x<resolution*3/4;++x)
+                for(int y : {resolution/8,resolution*7/8})
+                    if(int(hardHorizon[(y*resolution+x)*4])<200)
+                    Check(std::abs(int(softened[(y*resolution+x)*4])-int(hardHorizon[(y*resolution+x)*4]))<=3,
+                          "Horizon haze washes out sky away from the horizon");
+            if(divisor==2)capture("horizon-after",softened);
+        }
         ocean->Deserialize(savedOcean);
         camera = savedCamera;
         lighting = savedLighting;

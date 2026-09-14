@@ -472,7 +472,7 @@ float dielectricFresnel(float cosine, float ior)
 // background fog, so transmission must preserve its existing in-scattering.
 float4 glassAtmosphere(float3 worldPosition)
 {
-    if (glassFog[0].w <= 0.0) return float4(0, 0, 0, 1);
+    if (glassFog[0].w <= 0.0 && glassFog[3].y <= 0.0) return float4(0, 0, 0, 1);
     const float3 ray = worldPosition - cameraPositionAmbient.xyz;
     const float distance = length(ray);
     const float3 direction = ray / max(distance, 0.0001);
@@ -527,7 +527,18 @@ float4 glassAtmosphere(float3 worldPosition)
     radiance += transmittance * (1.0 - tailTransmittance) * (ambientLight + sunlight);
     transmittance *= tailTransmittance;
     const float opacity = min(1.0 - transmittance, saturate(glassFog[2].w));
-    return float4(radiance * opacity / max(1.0 - transmittance, 0.0001), 1.0 - opacity);
+    radiance *= opacity / max(1.0 - transmittance, 0.0001);
+    transmittance = 1.0 - opacity;
+    if (glassFog[3].y > 0.0)
+    {
+        const float hazeTransmittance = horizonHazeTransmittance(direction.y, distance, false,
+            glassFog[3].y, glassFog[3].z, glassFog[3].w);
+        const float3 hazeLighting = horizonHazeLighting(direction, cameraPositionAmbient.w,
+            directionalColor.rgb * max(directionalDirectionIntensity.w, 0.0), glassFog[3].z);
+        radiance = radiance * hazeTransmittance + hazeLighting * (1.0 - hazeTransmittance);
+        transmittance *= hazeTransmittance;
+    }
+    return float4(radiance, transmittance);
 }
 #endif
 

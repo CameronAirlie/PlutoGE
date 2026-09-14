@@ -58,6 +58,14 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     };
     draw.model = glm::translate(glm::mat4(1), glm::vec3(0,0,-2));
     expect(sample(true), std::exp(-.1f), "Near fog extinction");
+    fog.parameters[3] = {1,1,4,2000};
+    expect(sample(true), std::exp(-.1f), "Horizon haze must preserve nearby surfaces");
+    fog.parameters[0].w = 0;
+    lighting.ambientIntensity = 1;
+    expect(sample(false), .65f, "Horizon haze must work independently of height-fog density");
+    fog.parameters[0].w = .05f;
+    lighting.ambientIntensity = 0;
+    fog.parameters[3] = {1,0,0,0};
     draw.model = glm::translate(glm::mat4(1), glm::vec3(0,0,-20));
     expect(sample(true), std::exp(-1.f), "Distant fog extinction");
     for (float detailDistance : {.25f, 2.f, 10.f, 40.f})

@@ -32,13 +32,14 @@ namespace PlutoGE::render
             float anisotropy, ambientContribution, directionalContribution, maxOpacity;
             int stepCount, shadowStepStride;
             bool halfResolution;
+            float horizonHaze, hazeWidth, hazeDistance;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_fogColor, m_density, m_heightFalloff, m_heightOffset, m_shadowDetailDistance,
                     m_scattering, m_anisotropy, m_ambientContribution,
                     m_directionalContribution, m_maxOpacity, m_stepCount,
-                    m_shadowStepStride, m_halfResolution};
+                    m_shadowStepStride, m_halfResolution, m_horizonHaze, m_hazeWidth, m_hazeDistance};
         }
 
     private:
@@ -68,6 +69,9 @@ namespace PlutoGE::render
         float m_ambientContribution = 1.0f;
         float m_directionalContribution = 6.0f;
         float m_maxOpacity = 1.0f;
+        float m_horizonHaze = 1.0f;
+        float m_hazeWidth = 4.0f;
+        float m_hazeDistance = 2000.0f;
         int m_stepCount = 16;
         int m_shadowStepStride = 2;
         int m_internalWidth = 0;

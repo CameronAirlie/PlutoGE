@@ -211,6 +211,9 @@ int main()
         ssrPacket->type != BasicPostProcessEffectType::SSR ||
         fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
         !Near(fogPacket->parameters[3].x, 2.0f) ||
+        !Near(fogPacket->parameters[3].y, 1.0f) ||
+        !Near(fogPacket->parameters[3].z, 4.0f) ||
+        !Near(fogPacket->parameters[3].w, 2000.0f) ||
         !Near(fogPacket->parameters[1].z, 24.0f) ||
         !Near(fogPacket->parameters[2].w, 1.0f) ||
         compositePacket->type != BasicPostProcessEffectType::SceneComposite)

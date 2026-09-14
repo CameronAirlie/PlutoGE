@@ -177,7 +177,7 @@ float4 integrateFog(FullscreenVertexOutput input)
         detailDistance = min(detailDistance, max(fogShadowCascadeSplits[count - 1], 0.001) / viewScale);
     }
     const float marchDistance = sky ? detailDistance : min(surfaceDistance, detailDistance);
-    if ((!sky && surfaceDistance <= 0.0001) || pass.parameters[0].w <= 0.0)
+    if ((!sky && surfaceDistance <= 0.0001) || (pass.parameters[0].w <= 0.0 && pass.parameters[3].y <= 0.0))
         return float4(0, 0, 0, 1);
 
     const int stepCount = clamp((int)pass.quality, 1, 64);
@@ -243,8 +243,19 @@ float4 integrateFog(FullscreenVertexOutput input)
 
     const float integratedOpacity = saturate(1.0 - transmittance);
     const float opacity = min(integratedOpacity, saturate(pass.parameters[2].w));
-    const float3 fogRadiance = accumulatedLight / max(integratedOpacity, 0.0001);
-    return float4(fogRadiance * opacity, 1.0 - opacity);
+    accumulatedLight *= opacity / max(integratedOpacity, 0.0001);
+    transmittance = 1.0 - opacity;
+    // The height-fog artistic opacity cap does not limit the separate haze.
+    if (pass.parameters[3].y > 0.0)
+    {
+        const float hazeTransmittance = horizonHazeTransmittance(rayDirection.y, surfaceDistance, sky,
+            pass.parameters[3].y, pass.parameters[3].z, pass.parameters[3].w);
+        const float3 hazeLighting = horizonHazeLighting(rayDirection, fogCameraPositionAmbient.w,
+            fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), pass.parameters[3].z);
+        accumulatedLight = accumulatedLight * hazeTransmittance + hazeLighting * (1.0 - hazeTransmittance);
+        transmittance *= hazeTransmittance;
+    }
+    return float4(accumulatedLight, transmittance);
 }
 
 [shader("fragment")]

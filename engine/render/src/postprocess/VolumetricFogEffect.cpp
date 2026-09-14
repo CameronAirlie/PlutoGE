@@ -174,6 +174,9 @@ namespace PlutoGE::render
                 .type = PostProcessParameterType::Float,
                 .value = std::to_string(m_directionalContribution),
             },
+            PostProcessParameter{.name = "Horizon Haze", .type = PostProcessParameterType::Float, .value = std::to_string(m_horizonHaze)},
+            PostProcessParameter{.name = "Haze Width", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeWidth)},
+            PostProcessParameter{.name = "Haze Distance", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeDistance)},
             PostProcessParameter{
                 .name = "Max Opacity",
                 .type = PostProcessParameterType::Float,
@@ -233,6 +236,12 @@ namespace PlutoGE::render
             {
                 m_shadowDetailDistance = std::max(std::stof(parameter.value), 0.1f);
             }
+            else if (parameter.name == "Horizon Haze")
+                m_horizonHaze = std::clamp(std::stof(parameter.value), 0.0f, 4.0f);
+            else if (parameter.name == "Haze Width")
+                m_hazeWidth = std::clamp(std::stof(parameter.value), 0.1f, 45.0f);
+            else if (parameter.name == "Haze Distance")
+                m_hazeDistance = std::clamp(std::stof(parameter.value), 1.0f, 1000000.0f);
             else if (parameter.name == "Scattering")
             {
                 m_scattering = glm::clamp(std::stof(parameter.value), 0.0f, 2.0f);
@@ -338,6 +347,7 @@ namespace PlutoGE::render
             uniform float uAmbientContribution;
             uniform float uDirectionalContribution;
             uniform float uMaxOpacity;
+            uniform vec3 uHorizonHaze;
             uniform float uShadowSoftness;
             uniform float uCascadeBlendDistance;
             uniform int uStepCount;
@@ -501,6 +511,8 @@ namespace PlutoGE::render
                 return shadow;
             }
 
+        )";
+        source.fragmentSource += R"(
             void main()
             {
                 if (texture(uOceanStateTexture, vec2(0.5)).r > 0.5)
@@ -525,7 +537,7 @@ namespace PlutoGE::render
                     hitDistance = distance(surfacePosition, uCameraPosition);
                 }
 
-                if (hitDistance <= 0.0001 || uFogDensity <= 0.0 || uStepCount <= 0)
+                if (hitDistance <= 0.0001 || (uFogDensity <= 0.0 && uHorizonHaze.x <= 0.0) || uStepCount <= 0)
                 {
                     FragColor = vec4(0.0);
                     return;
@@ -611,6 +623,14 @@ namespace PlutoGE::render
                 accumulatedLight += transmittance * (1.0 - tailTransmittance) * tailLighting;
                 transmittance *= tailTransmittance;
 
+                float heightOpacity = min(1.0 - transmittance, clamp(uMaxOpacity, 0.0, 1.0));
+                accumulatedLight *= heightOpacity / max(1.0 - transmittance, 0.0001);
+                transmittance = 1.0 - heightOpacity;
+                float hazeTransmission = horizonHazeTransmittance(rayDirection.y, hitDistance, isSky,
+                    uHorizonHaze.x, uHorizonHaze.y, uHorizonHaze.z);
+                vec3 hazeColor = ambientFogColor * vec3(0.65, 0.8, 1.0);
+                accumulatedLight = accumulatedLight * hazeTransmission + hazeColor * (1.0 - hazeTransmission);
+                transmittance *= hazeTransmission;
                 float totalFog = Saturate(1.0 - transmittance);
                 if (totalFog <= 0.0001)
                 {
@@ -619,7 +639,7 @@ namespace PlutoGE::render
                 }
 
                 vec3 fogRadiance = accumulatedLight / max(totalFog, 0.0001);
-                float fogFactor = min(totalFog, clamp(uMaxOpacity, 0.0, 1.0));
+                float fogFactor = totalFog;
                 FragColor = vec4(fogRadiance, fogFactor);
             }
         )";
@@ -984,6 +1004,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uAmbientContribution", m_ambientContribution);
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
+        m_shader->SetUniform("uHorizonHaze", glm::vec3(m_horizonHaze, m_hazeWidth, m_hazeDistance));
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uShadowStepStride", std::clamp(m_shadowStepStride, kMinShadowStepStride, kMaxShadowStepStride));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);

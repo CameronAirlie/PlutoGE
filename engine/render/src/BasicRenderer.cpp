@@ -1877,7 +1877,7 @@ namespace PlutoGE::render
                 for (const auto &effect : postProcessEffects)
                     if (effect.type == BasicPostProcessEffectType::VolumetricFog)
                     {
-                        std::copy_n(effect.parameters.begin(), 3, materialParameters.glassFog.begin());
+                        std::copy_n(effect.parameters.begin(), 4, materialParameters.glassFog.begin());
                         materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
                         break;
                     }

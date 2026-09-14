@@ -35,4 +35,17 @@ float fogShadowWeight(float distance, float detailDistance)
     // Fade to the distant lighting model over the final fifth of coverage.
     return 1.0 - smoothstep(detailDistance * 0.8, detailDistance, distance);
 }
+// Artistic aerial perspective for a flat world. Unlike the local height layer,
+// this broad angular band joins the sky to aerial perspective below the horizon.
+// Smooth distance onset protects nearby silhouettes; width is in degrees.
+float horizonHazeTransmittance(float directionY, float distance, bool sky,
+                               float strength, float widthDegrees, float onsetDistance)
+{
+    if (strength <= 0.0) return 1.0;
+    float width = sin(clamp(widthDegrees, 0.1, 45.0) * 0.01745329252);
+    float elevation = max(directionY, 0.0) / width;
+    float angularDensity = exp(-0.5 * elevation * elevation);
+    float distanceWeight = sky ? 1.0 : smoothstep(0.0, max(onsetDistance, 1.0), distance);
+    return exp(-8.0 * strength * angularDensity * distanceWeight);
+}
 #endif

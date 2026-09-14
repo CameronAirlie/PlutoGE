@@ -108,6 +108,13 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const auto fogGlass = render(clearDraws, fogEffects);
     for (int c=0;c<3;++c)
         require(std::abs(fogGlass[c]-fogReference[c]) <= 3, "Clear glass applied background fog twice");
+    auto hazeEffect = fogEffect;
+    hazeEffect.parameters[3] = {1,1,4,1};
+    const std::array hazeEffects{hazeEffect};
+    const auto hazeReference = render(std::span(&background,1), hazeEffects);
+    const auto hazeGlass = render(clearDraws, hazeEffects);
+    for (int c=0;c<3;++c)
+        require(std::abs(hazeGlass[c]-hazeReference[c]) <= 3, "Clear glass applied horizon haze twice");
     auto glowingPane = pane;
     glowingPane.transmission = 0;
     glowingPane.emission = {.8f,.8f,.8f};

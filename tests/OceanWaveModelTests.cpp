@@ -69,6 +69,16 @@ int main() try
     OceanComponent styled;
     styled.Deserialize(ocean.Serialize());
     Check(styled.GetCrestColor()==ocean.GetCrestColor() && styled.GetStylization()==1,"Stylization did not round-trip");
+    OceanComponent harbour;
+    harbour.AddArea({{0,0},{1,0},{0,1}});
+    const float oldVisibility=harbour.GetMaxVisibilityDepth();
+    harbour.ApplyHarbourPreset();
+    Check(harbour.GetWaveAmplitude()<.5f && harbour.GetStylization()<.2f && harbour.GetCrestFoamIntensity()<.1f,
+          "Harbour preset does not reduce swells, crest coloring and whitecaps");
+    Check(harbour.GetAreas().size()==1 && harbour.GetMaxVisibilityDepth()==oldVisibility,"Harbour preset changes masks or visibility");
+    OceanComponent harbourRestored;harbourRestored.Deserialize(harbour.Serialize());
+    Check(harbourRestored.GetReflectionStrength()==harbour.GetReflectionStrength() &&
+          harbourRestored.GetContactDamping()==harbour.GetContactDamping(),"Harbour controls do not serialize");
     ocean.Deserialize({{"WindSea",PropertyType::Float,"0.8"}});
     OceanComponent restored;
     restored.Deserialize(ocean.Serialize());

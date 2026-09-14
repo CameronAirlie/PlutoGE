@@ -5,6 +5,7 @@
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
+[[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
 [[vk::binding(15, 0)]] cbuffer Ocean : register(b15, space0)
 {
     column_major float4x4 localToWorld;
@@ -15,8 +16,10 @@
     float4 points[256];
     float4 waveShape[8], waveMotion[8];
     float4 crestFoam, detail, flow;
+    float4 reflections, contact;
 };
 #include "OceanWaves.slang"
+#include "OceanSceneEffects.slang"
 [shader("vertex")]
 FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
@@ -94,12 +97,15 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float upper = min(sceneDistance, (-bound-origin.y)/ray.y);
     if (upper <= lower) return original;
     float distance = clamp(-origin.y/ray.y, lower, upper);
+    float3 flatWorld = pass.cameraPosition.xyz+worldRay*distance;
+    float wallContact = oceanWallContact(flatWorld);
+    float damping = 1.0-wallContact*contact.y*.9;
     OceanWaveSample wave;
     for (int iteration = 0; iteration < 10; ++iteration)
     {
         float3 hit = origin + ray * distance;
         wave = sampleWaves(hit.xz);
-        float displacementLod = oceanDisplacementLod(distance);
+        float displacementLod = oceanDisplacementLod(distance)*damping;
         float residual = hit.y-wave.height*displacementLod;
         if (abs(residual) < .0005) break;
         if (residual > 0) lower = distance; else upper = distance;
@@ -110,15 +116,15 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (distance <= 0 || distance >= sceneDistance) return original;
     float3 localHit = origin + ray * distance;
     wave = sampleWaves(localHit.xz);
-    if (abs(localHit.y-wave.height*oceanDisplacementLod(distance)) > .02 || !waterAt(localHit.xz)) return original;
-    float dx = wave.gradient.x, dz = wave.gradient.y;
+    if (abs(localHit.y-wave.height*oceanDisplacementLod(distance)*damping) > .02 || !waterAt(localHit.xz)) return original;
+    float dx = wave.gradient.x*damping, dz = wave.gradient.y*damping;
     // Small wind ripples enrich close reflections and fade before becoming subpixel noise.
     float rippleFade = (1.0-smoothstep(20.0, 100.0, distance)) * saturate(abs(waves.x)*5.0);
     float2 ripplePhase = float2(dot(localHit.xz,float2(2.8,1.7)), dot(localHit.xz,float2(-1.9,3.4)))
         + sunDirectionTime.w * waves.z * float2(-2.1,2.7);
     float2 rippleSlope = (float2(2.8,1.7)*cos(ripplePhase.x) + float2(-1.9,3.4)*cos(ripplePhase.y)) * detail.x * rippleFade;
-    dx += rippleSlope.x;
-    dz += rippleSlope.y;
+    dx += rippleSlope.x*sqrt(damping);
+    dz += rippleSlope.y*sqrt(damping);
     float3 normal = normalize(mul(float3(-dx,1,-dz), (float3x3)pass.worldToLocal));
     float thickness = max(sceneDistance - distance, 0.0);
     float factor = saturate(thickness / visibility);
@@ -163,6 +169,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float variance = dot(ddx(normal), ddx(normal)) + dot(ddy(normal), ddy(normal));
     float roughness = clamp(sqrt(pow(1.0-saturate(deepSmoothness.w), 2.0) + variance), .06, 1.0);
     float3 reflection = oceanEnvironment(reflectedDirection, roughness, ambient);
+    float4 sceneReflection = oceanSceneReflection(worldHit,normal,reflectedDirection,roughness);
+    reflection = lerp(reflection,sceneReflection.rgb,sceneReflection.a);
     float3 specular = sunlight * oceanSunSpecular(normal, -worldRay, lightDirection, roughness) * (1.0+.5*crestTintStyle.w);
     float3 color = refracted * (1.0-fresnel) + reflection * fresnel + specular;
     float shoreDepth = depth > .0000001 ? max(wave.height-bottomLocal.y, 0.0) : foamVisibility.w*100.0;
@@ -170,7 +178,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float pattern = waterFoamPattern(localHit.xz, sunDirectionTime.w);
     float wash = .65 + .35*sin(shoreDepth*6.0 - sunDirectionTime.w*waves.z*2.0 + pattern*3.0);
     float whitecaps = smoothstep(crestFoam.x,crestFoam.x+.15,wave.crest) * crestFoam.y;
-    float foam = saturate(shore*wash*(.35+.65*pattern) + whitecaps*pattern);
+    float contactFoam = pow(wallContact,2.0)*contact.w*(.3+.7*pattern);
+    float foam = saturate(shore*wash*(.35+.65*pattern) + whitecaps*pattern*damping + contactFoam);
+    color *= 1.0-wallContact*contact.z;
     color = lerp(color,foamVisibility.xyz * irradiance,saturate(foam));
     return float4(lerp(refracted,color,saturate(shallowOpacity.w)),original.a);
 }

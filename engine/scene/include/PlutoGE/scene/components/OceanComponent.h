@@ -16,7 +16,15 @@ namespace PlutoGE::scene
     class OceanComponent : public TypedComponent<OceanComponent>
     {
     public:
+        void ApplyHarbourPreset();
         void ApplyStylizedSeaPreset();
+        float GetReflectionStrength() const { return m_reflectionStrength; }
+        float GetReflectionDistance() const { return m_reflectionDistance; }
+        float GetContactDistance() const { return m_contactDistance; }
+        float GetContactDamping() const { return m_contactDamping; }
+        float GetContactDarkening() const { return m_contactDarkening; }
+        float GetContactFoam() const { return m_contactFoam; }
+
         float GetStylization() const { return m_stylization; }
         const glm::vec3 &GetCrestColor() const { return m_crestColor; }
         void Update(float deltaTime) override;
@@ -68,6 +76,13 @@ namespace PlutoGE::scene
     private:
         glm::vec3 m_crestColor{0.08f, 0.85f, 0.6f};
         float m_stylization = 0.0f;
+        float m_reflectionStrength = .65f;
+        float m_reflectionDistance = 80.f;
+        float m_contactDistance = 2.f;
+        float m_contactDamping = .75f;
+        float m_contactDarkening = .2f;
+        float m_contactFoam = .35f;
+
         glm::vec3 m_shallowColor{0.06f, 0.32f, 0.42f};
         glm::vec3 m_deepColor{0.01f, 0.08f, 0.16f};
         glm::vec3 m_foamColor{0.88f, 0.94f, 0.98f};

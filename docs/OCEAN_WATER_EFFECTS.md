@@ -39,7 +39,21 @@ Select an ocean entity and click **Apply Stylized Sea Preset** in its Ocean insp
 
 **Stylization** blends the art-directed crest/trough palette and elongated foam breakup from 0 (the existing shading) to 1. **Crest Color** controls the turquoise wave tops. Wave controls remain editable after applying the preset. Surface colors still receive scene illumination and directional shadows, so a physical sky and directional light are needed for a bright daytime sea; the preset does not modify scene lights. Deep-floor attenuation remains unchanged.
 
-The visual direction is inspired by stylized pirate-adventure seas rather than recreating a game's assets or entire rendering system. Geometry reflections, wakes, spray, and full fluid simulation remain outside this preset.
+The visual direction is inspired by stylized pirate-adventure seas rather than recreating a game's assets or entire rendering system. Wakes, spray, and full fluid simulation remain outside this preset.
+
+## Harbour water and buildings
+
+Apply **Harbour Preset** in the Ocean inspector for flooded streets, quays and sheltered city water. The undoable preset implements the five city-water changes in order:
+
+1. Low-amplitude, slower swells with subtle ripples; the separate Stylized Sea preset remains available for exposed ocean.
+2. Restrained blue-green colors and low Stylization, so reflections and lights dominate the surface instead of bright turquoise bands.
+3. Sparse crest whitecaps, a narrow shoreline wash, and localized wall foam.
+4. Screen-space building reflections traced from the displaced water surface into the opaque scene depth and normal buffers. Misses fall back to physical-sky lighting.
+5. Damped displacement and ripples immediately beside visible walls, a subtle dark contact band and broken contact foam.
+
+Reflection Strength blends scene reflection hits into the sky reflection; Reflection Distance limits ray travel. Contact Distance controls the wall-neighborhood radius in world units; Contact Damping, Contact Darkening and Contact Foam independently control the three contact effects. Set Reflection Strength or Contact Distance to zero to disable the respective feature. The preset preserves area masks and visibility depth.
+
+The screen-space path uses a fixed bounded ray budget, crossing refinement, thickness/backface checks, and fades at screen edges and maximum distance. It cannot reflect off-screen or hidden geometry, and it approximates rough reflection filtering by fading toward the sky. Contact samples reject horizontal floors and require actual world-space proximity, avoiding dark outlines from distant silhouettes. Hidden walls cannot contribute; this is visual contact treatment, not fluid collision. Camera-dependent near-wall damping is not included in the camera-independent CPU gameplay sampler. It does not create solid collision boundaries or prevent a mathematical wave from passing through geometry.
 
 ## Visibility through and within water
 
@@ -60,7 +74,7 @@ Coordinates and returned heights/velocities are in the ocean entity's local spac
 
 These effects target the RHI OpenGL and Vulkan paths; the legacy OceanPass retains its previous wave model. Foam is procedural and has no persistent history, wakes, spray or collision interaction. Shoreline wash and caustics use visible opaque scene depth, so hidden or transparent receivers cannot contribute. Caustics are an artistic focusing approximation, not refracted light transport, and currently appear when viewing the bottom through the surface. Water depth for dispersion is uniform; there is no bathymetry-driven shoaling or coastal refraction. Surface intersections remain an approximation at very grazing angles and extreme steepness.
 
-Physical-sky reflections and directional shadows remain supported. Scene-geometry reflections, local point/spot lights, water motion/depth output, and complete transparent/temporal integration remain future work. No mesh, asset migration, or additional post-process component is needed.
+Physical-sky reflections and directional shadows remain supported. Off-screen scene reflections, local point/spot lights, water motion/depth output, and complete transparent/temporal integration remain future work. No mesh, asset migration, or additional post-process component is needed.
 
 ## Verification
 

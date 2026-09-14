@@ -5537,12 +5537,14 @@ namespace PlutoGE::ui
                         else if (auto *oceanComponent = dynamic_cast<scene::OceanComponent *>(componentPtr))
                         {
                             ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
-                            if (ImGui::Button("Apply Stylized Sea Preset"))
+                            const auto applyOceanPreset = [&](const char *label, bool harbour)
                             {
-                                editorShell.ExecuteSceneEdit("Apply Stylized Sea Preset", [&]
+                                if (!ImGui::Button(label)) return;
+                                editorShell.ExecuteSceneEdit(label, [&]
                                 {
                                     const auto before = oceanComponent->Serialize();
-                                    oceanComponent->ApplyStylizedSeaPreset();
+                                    if (harbour) oceanComponent->ApplyHarbourPreset();
+                                    else oceanComponent->ApplyStylizedSeaPreset();
                                     for (const auto &property : oceanComponent->Serialize())
                                     {
                                         const auto previous = std::find_if(before.begin(),before.end(),[&](const auto &value) { return value.name==property.name; });
@@ -5550,9 +5552,11 @@ namespace PlutoGE::ui
                                             entity->AddPrefabOverride("Component:OceanComponent:"+property.name);
                                     }
                                 });
-                            }
+                            };
+                            applyOceanPreset("Apply Harbour Preset", true);
+                            applyOceanPreset("Apply Stylized Sea Preset", false);
                             ImGui::EndDisabled();
-                            ImGui::TextWrapped("Rolling swells, turquoise crests and broken whitecaps. Adjust Stylization and Crest Color below.");
+                            ImGui::TextWrapped("Harbour: calm city water. Stylized Sea: exposed ocean swells. Both presets preserve masks and visibility depth.");
                             propertiesProvided = true;
                             properties = oceanComponent->Serialize();
                             std::erase_if(properties, [](const auto &property)

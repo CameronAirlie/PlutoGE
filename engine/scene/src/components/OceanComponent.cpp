@@ -47,6 +47,34 @@ namespace PlutoGE::scene
         }
     }
 
+    void OceanComponent::ApplyHarbourPreset()
+    {
+        ApplyStylizedSeaPreset();
+        m_waveAmplitude = .25f;
+        m_waveLength = 32.f;
+        m_waveSpeed = .55f;
+        m_waveChoppiness = .7f;
+        m_directionalSpread = .75f;
+        m_windSea = .12f;
+        m_stylization = .12f;
+        m_shallowColor = {.065f,.22f,.21f};
+        m_deepColor = {.02f,.09f,.105f};
+        m_crestColor = {.09f,.28f,.24f};
+        m_smoothness = .9f;
+        m_opacity = 1.f;
+        m_crestFoamThreshold = .3f;
+        m_crestFoamIntensity = .03f;
+        m_foamIntensity = .5f;
+        m_foamDistance = .6f;
+        m_rippleStrength = .008f;
+        m_reflectionStrength = .85f;
+        m_reflectionDistance = 80.f;
+        m_contactDistance = 2.f;
+        m_contactDamping = .85f;
+        m_contactDarkening = .25f;
+        m_contactFoam = .4f;
+    }
+
     void OceanComponent::ApplyStylizedSeaPreset()
     {
         // Appearance only: preserve entity transform, masks, clock, and visibility settings.
@@ -86,6 +114,12 @@ namespace PlutoGE::scene
     std::vector<Property> OceanComponent::Serialize() const
     {
         std::vector<Property> properties = {
+            {"ReflectionStrength", PropertyType::Float, std::to_string(m_reflectionStrength)},
+            {"ReflectionDistance", PropertyType::Float, std::to_string(m_reflectionDistance)},
+            {"ContactDistance", PropertyType::Float, std::to_string(m_contactDistance)},
+            {"ContactDamping", PropertyType::Float, std::to_string(m_contactDamping)},
+            {"ContactDarkening", PropertyType::Float, std::to_string(m_contactDarkening)},
+            {"ContactFoam", PropertyType::Float, std::to_string(m_contactFoam)},
             {"Stylization", PropertyType::Float, std::to_string(m_stylization)},
             {"CrestColor", PropertyType::Color, ToColorString(m_crestColor)},
             {"ShallowColor", PropertyType::Color, ToColorString(m_shallowColor)},
@@ -140,7 +174,37 @@ namespace PlutoGE::scene
 
         for (const auto &property : properties)
         {
-            if (property.name == "Stylization")
+            if (property.name == "ReflectionStrength")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_reflectionStrength = std::clamp(value, 0.0f, 1.0f);
+            }
+            else if (property.name == "ReflectionDistance")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_reflectionDistance = std::clamp(value, 1.0f, 500.0f);
+            }
+            else if (property.name == "ContactDistance")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_contactDistance = std::clamp(value, 0.0f, 20.0f);
+            }
+            else if (property.name == "ContactDamping")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_contactDamping = std::clamp(value, 0.0f, 1.0f);
+            }
+            else if (property.name == "ContactDarkening")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_contactDarkening = std::clamp(value, 0.0f, 1.0f);
+            }
+            else if (property.name == "ContactFoam")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_contactFoam = std::clamp(value, 0.0f, 2.0f);
+            }
+            else if (property.name == "Stylization")
             {
                 const float value = std::stof(property.value);
                 if (std::isfinite(value)) m_stylization = std::clamp(value,0.f,1.f);

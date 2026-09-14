@@ -120,6 +120,7 @@ namespace PlutoGE::render
         case BasicPostProcessEffectType::MotionBlur:
             return BasicPostProcessInput::Motion;
         case BasicPostProcessEffectType::Ocean:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::DepthOfField:
             return BasicPostProcessInput::Depth;
         case BasicPostProcessEffectType::TAA:

@@ -14,6 +14,7 @@ namespace PlutoGE::render
         std::array<glm::vec4, 256> points{};
         std::array<glm::vec4, 8> waveShape{}, waveMotion{};
         glm::vec4 crestFoam{}, detail{}, flow{};
+        glm::vec4 reflections{}, contact{};
     };
-    static_assert(sizeof(OceanParameters) == 4736);
+    static_assert(sizeof(OceanParameters) == 4768);
 }

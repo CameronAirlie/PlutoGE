@@ -172,8 +172,8 @@ Fresnel reflectance increases toward grazing angles. Scattering, wave-crest
 lighting, foam, and underwater tint respond to directional and ambient lighting.
 Shadowing attenuates direct light while preserving sky illumination.
 
-Reflected scene geometry and local point/spot lighting are not yet supported by
-the ocean pass. Virtual shadows can use coarse fallback pages where water has no
+The ocean supports screen-space reflections of visible opaque geometry, with sky
+fallback for misses. Local point/spot lighting is not yet supported by the ocean pass. Virtual shadows can use coarse fallback pages where water has no
 opaque receiver requesting finer pages. Water composites before temporal resolve
 and transparent geometry without writing water depth or motion vectors; temporal
 effects and submerged transparent objects do not yet have full water integration.

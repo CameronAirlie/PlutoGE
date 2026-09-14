@@ -12,11 +12,22 @@ Sampler2D sceneTexture : register(t1, space0);
 [[vk::binding(2, 0)]]
 Sampler2D depthTexture : register(t2, space0);
 
+uint cloudHash(uint value)
+{
+    value ^= value >> 16; value *= 0x7feb352du;
+    value ^= value >> 15; value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+}
 float hash31(float3 p)
 {
-    p = frac(p * 0.1031);
-    p += dot(p, p.yzx + 33.33);
-    return frac((p.x + p.y) * p.z);
+    // Lattice corners must agree across cells and compiler contraction modes.
+    const int3 cell = int3(p);
+    const uint seed = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u ^ uint(cell.z) * 0xcb1ab31fu;
+    return float(cloudHash(seed) >> 8) * (1.0 / 16777216.0);
+}
+float cloudSampleOffset(uint seed, uint index)
+{
+    return (float(cloudHash(seed ^ cloudHash(index + 1u)) >> 8) + 0.5) * (1.0 / 16777216.0);
 }
 float valueNoise(float3 p)
 {
@@ -61,29 +72,39 @@ float2 intersectVolume(float3 origin, float3 direction, float4x4 inverseVolume)
 {
     const float3 localOrigin = transformWorldToLocalPosition(origin, inverseVolume, pass.flipY);
     const float3 localDirection = transformWorldToLocalDirection(direction, inverseVolume, pass.flipY);
-    const float3 safeDirection = float3(localDirection.x < 0 ? -1 : 1,
-                                        localDirection.y < 0 ? -1 : 1,
-                                        localDirection.z < 0 ? -1 : 1) * max(abs(localDirection), 0.000001);
-    const float3 t0 = (-0.5 - localOrigin) / safeDirection;
-    const float3 t1 = (0.5 - localOrigin) / safeDirection;
-    const float3 low = min(t0, t1), high = max(t0, t1);
-    return float2(max(max(low.x, low.y), low.z), min(min(high.x, high.y), high.z));
+    float nearDistance = -1e30;
+    float farDistance = 1e30;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        // Clamping local direction changes the ray at grazing angles and for
+        // large volumes. Handle parallel slabs explicitly instead.
+        if (localDirection[axis] == 0.0)
+        {
+            if (abs(localOrigin[axis]) > 0.5) return float2(1, 0);
+            continue;
+        }
+        const float a = (-0.5 - localOrigin[axis]) / localDirection[axis];
+        const float b = (0.5 - localOrigin[axis]) / localDirection[axis];
+        nearDistance = max(nearDistance, min(a, b));
+        farDistance = min(farDistance, max(a, b));
+    }
+    return float2(nearDistance, farDistance);
 }
 
-float lightTransmittance(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps)
+float lightTransmittance(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps, uint seed)
 {
     const float2 hit = intersectVolume(position + lightDirection * 0.01, lightDirection, inverseVolume);
     const float stepLength = max(hit.y, 0.0) / lightSteps;
     float opticalDepth = 0.0;
-    position += lightDirection * stepLength * 0.5;
     for (uint index = 0; index < 16u; ++index)
     {
         if (index >= lightSteps)
             break;
-        opticalDepth += densityAt(position, inverseVolume) * pass.parameters[2].w * stepLength;
+        const float3 samplePosition = position + lightDirection *
+            ((float(index) + cloudSampleOffset(seed, index)) * stepLength);
+        opticalDepth += densityAt(samplePosition, inverseVolume) * pass.parameters[2].w * stepLength;
         if (opticalDepth >= 9.21034) // Remaining sunlight is below 0.0001.
             break;
-        position += lightDirection * stepLength;
     }
     return exp(-opticalDepth);
 }
@@ -98,13 +119,15 @@ FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
 // of the trace so reconstruction never blurs opaque geometry.
 float4 integrateCloud(FullscreenVertexOutput input)
 {
-    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    const float2 pixel = floor(orientFullscreenUv(input.uv, pass.flipY) / pass.inverseResolution);
+    const float2 uv = (pixel + 0.5) * pass.inverseResolution;
+    const uint seed = cloudHash(uint(pixel.x) ^ (uint(pixel.y) * 0x9e3779b9u));
     const float4x4 inverseVolume = pass.worldToLocal;
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);
     float end = hit.y;
     const float depth = depthTexture.Sample(uv).r;
-    if (depth > 0.000001)
+    if (depth > 0.0)
     {
         // Water contributes reciprocal ray distance to the shared volumetric
         // depth buffer. Clip clouds at that surface, not at the seabed.
@@ -124,8 +147,9 @@ float4 integrateCloud(FullscreenVertexOutput input)
     const uint primarySteps = clamp(pass.quality & 255u, 1u, 128u);
     const uint lightSteps = clamp((pass.quality >> 8u) & 255u, 1u, 16u);
     const float stepLength = (end - start) / primarySteps;
-    const float jitter = 0.5;
-    float distanceAlongRay = start + jitter * stepLength;
+    // Stratify every cell independently. Fixed midpoints align density/light
+    // samples into visible sheets across neighboring screen rows. Spatially
+    // stable offsets remove that coherence without requiring temporal history.
     float transmittance = 1.0;
     float3 radiance = 0.0;
     const float anisotropy = clamp(pass.parameters[4].y, -0.9, 0.9);
@@ -141,15 +165,15 @@ float4 integrateCloud(FullscreenVertexOutput input)
     {
         if (index >= primarySteps || transmittance < 0.01)
             break;
+        const float distanceAlongRay = start + (float(index) + cloudSampleOffset(seed, index)) * stepLength;
         const float3 samplePosition = pass.cameraPosition.xyz + rayDirection * distanceAlongRay;
         const float density = densityAt(samplePosition, inverseVolume);
-        distanceAlongRay += stepLength;
         // An empty segment has exactly zero scattering and extinction.
         if (density <= 0.0)
             continue;
         const float segmentTransmittance = exp(-density * pass.parameters[2].w * stepLength);
         const float sunlight = pass.parameters[3].w > 0.0001
-                                   ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps)
+                                   ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps, cloudHash(seed ^ index ^ 0xa511e9b3u))
                                    : 1.0;
         const float3 incident = ambientLight +
                                 pass.parameters[3].rgb * pass.parameters[3].w * phase * sunlight;

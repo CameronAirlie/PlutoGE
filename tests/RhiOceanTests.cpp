@@ -89,6 +89,29 @@ int main(int argc,char **argv) try
     atmosphere.push_back(fog);
     const auto fogged=center(render());
     Check(fogged[0]==std::byte{0} && fogged[1]==std::byte{0} && fogged[2]==std::byte{0},"Volumetric fog does not cover ocean");
+    // The ocean's auxiliary distance pass must preserve zero-depth sky. Verify
+    // the entire physical-sky background, not only the water at the centre.
+    render::BasicPostProcessEffect sky{render::BasicPostProcessEffectType::PhysicalSky};
+    sky.parameters[0]={0,1,0,1};
+    sky.parameters[1]={1,1,1,.1f};
+    sky.parameters[2]={0,0,0,.2f};
+    sky.parameters[3]={.1f,.1f,.1f,1};
+    sky.parameters[4]={10,.5f,0,0};
+    const auto skyTestView = camera.view;
+    camera.view = glm::lookAt(lighting.cameraPosition, lighting.cameraPosition + glm::vec3(0,0,-1), glm::vec3(0,1,0));
+    for (unsigned divisor : {1u,2u,4u})
+    {
+        fog.volumetricResolutionDivisor=divisor;
+        atmosphere={sky,fog};
+        const auto skyFogged=render();
+        int maximum=0;
+        for (std::size_t pixel=0;pixel<skyFogged.size();pixel+=4)
+            maximum=std::max(maximum,int(skyFogged[pixel]));
+        std::cout << "Sky fog maximum (divisor " << divisor << "): " << maximum << '\n';
+        capture("sky-fog",skyFogged);
+        Check(maximum<=1,"Ocean distance pass prevents fog from covering physical sky");
+    }
+    camera.view = skyTestView;
     atmosphere.clear();
     // Fog concentrated below sea level must not be integrated through water.
     fog.parameters[0].w=.01f;
@@ -372,6 +395,16 @@ int main(int argc,char **argv) try
             largestSeam=std::max(largestSeam,std::to_integer<int>(seams[pixel+channel]));
     std::cout<<"Largest noise boundary discontinuity: "<<largestSeam<<"/255\n";
     Check(largestSeam<=1,"Ocean/shader-graph noise has cell seams or inconsistent values");
+    renderer.Shutdown();
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::Ocean)]={library.Load("CloudNoiseProbe","vertex"),library.Load("CloudNoiseProbe","fragment")};
+    Check(renderer.Initialize(*device,shaders),"Cloud noise probe initialization failed");
+    const auto cloudSeams=render();
+    largestSeam=0;
+    for(std::size_t pixel=0;pixel<cloudSeams.size();pixel+=4)
+        for(int channel=0;channel<3;++channel)
+            largestSeam=std::max(largestSeam,std::to_integer<int>(cloudSeams[pixel+channel]));
+    std::cout<<"Largest cloud noise discontinuity: "<<largestSeam<<"/255\n";
+    Check(largestSeam<=1,"Cloud noise has discontinuities at lattice planes");
     renderer.Shutdown();
     std::cout<<(vulkan?"Vulkan":"OpenGL")<<" ocean: surface, animation, masks, transforms, disable, depth occlusion, sun lighting, shadows, physical sky and underwater passed\n";
 }

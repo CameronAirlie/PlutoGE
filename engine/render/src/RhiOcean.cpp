@@ -28,6 +28,14 @@ namespace PlutoGE::render
                     packet->surface = {ocean->GetRefractionStrength(), ocean->GetFoamDistance(), ocean->GetFoamIntensity(), ocean->GetUnderwaterTurbidity()};
                     packet->sunDirectionTime = {lighting.directionalDirection, ocean->GetSimulationTime()};
                     packet->sunColorIntensity = {lighting.directionalColor, lighting.directionalIntensity};
+                    const auto spectrum = ocean->GetWaveSpectrum();
+                    static_assert(scene::OceanWaveCount == std::tuple_size_v<decltype(packet->waveShape)>);
+                    packet->waveShape = spectrum.shape;
+                    packet->waveMotion = spectrum.motion;
+                    packet->crestFoam = {ocean->GetCrestFoamThreshold(), ocean->GetCrestFoamIntensity(), ocean->GetFoamScale(), spectrum.heightBound};
+                    packet->detail = {ocean->GetRippleStrength(), ocean->GetCausticsIntensity(), ocean->GetCausticsScale(), 0};
+                    const float windAngle = glm::radians(ocean->GetWindDirection());
+                    packet->flow = {std::cos(windAngle), std::sin(windAngle), 0, 0};
                     packet->mask.x = ocean->GetInvertAreaMask() ? 1 : 0;
                     packet->mask.y = static_cast<int>(std::min<std::size_t>(ocean->GetAreas().size(), 8));
                     for (int area = 0; area < packet->mask.y; ++area)

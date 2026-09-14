@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/OceanWaveModel.h"
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -38,8 +39,21 @@ namespace PlutoGE::scene
         float GetFoamDistance() const { return m_foamDistance; }
         float GetFoamIntensity() const { return m_foamIntensity; }
         bool GetInvertAreaMask() const { return m_invertAreaMask; }
-        float GetSimulationTime() const { return m_simulationTime; }
+        float GetSimulationTime() const { return static_cast<float>(m_simulationTime); }
+        OceanWaveSpectrum GetWaveSpectrum() const;
+        OceanSurfaceSample SampleLocalSurface(const glm::vec2 &position) const { return SampleOceanSurface(GetWaveSpectrum(), position); }
         const std::vector<OceanAreaPolygon> &GetAreas() const { return m_areas; }
+
+        float GetWindDirection() const { return m_windDirection; }
+        float GetDirectionalSpread() const { return m_directionalSpread; }
+        float GetWindSea() const { return m_windSea; }
+        float GetWaterDepth() const { return m_waterDepth; }
+        float GetCrestFoamThreshold() const { return m_crestFoamThreshold; }
+        float GetCrestFoamIntensity() const { return m_crestFoamIntensity; }
+        float GetFoamScale() const { return m_foamScale; }
+        float GetRippleStrength() const { return m_rippleStrength; }
+        float GetCausticsIntensity() const { return m_causticsIntensity; }
+        float GetCausticsScale() const { return m_causticsScale; }
 
         void SetAreaPoint(std::size_t areaIndex, std::size_t pointIndex, const glm::vec2 &position);
         void AddArea(const std::vector<glm::vec2> &points);
@@ -68,7 +82,18 @@ namespace PlutoGE::scene
         float m_foamDistance = 1.25f;
         float m_foamIntensity = 1.0f;
         bool m_invertAreaMask = false;
-        float m_simulationTime = 0.0f;
+        double m_simulationTime = 0.0;
+        float m_windDirection = 35.0f;
+        float m_directionalSpread = 0.65f;
+        float m_windSea = 0.35f;
+        float m_waterDepth = 50.0f;
+        float m_crestFoamThreshold = 0.12f;
+        float m_crestFoamIntensity = 0.6f;
+        float m_foamScale = 0.7f;
+        float m_rippleStrength = 0.012f;
+        float m_causticsIntensity = 0.35f;
+        float m_causticsScale = 0.8f;
+
         std::vector<OceanAreaPolygon> m_areas;
     };
 }

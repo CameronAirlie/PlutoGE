@@ -10,6 +10,8 @@
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/render/Material.h"
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <stdexcept>
 #include <string_view>
 void Check(bool ok,const char *message){if(!ok)throw std::runtime_error(message);}
@@ -52,6 +54,18 @@ int main(int argc,char **argv) try
         glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(static_cast<render::rhi::opengl::OpenGLDevice &>(*device).GetTextureNativeHandle(renderer.GetColorTexture())));
         glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());return pixels;
     };
+    // Optional review artifacts, kept out of ordinary regression runs.
+    const auto capture=[&](const char *name,const auto &pixels)
+    {
+        if(argc<3)return;
+        const auto path=std::filesystem::path(argv[2])/(std::string(name)+".ppm");
+        std::ofstream output(path,std::ios::binary);
+        Check(bool(output),"Cannot write ocean review image");
+        output<<"P6\n128 128\n255\n";
+        for(int y=127;y>=0;--y)
+            for(int x=0;x<128;++x)
+                output.write(reinterpret_cast<const char*>(pixels.data()+(y*128+x)*4),3);
+    };
     const auto center=[](const auto &pixels){return std::array{pixels[(64*128+64)*4],pixels[(64*128+64)*4+1],pixels[(64*128+64)*4+2]};};
     ocean->SetEnabled(false);const auto dry=render();
     ocean->SetEnabled(true);const auto wet=render();Check(center(wet)!=center(dry),"Ocean absent from RHI output");
@@ -70,6 +84,29 @@ int main(int argc,char **argv) try
     box.previousModel=box.model;box.worldBounds={{0,2,0},10};box.previousWorldBounds=box.worldBounds;
     ocean->SetEnabled(false);const auto foreground=render(std::span(&box,1));
     ocean->SetEnabled(true);Check(center(render(std::span(&box,1)))==center(foreground),"Ocean overlays foreground geometry");
+    const auto setOcean=[&](const char *name,const char *value)
+    {
+        ocean->Deserialize({{name,scene::PropertyType::Float,value}});
+    };
+    const auto originalSettings=ocean->Serialize();
+    setOcean("WindDirection","135");
+    Check(render()!=waves,"Wind direction does not alter water");
+    setOcean("WaveAmplitude","1.2");setOcean("CrestFoamThreshold","0");
+    setOcean("CrestFoamIntensity","0");const auto noWhitecaps=render();
+    setOcean("CrestFoamIntensity","5");Check(render()!=noWhitecaps,"Crest whitecaps do not render");
+    capture("ocean-whitecaps",render());
+    ocean->Deserialize(originalSettings);
+    // Put opaque geometry beneath the surface to exercise shallow-water effects.
+    auto bottom=box;
+    bottom.model=glm::scale(glm::translate(glm::mat4(1),glm::vec3(0,-2,0)),glm::vec3(12,2,12));
+    bottom.previousModel=bottom.model;bottom.worldBounds={{0,-2,0},10};bottom.previousWorldBounds=bottom.worldBounds;
+    setOcean("CausticsIntensity","0");const auto noCaustics=render(std::span(&bottom,1));
+    setOcean("CausticsIntensity","5");Check(render(std::span(&bottom,1))!=noCaustics,"Shallow-water caustics do not render");
+    setOcean("FoamIntensity","0");const auto noShoreFoam=render(std::span(&bottom,1));
+    setOcean("FoamIntensity","5");setOcean("FoamDistance","5");
+    Check(render(std::span(&bottom,1))!=noShoreFoam,"Shore foam does not render");
+    capture("ocean-shore",render(std::span(&bottom,1)));
+    ocean->Deserialize(originalSettings);
     // A shadow-only overhead caster isolates water lighting from opaque scene pixels.
     lighting.directionalDirection={0,-1,0};
     lighting.ambientIntensity=.1f;
@@ -106,11 +143,62 @@ int main(int argc,char **argv) try
     lighting.physicalSkyParameters[3]={.1f,.1f,.1f,1};
     lighting.physicalSkyParameters[4]={10,.53f,.1f,0};
     const auto skyLit=render();
+    capture("ocean-sky",skyLit);
     lighting.physicalSkyExposure=.1f;
     Check(brightness(render())<brightness(skyLit),"Ocean ignores physical sky exposure");
     lighting.physicalSkyEnabled=false;
     lighting.cameraPosition={0,-2,9};camera.view=glm::lookAt(lighting.cameraPosition,glm::vec3(0,-2,0),glm::vec3(0,1,0));
     ocean->SetEnabled(false);const auto belowDry=render();ocean->SetEnabled(true);Check(center(render())!=center(belowDry),"Underwater fading missing");
+    // A floor's color must disappear at the same water-path distance from either side.
+    const auto savedCamera=camera;
+    const auto savedLighting=lighting;
+    setOcean("WaveAmplitude","0");setOcean("FoamIntensity","0");setOcean("CrestFoamIntensity","0");
+    setOcean("CausticsIntensity","0");setOcean("RefractionStrength","0");setOcean("MaxVisibilityDepth","10");
+    setOcean("Opacity","0");
+    lighting.directionalIntensity=0;lighting.ambientIntensity=1;
+    render::Material redFloor({.color={1,0,0,1}}), blueFloor({.color={0,0,1,1}});
+    const auto floorContrast=[&](bool submerged,float path)
+    {
+        lighting.cameraPosition={0,submerged ? -.1f : 5.f,0};
+        camera.view=glm::lookAt(lighting.cameraPosition,lighting.cameraPosition+glm::vec3(0,-1,0),glm::vec3(0,0,-1));
+        auto floor=box;
+        float top=-(path+(submerged ? .1f : 0.f));
+        floor.model=glm::scale(glm::translate(glm::mat4(1),glm::vec3(0,top-1,0)),glm::vec3(200,2,200));
+        floor.previousModel=floor.model;floor.worldBounds={{0,top-1,0},150};floor.previousWorldBounds=floor.worldBounds;
+        floor.material=&redFloor;const auto red=center(render(std::span(&floor,1)));
+        floor.material=&blueFloor;const auto blue=center(render(std::span(&floor,1)));
+        glm::ivec3 contrast;
+        for(int channel=0;channel<3;++channel)
+            contrast[channel]=std::abs(std::to_integer<int>(red[channel])-std::to_integer<int>(blue[channel]));
+        return contrast;
+    };
+    const auto nearAbove=floorContrast(false,2);
+    const auto nearBelow=floorContrast(true,2);
+    Check(nearAbove.r+nearAbove.b>10 && nearBelow.r+nearBelow.b>10,"Shallow floors should remain visible");
+    Check(glm::all(glm::lessThanEqual(glm::abs(nearAbove-nearBelow),glm::ivec3(3))),"Surface and underwater visibility curves differ");
+    for(const char *opacity:{"0","0.15","0.82","1"})
+    {
+        setOcean("Opacity",opacity);
+        Check(floorContrast(false,20)==glm::ivec3(0),"Opacity leaks deep ocean floor through the surface");
+        Check(floorContrast(true,20)==glm::ivec3(0),"Deep floor remains visible underwater");
+    }
+    setOcean("UnderwaterTurbidity","0");setOcean("UnderwaterDepthFalloff","0");
+    Check(floorContrast(false,20)==glm::ivec3(0) && floorContrast(true,20)==glm::ivec3(0),"Zero turbidity bypasses maximum visibility");
+    camera=savedCamera;lighting=savedLighting;ocean->Deserialize(originalSettings);
+    renderer.Shutdown();
+    shaders.postProcess[static_cast<unsigned>(render::BasicPostProcessEffectType::Ocean)]={library.Load("OceanWaveProbe","vertex"),library.Load("OceanWaveProbe","fragment")};
+    Check(renderer.Initialize(*device,shaders),"Wave probe initialization failed");
+    for(int frame=0;frame<5;++frame)
+    {
+        ocean->Update(.37f);
+        setOcean("WindDirection",frame%2 ? "90" : "-35");
+        const auto expected=ocean->SampleLocalSurface({2.3f,-4.1f});
+        const glm::vec3 encoded=.5f+.2f*glm::vec3(expected.height,expected.gradient);
+        const auto actual=center(render());
+        for(int channel=0;channel<3;++channel)
+            Check(std::abs(std::to_integer<int>(actual[channel])/255.f-encoded[channel])<.008f,
+                  "CPU and GPU ocean heights/slopes disagree");
+    }
     renderer.Shutdown();
     std::cout<<(vulkan?"Vulkan":"OpenGL")<<" ocean: surface, animation, masks, transforms, disable, depth occlusion, sun lighting, shadows, physical sky and underwater passed\n";
 }

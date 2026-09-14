@@ -187,6 +187,8 @@ An animated water surface does not by itself implement swimming, buoyancy,
 drowning, or underwater sound gameplay. Implement and test those interactions
 separately. Avoid assuming the visible displaced surface is a physics collider.
 
+See [RHI ocean waves and water effects](../OCEAN_WATER_EFFECTS.md) for the wave model, new controls, sampling API, and limitations.
+
 ## Particles
 
 Author a `.plutoparticles` asset in the Particle System Editor and assign it to a

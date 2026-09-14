@@ -556,3 +556,7 @@ target_compile_definitions(PlutoGERhiOceanTests PRIVATE PLUTO_OCEAN_SHADER_DIR="
 add_test(NAME PlutoGEOpenGLOceanTests COMMAND PlutoGERhiOceanTests)
 add_test(NAME PlutoGEVulkanOceanTests COMMAND PlutoGERhiOceanTests --vulkan)
 set_tests_properties(PlutoGEOpenGLOceanTests PlutoGEVulkanOceanTests PROPERTIES TIMEOUT 60)
+
+add_executable(PlutoGEOceanWaveModelTests OceanWaveModelTests.cpp)
+target_link_libraries(PlutoGEOceanWaveModelTests PRIVATE PlutoGE::Scene)
+add_test(NAME PlutoGEOceanWaveModelTests COMMAND PlutoGEOceanWaveModelTests)

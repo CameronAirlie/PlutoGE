@@ -5537,27 +5537,11 @@ namespace PlutoGE::ui
                         else if (auto *oceanComponent = dynamic_cast<scene::OceanComponent *>(componentPtr))
                         {
                             propertiesProvided = true;
-                            properties = {
-                                {"ShallowColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetShallowColor().x) + "," + std::to_string(oceanComponent->GetShallowColor().y) + "," + std::to_string(oceanComponent->GetShallowColor().z) + ",1.0"},
-                                {"DeepColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetDeepColor().x) + "," + std::to_string(oceanComponent->GetDeepColor().y) + "," + std::to_string(oceanComponent->GetDeepColor().z) + ",1.0"},
-                                {"FoamColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetFoamColor().x) + "," + std::to_string(oceanComponent->GetFoamColor().y) + "," + std::to_string(oceanComponent->GetFoamColor().z) + ",1.0"},
-                                {"Opacity", scene::PropertyType::Float, std::to_string(oceanComponent->GetOpacity())},
-                                {"Smoothness", scene::PropertyType::Float, std::to_string(oceanComponent->GetSmoothness())},
-                                {"MaxVisibilityDepth", scene::PropertyType::Float, std::to_string(oceanComponent->GetMaxVisibilityDepth())},
-                                {"UnderwaterFadeStart", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterFadeStart())},
-                                {"UnderwaterFadeSoftness", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterFadeSoftness())},
-                                {"UnderwaterDepthFalloff", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterDepthFalloff())},
-                                {"UnderwaterLightFalloff", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterLightFalloff())},
-                                {"UnderwaterTurbidity", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterTurbidity())},
-                                {"RefractionStrength", scene::PropertyType::Float, std::to_string(oceanComponent->GetRefractionStrength())},
-                                {"WaveAmplitude", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveAmplitude())},
-                                {"WaveLength", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveLength())},
-                                {"WaveSpeed", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveSpeed())},
-                                {"WaveChoppiness", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveChoppiness())},
-                                {"FoamDistance", scene::PropertyType::Float, std::to_string(oceanComponent->GetFoamDistance())},
-                                {"FoamIntensity", scene::PropertyType::Float, std::to_string(oceanComponent->GetFoamIntensity())},
-                                {"InvertAreaMask", scene::PropertyType::Bool, oceanComponent->GetInvertAreaMask() ? "true" : "false"},
-                            };
+                            properties = oceanComponent->Serialize();
+                            std::erase_if(properties, [](const auto &property)
+                            {
+                                return property.name == "AreaCount" || property.name.starts_with("Areas.");
+                            });
 
                             const auto &areas = oceanComponent->GetAreas();
                             ImGui::SeparatorText("Area Masks");

@@ -49,11 +49,14 @@ namespace PlutoGE::scene
 
     void OceanComponent::Update(float deltaTime)
     {
-        m_simulationTime += std::max(deltaTime, 0.0f);
-        if (m_simulationTime > 100000.0f)
-        {
-            m_simulationTime -= 100000.0f;
-        }
+        if (std::isfinite(deltaTime) && deltaTime > 0.f)
+            m_simulationTime += static_cast<double>(deltaTime);
+    }
+
+    OceanWaveSpectrum OceanComponent::GetWaveSpectrum() const
+    {
+        return BuildOceanWaveSpectrum({m_waveAmplitude, m_waveLength, m_waveSpeed, m_waveChoppiness,
+            m_windDirection, m_directionalSpread, m_windSea, m_waterDepth}, m_simulationTime);
     }
 
     std::vector<Property> OceanComponent::Serialize() const
@@ -75,6 +78,16 @@ namespace PlutoGE::scene
             {"WaveLength", PropertyType::Float, std::to_string(m_waveLength)},
             {"WaveSpeed", PropertyType::Float, std::to_string(m_waveSpeed)},
             {"WaveChoppiness", PropertyType::Float, std::to_string(m_waveChoppiness)},
+            {"WindDirection", PropertyType::Float, std::to_string(m_windDirection)},
+            {"DirectionalSpread", PropertyType::Float, std::to_string(m_directionalSpread)},
+            {"WindSea", PropertyType::Float, std::to_string(m_windSea)},
+            {"WaterDepth", PropertyType::Float, std::to_string(m_waterDepth)},
+            {"CrestFoamThreshold", PropertyType::Float, std::to_string(m_crestFoamThreshold)},
+            {"CrestFoamIntensity", PropertyType::Float, std::to_string(m_crestFoamIntensity)},
+            {"FoamScale", PropertyType::Float, std::to_string(m_foamScale)},
+            {"RippleStrength", PropertyType::Float, std::to_string(m_rippleStrength)},
+            {"CausticsIntensity", PropertyType::Float, std::to_string(m_causticsIntensity)},
+            {"CausticsScale", PropertyType::Float, std::to_string(m_causticsScale)},
             {"FoamDistance", PropertyType::Float, std::to_string(m_foamDistance)},
             {"FoamIntensity", PropertyType::Float, std::to_string(m_foamIntensity)},
             {"InvertAreaMask", PropertyType::Bool, m_invertAreaMask ? "true" : "false"},
@@ -133,6 +146,56 @@ namespace PlutoGE::scene
                 m_waveSpeed = std::stof(property.value);
             else if (property.name == "WaveChoppiness")
                 m_waveChoppiness = std::clamp(std::stof(property.value), 0.0f, 4.0f);
+            else if (property.name == "WindDirection")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_windDirection = std::clamp(value, -360.0f, 360.0f);
+            }
+            else if (property.name == "DirectionalSpread")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_directionalSpread = std::clamp(value, 0.0f, 1.0f);
+            }
+            else if (property.name == "WindSea")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_windSea = std::clamp(value, 0.0f, 1.0f);
+            }
+            else if (property.name == "WaterDepth")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_waterDepth = std::clamp(value, 0.1f, 10000.0f);
+            }
+            else if (property.name == "CrestFoamThreshold")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_crestFoamThreshold = std::clamp(value, 0.0f, 2.0f);
+            }
+            else if (property.name == "CrestFoamIntensity")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_crestFoamIntensity = std::clamp(value, 0.0f, 5.0f);
+            }
+            else if (property.name == "FoamScale")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_foamScale = std::clamp(value, 0.01f, 20.0f);
+            }
+            else if (property.name == "RippleStrength")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_rippleStrength = std::clamp(value, 0.0f, 0.1f);
+            }
+            else if (property.name == "CausticsIntensity")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_causticsIntensity = std::clamp(value, 0.0f, 5.0f);
+            }
+            else if (property.name == "CausticsScale")
+            {
+                const float value = std::stof(property.value);
+                if (std::isfinite(value)) m_causticsScale = std::clamp(value, 0.01f, 20.0f);
+            }
             else if (property.name == "FoamDistance")
                 m_foamDistance = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "FoamIntensity")
@@ -187,7 +250,8 @@ namespace PlutoGE::scene
             }
         }
 
-        m_areas = std::move(deserializedAreas);
+        if (areaCount >= 0 || !deserializedAreas.empty())
+            m_areas = std::move(deserializedAreas);
     }
 
     void OceanComponent::SetAreaPoint(std::size_t areaIndex, std::size_t pointIndex, const glm::vec2 &position)

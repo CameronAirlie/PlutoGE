@@ -13,7 +13,10 @@
     int4 mask;
     int4 areaCounts[8];
     float4 points[256];
+    float4 waveShape[8], waveMotion[8];
+    float4 crestFoam, detail, flow;
 };
+#include "OceanWaves.slang"
 [shader("vertex")]
 FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
@@ -39,16 +42,15 @@ bool waterAt(float2 p)
     // Default polygons exclude water; inversion limits water to their union.
     return mask.x != 0 ? covered : !covered;
 }
-float swell(float2 p, float2 direction, float k, float amplitude, float phase)
+// Both views measure only the distance travelled through water, in world units.
+// Visibility depth is a hard upper bound even when turbidity or opacity is zero.
+float3 waterTransmission(float path)
 {
-    return sin(dot(p, normalize(direction)) * k - sqrt(9.81 * k) * sunDirectionTime.w * waves.z + phase) * amplitude;
-}
-float heightAt(float2 p)
-{
-    float k = 6.2831853 / max(waves.y, .01);
-    return swell(p,float2(.94,.34),k*.55,waves.x*.48,0) + swell(p,float2(.78,.63),k*.82,waves.x*.25,1.7)
-         + swell(p,float2(.99,-.14),k*1.35,waves.x*.14,3.2) + swell(p,float2(.55,.84),k*2.1,waves.x*.08,.8)
-         + swell(p,float2(-.25,.97),k*3.4,waves.x*.05,4.1);
+    float ratio = max(path,0.0) / max(foamVisibility.w,.01);
+    float fadeStart = clamp(underwater.x,0.0,.99);
+    float fadeEnd = min(1.0,fadeStart+max(underwater.y,.01));
+    float cutoff = 1.0-smoothstep(fadeStart,fadeEnd,ratio);
+    return exp(-float3(2.2,1.4,.8)*ratio*max(surface.w,0.0)*max(underwater.z,0.0))*cutoff;
 }
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
@@ -62,45 +64,55 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 scenePosition = reconstructWorldPosition(uv, max(depth, 0.0000001), pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
     float sceneDistance = depth <= 0.0000001 ? 100000.0 : max(dot(scenePosition - pass.cameraPosition.xyz, worldRay), 0.0);
     float visibility = max(foamVisibility.w, .01);
-    if (origin.y < 0 && waterAt(origin.xz))
+    float cameraHeight = sampleWaves(origin.xz).height;
+    if (origin.y < cameraHeight && waterAt(origin.xz))
     {
         float path = sceneDistance;
-        if (ray.y > .000001) path = min(path, -origin.y / ray.y);
-        float ratio = path / visibility * max(surface.w, 0.0);
-        float available = exp(-max(-origin.y, 0.0) / visibility * max(underwater.w, 0.0));
-        float3 transmission = exp(-float3(2.2, 1.4, .8) * ratio * max(underwater.z, 0.0));
-        transmission *= 1.0 - smoothstep(underwater.x, underwater.x + max(underwater.y, .01), ratio);
-        float3 surfaceWorld = mul(localToWorld, float4(origin.x, 0, origin.z, 1)).xyz;
+        if (ray.y > .000001) path = min(path, (cameraHeight-origin.y) / ray.y);
+        float ratio = path / visibility;
+        float available = exp(-max(cameraHeight-origin.y, 0.0) / visibility * max(underwater.w, 0.0));
+        float3 transmission = waterTransmission(path);
+        float3 surfaceWorld = mul(localToWorld, float4(origin.x, cameraHeight, origin.z, 1)).xyz;
         float3 up = normalize(mul(float3(0,1,0), (float3x3)pass.worldToLocal));
         float3 illumination = oceanAmbient(up) + max(directionalColor.rgb, 0.0) *
             max(directionalDirectionIntensity.w, 0.0) * saturate(dot(up, normalize(-directionalDirectionIntensity.xyz))) *
             oceanVisibility(surfaceWorld, up) / PI;
         float3 tint = lerp(shallowOpacity.xyz, deepSmoothness.xyz, saturate(max(ratio, 1.0 - available))) * available * illumination;
-        return float4(original.rgb * transmission * lerp(.12,1.0,available) + tint * (1.0-transmission), original.a);
+        return float4(original.rgb * transmission + tint * (1.0-transmission), original.a);
     }
-    if (ray.y >= -0.0000001 || origin.y < 0) return original;
-    float flat = -origin.y / ray.y;
-    if (flat <= 0) return original;
-    float distance = flat;
-    for (int iteration = 0; iteration < 5; ++iteration)
+    if (ray.y >= -0.0000001) return original;
+    // Bracket the height field inside its conservative wave envelope. Safeguarded Newton
+    // steps avoid the old flat-plane division instability on steep waves and near the horizon.
+    float bound = max(crestFoam.w, .0001);
+    float lower = max(0.0, (bound-origin.y)/ray.y);
+    float upper = min(sceneDistance, (-bound-origin.y)/ray.y);
+    if (upper <= lower) return original;
+    float distance = clamp(-origin.y/ray.y, lower, upper);
+    OceanWaveSample wave;
+    for (int iteration = 0; iteration < 10; ++iteration)
     {
         float3 hit = origin + ray * distance;
-        distance -= clamp((hit.y - heightAt(hit.xz)) / ray.y, -flat*.25, flat*.25);
+        wave = sampleWaves(hit.xz);
+        float residual = hit.y-wave.height;
+        if (abs(residual) < .0005) break;
+        if (residual > 0) lower = distance; else upper = distance;
+        float derivative = ray.y-dot(wave.gradient,ray.xz);
+        float candidate = distance-residual/(abs(derivative)>.00001 ? derivative : -.00001);
+        distance = candidate > lower && candidate < upper ? candidate : (lower+upper)*.5;
     }
     if (distance <= 0 || distance >= sceneDistance) return original;
     float3 localHit = origin + ray * distance;
-    if (!waterAt(localHit.xz)) return original;
-    float epsilon = max(waves.y * .002, .01);
-    float dx = (heightAt(localHit.xz + float2(epsilon,0)) - heightAt(localHit.xz - float2(epsilon,0))) / (2*epsilon);
-    float dz = (heightAt(localHit.xz + float2(0,epsilon)) - heightAt(localHit.xz - float2(0,epsilon))) / (2*epsilon);
+    wave = sampleWaves(localHit.xz);
+    if (abs(localHit.y-wave.height) > .02 || !waterAt(localHit.xz)) return original;
+    float dx = wave.gradient.x, dz = wave.gradient.y;
     // Small wind ripples enrich close reflections and fade before becoming subpixel noise.
     float rippleFade = (1.0-smoothstep(20.0, 100.0, distance)) * saturate(abs(waves.x)*5.0);
     float2 ripplePhase = float2(dot(localHit.xz,float2(2.8,1.7)), dot(localHit.xz,float2(-1.9,3.4)))
         + sunDirectionTime.w * waves.z * float2(-2.1,2.7);
-    float2 rippleSlope = (float2(2.8,1.7)*cos(ripplePhase.x) + float2(-1.9,3.4)*cos(ripplePhase.y)) * .012 * rippleFade;
+    float2 rippleSlope = (float2(2.8,1.7)*cos(ripplePhase.x) + float2(-1.9,3.4)*cos(ripplePhase.y)) * detail.x * rippleFade;
     dx += rippleSlope.x;
     dz += rippleSlope.y;
-    float3 normal = normalize(mul(float3(-dx*waves.w,1,-dz*waves.w), (float3x3)pass.worldToLocal));
+    float3 normal = normalize(mul(float3(-dx,1,-dz), (float3x3)pass.worldToLocal));
     float thickness = max(sceneDistance - distance, 0.0);
     float factor = saturate(thickness / visibility);
     float3 worldHit = pass.cameraPosition.xyz + worldRay * distance;
@@ -117,9 +129,19 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float refractedDepth = depthTexture.Sample(refractedUv).r;
     float3 refractedPosition = reconstructWorldPosition(refractedUv, max(refractedDepth, .0000001), pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
     // Do not pull foreground geometry across the water boundary.
-    if (refractedDepth > .0000001 && dot(refractedPosition - pass.cameraPosition.xyz, worldRay) < distance) refractedUv = uv;
-    float3 transmission = exp(-float3(6,4,2.8)*min(thickness / visibility, 80.0));
-    float3 refracted = sceneTexture.Sample(refractedUv).rgb * transmission + tint * (1.0-transmission);
+    if (refractedDepth > .0000001 && dot(refractedPosition - pass.cameraPosition.xyz, worldRay) < distance)
+    {
+        refractedUv = uv;
+        refractedDepth = depth;
+        refractedPosition = scenePosition;
+    }
+    float refractedPath = refractedDepth > .0000001 ? length(refractedPosition-worldHit) : 100000.0;
+    float3 transmission = waterTransmission(refractedPath);
+    float3 bottomLocal = mul(pass.worldToLocal, float4(scenePosition,1)).xyz;
+    float caustics = depth > .0000001 && bottomLocal.y < wave.height
+        ? waterCaustics(bottomLocal, sunDirectionTime.w) : 0.0;
+    float3 bottomLighting = sceneTexture.Sample(refractedUv).rgb * (1.0 + sunlight * caustics);
+    float3 refracted = bottomLighting * transmission + tint * (1.0-transmission);
     float fresnel = .0204 + .9796 * pow(1.0 - saturate(dot(-worldRay,normal)), 5.0);
     float3 reflectedDirection = reflect(worldRay, normal);
     // Screen-space normal variance broadens distant highlights to suppress sparkle aliasing.
@@ -128,8 +150,12 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float3 reflection = oceanEnvironment(reflectedDirection, roughness, ambient);
     float3 specular = sunlight * oceanSunSpecular(normal, -worldRay, lightDirection, roughness);
     float3 color = refracted * (1.0-fresnel) + reflection * fresnel + specular;
-    float foam = (1.0-saturate(thickness/max(surface.y,.001))) * max(surface.z,0.0);
-    foam *= .7 + .3*sin(localHit.x*3.1 + localHit.z*2.7 + sunDirectionTime.w*2);
+    float shoreDepth = depth > .0000001 ? max(wave.height-bottomLocal.y, 0.0) : foamVisibility.w*100.0;
+    float shore = (1.0-smoothstep(0.0,max(surface.y,.001),shoreDepth)) * max(surface.z,0.0);
+    float pattern = waterFoamPattern(localHit.xz, sunDirectionTime.w);
+    float wash = .65 + .35*sin(shoreDepth*6.0 - sunDirectionTime.w*waves.z*2.0 + pattern*3.0);
+    float whitecaps = smoothstep(crestFoam.x,crestFoam.x+.15,wave.crest) * crestFoam.y;
+    float foam = saturate(shore*wash*(.35+.65*pattern) + whitecaps*pattern);
     color = lerp(color,foamVisibility.xyz * irradiance,saturate(foam));
-    return float4(lerp(original.rgb,color,saturate(shallowOpacity.w)),original.a);
+    return float4(lerp(refracted,color,saturate(shallowOpacity.w)),original.a);
 }

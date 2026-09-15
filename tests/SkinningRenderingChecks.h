@@ -147,6 +147,38 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(boundedVertices.empty() && emptyBounds.center == glm::vec3(0) && emptyBounds.radius == 0,
             "Empty deformation retained stale bounds or vertices");
     std::cout << "PASS Vulkan skinning: pixels, independent actors, submeshes, shadows, motion, pause/reset, in-flight uploads and weights\n";
+    // Representative vertex count, four influences and reusable in-place
+    // history. Log timings rather than enforcing a machine-dependent limit.
+    std::vector<MeshVertexData> workload(73683, config.data.vertices[0]);
+    std::array<glm::mat4, 4> benchmarkJoints;
+    for (unsigned i = 0; i < benchmarkJoints.size(); ++i)
+        benchmarkJoints[i] = glm::translate(glm::mat4(1), glm::vec3(.1f * i, .2f * i, -.05f * i)) *
+            glm::rotate(glm::mat4(1), .17f * i, glm::vec3(0, 1, 0));
+    for (std::size_t i = 0; i < workload.size(); ++i)
+    {
+        workload[i].joints = {0, 1, 2, 3}; workload[i].weights = {.4f, .3f, .2f, .1f};
+        workload[i].position[0] += float(i % 197) * .001f;
+    }
+    std::vector<BasicVertex> stream;
+    for (int frame = 0; frame < 8; ++frame) SkinRhiVerticesInto(workload, benchmarkJoints, stream, stream);
+    const auto referenceWorkload = ReferenceSkinRhiVertices(workload, benchmarkJoints);
+    for (std::size_t i = 0; i < stream.size(); ++i)
+        for (unsigned c = 0; c < 3; ++c)
+        {
+            require(std::abs(stream[i].position[c] - referenceWorkload[i].position[c]) < 1e-5f,
+                    "Four-influence SIMD position differs from reference");
+            require(std::abs(stream[i].normal[c] - referenceWorkload[i].normal[c]) < 1e-5f &&
+                    std::abs(stream[i].tangent[c] - referenceWorkload[i].tangent[c]) < 1e-5f,
+                    "Four-influence SIMD normal/tangent differs from reference");
+        }
+    for (int run = 0; run < 3; ++run)
+    {
+        const auto startTime = std::chrono::steady_clock::now();
+        for (int frame = 0; frame < 40; ++frame)
+            SkinRhiVerticesInto(workload, benchmarkJoints, stream, stream);
+        const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count() / 40;
+        std::cout << "CPU skinning 73683 vertices, four influences, run " << run << ": " << elapsed << " ms/pose\n";
+    }
 }
 
 template<class Device>

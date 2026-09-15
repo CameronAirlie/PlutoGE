@@ -187,6 +187,8 @@ float3 sampleGlassBackground(float2 uv, float2 originalUv, float surfaceDepth)
 
 static const float PI = 3.14159265359;
 
+[[vk::binding(2, 0)]] Sampler2D skyQuadratureTexture : register(t2, space0);
+#define PLUTO_SKY_QUADRATURE_TEXTURE 1
 #include "PhysicalSkyEnvironment.slang"
 #include "FogEnvironment.slang"
 #include "FogIntegration.slang"
@@ -329,7 +331,9 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
         int2 last = int2(ceil(position + support)) - 1;
         if (any(first < 0) || any(last >= virtualResolution(level)) || coordinate.z < 0 || coordinate.z > 1) continue;
         int2 lowPage = first / PLUTO_VSM_PAGE_SIZE, highPage = last / PLUTO_VSM_PAGE_SIZE;
-        uint mappings[4];
+        // Decode each resident page once into an integer virtual-to-atlas
+        // offset. The tent spans at most two pages per axis (support <= 5).
+        int2 atlasOffsets[4];
         bool complete = true;
         for (int corner = 0; corner < 4; ++corner)
         {
@@ -337,19 +341,24 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
             // mapping along axes that do not cross a page boundary.
             if ((corner & 1) != 0 && lowPage.x == highPage.x)
             {
-                mappings[corner] = mappings[corner - 1];
+                atlasOffsets[corner] = atlasOffsets[corner - 1];
                 continue;
             }
             if ((corner & 2) != 0 && lowPage.y == highPage.y)
             {
-                mappings[corner] = mappings[corner - 2];
+                atlasOffsets[corner] = atlasOffsets[corner - 2];
                 continue;
             }
             int2 page = int2((corner & 1) != 0 ? highPage.x : lowPage.x, (corner & 2) != 0 ? highPage.y : lowPage.y);
             float2 at = (float2(page + int2(0, level * PLUTO_VSM_GRID)) + 0.5) /
                         float2(PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS);
-            mappings[corner] = uint(virtualShadowTable.SampleLevel(at, 0).r);
-            complete = complete && mappings[corner] != 0;
+            const uint mapping = uint(virtualShadowTable.SampleLevel(at, 0).r);
+            complete = complete && mapping != 0;
+            // Missing mappings are never sampled; avoid unsigned underflow
+            // while preparing their unused offsets.
+            const uint slot = max(mapping, 1u) - 1;
+            atlasOffsets[corner] = (int2(slot % PLUTO_VSM_ATLAS_TILES,
+                slot / PLUTO_VSM_ATLAS_TILES) - page) * PLUTO_VSM_PAGE_SIZE;
         }
         // Try a resident coarser clipmap when the requested filter footprint
         // is unavailable. The VSM path never samples conventional cascades.
@@ -359,23 +368,61 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
         float2 gradient = computeReceiverPlaneDepthGradient(dx, dy);
         float depth = coordinate.z - max(0.0000005, vsm.metrics[level].x * lerp(0.25, 1.0, slope) / vsm.metrics[level].y);
         float visibility = 0, weightSum = 0;
+        const int2 nearestTexel = int2(floor(position + 0.5));
+        // Common softness-1 footprint: gather raw depths, not comparison
+        // results, so each tap retains its own receiver-plane correction.
+        // Keep the scalar path for page crossings and all other footprints.
+        if (pointParameters.w != 3.0 && all(last - first == int2(3, 3)) && all(lowPage == highPage))
+        {
+            const float2 gatherOrigin = float2(first + atlasOffsets[0] + 1);
+            float4 depths[4];
+            depths[0] = virtualShadowAtlas.GatherRed(gatherOrigin / PLUTO_VSM_ATLAS_SIZE);
+            depths[1] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 0)) / PLUTO_VSM_ATLAS_SIZE);
+            depths[2] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(0, 2)) / PLUTO_VSM_ATLAS_SIZE);
+            depths[3] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 2)) / PLUTO_VSM_ATLAS_SIZE);
+            // Gather components are (lower-left, lower-right, upper-right,
+            // upper-left) in texture coordinates: row-major indices 3,2,0,1.
+            // Unroll to keep gathers in registers and preserve scalar summation order.
+            [unroll] for (int y = 0; y < 4; ++y)
+                [unroll] for (int x = 0; x < 4; ++x)
+                {
+                    const int2 texel = first + int2(x, y);
+                    const int component = (y & 1) == 0 ? 3 - (x & 1) : (x & 1);
+                    const float storedDepth = depths[(y / 2) * 2 + x / 2][component];
+                    const float2 tapUv = (float2(texel) + 0.5) / virtualResolution(level);
+                    const float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= storedDepth ? 1.0 : 0.0;
+                    const float2 tent = max(support - abs(float2(texel) - position), 0.0);
+                    const float weight = tent.x * tent.y;
+                    visibility += comparison * weight; weightSum += weight;
+                    if (all(texel == nearestTexel)) rawVisibility = comparison;
+                }
+            normalizedLevel = float(level) / (PLUTO_VSM_LEVELS - 1);
+            return visibility / max(weightSum, 0.000001);
+        }
+        const int pageBoundaryX = (lowPage.x + 1) * PLUTO_VSM_PAGE_SIZE;
+        const int pageBoundaryY = (lowPage.y + 1) * PLUTO_VSM_PAGE_SIZE;
         // All tent texels are visited once. At most four page-table fetches
         // resolve the entire footprint; depth is sampled at texel centres.
         for (int y = first.y; y <= last.y; ++y)
+        {
+            const int row = y >= pageBoundaryY ? 2 : 0;
+            const int2 leftOffset = atlasOffsets[row];
+            const int2 rightOffset = atlasOffsets[row + 1];
+            const float tentY = max(support - abs(float(y) - position.y), 0.0);
             for (int x = first.x; x <= last.x; ++x)
             {
-                int2 texel = int2(x, y), page = texel / PLUTO_VSM_PAGE_SIZE;
-                uint corner = (page.x != lowPage.x ? 1 : 0) + (page.y != lowPage.y ? 2 : 0);
-                uint slot = mappings[corner] - 1;
-                float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
-                                float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
+                const int2 texel = int2(x, y);
+                const int2 offset = x >= pageBoundaryX ? rightOffset : leftOffset;
+                // Integer addressing preserves the original texel centres,
+                // including filters crossing unrelated physical atlas pages.
+                float2 atlas = (float2(texel + offset) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
                 float2 tapUv = (float2(texel) + 0.5) / virtualResolution(level);
                 float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= virtualShadowAtlas.SampleLevel(atlas, 0).r ? 1.0 : 0.0;
-                float2 tent = max(support - abs(float2(texel) - position), 0.0);
-                float weight = tent.x * tent.y;
+                float weight = max(support - abs(float(x) - position.x), 0.0) * tentY;
                 visibility += comparison * weight; weightSum += weight;
-                if (all(texel == int2(floor(position + 0.5)))) rawVisibility = comparison;
+                if (all(texel == nearestTexel)) rawVisibility = comparison;
             }
+        }
         normalizedLevel = float(level) / (PLUTO_VSM_LEVELS - 1);
         return visibility / max(weightSum, 0.000001);
     }
@@ -720,7 +767,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float shadowVisibility = 1.0;
     float rawShadowVisibility = 1.0;
     float normalizedCascade = 0.0;
-    if (shadowsEnabled != 0)
+    // pointParameters.w records the explicit geometry diagnostic mode.
+    // Mode 2 bypasses directional receiver sampling without changing page generation.
+    if (shadowsEnabled != 0 && pointParameters.w != 2.0)
     {
         // Evaluate derivatives before any per-pixel cascade-dependent work so
         // they remain continuous when a 2x2 fragment quad straddles a split.

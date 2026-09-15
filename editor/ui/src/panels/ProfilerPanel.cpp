@@ -51,42 +51,25 @@ namespace PlutoGE::ui
 
         SynchronizeFrameSelection();
         const auto *selected = GetSelectedFrame();
-        const auto &rmlTiming = (selected ? selected->runtimeUi : render::RmlUiRuntime::Get().GetCpuTiming());
-        m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
-            (selected ? selected->panels : m_panelManager->GetTimingStats()),
-            (selected ? selected->timing : m_profiler->GetLatestFrameTimingStats()),
-            (selected ? selected->cpuPasses : m_renderer->GetCpuPassTimings()),
-            (selected ? selected->renderer : m_renderer->GetCpuFrameStats()),
-            (selected ? selected->gpuPasses : m_renderer->GetGpuPassTimings()),
-            (selected ? selected->postProcessGpuPasses : m_renderer->GetPostProcessGpuTimings()),
-            (selected ? selected->gpuDetails : m_renderer->GetGpuDetailTimings()),
-            (selected ? selected->totalCpuMs : m_renderer->GetTotalCpuPassTimeMs()),
-            (selected ? selected->totalGpuMs : m_renderer->GetTotalGpuPassTimeMs()),
-            (selected ? selected->lighting : m_renderer->GetLightingGpuTiming()),
-            selected ? selected->durationMs : -1.0f);
         if (selected)
         {
-            m_lastCopiedMetrics = "Frame sequence: " + std::to_string(selected->sequence) + "\n" + m_lastCopiedMetrics;
-            const auto selfTimes = core::CpuSelfTimes(selected->samples);
-            std::vector<std::size_t> order;
-            for (std::size_t i = 0; i < selected->samples.size(); ++i) order.push_back(i);
-            std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return selfTimes[a] > selfTimes[b]; });
-            std::ostringstream traceReport;
-            traceReport << std::fixed << std::setprecision(3)
-                        << "\nSlowest CPU trace scopes (elapsed time, includes blocking and descheduling):\n"
-                        << "Trace samples: " << selected->samples.size() << ", dropped: " << selected->droppedSamples << "\n";
-            for (std::size_t rank = 0; rank < std::min<std::size_t>(20, order.size()); ++rank)
-            {
-                const auto index = order[rank];
-                const auto &sample = selected->samples[index];
-                traceReport << "  " << sample.name << ": " << selfTimes[index] << " ms self, "
-                            << sample.durationMs << " ms inclusive, start " << sample.startMs << " ms";
-                if (sample.parent >= 0 && static_cast<std::size_t>(sample.parent) < selected->samples.size())
-                    traceReport << " (parent: " << selected->samples[sample.parent].name << ")";
-                traceReport << "\n";
-            }
-            m_lastCopiedMetrics += traceReport.str();
+            m_lastCopiedMetrics = m_profiler->BuildFrameMetricsReport(*selected);
+            ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());
+            return;
         }
+        const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
+        m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
+            m_panelManager->GetTimingStats(),
+            m_profiler->GetLatestFrameTimingStats(),
+            m_renderer->GetCpuPassTimings(),
+            m_renderer->GetCpuFrameStats(),
+            m_renderer->GetGpuPassTimings(),
+            m_renderer->GetPostProcessGpuTimings(),
+            m_renderer->GetGpuDetailTimings(),
+            m_renderer->GetTotalCpuPassTimeMs(),
+            m_renderer->GetTotalGpuPassTimeMs(),
+            m_renderer->GetLightingGpuTiming(),
+            -1.0f);
         std::ostringstream rmlReport;
         rmlReport << std::fixed << std::setprecision(3)
                   << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
@@ -108,6 +91,12 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::Initialize()
     {
+    }
+    void ProfilerPanel::CopyCapturedMetricsToClipboard()
+    {
+        if (!m_profiler || m_profiler->GetCapturedFrames().empty()) return;
+        m_lastCopiedMetrics = m_profiler->BuildCaptureMetricsReport();
+        ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());
     }
 
     void ProfilerPanel::Render()
@@ -269,6 +258,14 @@ namespace PlutoGE::ui
         ImGui::Text("  Recorded: %llu geometry draws / %llu instances",
                     static_cast<unsigned long long>(rhiScene.recordedGeometryDrawCount),
                     static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount));
+        ImGui::Text("  Internal: %u x %u; output: %u x %u", rhiScene.renderSize.width, rhiScene.renderSize.height,
+                    rhiScene.outputSize.width, rhiScene.outputSize.height);
+        ImGui::Text("  Mode: %s", render::GeometryDiagnosticName(rhiScene.geometryDiagnosticMode));
+        ImGui::Text("  Triangles: %llu opaque, %llu masked, %llu transparent, %llu outline",
+                    static_cast<unsigned long long>(rhiScene.geometryTriangles[0]),
+                    static_cast<unsigned long long>(rhiScene.geometryTriangles[1]),
+                    static_cast<unsigned long long>(rhiScene.geometryTriangles[2]),
+                    static_cast<unsigned long long>(rhiScene.geometryTriangles[3]));
         ImGui::Text("  Shadows: %llu draws / %llu instances; %llu uploads",
                     static_cast<unsigned long long>(rhiScene.recordedShadowDrawCount),
                     static_cast<unsigned long long>(rhiScene.recordedShadowInstanceCount),

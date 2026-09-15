@@ -103,6 +103,9 @@ namespace PlutoGE::ui
                            const render::RmlUiCpuTiming &runtimeUi,
                            std::vector<core::CpuSample> samples = {}, std::uint32_t droppedSamples = 0);
         void RecordFrame(EditorProfileFrame frame);
+        [[nodiscard]] std::string BuildFrameMetricsReport(const EditorProfileFrame &frame, bool allTraceSamples = false) const;
+        [[nodiscard]] std::string BuildCaptureMetricsReport() const;
+        render::GeometryDiagnosticMode geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
 
         void AddFrameSample(float frameTimeMs);
         void SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats);

@@ -4,6 +4,10 @@
 #include "PlutoGE/render/Mesh.h"
 #include <cmath>
 #include <limits>
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define PLUTO_SKINNING_SSE2 1
+#endif
 
 namespace PlutoGE::render
 {
@@ -21,8 +25,13 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < source.size(); ++index)
         {
             const auto &vertex = source[index];
-            // Affine 3x4 blend: the unused homogeneous row need not be computed.
+            // Keep only the affine 3x4 portion for deformation below.
             float m[12]{};
+#if defined(PLUTO_SKINNING_SSE2)
+            // Matrix columns are contiguous in GLM. Blend four lanes at once;
+            // unaligned loads impose no alignment requirement on the palette.
+            __m128 columns[4] = {_mm_setzero_ps(), _mm_setzero_ps(), _mm_setzero_ps(), _mm_setzero_ps()};
+#endif
             float totalWeight = 0;
             for (unsigned influence=0; influence<4; ++influence)
             {
@@ -31,11 +40,25 @@ namespace PlutoGE::render
                 if (joint<0 || static_cast<std::size_t>(joint)>=joints.size() ||
                     !std::isfinite(weight) || weight<=0) continue;
                 const float *bone=&joints[joint][0][0];
+#if defined(PLUTO_SKINNING_SSE2)
+                const __m128 weights = _mm_set1_ps(weight);
+                for (unsigned column = 0; column < 4; ++column)
+                    columns[column] = _mm_add_ps(columns[column], _mm_mul_ps(_mm_loadu_ps(bone + column * 4), weights));
+#else
                 for (unsigned column=0;column<4;++column)
                     for (unsigned row=0;row<3;++row)
                         m[column*3+row]+=bone[column*4+row]*weight;
+#endif
                 totalWeight+=weight;
             }
+#if defined(PLUTO_SKINNING_SSE2)
+            alignas(16) float blended[4];
+            for (unsigned column = 0; column < 4; ++column)
+            {
+                _mm_store_ps(blended, columns[column]);
+                for (unsigned row = 0; row < 3; ++row) m[column * 3 + row] = blended[row];
+            }
+#endif
             if (totalWeight>.0001f) {
                 const float inverse=1/totalWeight;
                 for (float &value:m) value*=inverse;

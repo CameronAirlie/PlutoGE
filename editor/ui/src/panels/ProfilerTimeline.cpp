@@ -99,6 +99,22 @@ namespace PlutoGE::ui
         m_captureFrameLimit = std::clamp(m_captureFrameLimit, 1, static_cast<int>(EditorProfiler::MaxCaptureFrames));
         ImGui::SameLine();
         if (ImGui::Button("Copy metrics")) CopyMetricsToClipboard();
+        if (availableWidth >= 700) ImGui::SameLine();
+        ImGui::BeginDisabled(m_profiler->GetCapturedFrames().empty());
+        if (ImGui::Button("Copy all captured metrics")) CopyCapturedMetricsToClipboard();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Copies the retained history: summary, complete per-frame metrics and all CPU trace samples. Stop recording first for a fixed capture.");
+        if (ImGui::TreeNode("Geometry diagnostics"))
+        {
+            int mode = static_cast<int>(m_profiler->geometryDiagnosticMode);
+            if (ImGui::Combo("Comparison mode", &mode, "Normal rendering\0Original sky evaluation\0Bypass directional shadow sampling\0Scalar directional shadow filter\0"))
+                m_profiler->geometryDiagnosticMode = static_cast<render::GeometryDiagnosticMode>(mode);
+            ImGui::TextWrapped("Applies to the editor viewport. Shadow bypass changes appearance for measurement; shadow pages are still generated. Wait for temporal history to settle before recording each mode.");
+            ImGui::TreePop();
+        }
+        if (m_profiler->geometryDiagnosticMode != render::GeometryDiagnosticMode::None)
+            ImGui::TextColored(ImVec4(1, .7f, .2f, 1), "Geometry comparison mode is active");
 
         const auto &frames = m_profiler->GetCapturedFrames();
         if (m_followLatest && !frames.empty()) SelectFrame(static_cast<int>(frames.size()) - 1);

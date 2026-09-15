@@ -24,18 +24,17 @@ bool projectRay(float4 clip, out float2 uv, out float projectedDepth)
     return all(uv >= 0.0) && all(uv <= 1.0);
 }
 
-bool behindSurface(float2 uv, float projectedDepth)
+bool behindSurface(float2 uv, float projectedDepth, out float sceneDepth)
 {
-    const float sceneDepth = depthTexture.SampleLevel(uv, 0.0).r;
+    sceneDepth = depthTexture.SampleLevel(uv, 0.0).r;
     // Both RHI backends use reverse Z. At the same screen coordinate, depth
     // ordering identifies a crossing without reconstructing view-space depth.
     // Keep the full reconstruction below for the final world-unit thickness test.
     return sceneDepth > 0.000001 && sceneDepth >= projectedDepth;
 }
 
-float depthDelta(float2 uv, float rayDepth, float4 viewDepthRow, float4 homogeneousRow)
+float depthDelta(float2 uv, float depth, float rayDepth, float4 viewDepthRow, float4 homogeneousRow)
 {
-    float depth = depthTexture.SampleLevel(uv, 0.0).r;
     if (depth <= 0.000001) return -1e20;
     float2 ndc = uv * 2.0 - 1.0;
     if (pass.flipY != 0) ndc.y = -ndc.y;
@@ -155,7 +154,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             if (!projectRay(clipOrigin + clipRay * travel, rayUv, projectedDepth)) break;
             // Every preceding sample is in front: this loop terminates at its
             // first crossing, regardless of whether the refined hit is accepted.
-            if (behindSurface(rayUv, projectedDepth))
+            float hitDepth;
+            if (behindSurface(rayUv, projectedDepth, hitDepth))
             {
                 float low = previousTravel, high = travel;
                 for (uint j = 0; j < min(uint(max(pass.parameters[1].w, 0.0)), 8u); ++j)
@@ -164,12 +164,20 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                     float2 middleUv;
                     float middleDepth;
                     if (!projectRay(clipOrigin + clipRay * middle, middleUv, middleDepth)) break;
-                    if (behindSurface(middleUv, middleDepth)) high = middle;
+                    float middleSceneDepth;
+                    if (behindSurface(middleUv, middleDepth, middleSceneDepth))
+                    {
+                        high = middle;
+                        rayUv = middleUv;
+                        hitDepth = middleSceneDepth;
+                    }
                     else low = middle;
                 }
-                projectRay(clipOrigin + clipRay * high, rayUv, projectedDepth);
+                // The upper endpoint is always the last accepted crossing.
+                // Reuse its projected UV and depth, including zero refinements
+                // and early projection failure, instead of sampling it again.
                 float rayDepth = -(viewOrigin.z + viewRay.z * high);
-                float delta = depthDelta(rayUv, rayDepth, viewDepthRow, homogeneousRow);
+                float delta = depthDelta(rayUv, hitDepth, rayDepth, viewDepthRow, homogeneousRow);
                 float3 hitNormal = decodeNormal(normalTexture.SampleLevel(rayUv, 0.0).xyz);
                 if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
                 {

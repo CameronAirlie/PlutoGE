@@ -24,6 +24,7 @@ namespace PlutoGE::ui
         void Shutdown() override;
 
         void CopyMetricsToClipboard();
+        void CopyCapturedMetricsToClipboard();
 
     private:
         void RenderCaptureControls();

@@ -1,4 +1,5 @@
 #include "FogRenderingChecks.h"
+#include "SkyQuadratureChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -150,6 +151,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
+        shaders.skyQuadrature = { { .glsl = ReadText("SkyQuadrature.vertex.glsl") }, { .glsl = ReadText("SkyQuadrature.fragment.glsl") } };
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particles.fragmentShader.glsl = ReadText("Particles.fragment.glsl");
@@ -354,6 +356,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             CheckFogRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--sky-quadrature")
+        {
+            CheckSkyQuadrature(device, shaders, [&](auto texture, auto width, auto height) {
+                std::vector<std::byte> pixels(width * height * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;

@@ -68,6 +68,7 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     renderer.Render(glm::mat4(1),lighting,original);
     auto before=readPixels(renderer.GetColorTexture());
     require(renderer.GetFrameStats().geometryDraws==343,"Unbatched baseline count incorrect");
+    require(renderer.GetFrameStats().geometryTriangles[0] == 686, "Unbatched triangle count incorrect");
     renderer.Render(glm::mat4(1),lighting,batched);
     auto after=readPixels(renderer.GetColorTexture());
     require(before.size()==after.size() && !before.empty(),"Image readback failed");
@@ -78,6 +79,7 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     require(renderer.GetFrameStats().geometryInstances==343 && renderer.GetFrameStats().geometryDraws<=8,
             "Renderer failed to use instanced geometry");
     const auto drawCount=renderer.GetFrameStats().geometryDraws;
+    require(renderer.GetFrameStats().geometryTriangles[0] == 686, "Instanced triangle count incorrect");
     const auto measure=[&](const auto &draws) {
         double ms=0;
         for(int i=0;i<100;++i) {

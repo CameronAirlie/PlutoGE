@@ -150,6 +150,10 @@ int main(int argc, char **argv)
     append(1321);
     panel.CopyMetricsToClipboard();
     valid = valid && clipboard.starts_with("Frame sequence: 1321\n");
+    panel.CopyCapturedMetricsToClipboard();
+    valid = valid && clipboard.starts_with("Editor profiling capture\n") &&
+            clipboard.find("FRAME 1321") != std::string::npos &&
+            clipboard.find("Retained frames: 160") != std::string::npos;
     platform.Platform_SetClipboardTextFn = previousClipboardSetter;
     platform.Platform_ClipboardUserData = previousClipboardData;
     profiler.ClearCapture();

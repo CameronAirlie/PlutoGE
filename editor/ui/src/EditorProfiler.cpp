@@ -6,6 +6,7 @@
 #include <numeric>
 #include <sstream>
 #include <utility>
+#include <map>
 
 namespace PlutoGE::ui
 {
@@ -20,6 +21,97 @@ namespace PlutoGE::ui
                 bytes += sample.name.capacity() + sample.context.capacity();
             return bytes;
         }
+    }
+
+    std::string EditorProfiler::BuildFrameMetricsReport(const EditorProfileFrame &frame, bool allTraceSamples) const
+    {
+        const auto &rmlTiming = frame.runtimeUi;
+        auto result = BuildMetricsReport(frame.panels, frame.timing, frame.cpuPasses, frame.renderer,
+            frame.gpuPasses, frame.postProcessGpuPasses, frame.gpuDetails, frame.totalCpuMs,
+            frame.totalGpuMs, frame.lighting, frame.durationMs);
+        {
+            result = "Frame sequence: " + std::to_string(frame.sequence) + "\n" + result;
+            const auto selfTimes = core::CpuSelfTimes(frame.samples);
+            std::vector<std::size_t> order;
+            for (std::size_t i = 0; i < frame.samples.size(); ++i) order.push_back(i);
+            std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return selfTimes[a] > selfTimes[b]; });
+            std::ostringstream traceReport;
+            traceReport << std::fixed << std::setprecision(3)
+                        << (allTraceSamples ? "\nAll CPU trace scopes (sorted by self time):\n" : "\nSlowest CPU trace scopes:\n")
+                        << "Trace samples: " << frame.samples.size() << ", dropped: " << frame.droppedSamples << "\n";
+            for (std::size_t rank = 0; rank < (allTraceSamples ? order.size() : std::min<std::size_t>(20, order.size())); ++rank)
+            {
+                const auto index = order[rank];
+                const auto &sample = frame.samples[index];
+                traceReport << "  [" << index << "] " << sample.name << ": " << selfTimes[index] << " ms self, "
+                            << sample.durationMs << " ms inclusive, start " << sample.startMs << " ms";
+                if (sample.parent >= 0 && static_cast<std::size_t>(sample.parent) < frame.samples.size())
+                    traceReport << " (parent [" << sample.parent << "]: " << frame.samples[sample.parent].name << ")";
+                traceReport << " (category " << static_cast<unsigned>(sample.category) << ", depth " << sample.depth << ", context: " << sample.context << ")\n";
+            }
+            result += traceReport.str();
+        }
+        std::ostringstream rmlReport;
+        rmlReport << std::fixed << std::setprecision(3)
+                  << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
+                  << "RmlUi documents: " << rmlTiming.visibleDocumentCount << "/"
+                  << rmlTiming.documentCount << " visible\n"
+                  << "RmlUi initialize: " << rmlTiming.initializeMs << " ms\n"
+                  << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
+                  << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
+                  << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
+                  << "RmlUi world-surface update: " << rmlTiming.worldSurfaceMs << " ms\n"
+                  << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
+                  << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
+                  << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"
+                  << "RmlUi render submission: " << rmlTiming.renderMs << " ms\n"
+                  << "RmlUi backend end frame: " << rmlTiming.endFrameMs << " ms\n";
+        result += rmlReport.str();
+        return result;
+    }
+
+    std::string EditorProfiler::BuildCaptureMetricsReport() const
+    {
+        std::ostringstream report;
+        report << std::fixed << std::setprecision(3) << "Editor profiling capture\nRetained frames: " << m_capture.size() << "\n";
+        if (m_capture.empty()) return report.str();
+        report << "Frame sequence range: " << m_capture.front().sequence << " - " << m_capture.back().sequence
+               << "\nRolling history capacity: " << m_captureLimit
+               << "\nTrace memory limit encountered: " << (m_memoryLimited ? "Yes" : "No")
+               << "\nGPU values are asynchronous observations; repeated observations may occur."
+               << "\nParent GPU scopes include children; do not add them together."
+               << "\nSummary pools retained frames; check per-frame resolution and diagnostic mode before comparing.\n";
+        std::map<std::string, std::vector<float>> measurements;
+        for (const auto &frame : m_capture)
+        {
+            measurements["CPU frame"].push_back(frame.durationMs);
+            const auto &gpu = frame.timing.rhiTimingStats;
+            if (gpu.hasGpuResult)
+            {
+                if (std::isfinite(gpu.frameGpuMs) && gpu.frameGpuMs >= 0)
+                    measurements["Scene GPU observations"].push_back(gpu.frameGpuMs);
+                for (const auto &scope : gpu.gpuScopes)
+                    if (std::isfinite(scope.milliseconds) && scope.milliseconds >= 0)
+                        measurements[scope.name + " GPU observations"].push_back(scope.milliseconds);
+            }
+        }
+        report << "\nTiming summary (ms; percentiles use nearest rank):\n";
+        for (auto &[name, values] : measurements)
+        {
+            if (values.empty()) continue;
+            std::sort(values.begin(), values.end());
+            const auto percentile = [&](double fraction) {
+                return values[static_cast<std::size_t>(std::ceil(fraction * values.size())) - 1];
+            };
+            report << name << ": n=" << values.size()
+                   << ", mean=" << std::accumulate(values.begin(), values.end(), 0.0) / values.size()
+                   << ", min=" << values.front() << ", p50=" << percentile(.5)
+                   << ", p95=" << percentile(.95) << ", p99=" << percentile(.99)
+                   << ", max=" << values.back() << "\n";
+        }
+        for (const auto &frame : m_capture)
+            report << "\n========== FRAME " << frame.sequence << " ==========\n" << BuildFrameMetricsReport(frame, true);
+        return report.str();
     }
 
     void EditorProfiler::StartCapture(std::size_t frameLimit)
@@ -254,8 +346,8 @@ namespace PlutoGE::ui
             report << "Process memory: " << frameTimingStats.processPrivateMiB << " MiB private, "
                    << frameTimingStats.processWorkingSetMiB << " MiB resident\n";
             report << "Process page faults: " << frameTimingStats.processPageFaults << " cumulative (includes soft faults)\n";
-            report << "Debugger attached: " << (frameTimingStats.debuggerAttached ? "Yes" : "No") << "\n";
         }
+        report << "Debugger attached: " << (frameTimingStats.debuggerAttached ? "Yes" : "No") << "\n";
         report << "Profiling begin: " << frameTimingStats.profilingBeginMs << " ms\n";
         report << "Editor setup: " << frameTimingStats.editorSetupMs << " ms\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";
@@ -332,6 +424,14 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "RHI geometry diagnostic mode: " << render::GeometryDiagnosticName(rhiScene.geometryDiagnosticMode) << "\n";
+        report << "RHI directional shadow softness: " << rhiScene.directionalShadowSoftness
+               << " (configured; not a measured tap count)\n";
+        report << "RHI resolution: " << rhiScene.renderSize.width << " x " << rhiScene.renderSize.height
+               << " internal -> " << rhiScene.outputSize.width << " x " << rhiScene.outputSize.height << " output\n";
+        report << "RHI submitted triangles (includes instances): " << rhiScene.geometryTriangles[0] << " opaque, "
+               << rhiScene.geometryTriangles[1] << " alpha-tested, " << rhiScene.geometryTriangles[2]
+               << " transparent, " << rhiScene.geometryTriangles[3] << " outline\n";
         report << "RHI recorded shadows: " << rhiScene.recordedShadowDrawCount << " draws, "
                << rhiScene.recordedShadowInstanceCount << " instances ("
                << rhiScene.recordedShadowDrawsByCascade[0] << ", "

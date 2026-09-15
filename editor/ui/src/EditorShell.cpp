@@ -2982,6 +2982,8 @@ namespace PlutoGE::ui
             viewportPanel->SetTemporalUpscalerOptions(viewportUpscaler);
             viewportPanel2->SetTemporalUpscalerOptions(viewportUpscaler);
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
+            if (m_editorSceneRenderService)
+                m_editorSceneRenderService->SetGeometryDiagnosticMode(m_profiler.geometryDiagnosticMode);
             core::CpuScope frameScope("EditorLoop");
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;

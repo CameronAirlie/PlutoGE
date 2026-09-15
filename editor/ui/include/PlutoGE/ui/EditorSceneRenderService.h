@@ -40,6 +40,7 @@ namespace PlutoGE::ui
         bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
+        void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
                     std::span<const render::RenderCommand> commands,
@@ -69,6 +70,7 @@ namespace PlutoGE::ui
         }
 
     private:
+        render::GeometryDiagnosticMode m_geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
         render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;

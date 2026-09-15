@@ -1006,6 +1006,11 @@ namespace PlutoGE::render
         m_timingStats.submitMs = rendererTiming.submitMs;
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
+        m_timingStats.geometryTriangles = frameStats.geometryTriangles;
+        m_timingStats.renderSize = renderSize;
+        m_timingStats.outputSize = outputSize;
+        m_timingStats.geometryDiagnosticMode = effectiveLighting.geometryDiagnosticMode;
+        m_timingStats.directionalShadowSoftness = effectiveLighting.shadowSoftness;
         m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();
         m_timingStats.recordedShadowInstanceCount = frameStats.shadowInstances;
         m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;

@@ -53,9 +53,65 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     };
     for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
     const auto shadowed = readPixels(renderer.GetColorTexture());
+    lighting.geometryDiagnosticMode = GeometryDiagnosticMode::BypassDirectionalShadows;
+    renderSurface(); assertExclusive();
+    const auto bypassed = readPixels(renderer.GetColorTexture());
+    if (static_cast<unsigned char>(bypassed[(32 * 64 + 32) * 4]) < 245 || bypassed == shadowed)
+        throw std::runtime_error("Directional shadow sampling diagnostic did not bypass receiver shading");
+    lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+    renderSurface();
+    if (readPixels(renderer.GetColorTexture()) != shadowed)
+        throw std::runtime_error("Leaving the shadow diagnostic changed normal rendering");
     std::cout << "VSM surface: requested " << renderer.GetFrameStats().virtualShadows.requested
               << ", hits " << renderer.GetFrameStats().virtualShadows.cacheHits
               << ", center " << int(shadowed[(32 * 64 + 32) * 4]) << '\n';
+    // Record deterministic filter images before and after shader changes. The
+    // smaller occluder exposes penumbrae instead of only testing a black mask.
+    const auto originalCasterModel = caster.model;
+    for (float tilt : {0.0f, 0.24f})
+    for (float softness : {0.0f, 0.5f, 1.0f, 2.0f, 4.0f})
+    {
+        receiver.model = glm::rotate(glm::mat4(1), tilt, glm::vec3(0, 1, 0)) *
+            glm::scale(glm::mat4(1), glm::vec3(4));
+        lighting.shadowSoftness = softness;
+        caster.model = glm::translate(glm::mat4(1), glm::vec3(0.137f, -0.219f, 2)) *
+            glm::scale(glm::mat4(1), glm::vec3(0.75f));
+        for (int frame = 0; frame < 16; ++frame) renderSurface();
+        const auto filtered = readPixels(renderer.GetColorTexture());
+        lighting.geometryDiagnosticMode = GeometryDiagnosticMode::ReferenceDirectionalShadows;
+        renderSurface();
+        if (readPixels(renderer.GetColorTexture()) != filtered)
+            throw std::runtime_error("Gather shadow filter differs from scalar reference");
+        lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+        renderer.Render(projection * lighting.view, lighting, std::span(&receiver, 1), {}, std::span(&caster, 1),
+                        PostProcessDebugView::DirectionalShadowMaskRaw);
+        const auto raw = readPixels(renderer.GetColorTexture());
+        lighting.geometryDiagnosticMode = GeometryDiagnosticMode::ReferenceDirectionalShadows;
+        renderer.Render(projection * lighting.view, lighting, std::span(&receiver, 1), {}, std::span(&caster, 1),
+                        PostProcessDebugView::DirectionalShadowMaskRaw);
+        if (readPixels(renderer.GetColorTexture()) != raw)
+            throw std::runtime_error("Gather shadow filter changed the diagnostic nearest texel");
+        lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+        std::uint64_t fingerprint = 14695981039346656037ull;
+        int lit = 0, dark = 0, partial = 0;
+        for (std::size_t index = 0; index < filtered.size(); ++index)
+        {
+            const auto value = static_cast<unsigned char>(filtered[index]);
+            fingerprint = (fingerprint ^ value) * 1099511628211ull;
+            if (index % 4 == 0)
+            {
+                lit += value > 245; dark += value < 10;
+                partial += value >= 10 && value <= 245;
+            }
+        }
+        std::cout << "VSM filter softness " << softness << ": fingerprint " << fingerprint
+                  << ", partial pixels " << partial << '\n';
+        if (!lit || !dark || (softness >= 1 && !partial))
+            throw std::runtime_error("VSM filter lost lit, occluded or penumbra coverage");
+    }
+    caster.model = originalCasterModel;
+    receiver.model = glm::scale(glm::mat4(1), glm::vec3(4));
+    lighting.shadowSoftness = 1;
     caster.castsShadow = false;
     for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
     if (shadowed == readPixels(renderer.GetColorTexture()))

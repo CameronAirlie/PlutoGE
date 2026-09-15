@@ -111,6 +111,46 @@ int main()
         profiler.StopCapture();
         Require(profiler.GetCapturedFrames().front().sequence == 4, "Manual stop must preserve the rolling history");
         std::cout << "Editor profiler tests passed\n";
+        profiler.ClearCapture();
+        Require(profiler.BuildCaptureMetricsReport().find("Retained frames: 0") != std::string::npos, "Empty capture report incorrect");
+        profiler.StartCapture(2);
+        for (int index = 0; index < 3; ++index)
+        {
+            EditorProfileFrame exported;
+            exported.sequence = 100 + index;
+            exported.durationMs = 10.0f + index * 10;
+            exported.timing.debuggerAttached = true;
+            exported.timing.rhiTimingStats.hasGpuResult = index == 2;
+            exported.timing.rhiTimingStats.frameGpuMs = index == 2 ? 5.0f : 99.0f;
+            exported.timing.rhiTimingStats.gpuScopes.push_back({"Geometry parent", 5.0f, .1f});
+            exported.timing.rhiSceneTimingStats.geometryTriangles = {123, 4, 5, 6};
+            exported.timing.rhiSceneTimingStats.renderSize = {603, 346};
+            exported.timing.rhiSceneTimingStats.outputSize = {1005, 594};
+            exported.timing.rhiSceneTimingStats.directionalShadowSoftness = 1.5f;
+            exported.timing.rhiSceneTimingStats.geometryDiagnosticMode = PlutoGE::render::GeometryDiagnosticMode::ReferenceDirectionalShadows;
+            exported.runtimeUi.renderMs = float(index);
+            for (int sample = 0; sample < 25; ++sample)
+                exported.samples.push_back({"scope" + std::to_string(sample), "captured context", float(sample), 1, -1, 0, PlutoGE::core::CpuCategory::Rendering});
+            profiler.RecordFrame(std::move(exported));
+        }
+        profiler.StopCapture();
+        const auto captureReport = profiler.BuildCaptureMetricsReport();
+        Require(captureReport.find("FRAME 100") == std::string::npos && captureReport.find("FRAME 101") < captureReport.find("FRAME 102"),
+                "Export must contain only retained frames in order");
+        Require(captureReport.find("mean=25.000") != std::string::npos && captureReport.find("p95=30.000") != std::string::npos,
+                "Capture statistics incorrect");
+        Require(captureReport.find("Scene GPU observations: n=1, mean=5.000") != std::string::npos,
+                "Pending GPU results contaminated the summary");
+        Require(captureReport.find("scope24") != std::string::npos && captureReport.find("captured context") != std::string::npos,
+                "Whole capture truncated traces");
+        Require(captureReport.find("RmlUi render submission: 2.000") != std::string::npos &&
+                captureReport.find("Debugger attached: Yes") != std::string::npos &&
+                captureReport.find("123 opaque") != std::string::npos && captureReport.find("603 x 346 internal") != std::string::npos,
+                "Whole capture omitted frame metrics");
+        Require(profiler.GetCapturedFrames().size() == 2 && !profiler.IsRecording(), "Export mutated capture state");
+        Require(captureReport.find("Scalar directional shadow filter") != std::string::npos &&
+                captureReport.find("RHI directional shadow softness: 1.50") != std::string::npos,
+                "Capture omitted the actual shadow filter configuration");
         return 0;
     }
     catch (const std::exception &error)

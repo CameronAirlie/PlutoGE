@@ -58,6 +58,16 @@ float3 samplePhysicalSkyEnvironment(float3 direction, float sunVisibility = 1.0)
     return max(sky * physicalSkySettings.y, 0.0);
 }
 
+static const float skyQuadratureCorner = 0.57735026919;
+static const float3 skyQuadratureDirections[14] = {
+    float3(1,0,0), float3(-1,0,0), float3(0,1,0),
+    float3(0,-1,0), float3(0,0,1), float3(0,0,-1),
+    float3(1,1,1) * skyQuadratureCorner, float3(1,1,-1) * skyQuadratureCorner,
+    float3(1,-1,1) * skyQuadratureCorner, float3(1,-1,-1) * skyQuadratureCorner,
+    float3(-1,1,1) * skyQuadratureCorner, float3(-1,1,-1) * skyQuadratureCorner,
+    float3(-1,-1,1) * skyQuadratureCorner, float3(-1,-1,-1) * skyQuadratureCorner
+};
+
 float3 samplePhysicalSkyIrradiance(float3 normal)
 {
     // Integrate a fixed world-space quadrature, rather than rotating five
@@ -65,23 +75,24 @@ float3 samplePhysicalSkyIrradiance(float3 normal)
     // sharp horizon/Mie features over curved diffuse surfaces like reflections
     // and introduces a seam where the tangent-frame reference axis changes.
     // The 14-point sphere rule uses axis weights 1/15 and corner weights 3/40.
-    const float corner = 0.57735026919;
-    const float3 directions[14] = {
-        float3(1,0,0), float3(-1,0,0), float3(0,1,0),
-        float3(0,-1,0), float3(0,0,1), float3(0,0,-1),
-        float3(1,1,1) * corner, float3(1,1,-1) * corner,
-        float3(1,-1,1) * corner, float3(1,-1,-1) * corner,
-        float3(-1,1,1) * corner, float3(-1,1,-1) * corner,
-        float3(-1,-1,1) * corner, float3(-1,-1,-1) * corner
-    };
     float3 irradiance = 0.0;
     float weightSum = 0.0;
     for (int tap = 0; tap < 14; ++tap)
     {
-        const float weight = max(dot(normal, directions[tap]), 0.0) *
+        const float weight = max(dot(normal, skyQuadratureDirections[tap]), 0.0) *
                              (tap < 6 ? 1.0 / 15.0 : 3.0 / 40.0);
         // Direct lighting owns the sun disc and its shadow visibility.
-        irradiance += samplePhysicalSkyEnvironment(directions[tap], 0.0) * weight;
+#ifdef PLUTO_SKY_QUADRATURE_TEXTURE
+        // The opposite hemisphere contributes exactly zero. Keep the reference
+        // path intact, and avoid texture fetches for zero-weight cached samples.
+        if (physicalSkySettings.w > 0.5 && weight == 0.0) continue;
+        const float3 radiance = physicalSkySettings.w > 0.5
+            ? skyQuadratureTexture.SampleLevel(float2((float(tap) + 0.5) / 14.0, 0.5), 0.0).rgb
+            : samplePhysicalSkyEnvironment(skyQuadratureDirections[tap], 0.0);
+#else
+        const float3 radiance = samplePhysicalSkyEnvironment(skyQuadratureDirections[tap], 0.0);
+#endif
+        irradiance += radiance * weight;
         weightSum += weight;
     }
     // Preserve the existing cosine-weighted mean-radiance convention, including

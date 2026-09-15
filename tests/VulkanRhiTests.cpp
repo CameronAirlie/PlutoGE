@@ -1,4 +1,5 @@
 #include "FogRenderingChecks.h"
+#include "SkyQuadratureChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "RenderOptimizationChecks.h"
@@ -49,6 +50,7 @@ int main(int argc, char **argv)
         rhi::vulkan::VulkanDevice device;
         BasicRendererShaderPackage shaders;
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
+        shaders.skyQuadrature = { { .spirv = ReadSpirv("SkyQuadrature.vertex.spv") }, { .spirv = ReadSpirv("SkyQuadrature.fragment.spv") } };
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
@@ -218,6 +220,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")
         {
             CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--sky-quadrature")
+        {
+            CheckSkyQuadrature(device, shaders, [&](auto texture, auto, auto) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--fog-only")

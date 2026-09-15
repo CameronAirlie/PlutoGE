@@ -438,6 +438,7 @@ namespace PlutoGE::render
                 {24,1,16,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {25,1,17,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {8, 1, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                 {9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
                 {10, 1, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics},
@@ -468,6 +469,21 @@ namespace PlutoGE::render
             descriptor.cullMode = rhi::CullMode::None;
             descriptor.debugName = "BasicRenderer opaque pipeline";
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
+            if (!shaders.skyQuadrature.fragment.glsl.empty() || !shaders.skyQuadrature.fragment.spirv.empty())
+            {
+                rhi::GraphicsPipelineDescriptor sky;
+                sky.vertexShader = shaders.skyQuadrature.vertex;
+                sky.fragmentShader = shaders.skyQuadrature.fragment;
+                sky.colorFormats = {rhi::Format::R32G32B32A32Float};
+                sky.depthTest = sky.depthWrite = false;
+                sky.resourceBindings = {{0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment}};
+                sky.debugName = "Physical sky fixed quadrature";
+                m_skyQuadraturePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(sky));
+                m_skyQuadratureBuffer = rhi::Buffer(device, device.CreateBuffer(
+                    {7 * sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
+                m_skyQuadratureTexture = rhi::Texture(device, device.CreateTexture(
+                    {14, 1, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment, "Physical sky quadrature", true}));
+            }
             auto instancedDescriptor = descriptor;
             instancedDescriptor.vertexShader = shaders.instancedVertex;
             instancedDescriptor.resourceBindings.back() =
@@ -482,6 +498,24 @@ namespace PlutoGE::render
             outlineDescriptor.vertexShader = shaders.instancedVertex;
             outlineDescriptor.resourceBindings.back() = instancedDescriptor.resourceBindings.back();
             m_outlineInstancedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
+            // Ordinary views do not consume the sixth (diagnostic) output.
+            // Keep diagnostic variants for debug views without writing it in production.
+            auto noDebug = descriptor;
+            noDebug.colorFormats.pop_back();
+            noDebug.debugName = "Opaque without diagnostics";
+            m_opaqueNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
+            noDebug = instancedDescriptor;
+            noDebug.colorFormats.pop_back();
+            noDebug.debugName = "Instanced opaque without diagnostics";
+            m_instancedNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
+            noDebug.cullMode = rhi::CullMode::Front;
+            noDebug.debugName = "Instanced outline without diagnostics";
+            m_outlineInstancedNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
+            noDebug = descriptor;
+            noDebug.colorFormats.pop_back();
+            noDebug.cullMode = rhi::CullMode::Front;
+            noDebug.debugName = "Outline without diagnostics";
+            m_outlineNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1103,9 +1137,16 @@ namespace PlutoGE::render
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
+        m_skyQuadraturePipeline.Reset();
+        m_skyQuadratureBuffer.Reset();
+        m_skyQuadratureTexture.Reset();
         m_glassDepthCopy.Reset();
         m_pipeline.Reset();
         m_outlinePipeline.Reset();
+        m_opaqueNoDebugPipeline.Reset();
+        m_instancedNoDebugPipeline.Reset();
+        m_outlineNoDebugPipeline.Reset();
+        m_outlineInstancedNoDebugPipeline.Reset();
         m_outlineInstancedPipeline.Reset();
         m_instancedPipeline.Reset();
         m_device = nullptr;
@@ -1225,8 +1266,7 @@ namespace PlutoGE::render
                                                      {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
         m_albedoTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                                                      {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer albedo", true}));
-        m_debugTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                    {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "G-buffer debug", true}));
+        m_debugTarget.Reset();
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
         m_postProcessPassTargetDescriptions.clear();
@@ -1480,12 +1520,13 @@ namespace PlutoGE::render
             lighting.physicalSkyParameters,
             glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
                       std::max(lighting.physicalSkyExposure, 0.0f),
-                      1.0f, 0.0f),
+                      1.0f, m_skyQuadraturePipeline && lighting.geometryDiagnosticMode != GeometryDiagnosticMode::ReferenceSky ? 1.0f : 0.0f),
             temporalClipOffset,
         };
         const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
         frameParameters.pointParameters = {static_cast<float>(pointCount),
-                                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f, 0.0f};
+                                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f,
+                                           static_cast<float>(lighting.geometryDiagnosticMode)};
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -1505,6 +1546,24 @@ namespace PlutoGE::render
             ++pointShadowCount;
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
+        if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && lighting.geometryDiagnosticMode != GeometryDiagnosticMode::ReferenceSky)
+        {
+            // Generate before any receiver reads. RHI transitions the render target
+            // to sampled usage on binding; no readback or cross-frame cache is needed.
+            ScopedGpuTiming skyTiming(commands, "RHI Sky Quadrature");
+            std::array<glm::vec4, 7> parameters;
+            std::copy(frameParameters.physicalSkyParameters.begin(), frameParameters.physicalSkyParameters.end(), parameters.begin());
+            parameters.back() = frameParameters.physicalSkySettings;
+            m_device->UpdateBuffer(m_skyQuadratureBuffer.Get(), 0, Bytes(parameters));
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_skyQuadratureTexture.Get()};
+            info.width = 14; info.height = 1; info.clearDepth = false;
+            commands.BeginRendering(info);
+            commands.BindPipeline(m_skyQuadraturePipeline.Get());
+            commands.BindUniformBuffer(0, m_skyQuadratureBuffer.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+        }
         if (virtualShadowsActive)
         {
             m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
@@ -1778,8 +1837,13 @@ namespace PlutoGE::render
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
         rhi::RenderingInfo renderingInfo;
+        const bool geometryDebug = debugView != PostProcessDebugView::None;
+        if (geometryDebug && !m_debugTarget)
+            m_debugTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                {m_width, m_height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "G-buffer debug", true}));
         renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
                                           m_motionTarget.Get(), m_albedoTarget.Get(), m_debugTarget.Get()};
+        if (!geometryDebug) renderingInfo.colorAttachments.pop_back();
         renderingInfo.depthAttachment = m_depthTarget.Get();
         renderingInfo.width = m_width;
         renderingInfo.height = m_height;
@@ -1795,10 +1859,16 @@ namespace PlutoGE::render
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
+        if (!geometryDebug) renderingInfo.clearColorValues.pop_back();
+        const auto opaquePipeline = geometryDebug ? m_pipeline.Get() : m_opaqueNoDebugPipeline.Get();
+        const auto instancedPipeline = geometryDebug ? m_instancedPipeline.Get() : m_instancedNoDebugPipeline.Get();
+        const auto outlinePipeline = geometryDebug ? m_outlinePipeline.Get() : m_outlineNoDebugPipeline.Get();
+        const auto outlineInstancedPipeline = geometryDebug ? m_outlineInstancedPipeline.Get() : m_outlineInstancedNoDebugPipeline.Get();
         const auto geometryRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Geometry");
         // Transition shadow outputs before entering dynamic rendering.
-        commands.BindPipeline(m_pipeline.Get());
+        commands.BindPipeline(opaquePipeline);
+        commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
         for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
             commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
         if (virtualShadowsActive)
@@ -1820,8 +1890,8 @@ namespace PlutoGE::render
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
             commands.BindPipeline(transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
-                                  (draw.outlinePass ? (instanced ? m_outlineInstancedPipeline.Get() : m_outlinePipeline.Get()) :
-                                   (instanced ? m_instancedPipeline.Get() : m_pipeline.Get())));
+                                  (draw.outlinePass ? (instanced ? outlineInstancedPipeline : outlinePipeline) :
+                                   (instanced ? instancedPipeline : opaquePipeline)));
             if (transparent || !geometryResourcesBound)
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             if (!instanced)
@@ -1915,6 +1985,7 @@ namespace PlutoGE::render
                 commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
                 commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
                                      m_shadowSampler.Get());
+                commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
@@ -1955,6 +2026,8 @@ namespace PlutoGE::render
                         commands.DrawIndexedInstanced(drawCount, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
                         ++m_frameStats.geometryDraws;
                         m_frameStats.geometryInstances += instanceCount;
+                        m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] +=
+                            static_cast<std::uint64_t>(drawCount / 3) * instanceCount;
                     }
                 }
                 else
@@ -1963,11 +2036,13 @@ namespace PlutoGE::render
                     commands.DrawIndexed(drawCount, draw.firstIndex);
                     ++m_frameStats.geometryDraws;
                     ++m_frameStats.geometryInstances;
+                    m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] += drawCount / 3;
                 }
             }
         };
         std::size_t historyIndex = 0;
         std::vector<BasicDraw> transparentDraws;
+        commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
         for (const auto &draw : draws)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
@@ -1993,6 +2068,8 @@ namespace PlutoGE::render
                 recordDraw(draw, false, historyIndex);
             ++historyIndex;
         }
+        commands.EndGpuScope();
+        commands.BeginGpuScope("RHI Geometry / Outlines");
         // Draw shells after all opaque surfaces so foreground geometry occludes them.
         historyIndex = 0;
         for (const auto &draw : draws)
@@ -2006,6 +2083,7 @@ namespace PlutoGE::render
             }
             ++historyIndex;
         }
+        commands.EndGpuScope();
         std::stable_sort(transparentDraws.begin(), transparentDraws.end(), [&](const auto &a, const auto &b)
         {
             const auto depth = [&](const auto &draw)
@@ -2479,7 +2557,7 @@ namespace PlutoGE::render
             commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
             commands.BindTexture(4, m_albedoTarget.Get(), m_screenSampler.Get());
             commands.BindTexture(5, m_materialTarget.Get(), m_screenSampler.Get());
-            commands.BindTexture(6, m_debugTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(6, m_debugTarget ? m_debugTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = m_displayTarget.Get();

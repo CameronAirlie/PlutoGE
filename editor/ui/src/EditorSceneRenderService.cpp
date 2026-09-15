@@ -112,6 +112,7 @@ namespace PlutoGE::ui
             return false;
 
         auto lighting = render::BuildSceneLighting(cameraData, scene);
+        lighting.geometryDiagnosticMode = m_geometryDiagnosticMode;
 
         const auto readOpenGlTexture = [](const render::Texture &source)
         {

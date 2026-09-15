@@ -182,6 +182,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
+        BasicPostProcessShaderPackage skyQuadrature;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -317,8 +318,24 @@ namespace PlutoGE::render
         bool castsShadows = false;
     };
 
+    enum class GeometryDiagnosticMode : std::uint8_t
+    {
+        None, ReferenceSky, BypassDirectionalShadows, ReferenceDirectionalShadows
+    };
+    constexpr const char *GeometryDiagnosticName(GeometryDiagnosticMode mode) noexcept
+    {
+        switch (mode)
+        {
+        case GeometryDiagnosticMode::ReferenceSky: return "Original sky evaluation";
+        case GeometryDiagnosticMode::BypassDirectionalShadows: return "Bypass directional shadow sampling";
+        case GeometryDiagnosticMode::ReferenceDirectionalShadows: return "Scalar directional shadow filter";
+        default: return "Normal rendering";
+        }
+    }
+
     struct BasicLighting
     {
+        GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; };
@@ -388,6 +405,8 @@ namespace PlutoGE::render
     {
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
+        // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
+        std::array<std::uint64_t, 4> geometryTriangles{};
         std::size_t shadowCandidates = 0;
         VirtualShadowStats virtualShadows;
         bool virtualShadowsActive = false;
@@ -503,10 +522,15 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_transparentPipeline;
         rhi::GraphicsPipeline m_transparentTwoSidedPipeline;
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
+        rhi::GraphicsPipeline m_skyQuadraturePipeline;
+        rhi::Buffer m_skyQuadratureBuffer;
+        rhi::Texture m_skyQuadratureTexture;
         rhi::Texture m_glassDepthCopy;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_instancedPipeline;
         rhi::GraphicsPipeline m_outlinePipeline, m_outlineInstancedPipeline;
+        rhi::GraphicsPipeline m_opaqueNoDebugPipeline, m_instancedNoDebugPipeline;
+        rhi::GraphicsPipeline m_outlineNoDebugPipeline, m_outlineInstancedNoDebugPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;
         rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;

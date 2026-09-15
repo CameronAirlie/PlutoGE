@@ -10,7 +10,7 @@
 
 template <class ReadPixels>
 void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
-                       PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr)
+                       PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = false)
 {
     using namespace PlutoGE::render;
     constexpr std::array<BasicVertex, 4> vertices = {{
@@ -47,6 +47,12 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     ssr.quality = 128;
     ssr.parameters[0] = {1,20,.2f,.02f};
     ssr.parameters[1] = {.02f,5,1,8};
+    if (projectSettings)
+    {
+        ssr.quality = 48;
+        ssr.parameters[0] = {.8f,30,.35f,.08f};
+        ssr.parameters[1] = {.12f,5,.75f,5};
+    }
     struct Measurement
     {
         std::array<std::uint64_t,3> energy{};
@@ -106,6 +112,15 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         }
     ssr.parameters[4].w = 0.0f;
     draws[0].roughness = .6f;
+    const auto configuredRefinements = ssr.parameters[1].w;
+    for (const float refinements : {0.0f, 1.0f, 5.0f, 8.0f})
+        for (const float fullResolution : {0.0f, 1.0f})
+        {
+            ssr.parameters[1].w = refinements;
+            ssr.parameters[4].w = fullResolution;
+            measure(.6f, 1);
+        }
+    ssr.parameters[1].w = configuredRefinements;
     if (performanceDevice)
     {
         for (const bool fullResolution : {true, false})
@@ -137,4 +152,29 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
                       << resolveMs / samples << " ms resolve (" << samples << " samples)\n";
         }
     }
+}
+
+// Compare the specialised stages with the legacy shader package fallback.
+// Include all G-buffer and output readbacks from the behavioural checks.
+template <class ReadPixels>
+void CheckSsrStageSpecialisation(PlutoGE::render::BasicRenderer &renderer,
+                               PlutoGE::render::rhi::IRenderDevice &device,
+                               PlutoGE::render::BasicRendererShaderPackage shaders,
+                               ReadPixels readPixels)
+{
+    std::vector<unsigned char> expected, actual;
+    const auto capture = [&](auto &destination, auto texture)
+    {
+        auto pixels = readPixels(texture);
+        for (const auto value : pixels) destination.push_back(static_cast<unsigned char>(value));
+        return pixels;
+    };
+    shaders.ssrStages = {};
+    PlutoGE::render::BasicRenderer reference;
+    if (!reference.Initialize(device, shaders) || !reference.Resize(renderer.GetWidth(), renderer.GetHeight()))
+        throw std::runtime_error("Cannot initialise SSR reference renderer");
+    CheckSsrRendering(reference, [&](auto texture) { return capture(expected, texture); });
+    CheckSsrRendering(renderer, [&](auto texture) { return capture(actual, texture); });
+    if (expected != actual)
+        throw std::runtime_error("Specialised SSR stages changed reference pixels");
 }

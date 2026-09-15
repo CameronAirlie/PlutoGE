@@ -57,6 +57,8 @@ namespace PlutoGE::render
         result.volumetricComposite = {Load("VolumetricComposite", "vertex"), Load("VolumetricComposite", "fragment")};
         result.fusedColor = {Load("FusedColor", "vertex"), Load("FusedColor", "fragment")};
         result.skyQuadrature = {Load("SkyQuadrature", "vertex"), Load("SkyQuadrature", "fragment")};
+        result.ssrStages[0] = {Load("SSRTrace", "vertex"), Load("SSRTrace", "fragment")};
+        result.ssrStages[1] = {Load("SSRResolve", "vertex"), Load("SSRResolve", "fragment")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {

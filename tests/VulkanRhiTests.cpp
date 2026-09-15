@@ -51,6 +51,8 @@ int main(int argc, char **argv)
         BasicRendererShaderPackage shaders;
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
         shaders.skyQuadrature = { { .spirv = ReadSpirv("SkyQuadrature.vertex.spv") }, { .spirv = ReadSpirv("SkyQuadrature.fragment.spv") } };
+        shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
+        shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
@@ -122,6 +124,7 @@ int main(int argc, char **argv)
         shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
         LoadRenderOptimizationShaders(shaders);
         BasicRenderer renderer;
+        if (argc > 3 && std::string_view(argv[3]) == "--reference-stages") shaders.ssrStages = {};
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
@@ -239,16 +242,18 @@ int main(int argc, char **argv)
             for (const auto size : {rhi::Extent2D{127, 95}, rhi::Extent2D{256, 192}})
             {
                 renderer.Resize(size.width, size.height);
-                CheckSsrRendering(renderer, [&](rhi::TextureHandle texture)
+                CheckSsrStageSpecialisation(renderer, device, shaders, [&](rhi::TextureHandle texture)
                 {
                     return device.ReadTextureRgba8(texture);
                 });
             }
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--ssr-performance")
+        if (argc > 1 && (std::string_view(argv[1]) == "--ssr-performance" ||
+                         std::string_view(argv[1]) == "--ssr-project-performance"))
         {
-            renderer.Resize(1222, 796);
+            const bool projectSettings = std::string_view(argv[1]) == "--ssr-project-performance";
+            renderer.Resize(projectSettings ? 603 : 1222, projectSettings ? 346 : 796);
             // Optional raw RGBA8 snapshots support before/after shader comparisons.
             std::ofstream snapshots;
             if (argc > 2)
@@ -262,7 +267,7 @@ int main(int argc, char **argv)
                 if (snapshots.is_open())
                     snapshots.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
                 return pixels;
-            }, &device);
+            }, &device, projectSettings);
             return 0;
         }
         CheckTextureMipRendering(renderer, device, [&](rhi::TextureHandle texture) {

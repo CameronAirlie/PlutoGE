@@ -183,6 +183,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage skyQuadrature;
+        std::array<BasicPostProcessShaderPackage, 2> ssrStages; // Trace and resolve.
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -523,6 +524,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_transparentTwoSidedPipeline;
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
+        std::array<rhi::GraphicsPipeline, 2> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         rhi::Texture m_glassDepthCopy;

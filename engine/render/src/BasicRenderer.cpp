@@ -731,6 +731,11 @@ namespace PlutoGE::render
                 return (!shader.vertex.spirv.empty() || !shader.vertex.glsl.empty()) &&
                        (!shader.fragment.spirv.empty() || !shader.fragment.glsl.empty());
             };
+            for (std::size_t index = 0; index < m_ssrStagePipelines.size(); ++index)
+                if (hasShader(shaders.ssrStages[index]))
+                    m_ssrStagePipelines[index] = createPostProcessPipeline(
+                        shaders.ssrStages[index].vertex, shaders.ssrStages[index].fragment,
+                        index == 0 ? "SSR trace" : "SSR resolve", BasicPostProcessEffectType::SSR);
             for (std::size_t index = 0; index < m_volumetricTracePipelines.size(); ++index)
             {
                 const auto &shader = shaders.volumetricTrace[index];
@@ -1138,6 +1143,7 @@ namespace PlutoGE::render
         m_transparentTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
         m_skyQuadraturePipeline.Reset();
+        for (auto &pipeline : m_ssrStagePipelines) pipeline.Reset();
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
         m_glassDepthCopy.Reset();
@@ -2410,6 +2416,9 @@ namespace PlutoGE::render
                                          std::uint32_t width, std::uint32_t height, float mode)
                 {
                     ScopedGpuTiming ssrStage(commands, mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace");
+                    const auto stageIndex = mode == 2.0f ? 1u : 0u;
+                    const auto stagePipeline = mode != 0.0f && m_ssrStagePipelines[stageIndex]
+                        ? m_ssrStagePipelines[stageIndex].Get() : pipeline;
                     parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
                                                 static_cast<float>(traceHeight), 0.0f};
                     // Both stages address the same full-resolution G-buffer.
@@ -2422,7 +2431,7 @@ namespace PlutoGE::render
                     info.height = height;
                     info.clearDepth = false;
                     commands.BeginRendering(info);
-                    commands.BindPipeline(pipeline);
+                    commands.BindPipeline(stagePipeline);
                     commands.BindUniformBuffer(0, buffer.Get());
                     commands.BindTexture(1, source, m_screenSampler.Get());
                     commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());

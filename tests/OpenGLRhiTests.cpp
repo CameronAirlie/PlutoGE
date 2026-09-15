@@ -152,6 +152,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
         shaders.skyQuadrature = { { .glsl = ReadText("SkyQuadrature.vertex.glsl") }, { .glsl = ReadText("SkyQuadrature.fragment.glsl") } };
+        shaders.ssrStages[0] = {{.glsl = ReadText("SSRTrace.vertex.glsl")}, {.glsl = ReadText("SSRTrace.fragment.glsl")}};
+        shaders.ssrStages[1] = {{.glsl = ReadText("SSRResolve.vertex.glsl")}, {.glsl = ReadText("SSRResolve.fragment.glsl")}};
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particles.fragmentShader.glsl = ReadText("Particles.fragment.glsl");
@@ -234,6 +236,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                              std::string_view(argv[1]) == "--opaque-batching" ||
                              std::string_view(argv[1]) == "--render-optimizations"))
                 shaders.virtualShadows = {};
+            if (argc > 3 && std::string_view(argv[3]) == "--reference-stages") shaders.ssrStages = {};
             if (!basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
                 return 6;
         }
@@ -374,13 +377,32 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         if (argc > 1 && std::string(argv[1]) == "--ssr-only")
         {
-            CheckSsrRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            CheckSsrStageSpecialisation(basicRenderer, device, shaders, [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssr-project-snapshots")
+        {
+            basicRenderer.Resize(603, 346);
+            std::ofstream snapshots;
+            if (argc > 2)
+            {
+                snapshots.open(argv[2], std::ios::binary);
+                if (!snapshots) throw std::runtime_error("Cannot open SSR snapshot output");
+            }
+            CheckSsrRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                if (snapshots.is_open()) snapshots.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+                return pixels;
+            }, nullptr, true);
             return 0;
         }
 

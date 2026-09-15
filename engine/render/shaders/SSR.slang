@@ -56,7 +56,12 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     // parameters[4]: internal pass mode, trace width, trace height. Mode zero
     // remains a full-resolution reference path for rendering comparisons.
-    const bool traceOnly = pass.parameters[4].x == 1.0;
+#if defined(PLUTO_SSR_STAGE)
+    const float stage = float(PLUTO_SSR_STAGE);
+#else
+    const float stage = pass.parameters[4].x;
+#endif
+    const bool traceOnly = stage == 1.0;
     // Choose an actual G-buffer pixel rather than interpolating unrelated
     // depths/normals at the centre of a 2x2 block.
     if (traceOnly)
@@ -72,7 +77,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (roughnessFade <= 0.0) return scene;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);
-    if (pass.parameters[4].x == 2.0)
+    if (stage == 2.0)
     {
         const float2 traceSize = pass.parameters[4].yz;
         const float2 pixel = uv * traceSize - 0.5;

@@ -111,22 +111,30 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         for (const bool fullResolution : {true, false})
         {
             ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
-            double gpuMs = 0, effectMs = 0;
+            double gpuMs = 0, effectMs = 0, traceMs = 0, resolveMs = 0;
             int samples = 0;
             for (int frame = 0; frame < 48; ++frame)
             {
                 renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr, 1));
                 const auto timing = performanceDevice->GetTimingStats("Scene");
                 if (frame < 16 || !timing.hasGpuResult) continue;
+                bool hasTrace = false, hasResolve = false;
                 for (const auto &scope : timing.gpuScopes)
+                {
                     if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
+                    if (scope.name == "RHI SSR / Trace") { traceMs += scope.milliseconds; hasTrace = true; }
+                    if (scope.name == "RHI SSR / Resolve") { resolveMs += scope.milliseconds; hasResolve = true; }
+                }
+                if (!hasTrace || (!fullResolution && !hasResolve))
+                    throw std::runtime_error("SSR benchmark is missing stage GPU timings");
                 gpuMs += timing.frameGpuMs;
                 ++samples;
             }
             if (!samples) throw std::runtime_error("SSR benchmark has no GPU timings");
             std::cout << "SSR benchmark (" << (fullResolution ? "full-resolution reference" : "half-resolution resolve")
                       << "): " << gpuMs / samples << " ms GPU frame, "
-                      << effectMs / samples << " ms reflections (" << samples << " samples)\n";
+                      << effectMs / samples << " ms reflections, " << traceMs / samples << " ms trace, "
+                      << resolveMs / samples << " ms resolve (" << samples << " samples)\n";
         }
     }
 }

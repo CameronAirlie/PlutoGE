@@ -3,18 +3,21 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Mesh.h"
 #include <cmath>
+#include <limits>
 
 namespace PlutoGE::render
 {
     // The RHI's shared vertex stream is consumed by lit, transparent, CSM and
     // virtual-shadow passes. Deform once per mesh/pose, rather than separately
     // in each material/pass. The supplied matrices already include inverse bind.
-    void SkinRhiVerticesInto(std::span<const MeshVertexData> source,
+    RhiSkinningBounds SkinRhiVerticesInto(std::span<const MeshVertexData> source,
                                                    std::span<const glm::mat4> joints,
                                                    std::span<const BasicVertex> previous,
                                                    std::vector<BasicVertex> &result)
     {
         result.resize(source.size());
+        glm::vec3 minimum(std::numeric_limits<float>::max());
+        glm::vec3 maximum(std::numeric_limits<float>::lowest());
         for (std::size_t index = 0; index < source.size(); ++index)
         {
             const auto &vertex = source[index];
@@ -76,7 +79,11 @@ namespace PlutoGE::render
             const auto &old = previous.size() == source.size() ? previous[index].position : output.position;
             output.previousPosition = {old[0], old[1], old[2], 1};
             result[index] = output;
+            const glm::vec3 position(output.position[0], output.position[1], output.position[2]);
+            minimum = glm::min(minimum, position);
+            maximum = glm::max(maximum, position);
         }
-
+        if (source.empty()) return {};
+        return {(minimum + maximum) * 0.5f, glm::length(maximum - minimum) * 0.5f};
     }
 }

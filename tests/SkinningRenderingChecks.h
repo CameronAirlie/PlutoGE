@@ -122,9 +122,30 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         }
         require(expected[0].tangent[3]==actual[0].tangent[3],"Reflected tangent handedness differs");
         const auto oldPosition=actual[0].position;
-        SkinRhiVerticesInto(std::span(&vertex,1),joints,actual,actual);
+        const auto bounds = SkinRhiVerticesInto(std::span(&vertex,1),joints,actual,actual);
+        require(bounds.center == glm::vec3(actual[0].position[0], actual[0].position[1], actual[0].position[2]) &&
+                bounds.radius == 0.0f, "Single-vertex deformation bounds differ");
         for(unsigned c=0;c<3;++c) require(actual[0].previousPosition[c]==oldPosition[c],"In-place output lost previous pose");
     }
+    // Compare fused bounds with an independent scan across transformed vertices.
+    // All-negative positions catch incorrect zero-initialized maxima.
+    auto boundsSource = config.data.vertices;
+    for (auto &v : boundsSource) { v.joints = {0, 0, 0, 0}; v.weights = {1, 0, 0, 0}; }
+    joints[0] = glm::translate(glm::mat4(1.0f), glm::vec3(-4, -5, -6)) *
+                glm::scale(glm::mat4(1.0f), glm::vec3(-2, 3, 0.5f));
+    std::vector<BasicVertex> boundedVertices;
+    const auto bounds = SkinRhiVerticesInto(boundsSource, joints, {}, boundedVertices);
+    glm::vec3 minimum(boundedVertices[0].position[0], boundedVertices[0].position[1], boundedVertices[0].position[2]);
+    auto maximum = minimum;
+    for (const auto &v : boundedVertices) {
+        const glm::vec3 position(v.position[0], v.position[1], v.position[2]);
+        minimum = glm::min(minimum, position); maximum = glm::max(maximum, position);
+    }
+    require(bounds.center == (minimum + maximum) * 0.5f &&
+            bounds.radius == glm::length(maximum - minimum) * 0.5f, "Fused deformation bounds differ from scan");
+    const auto emptyBounds = SkinRhiVerticesInto({}, joints, {}, boundedVertices);
+    require(boundedVertices.empty() && emptyBounds.center == glm::vec3(0) && emptyBounds.radius == 0,
+            "Empty deformation retained stale bounds or vertices");
     std::cout << "PASS Vulkan skinning: pixels, independent actors, submeshes, shadows, motion, pause/reset, in-flight uploads and weights\n";
 }
 

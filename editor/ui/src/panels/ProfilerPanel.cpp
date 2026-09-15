@@ -257,8 +257,12 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.visibleInstanceCount),
                     static_cast<unsigned long long>(rhiScene.shadowCandidateCount));
         ImGui::Text("    Upscaler + resize: %.2f ms", rhiScene.translationPreparationMs);
-        ImGui::Text("    Mesh conversion + upload: %.2f ms (%llu attempts)", rhiScene.meshUploadMs,
+        ImGui::Text("    Mesh preparation (includes skinning): %.2f ms (%llu attempts)", rhiScene.meshUploadMs,
                     static_cast<unsigned long long>(rhiScene.meshUploadCount));
+        ImGui::Text("      Skinning + bounds: %.2f ms (%llu updates, %llu vertices)", rhiScene.skinningDeformationMs,
+                    static_cast<unsigned long long>(rhiScene.skinningUpdateCount),
+                    static_cast<unsigned long long>(rhiScene.skinningVertexCount));
+        ImGui::Text("      Skinned vertex upload: %.2f ms", rhiScene.skinningUploadMs);
         ImGui::Text("    Texture reads: %.2f ms; creation + mipmaps: %.2f ms (%llu attempts)",
                     rhiScene.textureReadMs, rhiScene.textureUploadMs,
                     static_cast<unsigned long long>(rhiScene.textureUploadCount));

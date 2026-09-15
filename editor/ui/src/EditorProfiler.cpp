@@ -322,8 +322,11 @@ namespace PlutoGE::ui
                << rhiScene.visibleInstanceCount << " instances, "
                << rhiScene.shadowCandidateCount << " shadow candidates)\n";
         report << "RHI translation / Upscaler + resize: " << rhiScene.translationPreparationMs << " ms\n";
-        report << "RHI translation / Mesh conversion + upload: " << rhiScene.meshUploadMs
+        report << "RHI translation / Mesh preparation (includes skinning): " << rhiScene.meshUploadMs
                << " ms (" << rhiScene.meshUploadCount << " attempts)\n";
+        report << "RHI translation / Skinning deformation + bounds: " << rhiScene.skinningDeformationMs
+               << " ms (" << rhiScene.skinningUpdateCount << " updates, " << rhiScene.skinningVertexCount << " vertices)\n";
+        report << "RHI translation / Skinned vertex upload: " << rhiScene.skinningUploadMs << " ms\n";
         report << "RHI translation / Texture pixel reads: " << rhiScene.textureReadMs << " ms\n";
         report << "RHI translation / Texture creation + mipmaps: " << rhiScene.textureUploadMs
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";

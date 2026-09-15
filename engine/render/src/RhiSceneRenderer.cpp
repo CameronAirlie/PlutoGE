@@ -360,19 +360,15 @@ namespace PlutoGE::render
                             if (changed || !entry.mesh.IsValid())
                             {
                                 core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
-                                SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
+                                const auto deformationStart = std::chrono::steady_clock::now();
+                                const auto bounds = SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
                                     hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices);
+                                entry.boundsCenter = bounds.center;
+                                entry.boundsRadius = bounds.radius;
+                                m_timingStats.skinningDeformationMs += millisecondsBetween(deformationStart, std::chrono::steady_clock::now());
                                 entry.pose = *command.jointMatrices;
                                 ++m_timingStats.skinningUpdateCount;
                                 m_timingStats.skinningVertexCount += source.vertices.size();
-                                glm::vec3 minimum(std::numeric_limits<float>::max()), maximum(std::numeric_limits<float>::lowest());
-                                for (const auto &v : entry.vertices)
-                                {
-                                    const glm::vec3 p(v.position[0], v.position[1], v.position[2]);
-                                    minimum = glm::min(minimum, p); maximum = glm::max(maximum, p);
-                                }
-                                entry.boundsCenter = (minimum + maximum) * .5f;
-                                entry.boundsRadius = glm::length(maximum - minimum) * .5f;
                             }
                             else
                             {
@@ -381,12 +377,15 @@ namespace PlutoGE::render
                                 for (auto &v : entry.vertices)
                                     v.previousPosition = {v.position[0], v.position[1], v.position[2], 1};
                             }
+                            core::CpuScope uploadScope("Skeletal vertex upload", core::CpuCategory::Rendering);
+                            const auto uploadStart = std::chrono::steady_clock::now();
                             if (!entry.mesh.IsValid() || topologyChanged)
                             {
                                 entry.mesh = m_renderer->CreateMesh({entry.vertices, source.indices});
                                 ++m_timingStats.meshUploadCount;
                             }
                             else m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, changed);
+                            m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
                         }
                         entry.wasMoving = changed;
                         entry.lastFrame = m_skinningFrame;

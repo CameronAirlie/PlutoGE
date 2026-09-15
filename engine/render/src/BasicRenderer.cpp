@@ -2331,6 +2331,7 @@ namespace PlutoGE::render
                 const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
                                          std::uint32_t width, std::uint32_t height, float mode)
                 {
+                    ScopedGpuTiming ssrStage(commands, mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace");
                     parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
                                                 static_cast<float>(traceHeight), 0.0f};
                     // Both stages address the same full-resolution G-buffer.

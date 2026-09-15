@@ -23,6 +23,8 @@ namespace PlutoGE::render
         float commandTranslationMs = 0.0f;
         float translationPreparationMs = 0.0f;
         float meshUploadMs = 0.0f;
+        float skinningDeformationMs = 0.0f;
+        float skinningUploadMs = 0.0f;
         float textureReadMs = 0.0f;
         float textureUploadMs = 0.0f;
         std::size_t meshUploadCount = 0;

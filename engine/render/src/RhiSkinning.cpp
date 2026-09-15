@@ -4,6 +4,10 @@
 #include "PlutoGE/render/Mesh.h"
 #include <cmath>
 #include <limits>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <chrono>
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
 #define PLUTO_SKINNING_SSE2 1
@@ -14,12 +18,12 @@ namespace PlutoGE::render
     // The RHI's shared vertex stream is consumed by lit, transparent, CSM and
     // virtual-shadow passes. Deform once per mesh/pose, rather than separately
     // in each material/pass. The supplied matrices already include inverse bind.
-    RhiSkinningBounds SkinRhiVerticesInto(std::span<const MeshVertexData> source,
+    struct SkinningExtents { glm::vec3 minimum, maximum; };
+    static SkinningExtents SkinRange(std::span<const MeshVertexData> source,
                                                    std::span<const glm::mat4> joints,
                                                    std::span<const BasicVertex> previous,
-                                                   std::vector<BasicVertex> &result)
+                                                   std::span<BasicVertex> result)
     {
-        result.resize(source.size());
         glm::vec3 minimum(std::numeric_limits<float>::max());
         glm::vec3 maximum(std::numeric_limits<float>::lowest());
         for (std::size_t index = 0; index < source.size(); ++index)
@@ -106,7 +110,107 @@ namespace PlutoGE::render
             minimum = glm::min(minimum, position);
             maximum = glm::max(maximum, position);
         }
+        return {minimum, maximum};
+    }
+
+    RhiSkinningBounds SkinRhiVerticesInto(std::span<const MeshVertexData> source,
+        std::span<const glm::mat4> joints, std::span<const BasicVertex> previous,
+        std::vector<BasicVertex> &result)
+    {
+        result.resize(source.size());
         if (source.empty()) return {};
-        return {(minimum + maximum) * 0.5f, glm::length(maximum - minimum) * 0.5f};
+        const auto bounds = SkinRange(source, joints, previous, result);
+        return {(bounds.minimum + bounds.maximum) * .5f, glm::length(bounds.maximum - bounds.minimum) * .5f};
+    }
+
+    struct RhiSkinningExecutor::Impl
+    {
+        std::mutex mutex;
+        std::condition_variable ready, finished;
+        std::vector<std::thread> workers;
+        std::array<SkinningExtents, 4> bounds;
+        std::span<const MeshVertexData> source;
+        std::span<const glm::mat4> joints;
+        std::span<const BasicVertex> previous;
+        std::span<BasicVertex> output;
+        unsigned count = 1, pending = 0;
+        std::uint64_t generation = 0;
+        bool stopping = false;
+
+        void Range(unsigned index)
+        {
+            const auto begin = source.size() * index / count;
+            const auto end = source.size() * (index + 1) / count;
+            bounds[index] = SkinRange(source.subspan(begin, end - begin), joints,
+                previous.size() == source.size() ? previous.subspan(begin, end - begin) : std::span<const BasicVertex>{},
+                output.subspan(begin, end - begin));
+        }
+        void Stop()
+        {
+            { std::lock_guard lock(mutex); stopping = true; }
+            ready.notify_all();
+            for (auto &worker : workers) if (worker.joinable()) worker.join();
+        }
+        explicit Impl(unsigned participants)
+        {
+            count = std::clamp(participants, 1u, std::min(4u, std::max(1u, std::thread::hardware_concurrency())));
+            try
+            {
+                for (unsigned index = 1; index < count; ++index)
+                    workers.emplace_back([this, index]
+                    {
+                        std::uint64_t observed = 0;
+                        std::unique_lock lock(mutex);
+                        for (;;)
+                        {
+                            ready.wait(lock, [&] { return stopping || generation != observed; });
+                            if (stopping) return;
+                            observed = generation;
+                            lock.unlock();
+                            Range(index);
+                            lock.lock();
+                            if (--pending == 0) finished.notify_one();
+                        }
+                    });
+            }
+            catch (...) { Stop(); throw; }
+        }
+        ~Impl() { Stop(); }
+    };
+    RhiSkinningExecutor::RhiSkinningExecutor(unsigned participants) : impl(std::make_unique<Impl>(participants)) {}
+    RhiSkinningExecutor::~RhiSkinningExecutor() = default;
+    RhiSkinningBounds RhiSkinningExecutor::Deform(std::span<const MeshVertexData> source,
+        std::span<const glm::mat4> joints, std::span<const BasicVertex> previous,
+        std::vector<BasicVertex> &result)
+    {
+        stats = {};
+        if (source.size() < 32768 || impl->count == 1)
+            return SkinRhiVerticesInto(source, joints, previous, result);
+        using Clock = std::chrono::steady_clock;
+        const auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b - a).count(); };
+        const auto start = Clock::now();
+        result.resize(source.size());
+        {
+            std::lock_guard lock(impl->mutex);
+            impl->source = source; impl->joints = joints; impl->previous = previous; impl->output = result;
+            impl->pending = impl->count - 1; ++impl->generation;
+        }
+        impl->ready.notify_all();
+        const auto dispatched = Clock::now();
+        impl->Range(0);
+        const auto worked = Clock::now();
+        {
+            std::unique_lock lock(impl->mutex);
+            impl->finished.wait(lock, [&] { return impl->pending == 0; });
+        }
+        const auto waited = Clock::now();
+        auto bounds = impl->bounds[0];
+        for (unsigned i = 1; i < impl->count; ++i)
+        {
+            bounds.minimum = glm::min(bounds.minimum, impl->bounds[i].minimum);
+            bounds.maximum = glm::max(bounds.maximum, impl->bounds[i].maximum);
+        }
+        stats = {impl->count, ms(start, dispatched), ms(dispatched, worked), ms(worked, waited), ms(waited, Clock::now())};
+        return {(bounds.minimum + bounds.maximum) * .5f, glm::length(bounds.maximum - bounds.minimum) * .5f};
     }
 }

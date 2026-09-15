@@ -127,6 +127,11 @@ int main()
             exported.timing.rhiSceneTimingStats.renderSize = {603, 346};
             exported.timing.rhiSceneTimingStats.outputSize = {1005, 594};
             exported.timing.rhiSceneTimingStats.directionalShadowSoftness = 1.5f;
+            exported.timing.rhiSceneTimingStats.skinningParticipants = 4;
+            exported.timing.rhiSceneTimingStats.skinningWaitMs = .25f;
+            exported.timing.rhiSceneTimingStats.ssrSteps = 48;
+            exported.timing.rhiSceneTimingStats.ssrRefinementSteps = 5;
+            exported.timing.rhiSceneTimingStats.ssrTraceSize = {302, 173};
             exported.timing.rhiSceneTimingStats.geometryDiagnosticMode = PlutoGE::render::GeometryDiagnosticMode::ReferenceDirectionalShadows;
             exported.runtimeUi.renderMs = float(index);
             for (int sample = 0; sample < 25; ++sample)
@@ -151,6 +156,9 @@ int main()
         Require(captureReport.find("Scalar directional shadow filter") != std::string::npos &&
                 captureReport.find("RHI directional shadow softness: 1.50") != std::string::npos,
                 "Capture omitted the actual shadow filter configuration");
+        Require(captureReport.find("4 participants") != std::string::npos &&
+                captureReport.find("48 steps, 5 refinements, 16 rays, 302 x 173") != std::string::npos,
+                "Capture omitted parallel skinning or SSR configuration");
         return 0;
     }
     catch (const std::exception &error)

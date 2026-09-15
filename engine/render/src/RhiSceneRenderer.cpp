@@ -156,6 +156,8 @@ namespace PlutoGE::render
         }
     }
 
+    RhiSceneRenderer::RhiSceneRenderer() = default;
+    RhiSceneRenderer::~RhiSceneRenderer() = default;
     bool RhiSceneRenderer::Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders)
     {
         Shutdown();
@@ -170,6 +172,7 @@ namespace PlutoGE::render
 
     void RhiSceneRenderer::Shutdown()
     {
+        m_skinningExecutor.reset();
         m_particleDraws.clear();
         m_sortedParticles.clear();
         if (m_device && m_upscalerContextId != 0)
@@ -361,9 +364,22 @@ namespace PlutoGE::render
                             {
                                 core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
                                 const auto deformationStart = std::chrono::steady_clock::now();
-                                const auto bounds = SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
+                                if (!m_skinningExecutor && source.vertices.size() >= 32768)
+                                    m_skinningExecutor = std::make_unique<RhiSkinningExecutor>();
+                                const auto bounds = m_skinningExecutor ? m_skinningExecutor->Deform(source.vertices, *command.jointMatrices,
+                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices)
+                                    : SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
                                     hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices);
                                 entry.boundsCenter = bounds.center;
+                                if (m_skinningExecutor)
+                                {
+                                    const auto &work = m_skinningExecutor->stats;
+                                    m_timingStats.skinningParticipants = std::max(m_timingStats.skinningParticipants, work.participants);
+                                    m_timingStats.skinningDispatchMs += work.dispatchMs;
+                                    m_timingStats.skinningCallerMs += work.callerMs;
+                                    m_timingStats.skinningWaitMs += work.waitMs;
+                                    m_timingStats.skinningMergeMs += work.mergeMs;
+                                }
                                 entry.boundsRadius = bounds.radius;
                                 m_timingStats.skinningDeformationMs += millisecondsBetween(deformationStart, std::chrono::steady_clock::now());
                                 entry.pose = *command.jointMatrices;
@@ -965,6 +981,13 @@ namespace PlutoGE::render
                     }
                 }
             }
+        }
+        if (const auto ssr = std::ranges::find_if(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::SSR; }); ssr != basicEffects.end())
+        {
+            m_timingStats.ssrSteps = std::clamp(ssr->quality, 8u, 128u);
+            m_timingStats.ssrRefinementSteps = static_cast<unsigned>(std::clamp(ssr->parameters[1].w, 0.0f, 8.0f));
+            const bool full = ssr->parameters[4].w > .5f;
+            m_timingStats.ssrTraceSize = full ? renderSize : rhi::Extent2D{(renderSize.width + 1) / 2, (renderSize.height + 1) / 2};
         }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
                            useTemporalUpscaler ? &upscalerFrame : nullptr,

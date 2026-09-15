@@ -18,6 +18,7 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::render
 {
+    class RhiSkinningExecutor;
     struct RhiSceneTimingStats
     {
         float commandTranslationMs = 0.0f;
@@ -49,6 +50,10 @@ namespace PlutoGE::render
         rhi::Extent2D renderSize{}, outputSize{};
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         float directionalShadowSoftness = 0.0f;
+        unsigned skinningParticipants = 1;
+        float skinningDispatchMs = 0, skinningCallerMs = 0, skinningWaitMs = 0, skinningMergeMs = 0;
+        unsigned ssrSteps = 0, ssrRefinementSteps = 0;
+        rhi::Extent2D ssrTraceSize{};
         std::size_t recordedShadowDrawCount = 0;
         std::size_t recordedShadowInstanceCount = 0;
         std::size_t shadowObjectUploadCount = 0;
@@ -84,6 +89,8 @@ namespace PlutoGE::render
     class RhiSceneRenderer
     {
     public:
+        RhiSceneRenderer();
+        ~RhiSceneRenderer();
         using TexturePixelReader = std::function<std::vector<std::byte>(const Texture &)>;
 
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
@@ -156,6 +163,7 @@ namespace PlutoGE::render
       bool m_immediateTextureUploads = false;
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
+      std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;
       struct CachedMesh
       {
           std::weak_ptr<const void> lifetime;

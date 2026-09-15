@@ -425,6 +425,12 @@ namespace PlutoGE::ui
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
         report << "RHI geometry diagnostic mode: " << render::GeometryDiagnosticName(rhiScene.geometryDiagnosticMode) << "\n";
+        report << "RHI skinning parallel work: " << rhiScene.skinningParticipants << " participants, "
+               << rhiScene.skinningDispatchMs << " ms dispatch, " << rhiScene.skinningCallerMs << " ms caller work, "
+               << rhiScene.skinningWaitMs << " ms wait, " << rhiScene.skinningMergeMs << " ms bounds merge (wall time)\n";
+        report << "RHI SSR configuration (first effect): " << rhiScene.ssrSteps << " steps, "
+               << rhiScene.ssrRefinementSteps << " refinements, 16 rays, " << rhiScene.ssrTraceSize.width << " x "
+               << rhiScene.ssrTraceSize.height << " trace pixels (configured; not measured sample counts)\n";
         report << "RHI directional shadow softness: " << rhiScene.directionalShadowSoftness
                << " (configured; not a measured tap count)\n";
         report << "RHI resolution: " << rhiScene.renderSize.width << " x " << rhiScene.renderSize.height

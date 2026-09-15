@@ -179,6 +179,63 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count() / 40;
         std::cout << "CPU skinning 73683 vertices, four influences, run " << run << ": " << elapsed << " ms/pose\n";
     }
+    const auto benchmarkPose = benchmarkJoints;
+    for (unsigned participants : {2u, 4u})
+    {
+        RhiSkinningExecutor executor(participants);
+        std::vector<BasicVertex> serial, parallel;
+        for (std::size_t size : {0u, 1u, 32767u, 32768u, 32801u, 73683u})
+        {
+            auto input = std::span<const MeshVertexData>(workload).first(size);
+            serial.clear(); parallel.clear();
+            for (int frame = 0; frame < 3; ++frame)
+            {
+                benchmarkJoints = benchmarkPose;
+                benchmarkJoints[0][3].x = .01f * frame;
+                if (frame == 1) benchmarkJoints[2] = glm::scale(glm::mat4(1), glm::vec3(-2, .5f, 1));
+                if (frame == 2) benchmarkJoints.fill(glm::mat4(0));
+                const auto expected = SkinRhiVerticesInto(input, benchmarkJoints, serial, serial);
+                const auto actual = executor.Deform(input, benchmarkJoints, parallel, parallel);
+                require(expected.center == actual.center && expected.radius == actual.radius,
+                        "Parallel deformation changed merged bounds");
+                for (std::size_t i = 0; i < size; ++i)
+                    require(serial[i].position == parallel[i].position && serial[i].normal == parallel[i].normal &&
+                            serial[i].tangent == parallel[i].tangent && serial[i].uv == parallel[i].uv &&
+                            serial[i].previousPosition == parallel[i].previousPosition,
+                            "Parallel deformation changed vertices or in-place history");
+            }
+        }
+        benchmarkJoints = benchmarkPose;
+        for (int frame = 0; frame < 8; ++frame) executor.Deform(workload, benchmarkJoints, parallel, parallel);
+        for (int run = 0; run < 3; ++run)
+        {
+            const auto startTime = std::chrono::steady_clock::now();
+            for (int frame = 0; frame < 40; ++frame) executor.Deform(workload, benchmarkJoints, parallel, parallel);
+            std::cout << "Parallel skinning " << participants << " participants run " << run << ": "
+                      << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count() / 40
+                      << " ms/pose (wait " << executor.stats.waitMs << " ms)\n";
+        }
+    }
+    // Exercise the renderer-owned executor, not only the range API: the
+    // duplicated unused vertices force a large stream while the visible quad
+    // makes actor/history regressions easy to detect.
+    auto largeConfig = config;
+    largeConfig.data.vertices.resize(73683, config.data.vertices.front());
+    Mesh largeMesh(largeConfig);
+    for (auto &command : commands) command.mesh = &largeMesh;
+    renderer.InvalidateAssetCache();
+    const auto largeBefore = render();
+    poseA[0] = glm::translate(glm::mat4(1), glm::vec3(.10f, .35f, 0));
+    const auto largeAfter = render();
+    require(glm::distance(centroid(largeBefore, 0), centroid(largeAfter, 0)) > 15,
+            "Parallel renderer deformation lost actor animation");
+    require(glm::distance(centroid(largeBefore, 1), centroid(largeAfter, 1)) < .01f,
+            "Parallel renderer mixed independent actor histories");
+    require(renderer.GetTimingStats().skinningUpdateCount == 1,
+            "Parallel renderer repeated unchanged actor deformation");
+    renderer.InvalidateAssetCache();
+    render();
+    renderer.Shutdown();
 }
 
 template<class Device>

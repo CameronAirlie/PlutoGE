@@ -3,6 +3,13 @@ if (NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
 endif()
 
 file(READ "${INPUT}" shader_source)
+# Loop hints are optional optimisations, not shader semantics. Slang emits
+# EXT_control_flow_attributes for [unroll]/[loop], but desktop OpenGL drivers
+# need not support that extension. Leave these loops to the OpenGL optimiser;
+# the Vulkan artifacts retain their SPIR-V loop hints.
+string(REPLACE "[[unroll]]" "" shader_source "${shader_source}")
+string(REPLACE "[[dont_unroll]]" "" shader_source "${shader_source}")
+string(REPLACE "#extension GL_EXT_control_flow_attributes : require" "" shader_source "${shader_source}")
 # Some OpenGL drivers do not propagate Slang's global row-major default into
 # matrices nested in uniform structs. Declare it on each block so their layout
 # matches the generated row-vector operations and our column-major CPU data.

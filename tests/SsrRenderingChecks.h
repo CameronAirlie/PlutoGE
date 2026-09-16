@@ -10,7 +10,8 @@
 
 template <class ReadPixels>
 void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
-                       PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = false)
+                       PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = false,
+                       bool extendedTiming = false)
 {
     using namespace PlutoGE::render;
     constexpr std::array<BasicVertex, 4> vertices = {{
@@ -128,11 +129,15 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
             double gpuMs = 0, effectMs = 0, traceMs = 0, resolveMs = 0;
             int samples = 0;
-            for (int frame = 0; frame < 48; ++frame)
+            // Capture-sized comparisons need a longer warmup/sample window to
+            // reduce clock-ramp and scheduling noise on short GPU workloads.
+            const int warmupFrames = extendedTiming ? 256 : 16;
+            const int measuredFrames = extendedTiming ? 512 : 32;
+            for (int frame = 0; frame < warmupFrames + measuredFrames; ++frame)
             {
                 renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr, 1));
                 const auto timing = performanceDevice->GetTimingStats("Scene");
-                if (frame < 16 || !timing.hasGpuResult) continue;
+                if (frame < warmupFrames || !timing.hasGpuResult) continue;
                 bool hasTrace = false, hasResolve = false;
                 for (const auto &scope : timing.gpuScopes)
                 {

@@ -267,10 +267,13 @@ int main(int argc, char **argv)
             return 0;
         }
         if (argc > 1 && (std::string_view(argv[1]) == "--ssr-performance" ||
-                         std::string_view(argv[1]) == "--ssr-project-performance"))
+                         std::string_view(argv[1]) == "--ssr-project-performance" ||
+                         std::string_view(argv[1]) == "--ssr-capture-performance"))
         {
-            const bool projectSettings = std::string_view(argv[1]) == "--ssr-project-performance";
-            renderer.Resize(projectSettings ? 603 : 1222, projectSettings ? 346 : 796);
+            const bool captureSettings = std::string_view(argv[1]) == "--ssr-capture-performance";
+            const bool projectSettings = captureSettings || std::string_view(argv[1]) == "--ssr-project-performance";
+            renderer.Resize(captureSettings ? 1690 : (projectSettings ? 603 : 1222),
+                            captureSettings ? 934 : (projectSettings ? 346 : 796));
             // Optional raw RGBA8 snapshots support before/after shader comparisons.
             std::ofstream snapshots;
             if (argc > 2)
@@ -284,7 +287,7 @@ int main(int argc, char **argv)
                 if (snapshots.is_open())
                     snapshots.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
                 return pixels;
-            }, &device, projectSettings);
+            }, &device, projectSettings, captureSettings);
             return 0;
         }
         CheckTextureMipRendering(renderer, device, [&](rhi::TextureHandle texture) {

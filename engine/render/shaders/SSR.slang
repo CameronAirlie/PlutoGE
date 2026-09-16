@@ -135,8 +135,19 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // rejected directions and misses still count in the estimator denominator.
     const uint samples = 16;
     float3 reflection = 0.0;
+#if defined(PLUTO_SSR_UNROLL_RAYS)
+    // Partially unroll fixed GGX samples without constant-folding the entire
+    // ray generator. Keep the original sample and accumulation order.
+    for (uint group = 0; group < samples; group += 4)
+    {
+    [unroll]
+    for (uint lane = 0; lane < 4; ++lane)
+    {
+        uint sample = group + lane;
+#else
     for (uint sample = 0; sample < samples; ++sample)
     {
+#endif
         float xi = (float(sample) + 0.5) / float(samples);
         float phi = 6.283185307 * frac(float(sample) * 0.618033989);
         float cosTheta = sqrt((1.0 - xi) / (1.0 + (a2 - 1.0) * xi));
@@ -198,6 +209,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             previousTravel = travel;
         }
     }
+#if defined(PLUTO_SSR_UNROLL_RAYS)
+    }
+#endif
     // Indirect specular adds to existing diffuse and direct lighting.
     // Apply the artistic roughness fade once, at full resolution, so the
     // half-resolution resolve cannot leak SSR onto fully rough receivers.

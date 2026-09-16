@@ -244,7 +244,7 @@ namespace PlutoGE::scene
         {
             properties.push_back({"Shadow Method", PropertyType::Enum,
                 std::to_string(static_cast<int>(m_config.directionalShadowSettings.method)),
-                {"Cascaded Shadow Maps", "Virtual Shadow Maps (Experimental)"}});
+                {"Cascaded Shadow Maps (Legacy)", "Virtual Shadow Maps (Default)"}});
             properties.push_back({"VSM Page Updates per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualPageBudget)});
             properties.push_back({"VSM Triangle Budget per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualTriangleBudget)});
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});

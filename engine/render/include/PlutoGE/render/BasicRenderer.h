@@ -7,6 +7,7 @@
 #include "PlutoGE/render/RenderDebugView.h"
 #include "PlutoGE/render/ShadowMethod.h"
 #include "PlutoGE/render/VirtualShadowMaps.h"
+#include "PlutoGE/render/OcclusionCulling.h"
 
 #include "PlutoGE/render/rhi/Resource.h"
 
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -189,6 +191,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode maskedShadowFragment;
         VirtualShadowShaders virtualShadows;
+        OcclusionShaders occlusion;
         BasicPostProcessShaderPackage displayOutput;
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)>
@@ -274,6 +277,10 @@ namespace PlutoGE::render
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         // Authoritative object history survives visibility and draw-order changes.
         std::optional<glm::mat4> previousModel;
+        // Optional current world-space AABB. Negative extents select the
+        // existing conservative sphere fallback; never reuse for deformed meshes.
+        glm::vec3 occlusionBoundsCenter{0.0f};
+        glm::vec3 occlusionBoundsExtents{-1.0f};
     };
 
     struct BasicParticleVertex
@@ -321,7 +328,9 @@ namespace PlutoGE::render
 
     enum class GeometryDiagnosticMode : std::uint8_t
     {
-        None, ReferenceSky, BypassDirectionalShadows, ReferenceDirectionalShadows
+        None, ReferenceSky, BypassDirectionalShadows, ReferenceDirectionalShadows,
+        MaterialOnly, BypassDetailTextures, BypassPointLights, BypassSkyLighting,
+        AutomaticSweep, DrawRanges, MinimalShading
     };
     constexpr const char *GeometryDiagnosticName(GeometryDiagnosticMode mode) noexcept
     {
@@ -330,6 +339,13 @@ namespace PlutoGE::render
         case GeometryDiagnosticMode::ReferenceSky: return "Original sky evaluation";
         case GeometryDiagnosticMode::BypassDirectionalShadows: return "Bypass directional shadow sampling";
         case GeometryDiagnosticMode::ReferenceDirectionalShadows: return "Scalar directional shadow filter";
+        case GeometryDiagnosticMode::MaterialOnly: return "Material only (no lighting)";
+        case GeometryDiagnosticMode::BypassDetailTextures: return "Bypass standard detail textures";
+        case GeometryDiagnosticMode::BypassPointLights: return "Bypass point lights";
+        case GeometryDiagnosticMode::BypassSkyLighting: return "Bypass sky lighting";
+        case GeometryDiagnosticMode::AutomaticSweep: return "Automatic shading sweep";
+        case GeometryDiagnosticMode::MinimalShading: return "Minimal shading (coverage preserved)";
+        case GeometryDiagnosticMode::DrawRanges: return "Draw range timings";
         default: return "Normal rendering";
         }
     }
@@ -337,6 +353,7 @@ namespace PlutoGE::render
     struct BasicLighting
     {
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
+        OcclusionMode occlusionMode = OcclusionMode::Off;
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; };
@@ -354,7 +371,7 @@ namespace PlutoGE::render
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};
         bool shadowsEnabled = false;
-        ShadowMethod shadowMethod = ShadowMethod::Cascaded;
+        ShadowMethod shadowMethod = ShadowMethod::Virtual;
         std::uint32_t virtualShadowPageBudget = 64;
         std::uint32_t virtualShadowTriangleBudget = 1000000;
         std::array<glm::mat4, 4> shadowMatrices{
@@ -404,13 +421,17 @@ namespace PlutoGE::render
 
     struct BasicRendererFrameStats
     {
+        GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
         std::array<std::uint64_t, 4> geometryTriangles{};
         std::size_t shadowCandidates = 0;
         VirtualShadowStats virtualShadows;
+        OcclusionStats occlusion;
+        bool occlusionActive = false;
         bool virtualShadowsActive = false;
+        std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
@@ -454,6 +475,8 @@ namespace PlutoGE::render
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
+        [[nodiscard]] const char *VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
+                                                               std::span<const BasicDraw> shadowDraws = {}) const;
         [[nodiscard]] bool UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
                                              std::span<const BasicDraw> shadowDraws = {}) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
@@ -514,6 +537,8 @@ namespace PlutoGE::render
                                                             rhi::Format format = rhi::Format::R16G16B16A16Float);
         void EnsureShadowTargets(const BasicLighting &lighting);
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
+        std::unique_ptr<OcclusionCulling> m_occlusion;
+        std::uint64_t m_geometrySweepFrame = 0;
         VirtualShadowShaders m_virtualShadowShaders;
         rhi::Texture m_emptyVirtualShadowPageTable;
         std::uint64_t m_nextMeshRevision = 1;

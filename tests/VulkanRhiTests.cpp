@@ -17,6 +17,8 @@
 #include "TextureMipRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
+#include "OcclusionRenderingChecks.h"
+#include "GeometryDiagnosticChecks.h"
 #include "VsmOnlyRenderingChecks.h"
 
 #include <array>
@@ -62,6 +64,10 @@ int main(int argc, char **argv)
         shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");
         shaders.maskedShadowFragment.spirv = ReadSpirv("DirectionalShadowMasked.fragment.spv");
+        shaders.occlusion.vertex.spirv = ReadSpirv("OcclusionDepth.vertex.spv");
+        shaders.occlusion.fragment.spirv = ReadSpirv("OcclusionDepth.fragment.spv");
+        shaders.occlusion.reduce.spirv = ReadSpirv("OcclusionReduce.compute.spv");
+        shaders.occlusion.test.spirv = ReadSpirv("OcclusionTest.compute.spv");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].spirv = ReadSpirv((std::string(vsmCompute[index]) + ".compute.spv").c_str());
@@ -128,6 +134,16 @@ int main(int argc, char **argv)
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
+        {
+            CheckGeometryDiagnostics(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--occlusion")
+        {
+            CheckOcclusionRendering(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--shader-graphs")
         {
             CheckShaderGraphRendering(renderer, device, [&](auto texture)
@@ -210,7 +226,8 @@ int main(int argc, char **argv)
             PlutoGE::scene::LightComponent light;
             light.GetLight().type = PlutoGE::scene::LightType::Directional;
             light.GetLight().castsShadows = true;
-            light.GetLight().directionalShadowSettings.method = ShadowMethod::Virtual;
+            if (light.GetLight().directionalShadowSettings.method != ShadowMethod::Virtual)
+                throw std::runtime_error("Directional light did not default to VSM");
             light.GetLight().activeShadowCascadeCount = 4;
             light.Initialize();
             if (light.GetLight().activeShadowCascadeCount != 0 ||
@@ -396,6 +413,7 @@ int main(int argc, char **argv)
             BasicDraw{.mesh = &corner},
         };
         BasicLighting neutralLighting;
+        neutralLighting.shadowMethod = ShadowMethod::Cascaded; // Explicit legacy cache coverage.
         neutralLighting.view = view;
         neutralLighting.cameraPosition = glm::vec3(glm::inverse(view)[3]);
         neutralLighting.ambientIntensity = 1.0f;

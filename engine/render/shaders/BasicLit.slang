@@ -669,9 +669,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 {
     float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
 
+    // Coverage must remain intact for these controlled cost comparisons.
+    const bool skipDetailTextures = !transparentPass && pointParameters.w == 5.0 && shaderGraph.header.x == 0;
     const bool glass = transparentPass && glassParameters.x > 0.5;
     float3 normal = normalize(input.worldNormal);
-    if (hasNormalTexture != 0)
+    if (hasNormalTexture != 0 && !skipDetailTextures)
     {
         float3 tangentNormal = normalTexture.Sample(input.uv * uvScale).xyz * 2.0 - 1.0;
         if (flipNormalY != 0)
@@ -683,10 +685,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     if (transparentPass && dot(normal, cameraPositionAmbient.xyz - input.worldPosition) < 0.0)
         normal = -normal;
     float sampledMetallic = 1.0;
-    if (hasMetallicTexture != 0)
+    if (hasMetallicTexture != 0 && !skipDetailTextures)
         sampledMetallic = metallicTexture.Sample(input.uv * uvScale)[metallicChannel];
     float sampledRoughness = 1.0;
-    if (hasRoughnessTexture != 0)
+    if (hasRoughnessTexture != 0 && !skipDetailTextures)
         sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
     float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
@@ -695,6 +697,20 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
     if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
+    if (!transparentPass && (pointParameters.w == 4.0 || pointParameters.w == 10.0))
+    {
+        // Retain material evaluation, alpha coverage, MRT bandwidth and motion;
+        // omit all lighting. This is not a pure vertex/raster timing.
+        FragmentOutput output;
+        output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
+        output.normal = float4(normal * 0.5 + 0.5, 1);
+        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
+        output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
+                               input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0, 1);
+        output.albedo = sampledColor;
+        output.debug = float4(saturate(input.objectDebug), 0, 1, 1);
+        return output;
+    }
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float3 halfDirection = normalize(lightDirection + viewDirection);
@@ -726,7 +742,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float3 pointReceiverNormal = cross(ddx(input.worldPosition), ddy(input.worldPosition));
     float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
-    for (uint light = 0; light < uint(pointParameters.x); ++light)
+    for (uint light = 0; light < uint(pointParameters.x) && (transparentPass || pointParameters.w != 6.0); ++light)
     {
         const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
         const float distance = length(offset);
@@ -861,7 +877,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
     }
     float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
-    if (physicalSkySettings.x > 0.5)
+    if (physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0))
     {
         const float3 environmentIrradiance = samplePhysicalSkyIrradiance(normal);
         const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) *
@@ -962,6 +978,18 @@ FragmentOutput fragmentMain(VertexOutput input)
                                input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0.0, 1.0);
         output.albedo = float4(0.0, 0.0, 0.0, 1.0);
         output.debug = float4(0.0, 0.0, 1.0, 1.0);
+        return output;
+    }
+    if (pointParameters.w == 10.0 && alphaMode != 1 && shaderGraph.header.x == 0)
+    {
+        FragmentOutput output;
+        output.color = float4(0.5, 0.5, 0.5, 1);
+        output.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1);
+        output.material = float4(0, 1, 0, 1);
+        output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
+                               input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0, 1);
+        output.albedo = float4(0.5, 0.5, 0.5, 1);
+        output.debug = float4(saturate(input.objectDebug), 0, 1, 1);
         return output;
     }
     return shadeSurface(input, false);

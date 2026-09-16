@@ -1,4 +1,6 @@
 #include "FogRenderingChecks.h"
+#include "OcclusionRenderingChecks.h"
+#include "GeometryDiagnosticChecks.h"
 #include "SkyQuadratureChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
@@ -169,6 +171,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.maskedShadowFragment.glsl = ReadText("DirectionalShadowMasked.fragment.glsl");
         shaders.displayOutput.vertex.glsl = ReadText("DisplayOutput.vertex.glsl");
         shaders.displayOutput.fragment.glsl = ReadText("DisplayOutput.fragment.glsl");
+        shaders.occlusion.vertex.glsl = ReadText("OcclusionDepth.vertex.glsl");
+        shaders.occlusion.fragment.glsl = ReadText("OcclusionDepth.fragment.glsl");
+        shaders.occlusion.reduce.glsl = ReadText("OcclusionReduce.compute.glsl");
+        shaders.occlusion.test.glsl = ReadText("OcclusionTest.compute.glsl");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].glsl = ReadText((std::string(vsmCompute[index]) + ".compute.glsl").c_str());
@@ -246,6 +252,26 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
+        {
+            CheckGeometryDiagnostics(basicRenderer, device, [&](auto texture) {
+                std::vector<std::byte> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, false); // OpenGL RHI does not implement GPU timestamp scopes.
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--occlusion")
+        {
+            CheckOcclusionRendering(basicRenderer, [&](auto texture) {
+                std::vector<std::byte> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-secondary")
         {
             try {

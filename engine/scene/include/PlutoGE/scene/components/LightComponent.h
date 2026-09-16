@@ -25,7 +25,7 @@ namespace PlutoGE::scene
 
     struct DirectionalShadowSettings
     {
-        render::ShadowMethod method = render::ShadowMethod::Cascaded;
+        render::ShadowMethod method = render::ShadowMethod::Virtual;
         int virtualPageBudget = 64;
         int virtualTriangleBudget = 1000000;
         int cascadeCount = kDefaultDirectionalShadowCascades;

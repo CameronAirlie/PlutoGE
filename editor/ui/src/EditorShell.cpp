@@ -2984,6 +2984,7 @@ namespace PlutoGE::ui
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
             if (m_editorSceneRenderService)
                 m_editorSceneRenderService->SetGeometryDiagnosticMode(m_profiler.geometryDiagnosticMode);
+                m_editorSceneRenderService->SetOcclusionMode(m_profiler.occlusionMode);
             core::CpuScope frameScope("EditorLoop");
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;

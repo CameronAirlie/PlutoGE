@@ -260,6 +260,17 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount));
         ImGui::Text("  Internal: %u x %u; output: %u x %u", rhiScene.renderSize.width, rhiScene.renderSize.height,
                     rhiScene.outputSize.width, rhiScene.outputSize.height);
+        if (rhiScene.occlusionActive && rhiScene.occlusion.available)
+            ImGui::Text("Occlusion (delayed): %u tested, %u hidden draws, %u hidden triangles",
+                        rhiScene.occlusion.tested, rhiScene.occlusion.rejected, rhiScene.occlusion.rejectedTriangles);
+        if (rhiScene.occlusionActive && rhiScene.occlusion.available)
+        {
+            const auto &occlusion = rhiScene.occlusion;
+            ImGui::Text("  Skipped: %u unsupported, %u invalid bounds, %u clipped/offscreen",
+                        occlusion.unsupported, occlusion.invalidBounds, occlusion.clipped);
+            ImGui::Text("  Tight bounds: %u; refined: %u; recovered: %u; budget limits: %u",
+                        occlusion.tightBounds, occlusion.refined, occlusion.refinementRejected, occlusion.budgetExceeded);
+        }
         ImGui::Text("  Mode: %s", render::GeometryDiagnosticName(rhiScene.geometryDiagnosticMode));
         ImGui::Text("  Triangles: %llu opaque, %llu masked, %llu transparent, %llu outline",
                     static_cast<unsigned long long>(rhiScene.geometryTriangles[0]),
@@ -279,6 +290,7 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.shadowCascadeCacheHitCount),
                     static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount),
                     static_cast<unsigned long long>(rhiScene.shadowCascadeTargetCount));
+        ImGui::TextWrapped("  Directional shadows: %s", rhiScene.directionalShadowStatus.c_str());
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;

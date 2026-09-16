@@ -454,6 +454,10 @@ namespace PlutoGE::render::rhi::opengl
                                         indices, static_cast<GLsizei>(instanceCount));
         }
 
+        bool SupportsGpuOcclusionCulling() const noexcept override
+        {
+            return m_gpuDrivenShadows;
+        }
         bool SupportsGpuDrivenShadows() const noexcept override
         {
             return m_gpuDrivenShadows;

@@ -49,6 +49,9 @@ namespace PlutoGE::render
         std::array<std::uint64_t, 4> geometryTriangles{};
         rhi::Extent2D renderSize{}, outputSize{};
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
+        OcclusionMode occlusionMode = OcclusionMode::Off;
+        OcclusionStats occlusion;
+        bool occlusionActive = false;
         float directionalShadowSoftness = 0.0f;
         unsigned skinningParticipants = 1;
         float skinningDispatchMs = 0, skinningCallerMs = 0, skinningWaitMs = 0, skinningMergeMs = 0;
@@ -62,6 +65,7 @@ namespace PlutoGE::render
         std::size_t shadowCascadeTargetCount = 0;
         VirtualShadowStats virtualShadows;
         bool virtualShadowsActive = false;
+        std::string directionalShadowStatus = "Disabled";
         std::array<std::size_t, 4> recordedShadowDrawsByCascade{};
     };
 

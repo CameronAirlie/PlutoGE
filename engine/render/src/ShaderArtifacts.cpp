@@ -95,6 +95,8 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
             result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
                                    .fragment = Load(ssaoModules[index], "fragment")};
+        result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),
+                            Load("OcclusionReduce", "compute"), Load("OcclusionTest", "compute")};
         constexpr std::array<std::string_view, 7> virtualCompute{
             "VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < virtualCompute.size(); ++index)

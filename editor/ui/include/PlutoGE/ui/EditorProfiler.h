@@ -106,6 +106,7 @@ namespace PlutoGE::ui
         [[nodiscard]] std::string BuildFrameMetricsReport(const EditorProfileFrame &frame, bool allTraceSamples = false) const;
         [[nodiscard]] std::string BuildCaptureMetricsReport() const;
         render::GeometryDiagnosticMode geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
+        render::OcclusionMode occlusionMode = render::OcclusionMode::Off;
 
         void AddFrameSample(float frameTimeMs);
         void SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats);

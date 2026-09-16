@@ -35,6 +35,7 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
                    glm::rotate(glm::mat4(1), .25f, glm::vec3(0,0,1)) *
                    glm::scale(glm::mat4(1), glm::vec3(.5f, 2, 1));
     BasicLighting lighting;
+    lighting.shadowMethod = ShadowMethod::Cascaded; // Exercise legacy filtering before switching to VSM.
     lighting.shadowsEnabled = true;
     lighting.shadowCascadeCount = 1;
     lighting.shadowResolution = 256;

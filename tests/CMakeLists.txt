@@ -59,6 +59,8 @@ target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Pla
 target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEOpenGLRhiTests COMMAND PlutoGEOpenGLRhiTests)
+add_test(NAME PlutoGEOpenGLOcclusionTests COMMAND PlutoGEOpenGLRhiTests --occlusion)
+add_test(NAME PlutoGEOpenGLGeometryDiagnosticTests COMMAND PlutoGEOpenGLRhiTests --geometry-diagnostics)
 add_test(NAME PlutoGEMeshReplacementRenderingTests COMMAND PlutoGEOpenGLRhiTests --mesh-replacement)
 add_test(NAME PlutoGEOpenGLRenderOptimizationTests COMMAND PlutoGEOpenGLRhiTests --render-optimizations)
 add_test(NAME PlutoGEOpenGLSsrTests COMMAND PlutoGEOpenGLRhiTests --ssr-only)
@@ -79,6 +81,8 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)
+add_test(NAME PlutoGEVulkanGeometryDiagnosticTests COMMAND PlutoGEVulkanRhiTests --geometry-diagnostics)
 add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanFogTests COMMAND PlutoGEVulkanRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanSkyQuadratureTests COMMAND PlutoGEVulkanRhiTests --sky-quadrature)

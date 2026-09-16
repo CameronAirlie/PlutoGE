@@ -28,7 +28,8 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     caster.shadowBoundsRadius = 6;
     BasicLighting lighting;
     lighting.shadowsEnabled = true;
-    lighting.shadowMethod = ShadowMethod::Virtual;
+    if (lighting.shadowMethod != ShadowMethod::Virtual)
+        throw std::runtime_error("VSM is not the default shadow method");
     lighting.shadowResolution = 256;
     lighting.shadowCascadeCount = 4;
     lighting.shadowDistance = 150;
@@ -53,6 +54,30 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     };
     for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
     const auto shadowed = readPixels(renderer.GetColorTexture());
+    // Opaque fragment graphs do not alter shadow depth or coverage and must
+    // not force a whole-scene fallback to cascades.
+    auto graph = std::make_shared<ShaderGraphProgram>();
+    graph->data.header.x = 1;
+    caster.shaderGraphProgram = graph;
+    for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
+    if (readPixels(renderer.GetColorTexture()) != shadowed)
+        throw std::runtime_error("Opaque fragment graph changed VSM shadow coverage");
+    // Unsupported graph depth must be explicit, never allocate legacy maps.
+    graph->data.header.z = 1;
+    renderSurface();
+    if (renderer.GetFrameStats().virtualShadowsActive || renderer.GetFrameStats().shadowCascadeTargets ||
+        renderer.GetFrameStats().shadowInstances ||
+        renderer.GetFrameStats().directionalShadowStatus.find("VSM unavailable:") != 0)
+        throw std::runtime_error("Unsupported VSM graph silently fell back to CSM");
+    graph->data.header.z = 0;
+    caster.alphaMode = 1;
+    renderSurface();
+    if (renderer.GetFrameStats().virtualShadowsActive || renderer.GetFrameStats().shadowCascadeTargets ||
+        renderer.GetFrameStats().directionalShadowStatus.find("VSM unavailable:") != 0)
+        throw std::runtime_error("Masked graph silently used unsupported VSM depth or CSM");
+    caster.alphaMode = 0;
+    caster.shaderGraphProgram.reset();
+    for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
     lighting.geometryDiagnosticMode = GeometryDiagnosticMode::BypassDirectionalShadows;
     renderSurface(); assertExclusive();
     const auto bypassed = readPixels(renderer.GetColorTexture());

@@ -51,6 +51,7 @@ namespace PlutoGE::render
                                                                   const VirtualShadowParameters *previous = nullptr,
                                                                   float resolutionScale = 1.0f);
         [[nodiscard]] static bool CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters);
+        [[nodiscard]] auto ReceiverDepth() const { return m_receiverDepth.Get(); }
         [[nodiscard]] auto Atlas() const { return m_depth.Get(); }
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }

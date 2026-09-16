@@ -3686,7 +3686,9 @@ namespace PlutoGE::ui
             return;
         }
 
-        ImGui::Text("Entity Name: %s", entity->GetName().c_str());
+        auto entityNameBuffer = std::array<char, 256>{};
+        std::strncpy(entityNameBuffer.data(), entity->GetName().c_str(), entityNameBuffer.size() - 1);
+        ImGui::Text("Entity Name: %s", entityNameBuffer.data());
         ImGui::SameLine();
         ImGui::TextDisabled("ID: %u", entity->GetID());
         auto isActive = entity->IsSelfActive();
@@ -5539,9 +5541,10 @@ namespace PlutoGE::ui
                             ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
                             const auto applyOceanPreset = [&](const char *label, bool harbour)
                             {
-                                if (!ImGui::Button(label)) return;
+                                if (!ImGui::Button(label))
+                                    return;
                                 editorShell.ExecuteSceneEdit(label, [&]
-                                {
+                                                             {
                                     const auto before = oceanComponent->Serialize();
                                     if (harbour) oceanComponent->ApplyHarbourPreset();
                                     else oceanComponent->ApplyStylizedSeaPreset();
@@ -5550,8 +5553,7 @@ namespace PlutoGE::ui
                                         const auto previous = std::find_if(before.begin(),before.end(),[&](const auto &value) { return value.name==property.name; });
                                         if (previous==before.end() || previous->value!=property.value)
                                             entity->AddPrefabOverride("Component:OceanComponent:"+property.name);
-                                    }
-                                });
+                                    } });
                             };
                             applyOceanPreset("Apply Harbour Preset", true);
                             applyOceanPreset("Apply Stylized Sea Preset", false);
@@ -5560,9 +5562,7 @@ namespace PlutoGE::ui
                             propertiesProvided = true;
                             properties = oceanComponent->Serialize();
                             std::erase_if(properties, [](const auto &property)
-                            {
-                                return property.name == "AreaCount" || property.name.starts_with("Areas.");
-                            });
+                                          { return property.name == "AreaCount" || property.name.starts_with("Areas."); });
 
                             const auto &areas = oceanComponent->GetAreas();
                             ImGui::SeparatorText("Area Masks");

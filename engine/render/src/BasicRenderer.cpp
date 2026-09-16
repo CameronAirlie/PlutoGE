@@ -1002,6 +1002,8 @@ namespace PlutoGE::render
                     device, device.CreateGraphicsPipeline(descriptor));
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
+            m_occlusion = std::make_unique<OcclusionCulling>();
+            m_occlusion->Initialize(device, shaders.occlusion);
             m_virtualShadowShaders = shaders.virtualShadows;
             // Compile VSM pipelines during renderer initialization, alongside
             // the other pipelines, never on the first shadowed viewport frame.
@@ -1093,6 +1095,8 @@ namespace PlutoGE::render
             target.Reset();
         m_shadowResolutions.fill(0);
         m_virtualShadows.reset();
+        m_occlusion.reset();
+        m_geometrySweepFrame = 0;
         m_emptyVirtualShadowTable.Reset();
         m_emptyVirtualShadowPageTable.Reset();
         m_virtualShadowShaders = {};
@@ -1325,11 +1329,31 @@ namespace PlutoGE::render
     bool BasicRenderer::UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
                                           std::span<const BasicDraw> shadowDraws) const
     {
+        return lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual &&
+            VirtualShadowUnavailableReason(draws, shadowDraws) == nullptr;
+    }
+
+    const char *BasicRenderer::VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
+                                                             std::span<const BasicDraw> shadowDraws) const
+    {
+        if (!m_device || !m_device->GetImmediateContext().SupportsGpuDrivenShadows())
+            return "VSM unavailable: backend lacks GPU-driven shadows";
+        if (!m_virtualShadowShaders.Complete()) return "VSM unavailable: shader artifacts missing";
         const auto casters = shadowDraws.empty() ? draws : shadowDraws;
-        if (std::any_of(casters.begin(),casters.end(),[](const auto &d){return bool(d.shaderGraphProgram);})) return false;
-        return m_device && lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual &&
-            m_device->GetImmediateContext().SupportsGpuDrivenShadows() && m_virtualShadowShaders.Complete() &&
-            VirtualShadowMaps::CanPrepare(draws, shadowDraws.empty() ? draws : shadowDraws);
+        const auto unsupported = [](std::span<const BasicDraw> list, bool caster) {
+            return std::any_of(list.begin(), list.end(), [caster](const auto &draw) {
+                if (!draw.mesh || !draw.mesh->IsValid() || draw.alphaMode == 2 || draw.surfaceType == 1 ||
+                    (caster && !draw.castsShadow) || !draw.shaderGraphProgram) return false;
+                // Opaque fragment graphs cannot change depth or coverage. Vertex
+                // graphs and masked fragment graphs require graph-aware depth shaders.
+                const auto &header = draw.shaderGraphProgram->data.header;
+                return header.z != 0 || (draw.alphaMode == 1 && header.x != 0);
+            });
+        };
+        if (unsupported(draws, false) || unsupported(casters, true))
+            return "VSM unavailable: vertex deformation or masked shader graph requires graph-aware depth rendering";
+        if (!VirtualShadowMaps::CanPrepare(draws, casters)) return "VSM unavailable: draw chunk capacity exceeded";
+        return nullptr;
     }
 
     void BasicRenderer::EnsureShadowTargets(const BasicLighting &lighting)
@@ -1375,6 +1399,16 @@ namespace PlutoGE::render
     {
         m_frameStats = {};
         m_timingStats = {};
+        const bool automaticSweep = lighting.geometryDiagnosticMode == GeometryDiagnosticMode::AutomaticSweep;
+        auto geometryMode = lighting.geometryDiagnosticMode;
+        constexpr std::array sweepModes{GeometryDiagnosticMode::None, GeometryDiagnosticMode::MinimalShading, GeometryDiagnosticMode::MaterialOnly,
+            GeometryDiagnosticMode::BypassDirectionalShadows, GeometryDiagnosticMode::BypassDetailTextures,
+            GeometryDiagnosticMode::BypassPointLights, GeometryDiagnosticMode::BypassSkyLighting};
+        if (automaticSweep)
+            geometryMode = sweepModes[(m_geometrySweepFrame++ / 32) % sweepModes.size()];
+        else
+            m_geometrySweepFrame = 0;
+        m_frameStats.geometryDiagnosticMode = geometryMode;
         m_temporalUpscalerEvaluatedLastFrame = false;
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
@@ -1386,7 +1420,15 @@ namespace PlutoGE::render
 
         auto &commands = m_device->GetImmediateContext();
         const float graphTime = ShaderGraphTimeSeconds();
-        bool virtualShadowsActive = UsesVirtualShadows(lighting, draws, shadowDraws);
+        const bool virtualShadowsRequested = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual;
+        const char *virtualShadowIssue = virtualShadowsRequested ? VirtualShadowUnavailableReason(draws, shadowDraws) : nullptr;
+        bool virtualShadowsActive = virtualShadowsRequested && !virtualShadowIssue;
+        const bool cascadedShadowsActive = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Cascaded;
+        if (lighting.shadowsEnabled)
+        {
+            m_frameStats.directionalShadowStatus = virtualShadowIssue ? virtualShadowIssue :
+                (virtualShadowsActive ? "Virtual shadow maps" : "Cascaded shadow maps (explicit legacy selection)");
+        }
         // Retain compiled pipelines and residency across temporary disablement
         // or CSM selection. Inactive VSM records no GPU work; signatures and
         // projection epochs validate cached depth when it resumes.
@@ -1420,7 +1462,7 @@ namespace PlutoGE::render
 
         if (shadowDraws.empty()) shadowDraws = draws;
         m_frameStats.shadowCandidates = shadowDraws.size();
-        if (lighting.shadowsEnabled)
+        if (virtualShadowsActive || cascadedShadowsActive)
         {
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
@@ -1429,7 +1471,7 @@ namespace PlutoGE::render
                 if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow && draw.surfaceType != 1 && draw.alphaMode != 2)
                     {
                     m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
-                    if(draw.shaderGraphProgram) {
+                    if(draw.shaderGraphProgram && !virtualShadowsActive) {
                         HashVctValue(m_shadowDrawSignatures[index],draw.shaderGraphProgram->hash);
                         HashVctValue(m_shadowDrawSignatures[index],graphTime);
                         HashVctValue(m_shadowDrawSignatures[index],lighting.cameraPosition);
@@ -1448,7 +1490,9 @@ namespace PlutoGE::render
                 m_shadowDrawSignatures, m_width, m_height);
         }
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
-        if (lighting.shadowsEnabled && !virtualShadowsActive)
+        if (virtualShadowsRequested && !virtualShadowIssue && !virtualShadowsActive)
+            m_frameStats.directionalShadowStatus = "VSM unavailable: preparation failed";
+        if (cascadedShadowsActive)
             EnsureShadowTargets(lighting);
         else
         {
@@ -1502,7 +1546,7 @@ namespace PlutoGE::render
             glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
             glm::vec4(lighting.directionalColor, 1.0f),
             lighting.shadowMatrices,
-            lighting.shadowsEnabled ? 1u : 0u,
+            (virtualShadowsActive || cascadedShadowsActive) ? 1u : 0u,
             lighting.shadowFlipY ? 1u : 0u,
             lighting.shadowDepthScale,
             lighting.shadowDepthBias,
@@ -1526,13 +1570,13 @@ namespace PlutoGE::render
             lighting.physicalSkyParameters,
             glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
                       std::max(lighting.physicalSkyExposure, 0.0f),
-                      1.0f, m_skyQuadraturePipeline && lighting.geometryDiagnosticMode != GeometryDiagnosticMode::ReferenceSky ? 1.0f : 0.0f),
+                      1.0f, m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky ? 1.0f : 0.0f),
             temporalClipOffset,
         };
         const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
         frameParameters.pointParameters = {static_cast<float>(pointCount),
                                            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f,
-                                           static_cast<float>(lighting.geometryDiagnosticMode)};
+                                           static_cast<float>(geometryMode)};
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -1552,7 +1596,7 @@ namespace PlutoGE::render
             ++pointShadowCount;
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
-        if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && lighting.geometryDiagnosticMode != GeometryDiagnosticMode::ReferenceSky)
+        if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky)
         {
             // Generate before any receiver reads. RHI transitions the render target
             // to sampled usage on binding; no readback or cross-frame cache is needed.
@@ -1584,7 +1628,7 @@ namespace PlutoGE::render
             });
             m_frameStats.virtualShadows = m_virtualShadows->GetStats();
         }
-        if (lighting.shadowsEnabled && !virtualShadowsActive)
+        if (cascadedShadowsActive)
         {
             const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
             m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
@@ -1864,6 +1908,27 @@ namespace PlutoGE::render
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
+        // Current-frame coverage must include exactly the same temporal jitter.
+        glm::mat4 occlusionProjection = viewProjection;
+        for (int column = 0; column < 4; ++column)
+        {
+            occlusionProjection[column][0] += temporalClipOffset.x * viewProjection[column][3];
+            occlusionProjection[column][1] += temporalClipOffset.y * viewProjection[column][3];
+        }
+        // VSM depth has simplified material coverage and is unjittered. Reuse
+        // only when every receiver is a compatible opaque, single draw.
+        const bool reuseReceiverDepth = virtualShadowsActive && temporalClipOffset == glm::vec4(0) &&
+            std::ranges::all_of(draws, OcclusionCulling::SafeOccluder);
+        const bool occlusionActive = m_occlusion && m_occlusion->Record(*m_device, draws, occlusionProjection,
+            m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
+            {
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
+            }, reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
+        m_frameStats.occlusionActive = occlusionActive;
+        if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
         if (!geometryDebug) renderingInfo.clearColorValues.pop_back();
         const auto opaquePipeline = geometryDebug ? m_pipeline.Get() : m_opaqueNoDebugPipeline.Get();
@@ -1871,7 +1936,9 @@ namespace PlutoGE::render
         const auto outlinePipeline = geometryDebug ? m_outlinePipeline.Get() : m_outlineNoDebugPipeline.Get();
         const auto outlineInstancedPipeline = geometryDebug ? m_outlineInstancedPipeline.Get() : m_outlineInstancedNoDebugPipeline.Get();
         const auto geometryRecordingStart = std::chrono::steady_clock::now();
-        commands.BeginGpuScope("RHI Geometry");
+        const std::string geometryScopeName = automaticSweep
+            ? std::string("RHI Geometry sweep / ") + GeometryDiagnosticName(geometryMode) : "RHI Geometry";
+        commands.BeginGpuScope(geometryScopeName);
         // Transition shadow outputs before entering dynamic rendering.
         commands.BindPipeline(opaquePipeline);
         commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
@@ -2039,7 +2106,10 @@ namespace PlutoGE::render
                 else
                 {
                     commands.BindUniformBuffer(16, m_objectBuffers[objectBufferCursor - 1].Get());
-                    commands.DrawIndexed(drawCount, draw.firstIndex);
+                    if (occlusionActive && !transparent && !draw.outlinePass)
+                        commands.DrawIndexedIndirect(m_occlusion->Indirect(), static_cast<std::size_t>(&draw - draws.data()) * 20);
+                    else
+                        commands.DrawIndexed(drawCount, draw.firstIndex);
                     ++m_frameStats.geometryDraws;
                     ++m_frameStats.geometryInstances;
                     m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] += drawCount / 3;
@@ -2049,8 +2119,21 @@ namespace PlutoGE::render
         std::size_t historyIndex = 0;
         std::vector<BasicDraw> transparentDraws;
         commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
+        // At most eight additional query pairs; avoid per-draw queries exhausting
+        // the backend timestamp pool or materially changing submission cost.
+        const bool rangeTimings = geometryMode == GeometryDiagnosticMode::DrawRanges;
+        const std::size_t rangeSize = std::max<std::size_t>(1, (draws.size() + 7) / 8);
+        bool rangeScopeOpen = false;
         for (const auto &draw : draws)
         {
+            const auto drawIndex = static_cast<std::size_t>(&draw - draws.data());
+            if (rangeTimings && drawIndex % rangeSize == 0)
+            {
+                if (rangeScopeOpen) commands.EndGpuScope();
+                commands.BeginGpuScope("RHI Geometry draws " + std::to_string(drawIndex) + "-" +
+                    std::to_string(std::min(drawIndex + rangeSize, draws.size()) - 1));
+                rangeScopeOpen = true;
+            }
             if (!draw.mesh || !draw.mesh->IsValid())
                 continue;
             if (draw.surfaceType == 1 || draw.alphaMode == 2)
@@ -2074,6 +2157,7 @@ namespace PlutoGE::render
                 recordDraw(draw, false, historyIndex);
             ++historyIndex;
         }
+        if (rangeScopeOpen) commands.EndGpuScope();
         commands.EndGpuScope();
         commands.BeginGpuScope("RHI Geometry / Outlines");
         // Draw shells after all opaque surfaces so foreground geometry occludes them.

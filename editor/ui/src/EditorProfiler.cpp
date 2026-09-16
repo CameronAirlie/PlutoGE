@@ -424,6 +424,18 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)
+               << " (0 off, 1 measure, 2 cull), active: " << rhiScene.occlusionActive << "\n";
+        if (rhiScene.occlusionActive && rhiScene.occlusion.available)
+            report << "RHI occlusion delayed frame " << rhiScene.occlusion.frame << ": "
+                   << rhiScene.occlusion.tested << " tested, " << rhiScene.occlusion.rejected
+                   << " hidden draws, " << rhiScene.occlusion.rejectedTriangles << " hidden triangles\n";
+        if (rhiScene.occlusionActive && rhiScene.occlusion.available)
+            report << "RHI occlusion diagnostics: " << rhiScene.occlusion.unsupported << " unsupported, "
+                   << rhiScene.occlusion.invalidBounds << " invalid bounds, " << rhiScene.occlusion.clipped
+                   << " clipped/offscreen, " << rhiScene.occlusion.tightBounds << " tight bounds, "
+                   << rhiScene.occlusion.refined << " refined, " << rhiScene.occlusion.refinementRejected
+                   << " rejected after refinement, " << rhiScene.occlusion.budgetExceeded << " refinement budget limits\n";
         report << "RHI geometry diagnostic mode: " << render::GeometryDiagnosticName(rhiScene.geometryDiagnosticMode) << "\n";
         report << "RHI skinning parallel work: " << rhiScene.skinningParticipants << " participants, "
                << rhiScene.skinningDispatchMs << " ms dispatch, " << rhiScene.skinningCallerMs << " ms caller work, "
@@ -447,6 +459,7 @@ namespace PlutoGE::ui
                << rhiScene.shadowObjectUploadCount << " object uploads)\n";
         report << "RHI shadow cascade cache: " << rhiScene.shadowCascadeCacheHitCount << " hits, "
                << rhiScene.shadowCascadeUpdateCount << " updates, " << rhiScene.shadowCascadeTargetCount << " allocated targets\n";
+        report << "RHI directional shadows: " << rhiScene.directionalShadowStatus << "\n";
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;

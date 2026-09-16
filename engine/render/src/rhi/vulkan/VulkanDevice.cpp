@@ -1475,6 +1475,12 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdDrawIndexed(CommandBuffer(), count, instanceCount, firstIndex, vertexOffset, 0);
             ++m_impl.timingStats.indexedDrawCalls;
         }
+        bool SupportsGpuOcclusionCulling() const noexcept override
+        {
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(m_impl.physicalDevice, &properties);
+            return properties.limits.maxPerStageDescriptorStorageBuffers >= 4;
+        }
         bool SupportsGpuDrivenShadows() const noexcept override
         {
             VkPhysicalDeviceFeatures features{};

@@ -444,6 +444,13 @@ namespace PlutoGE::render
                     indexCount = range.indexCount;
                 }
                 BasicDraw draw{.mesh = renderMesh, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                if (!deformed && (!command.jointMatrices || command.jointMatrices->empty()) &&
+                    !command.instanceModels && command.submeshIndex < command.mesh->GetSubmeshCount())
+                {
+                    const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
+                    if (submesh.hasBoundsExtents)
+                        OcclusionCulling::SetRigidBounds(draw, submesh.boundsMin, submesh.boundsMax);
+                }
                 if (deformed)
                 {
                     draw.shadowBoundsCenter = glm::vec3(command.model * glm::vec4(deformed->boundsCenter, 1));
@@ -605,7 +612,7 @@ namespace PlutoGE::render
                                              : shadowDistance;
             effectiveLighting.shadowDistance = shadowDistance;
             effectiveLighting.shadowCasterDistance = casterDistance;
-            if (!m_renderer->UsesVirtualShadows(effectiveLighting, draws, shadowDraws))
+            if (effectiveLighting.shadowMethod == ShadowMethod::Cascaded)
             {
                 const std::uint32_t cascadeCount = std::clamp(effectiveLighting.shadowCascadeCount, 1u, 4u);
                 const float cameraNear = std::max(cameraData.nearPlane, 0.01f);
@@ -1032,7 +1039,7 @@ namespace PlutoGE::render
         m_timingStats.geometryTriangles = frameStats.geometryTriangles;
         m_timingStats.renderSize = renderSize;
         m_timingStats.outputSize = outputSize;
-        m_timingStats.geometryDiagnosticMode = effectiveLighting.geometryDiagnosticMode;
+        m_timingStats.geometryDiagnosticMode = frameStats.geometryDiagnosticMode;
         m_timingStats.directionalShadowSoftness = effectiveLighting.shadowSoftness;
         m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();
         m_timingStats.recordedShadowInstanceCount = frameStats.shadowInstances;
@@ -1040,8 +1047,12 @@ namespace PlutoGE::render
         m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
         m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
         m_timingStats.shadowCascadeTargetCount = frameStats.shadowCascadeTargets;
+        m_timingStats.occlusion = frameStats.occlusion;
+        m_timingStats.occlusionActive = frameStats.occlusionActive;
+        m_timingStats.occlusionMode = effectiveLighting.occlusionMode;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;
+        m_timingStats.directionalShadowStatus = frameStats.directionalShadowStatus;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();

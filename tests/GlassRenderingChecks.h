@@ -138,6 +138,7 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     lighting.directionalDirection = {0,0,-1};
     lighting.directionalIntensity = 1;
     const auto litReflection = render(shadowDraws);
+    lighting.shadowMethod = ShadowMethod::Cascaded; // This fixture uses the identity cascade projection.
     lighting.shadowsEnabled = true;
     const auto shadowedReflection = render(shadowDraws);
     require(shadowedReflection[0] + 10 < litReflection[0], "Glass direct reflection ignored shadow visibility");

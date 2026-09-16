@@ -280,7 +280,10 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
     scene.links[0].fromPin="Out";
     foreground.shaderGraphProgram=BuildShaderGraphProgram(scene);
     require(bool(foreground.shaderGraphProgram),"Scene depth did not compile");
-    expect(sample(std::array{background,foreground}),{64,64,64});
+    // SceneDepth exposes raw device depth. With this identity projection,
+    // OpenGL maps clip Z from [-1, 1], while Vulkan uses [0, 1].
+    const int expectedDepth = device.GetApi() == rhi::GraphicsApi::OpenGL ? 96 : 64;
+    expect(sample(std::array{background,foreground}),glm::ivec3(expectedDepth));
     ShaderGraph overlay;overlay.unlit=true;
     overlay.nodes={{.id=1,.kind=ShaderGraphNodeKind::Vec3,.value={1,0,0,1}},
         {.id=2,.kind=ShaderGraphNodeKind::Float,.value=glm::vec4(.5f)},
@@ -296,7 +299,7 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
     ShaderGraph mask;mask.nodes={{.id=1,.kind=ShaderGraphNodeKind::Float,.value=glm::vec4(0)},
         {.id=100,.kind=ShaderGraphNodeKind::Output}};
     mask.links={{1,1,"Out",100,"Opacity"}};
-    BasicLighting shadows;shadows.shadowsEnabled=true;shadows.shadowCascadeCount=1;shadows.shadowResolution=256;
+    BasicLighting shadows;shadows.shadowMethod=ShadowMethod::Cascaded;shadows.shadowsEnabled=true;shadows.shadowCascadeCount=1;shadows.shadowResolution=256;
     shadows.shadowMatrices[0]=glm::mat4(1);shadows.directionalDirection={0,0,-1};shadows.cameraPosition={0,0,2};
     auto shadowPixel=[&](){
         renderer.Render(glm::mat4(1),shadows,std::span(&receiver,1),{},std::span(&caster,1),PostProcessDebugView::DirectionalShadowMaskFiltered);

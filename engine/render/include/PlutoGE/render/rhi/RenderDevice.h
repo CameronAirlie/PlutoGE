@@ -89,6 +89,7 @@ namespace PlutoGE::render::rhi
         virtual void BindUniformBuffer(std::uint32_t slot, BufferHandle buffer) = 0;
         virtual void BindTexture(std::uint32_t slot, TextureHandle texture, SamplerHandle sampler) = 0;
         virtual void BindStorageImage(std::uint32_t, TextureHandle, std::uint32_t mipLevel = 0) {}
+        [[nodiscard]] virtual bool SupportsGpuOcclusionCulling() const noexcept { return false; }
         [[nodiscard]] virtual bool SupportsGpuDrivenShadows() const noexcept { return false; }
         virtual void BindStorageBuffer(std::uint32_t, BufferHandle)
         { throw std::logic_error("Storage buffers are unsupported"); }

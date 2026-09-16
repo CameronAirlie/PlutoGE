@@ -12,6 +12,17 @@ void CheckFsr2Rendering(PlutoGE::render::BasicRenderer &renderer, Device &device
     using namespace PlutoGE::render;
     if (!device.GetTemporalUpscalerSupport(rhi::TemporalUpscaler::Fsr2).supported)
         throw std::runtime_error("FSR2 unavailable for accumulation regression");
+    // Small editor viewports must still honor the requested performance mode.
+    const auto ultraSize = device.GetOptimalRenderSize(
+        {.technology = rhi::TemporalUpscaler::Fsr2,
+         .quality = rhi::UpscalerQuality::UltraPerformance}, {566, 355});
+    if (ultraSize.width != 189 || ultraSize.height != 118)
+        throw std::runtime_error("FSR2 Ultra Performance ignored small viewport ratio");
+    const auto nativeSize = device.GetOptimalRenderSize(
+        {.technology = rhi::TemporalUpscaler::Fsr2,
+         .quality = rhi::UpscalerQuality::Dlaa}, {566, 355});
+    if (nativeSize.width != 566 || nativeSize.height != 355)
+        throw std::runtime_error("FSR2 native AA changed viewport resolution");
     const auto halton = [](unsigned index, unsigned base) {
         float value = 0, fraction = 1;
         for (; index; index /= base) { fraction /= base; value += fraction * (index % base); }

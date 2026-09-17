@@ -1,5 +1,6 @@
 #pragma once
 #include "../engine/render/src/BasicDrawBatching.h"
+#include "../engine/render/src/CanonicalGeometry.h"
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -18,6 +19,91 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     }};
     const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
     auto mesh = renderer.CreateMesh({vertices,indices});
+    // Exporters can duplicate vertex/index storage for otherwise identical
+    // primitives. Deduplicate ranges without changing topology or attributes.
+    std::vector<BasicVertex> duplicateVertices(vertices.begin(), vertices.end());
+    duplicateVertices.insert(duplicateVertices.end(), vertices.begin(), vertices.end());
+    std::vector<std::uint32_t> duplicateIndices(indices.begin(), indices.end());
+    for (const auto index : indices) duplicateIndices.push_back(index + 4);
+    const std::array ranges{GeometryRange{0, 6}, GeometryRange{6, 6}};
+    auto canonical = FindCanonicalGeometry({duplicateVertices, duplicateIndices}, ranges);
+    require(canonical.at(GeometryRangeKey(ranges[1])) == 0, "Duplicate geometry was not canonicalized");
+    for (int variant = 0; variant < 5; ++variant)
+    {
+        auto modified = duplicateVertices;
+        if (variant == 0) modified[4].normal[0] = .1f;
+        if (variant == 1) modified[4].uv[0] = .1f;
+        if (variant == 2) modified[4].tangent[3] = -1;
+        if (variant == 3) modified[4].position[0] += .1f;
+        if (variant == 4) modified[4].previousPosition[3] = 1;
+        require(FindCanonicalGeometry({modified, duplicateIndices}, ranges).at(GeometryRangeKey(ranges[1])) == 6,
+                "Canonical geometry discarded distinct vertex attributes");
+    }
+    auto reversed = duplicateIndices;
+    std::swap(reversed[6], reversed[7]);
+    require(FindCanonicalGeometry({duplicateVertices, reversed}, ranges).at(GeometryRangeKey(ranges[1])) == 6,
+            "Canonical geometry changed triangle winding");
+    auto duplicateMesh = renderer.CreateMesh({duplicateVertices, duplicateIndices});
+    std::vector<BasicDraw> duplicateDraws(2);
+    for (size_t i = 0; i < duplicateDraws.size(); ++i)
+    {
+        auto &draw = duplicateDraws[i];
+        draw.mesh = &duplicateMesh;
+        draw.firstIndex = ranges[i].firstIndex;
+        draw.indexCount = 6;
+        draw.model = glm::translate(glm::mat4(1), glm::vec3(i == 0 ? -.5f : .5f, 0, .5f));
+        draw.previousModel = draw.model;
+        draw.emission = {.4f, .2f, .1f};
+    }
+    BasicLighting duplicateLighting;
+    duplicateLighting.ambientIntensity = 0;
+    duplicateLighting.directionalIntensity = 0;
+    renderer.Render(glm::mat4(1), duplicateLighting, duplicateDraws);
+    const auto duplicateReference = readPixels(renderer.GetColorTexture());
+    for (auto &draw : duplicateDraws)
+        draw.firstIndex = canonical.at(GeometryRangeKey({draw.firstIndex, draw.indexCount}));
+    BatchOpaqueDraws(duplicateDraws);
+    require(duplicateDraws.size() == 1, "Duplicate exported primitives did not become instances");
+    renderer.Render(glm::mat4(1), duplicateLighting, duplicateDraws);
+    require(readPixels(renderer.GetColorTexture()) == duplicateReference, "Geometry canonicalization changed rendered pixels");
+    // Different primitives sharing an object transform may merge after packing,
+    // but their geometry, visibility gaps and motion histories must survive.
+    auto distinctVertices = duplicateVertices;
+    for (size_t i = 4; i < distinctVertices.size(); ++i) distinctVertices[i].position[0] += 1.0f;
+    const auto packed = PackGeometryRanges({distinctVertices, duplicateIndices}, ranges);
+    require(packed.indices.size() == 24, "Packed geometry lost original whole-mesh indices");
+    const std::array isolated{GeometryRange{0,6,0}, GeometryRange{6,6,1}};
+    require(PackGeometryRanges({distinctVertices, duplicateIndices}, isolated).indices.size() == duplicateIndices.size(),
+            "Unmergeable material/LOD groups wasted index-buffer storage");
+    auto packedMesh = renderer.CreateMesh({distinctVertices, packed.indices});
+    std::vector<BasicDraw> separate(2);
+    for (size_t i = 0; i < separate.size(); ++i)
+    {
+        separate[i].mesh = &packedMesh;
+        separate[i].firstIndex = packed.firstIndices.at(GeometryRangeKey(ranges[i]));
+        separate[i].indexCount = 6;
+        separate[i].previousModel = separate[i].model;
+        separate[i].emission = {.2f,.4f,.6f};
+    }
+    renderer.Render(glm::mat4(1), duplicateLighting, separate);
+    const auto separatePixels = readPixels(renderer.GetColorTexture());
+    auto merged = separate;
+    MergeAdjacentOpaqueDraws(merged);
+    require(merged.size() == 1 && merged[0].indexCount == 12, "Adjacent compatible geometry did not merge");
+    renderer.Render(glm::mat4(1), duplicateLighting, merged);
+    require(readPixels(renderer.GetColorTexture()) == separatePixels, "Range merging changed rendered pixels");
+    for (int variant = 0; variant < 6; ++variant)
+    {
+        auto incompatible = separate;
+        if (variant == 0) incompatible[1].firstIndex += 3;
+        if (variant == 1) incompatible[1].model[3].x += 1;
+        if (variant == 2) (*incompatible[1].previousModel)[3].x += 1;
+        if (variant == 3) incompatible[1].emission.x += 1;
+        if (variant == 4) incompatible[1].normalizedLod = .5f;
+        if (variant == 5) incompatible[1].alphaMode = 2;
+        MergeAdjacentOpaqueDraws(incompatible);
+        require(incompatible.size() == 2, "Range merging crossed a visibility, material, LOD or history boundary");
+    }
     std::vector<BasicDraw> original;
     for (int i=0; i<343; ++i)
     {

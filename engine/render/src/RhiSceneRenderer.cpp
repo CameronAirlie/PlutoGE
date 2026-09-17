@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "rhi/NormalMipmaps.h"
 #include "BasicDrawBatching.h"
+#include "CanonicalGeometry.h"
 #include "ParticleVisibility.h"
 #include "RhiSkinning.h"
 
@@ -335,15 +336,73 @@ namespace PlutoGE::render
                             : rhi::TextureHandle{};
         };
 
-        const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
-                                     std::vector<BasicDraw> &destination,
-                                     bool shadowOnly, bool giOnly = false)
-        {
+        // A frame-local material snapshot is shared by visible, shadow and GI
+        // translation. Mutable materials need no persistent invalidation protocol;
+        // texture uploads and editor changes are observed again next frame.
+        std::unordered_map<const Material *, BasicDraw> preparedMaterials;
+        const auto prepareMaterial = [&](const Material *source) -> const BasicDraw & {
+            const auto [entry, inserted] = preparedMaterials.try_emplace(source);
+            if (!inserted)
+                return entry->second;
+            auto &draw = entry->second;
+            const auto &material = source->GetConfig();
+            draw.baseColor = material.color;
+            draw.uvScale = material.uvScale;
+            draw.metallic = material.metallic;
+            draw.roughness = material.roughness;
+            draw.emission = material.emission;
+            draw.subsurface = material.subsurface;
+            draw.subsurfaceColor = material.subsurfaceColor;
+            draw.subsurfaceRadius = material.subsurfaceRadius;
+            draw.surfaceType = static_cast<std::uint32_t>(material.surfaceType);
+            draw.transmission = material.transmission;
+            draw.ior = material.ior;
+            draw.thickness = material.thickness;
+            draw.attenuationColor = material.attenuationColor;
+            draw.attenuationDistance = material.attenuationDistance;
+            draw.twoSided = material.twoSided;
+            draw.outlineWidth = material.outline.enabled ? material.outline.width : 0.0f;
+            draw.outlineColor = material.outline.color;
+            draw.shaderGraphProgram = material.shaderGraphProgram;
+            draw.graphPassOrder = material.graphPassOrder;
+            draw.graphSamplers = material.graphSamplers;
+            for (size_t i = 0; i < draw.graphTextures.size(); ++i)
+                draw.graphTextures[i] = uploadTexture(material.graphTextures[i], rhi::Format::R8G8B8A8Unorm,
+                                                      m_linearTextures, "Graph texture");
+            const bool transparent =
+                material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
+            draw.contributesToGi = !transparent;
+            draw.castsShadow = material.castsShadow && !transparent;
+            draw.alphaCutoff = material.alphaCutoff;
+            draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
+            draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
+            draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
+            draw.flipNormalY = material.flipNormalY;
+            draw.baseColorTexture =
+                uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene albedo");
+            draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm, m_normalTextures,
+                                               "Scene normal", true);
+            draw.metallicTexture =
+                uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_linearTextures, "Scene metallic");
+            draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
+                                                  m_linearTextures, "Scene roughness");
+            return draw;
+        };
+
+        const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands, std::vector<BasicDraw> &destination,
+                                     bool shadowOnly, bool giOnly = false) {
             for (const auto &command : sourceCommands)
             {
                 if (!command.mesh || (shadowOnly && !command.castsShadow))
                     continue;
+                if (shadowOnly && command.material)
+                {
+                    const auto &material = command.material->GetConfig();
+                    if (!material.castsShadow || material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend)
+                        continue;
+                }
                 BasicMesh *renderMesh = nullptr;
+                const CachedMesh *rigidMesh = nullptr;
                 SkinnedMesh *deformed = nullptr;
                 if (command.jointMatrices && !command.jointMatrices->empty())
                 {
@@ -353,7 +412,8 @@ namespace PlutoGE::render
                     if (entry.lastFrame != m_skinningFrame)
                     {
                         const auto &source = command.mesh->GetMeshData();
-                        if (source.vertices.empty() || source.indices.empty()) continue;
+                        if (source.vertices.empty() || source.indices.empty())
+                            continue;
                         const auto start = std::chrono::steady_clock::now();
                         const bool topologyChanged = entry.vertices.size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size();
                         const bool changed = entry.pose != *command.jointMatrices || topologyChanged;
@@ -400,7 +460,8 @@ namespace PlutoGE::render
                                 entry.mesh = m_renderer->CreateMesh({entry.vertices, source.indices});
                                 ++m_timingStats.meshUploadCount;
                             }
-                            else m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, changed);
+                            else
+                                m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, changed);
                             m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
                         }
                         entry.wasMoving = changed;
@@ -415,24 +476,39 @@ namespace PlutoGE::render
                     auto mesh = m_meshes.find(command.mesh);
                     if (mesh == m_meshes.end())
                     {
-                    core::CpuScope meshScope("Mesh conversion and upload", core::CpuCategory::Rendering);
-                    const auto &source = command.mesh->GetMeshData();
-                    if (source.vertices.empty() || source.indices.empty())
-                        continue;
-                    const auto meshStart = std::chrono::steady_clock::now();
-                    ++m_timingStats.meshUploadCount;
-                    std::vector<BasicVertex> vertices;
-                    vertices.reserve(source.vertices.size());
-                    for (const auto &vertex : source.vertices)
-                        vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
-                    mesh = m_meshes.emplace(command.mesh, CachedMesh{command.mesh->GetLifetimeToken(), m_renderer->CreateMesh({vertices, source.indices})}).first;
-                    m_timingStats.meshUploadMs += millisecondsBetween(meshStart, std::chrono::steady_clock::now());
+                        core::CpuScope meshScope("Mesh conversion and upload", core::CpuCategory::Rendering);
+                        const auto &source = command.mesh->GetMeshData();
+                        if (source.vertices.empty() || source.indices.empty())
+                            continue;
+                        const auto meshStart = std::chrono::steady_clock::now();
+                        ++m_timingStats.meshUploadCount;
+                        std::vector<BasicVertex> vertices;
+                        vertices.reserve(source.vertices.size());
+                        for (const auto &vertex : source.vertices)
+                            vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
+                        std::vector<GeometryRange> ranges;
+                        for (size_t submesh = 0; submesh < command.mesh->GetSubmeshCount(); ++submesh)
+                            for (size_t lod = 0; lod < command.mesh->GetSubmeshLodCount(submesh); ++lod)
+                            {
+                                const auto range = command.mesh->GetSubmeshLodRange(submesh, lod);
+                                ranges.push_back(
+                                    {range.indexOffset, range.indexCount,
+                                     (std::uint64_t(command.mesh->GetSubmesh(submesh).materialIndex) << 32) | lod});
+                            }
+                        auto packed = PackGeometryRanges({vertices, source.indices}, ranges);
+                        mesh = m_meshes
+                                   .emplace(command.mesh, CachedMesh{command.mesh->GetLifetimeToken(),
+                                                                     m_renderer->CreateMesh({vertices, packed.indices}),
+                                                                     std::move(packed.firstIndices)})
+                                   .first;
+                        m_timingStats.meshUploadMs += millisecondsBetween(meshStart, std::chrono::steady_clock::now());
                     }
                     renderMesh = &mesh->second.mesh;
+                    rigidMesh = &mesh->second;
                 }
 
                 std::uint32_t firstIndex = 0;
-                std::uint32_t indexCount = 0;
+                std::uint32_t indexCount = static_cast<std::uint32_t>(command.mesh->GetMeshData().indices.size());
                 if (command.submeshIndex < command.mesh->GetSubmeshCount())
                 {
                     // Small emissive submeshes must not disappear from the GI
@@ -443,7 +519,18 @@ namespace PlutoGE::render
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
                 }
-                BasicDraw draw{.mesh = renderMesh, .model = command.model, .castsShadow = command.castsShadow, .shadowBoundsCenter = command.worldBounds.center, .shadowBoundsRadius = command.worldBounds.radius, .firstIndex = firstIndex, .indexCount = indexCount};
+                if (rigidMesh)
+                    if (const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({firstIndex, indexCount}));
+                        canonical != rigidMesh->canonicalGeometry.end())
+                        firstIndex = canonical->second;
+                BasicDraw draw = command.material ? prepareMaterial(command.material) : BasicDraw{};
+                draw.mesh = renderMesh;
+                draw.model = command.model;
+                draw.castsShadow = draw.castsShadow && command.castsShadow;
+                draw.shadowBoundsCenter = command.worldBounds.center;
+                draw.shadowBoundsRadius = command.worldBounds.radius;
+                draw.firstIndex = firstIndex;
+                draw.indexCount = indexCount;
                 if (!deformed && (!command.jointMatrices || command.jointMatrices->empty()) &&
                     !command.instanceModels && command.submeshIndex < command.mesh->GetSubmeshCount())
                 {
@@ -467,57 +554,9 @@ namespace PlutoGE::render
                 // VCT content signatures already invalidate moved rigid draws, so the Static flag
                 // is a caching hint rather than a requirement for contributing to GI. Skinned
                 // geometry remains excluded until the voxelizer supports joint transforms.
-                draw.contributesToGi = !command.jointMatrices || command.jointMatrices->empty();
-                if (command.material)
-                {
-                    const auto &material = command.material->GetConfig();
-                    if (shadowOnly)
-                    {
-                        if (!material.castsShadow || material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend)
-                            continue;
-                    }
-                    {
-                        draw.baseColor = material.color;
-                        draw.uvScale = material.uvScale;
-                        draw.metallic = material.metallic;
-                        draw.roughness = material.roughness;
-                        draw.emission = material.emission;
-                        draw.subsurface = material.subsurface;
-                        draw.subsurfaceColor = material.subsurfaceColor;
-                        draw.subsurfaceRadius = material.subsurfaceRadius;
-                        draw.surfaceType = static_cast<std::uint32_t>(material.surfaceType);
-                        draw.transmission = material.transmission;
-                        draw.ior = material.ior;
-                        draw.thickness = material.thickness;
-                        draw.attenuationColor = material.attenuationColor;
-                        draw.attenuationDistance = material.attenuationDistance;
-                        draw.twoSided = material.twoSided;
-                        draw.outlineWidth = material.outline.enabled ? material.outline.width : 0.0f;
-                        draw.outlineColor = material.outline.color;
-                        draw.shaderGraphProgram = material.shaderGraphProgram;
-                        draw.graphPassOrder = material.graphPassOrder;
-                        draw.graphSamplers=material.graphSamplers;
-                        for(size_t i=0;i<4;++i)draw.graphTextures[i]=uploadTexture(material.graphTextures[i],rhi::Format::R8G8B8A8Unorm,m_linearTextures,"Graph texture");
-                        if (draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z>0) draw.shadowBoundsRadius=-1.0f;
-                        const bool transparent = material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
-                        draw.contributesToGi = draw.contributesToGi && !transparent;
-                        draw.castsShadow = draw.castsShadow && !transparent;
-                        draw.alphaCutoff = material.alphaCutoff;
-                        draw.alphaMode = static_cast<std::uint32_t>(material.alphaMode);
-                        draw.metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
-                        draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
-                        draw.flipNormalY = material.flipNormalY;
-                        draw.castsShadow = draw.castsShadow && material.castsShadow;
-                        draw.baseColorTexture = uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb,
-                                                              m_srgbTextures, "Scene albedo");
-                        draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm,
-                                                           m_normalTextures, "Scene normal", true);
-                        draw.metallicTexture = uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm,
-                                                             m_linearTextures, "Scene metallic");
-                        draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                              m_linearTextures, "Scene roughness");
-                    }
-                }
+                draw.contributesToGi = draw.contributesToGi && (!command.jointMatrices || command.jointMatrices->empty());
+                if (draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z > 0)
+                    draw.shadowBoundsRadius = -1.0f;
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
@@ -526,6 +565,7 @@ namespace PlutoGE::render
         };
         appendDraws(commands, draws, false);
         BatchOpaqueDraws(draws);
+        MergeAdjacentOpaqueDraws(draws);
         std::vector<BasicDraw> shadowDraws;
         if (lighting.shadowsEnabled)
         {

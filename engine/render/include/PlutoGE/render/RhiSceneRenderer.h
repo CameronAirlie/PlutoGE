@@ -172,6 +172,7 @@ namespace PlutoGE::render
       {
           std::weak_ptr<const void> lifetime;
           BasicMesh mesh;
+          std::unordered_map<std::uint64_t, std::uint32_t> canonicalGeometry;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh

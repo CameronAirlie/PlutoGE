@@ -224,13 +224,13 @@ void fragmentMain(GeometryOutput input)
     }
     const float3 textureCoordinate = (input.worldPosition - voxel.volumeOrigin) / voxel.volumeSize;
     if (any(textureCoordinate < 0.0) || any(textureCoordinate >= 1.0)) discard;
-    float4 albedo = material.baseColor;
-    if (material.hasAlbedoTexture != 0) albedo *= albedoTexture.Sample(input.uv);
+    const float4 sampledBaseColor = material.hasAlbedoTexture != 0 ? albedoTexture.Sample(input.uv) : float4(1.0);
+    float4 albedo = material.baseColor * sampledBaseColor;
     float3 normal = normalize(input.worldNormal);
     float metallic = saturate(material.metallic);
     if (material.hasMetallicTexture != 0) metallic *= metallicTexture.Sample(input.uv)[min(material.metallicChannel,3)];
     float roughness=material.graphFactors.x;
-    float3 emission=material.emission;
+    float3 emission=material.emission * sampledBaseColor.rgb;
     evaluateShaderGraph(material.graph,input.worldPosition,normal,normalize(material.graphCameraTime.xyz-input.worldPosition),
         material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;

@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
+#include "../engine/render/src/GlassSnapshotBounds.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -153,6 +154,20 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const auto blendedColor = render(blendDraws);
     require(blendedColor[0] < clear[0] && blendedColor[2] > clear[2],
             "Standard alpha blend material was not composited");
+    // Alpha blends on either side of a refractor retain sorted dependencies.
+    // This also exercises scratch snapshot reuse and switching render scopes.
+    auto rearBlend = blended;
+    rearBlend.model[3].z = .3f;
+    auto frontBlend = blended;
+    frontBlend.model[3].z = .8f;
+    frontBlend.emission = {.8f, 0, 0};
+    const std::array blendLayers{background, rearBlend, frontBlend};
+    const auto blendReference = render(blendLayers);
+    const std::array mixedLayers{frontBlend, pane, rearBlend, background};
+    const auto mixedColor = render(mixedLayers);
+    for (int c = 0; c < 3; ++c)
+        require(std::abs(blendReference[c] - mixedColor[c]) <= 3,
+                "Clear glass changed interleaved alpha-blended layers");
     // Refraction must move a color boundary, rather than merely change Fresnel brightness.
     auto angledVertices = vertices;
     for (auto &vertex : angledVertices) vertex.normal = {.7071f,0,.7071f};
@@ -183,6 +198,30 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     boundary[1].model[3].z = .8f;
     const auto foreground = render(boundary);
     require(foreground[1] > foreground[0] + 30, "Glass refracted opaque foreground into the background");
+    require(renderer.Resize(320,180), "Glass snapshot test resize failed");
+    boundary[1] = left;
+    boundary[0].model = glm::translate(glm::mat4(1), glm::vec3(.2f,-.4f,.6f)) *
+                        glm::scale(glm::mat4(1), glm::vec3(.2f));
+    boundary[0].thickness = .005f;
+    boundary[0].roughness = 1;
+    render(boundary);
+    const auto fullSnapshot = readPixels(renderer.GetColorTexture());
+    boundary[0].shadowBoundsCenter = {.2f,-.4f,.6f};
+    boundary[0].shadowBoundsRadius = .26f;
+    boundary[0].occlusionBoundsCenter = boundary[0].shadowBoundsCenter;
+    boundary[0].occlusionBoundsExtents = {.18f,.18f,0};
+    const auto footprint = GlassSnapshotBounds(boundary[0], glm::mat4(1), {}, 320, 180, false);
+    require(footprint.width * footprint.height < 320u * 180u / 2, "Glass snapshot failed to restrict its copy region");
+    render(boundary);
+    const auto boundedSnapshot = readPixels(renderer.GetColorTexture());
+    require(boundedSnapshot.size() == fullSnapshot.size(), "Glass snapshot readback size mismatch");
+    for (size_t i = 0; i < fullSnapshot.size(); ++i)
+        require(std::abs(int(fullSnapshot[i]) - int(boundedSnapshot[i])) <= 1,
+                "Bounded snapshot changed refracted or frosted glass pixels");
+    auto eyePlane = glm::mat4(1);
+    eyePlane[3][3] = 0;
+    require(GlassSnapshotBounds(boundary[0], eyePlane, {}, 320, 180, false).width == 320,
+            "Glass crossing the eye plane did not fall back to a full snapshot");
     require(renderer.Resize(48,32), "Glass resize failed");
     require(render(layers)[0] > 0, "Glass failed after resize");
     require(renderer.Resize(96,64), "Glass test restore resize failed");

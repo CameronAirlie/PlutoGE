@@ -964,7 +964,8 @@ namespace PlutoGE::assets
         }
         if (EndsWithInsensitive(reference, ".png") || EndsWithInsensitive(reference, ".jpg") ||
             EndsWithInsensitive(reference, ".jpeg") || EndsWithInsensitive(reference, ".tga") ||
-            EndsWithInsensitive(reference, ".hdr") || EndsWithInsensitive(reference, ".exr"))
+            EndsWithInsensitive(reference, ".hdr") || EndsWithInsensitive(reference, ".exr") ||
+            EndsWithInsensitive(reference, ".dds"))
         {
             return ProjectAssetType::Texture;
         }

@@ -52,137 +52,142 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    const auto resolutionRoot = std::filesystem::temp_directory_path() / "plutoge_model_resolution_test";
-    const auto resolutionAssets = resolutionRoot / "Assets";
-    std::filesystem::create_directories(resolutionAssets);
-    std::ofstream(resolutionAssets / "Model.fbx.plutometa") << "ID\tmodel-id\n";
-    assets::ModelAsset resolutionModel;
-    resolutionModel.objects.push_back({.localId = 42, .reference = "project://first.plutomesh"});
-    const auto manifest = resolutionAssets / "Model.plutomodel";
-    assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
-    assets::AssetManager resolver;
-    resolver.SetProjectContext(resolutionRoot.string());
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
-    assert(resolver.ResolveModelObject("model-id", 99).empty());
-    const auto previousStamp = std::filesystem::last_write_time(manifest);
-    resolutionModel.objects[0].reference = "project://changed.plutomesh";
-    assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
-    std::filesystem::last_write_time(manifest, previousStamp + std::chrono::seconds(2));
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
-    std::filesystem::rename(resolutionAssets / "Model.fbx.plutometa", resolutionAssets / "Renamed.fbx.plutometa");
-    std::filesystem::rename(manifest, resolutionAssets / "Renamed.plutomodel");
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
-    resolver.ClearProjectContext();
-    assert(resolver.ResolveModelObject("model-id", 42).empty());
-    resolver.SetProjectContext(resolutionRoot.string());
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
-    const auto renamedManifest = resolutionAssets / "Renamed.plutomodel";
-    const auto legacyManifest = resolutionAssets / "Imported" / "Renamed" / "Renamed.plutomodel";
-    std::filesystem::create_directories(legacyManifest.parent_path());
-    std::filesystem::rename(renamedManifest, legacyManifest);
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
-    resolutionModel.objects[0].reference = "project://canonical.plutomesh";
-    assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
-    std::ofstream(renamedManifest, std::ios::trunc) << "invalid manifest";
-    assert(resolver.ResolveModelObject("model-id", 42).empty());
-    assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
-    assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
-    assert(resolver.ResolveStableAssetId("missing-id", "fallback-a") == "fallback-a");
-    assert(resolver.ResolveStableAssetId("missing-id", "fallback-b") == "fallback-b");
-    std::filesystem::remove_all(resolutionRoot);
-
-    scene::RectTransformComponent childRect;
-    childRect.SetAnchorPreset(scene::UIAnchorPreset::MiddleCenter);
-    childRect.SetSizeDelta(glm::vec2(100.0f, 40.0f));
-    const auto childLayout = scene::ResolveRectTransformLayout(
-        childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
-    assert(childLayout.min == glm::vec2(150.0f, 130.0f));
-    assert(childLayout.max == glm::vec2(250.0f, 170.0f));
-
-    childRect.SetAnchorPreset(scene::UIAnchorPreset::Stretch);
-    childRect.SetSizeDelta(glm::vec2(0.0f));
-    const auto stretchedLayout = scene::ResolveRectTransformLayout(
-        childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
-    assert(stretchedLayout.min == glm::vec2(100.0f, 100.0f));
-    assert(stretchedLayout.max == glm::vec2(300.0f, 200.0f));
-
-    scene::ParticleSystemComponent oneShotParticles;
-    oneShotParticles.SetLooping(false);
-    oneShotParticles.SetDuration(0.1f);
-    oneShotParticles.SetStartLifetime(1.0f);
-    oneShotParticles.SetEmissionRateOverTime(0.0f);
-    oneShotParticles.Emit(1);
-    oneShotParticles.Update(0.2f);
-    assert(!oneShotParticles.IsPlaying());
-    assert(oneShotParticles.GetParticleCount() == 1);
-    for (int step = 0; step < 5; ++step)
+    if (argc < 2 || std::string_view(argv[1]) != "--lod-only")
     {
+        const auto resolutionRoot = std::filesystem::temp_directory_path() / "plutoge_model_resolution_test";
+        const auto resolutionAssets = resolutionRoot / "Assets";
+        std::filesystem::create_directories(resolutionAssets);
+        std::ofstream(resolutionAssets / "Model.fbx.plutometa") << "ID\tmodel-id\n";
+        assets::ModelAsset resolutionModel;
+        resolutionModel.objects.push_back({.localId = 42, .reference = "project://first.plutomesh"});
+        const auto manifest = resolutionAssets / "Model.plutomodel";
+        assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
+        assets::AssetManager resolver;
+        resolver.SetProjectContext(resolutionRoot.string());
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
+        assert(resolver.ResolveModelObject("model-id", 99).empty());
+        const auto previousStamp = std::filesystem::last_write_time(manifest);
+        resolutionModel.objects[0].reference = "project://changed.plutomesh";
+        assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
+        std::filesystem::last_write_time(manifest, previousStamp + std::chrono::seconds(2));
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+        std::filesystem::rename(resolutionAssets / "Model.fbx.plutometa", resolutionAssets / "Renamed.fbx.plutometa");
+        std::filesystem::rename(manifest, resolutionAssets / "Renamed.plutomodel");
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+        resolver.ClearProjectContext();
+        assert(resolver.ResolveModelObject("model-id", 42).empty());
+        resolver.SetProjectContext(resolutionRoot.string());
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+        const auto renamedManifest = resolutionAssets / "Renamed.plutomodel";
+        const auto legacyManifest = resolutionAssets / "Imported" / "Renamed" / "Renamed.plutomodel";
+        std::filesystem::create_directories(legacyManifest.parent_path());
+        std::filesystem::rename(renamedManifest, legacyManifest);
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://changed.plutomesh");
+        resolutionModel.objects[0].reference = "project://canonical.plutomesh";
+        assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
+        std::ofstream(renamedManifest, std::ios::trunc) << "invalid manifest";
+        assert(resolver.ResolveModelObject("model-id", 42).empty());
+        assert(assets::SaveModelAsset(renamedManifest.string(), resolutionModel));
+        assert(resolver.ResolveModelObject("model-id", 42) == "project://canonical.plutomesh");
+        assert(resolver.ResolveStableAssetId("missing-id", "fallback-a") == "fallback-a");
+        assert(resolver.ResolveStableAssetId("missing-id", "fallback-b") == "fallback-b");
+        std::filesystem::remove_all(resolutionRoot);
+
+        scene::RectTransformComponent childRect;
+        childRect.SetAnchorPreset(scene::UIAnchorPreset::MiddleCenter);
+        childRect.SetSizeDelta(glm::vec2(100.0f, 40.0f));
+        const auto childLayout = scene::ResolveRectTransformLayout(
+            childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
+        assert(childLayout.min == glm::vec2(150.0f, 130.0f));
+        assert(childLayout.max == glm::vec2(250.0f, 170.0f));
+
+        childRect.SetAnchorPreset(scene::UIAnchorPreset::Stretch);
+        childRect.SetSizeDelta(glm::vec2(0.0f));
+        const auto stretchedLayout = scene::ResolveRectTransformLayout(
+            childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
+        assert(stretchedLayout.min == glm::vec2(100.0f, 100.0f));
+        assert(stretchedLayout.max == glm::vec2(300.0f, 200.0f));
+
+        scene::ParticleSystemComponent oneShotParticles;
+        oneShotParticles.SetLooping(false);
+        oneShotParticles.SetDuration(0.1f);
+        oneShotParticles.SetStartLifetime(1.0f);
+        oneShotParticles.SetEmissionRateOverTime(0.0f);
+        oneShotParticles.Emit(1);
         oneShotParticles.Update(0.2f);
+        assert(!oneShotParticles.IsPlaying());
+        assert(oneShotParticles.GetParticleCount() == 1);
+        for (int step = 0; step < 5; ++step)
+        {
+            oneShotParticles.Update(0.2f);
+        }
+        assert(oneShotParticles.GetParticleCount() == 0);
+
+        const auto command = render::BuildDrawElementsIndirectCommand(300, 4, 27, 12);
+        assert(command.count == 300);
+        assert(command.instanceCount == 4);
+        assert(command.firstIndex == 27);
+        assert(command.baseVertex == 0);
+        assert(command.baseInstance == 12);
+
+        int shader = 0;
+        int materialA = 0;
+        int materialB = 0;
+        int meshA = 0;
+        int meshB = 0;
+        const render::IndirectDrawGroupingKey base{&shader, &materialA, &meshA, false, false};
+        assert(render::CanGroupGeometryIndirectDraws(base, base));
+        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialB, &meshA, false, false}));
+        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshB, false, false}));
+        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshA, true, false}));
+
+        assert(render::CanGroupShadowIndirectDraws(base, {nullptr, &materialB, &meshA, false, false}));
+        const render::IndirectDrawGroupingKey masked{nullptr, &materialA, &meshA, false, true};
+        assert(render::CanGroupShadowIndirectDraws(masked, masked));
+        assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialB, &meshA, false, true}));
+        assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialA, &meshA, true, true}));
+
+        assetimport::MeshImportOptions options;
+        assert(options.ToFlags() == 0);
+        options.generateLods = true;
+        options.optimizeVertexCache = true;
+        options.optimizeOverdraw = true;
+        assert(options.ToFlags() == 7);
+
+        const auto meshAssetPath = std::filesystem::temp_directory_path() / "plutoge_large_mesh_metadata_test.plutomesh";
+        assets::AssetManager assetManager;
+        assets::MeshAssetMetadata metadata;
+        metadata.sourceAssetReference = "source.glb";
+        metadata.importOptions = options;
+        render::MeshConfig emptyMeshConfig;
+        std::string errorMessage;
+        assert(assetManager.SaveMeshAsset(meshAssetPath.string(), emptyMeshConfig, {}, &errorMessage, metadata));
+        const auto &loadedMetadata = assetManager.GetMeshAssetMetadata(meshAssetPath.string());
+        assert(loadedMetadata.sourceAssetReference == metadata.sourceAssetReference);
+        assert(loadedMetadata.importOptions.ToFlags() == metadata.importOptions.ToFlags());
+
+        // Version 3 ends immediately after material references. Rewriting the
+        // version and trimming the version-4 metadata verifies disabled defaults.
+        std::ifstream version4Input(meshAssetPath, std::ios::binary);
+        std::vector<char> version3Bytes((std::istreambuf_iterator<char>(version4Input)), std::istreambuf_iterator<char>());
+        version4Input.close();
+        assert(version3Bytes.size() > metadata.sourceAssetReference.size() + 15);
+        const std::uint32_t version3 = 3;
+        std::memcpy(version3Bytes.data() + sizeof(std::uint32_t), &version3, sizeof(version3));
+        version3Bytes.resize(version3Bytes.size() - sizeof(std::uint64_t) - metadata.sourceAssetReference.size() - 3);
+        std::ofstream version3Output(meshAssetPath, std::ios::binary | std::ios::trunc);
+        version3Output.write(version3Bytes.data(), static_cast<std::streamsize>(version3Bytes.size()));
+        version3Output.close();
+        assets::AssetManager legacyAssetManager;
+        const auto &legacyMetadata = legacyAssetManager.GetMeshAssetMetadata(meshAssetPath.string());
+        assert(legacyMetadata.sourceAssetReference.empty());
+        assert(legacyMetadata.importOptions.ToFlags() == 0);
+        std::filesystem::remove(meshAssetPath);
+
     }
-    assert(oneShotParticles.GetParticleCount() == 0);
-
-    const auto command = render::BuildDrawElementsIndirectCommand(300, 4, 27, 12);
-    assert(command.count == 300);
-    assert(command.instanceCount == 4);
-    assert(command.firstIndex == 27);
-    assert(command.baseVertex == 0);
-    assert(command.baseInstance == 12);
-
-    int shader = 0;
-    int materialA = 0;
-    int materialB = 0;
-    int meshA = 0;
-    int meshB = 0;
-    const render::IndirectDrawGroupingKey base{&shader, &materialA, &meshA, false, false};
-    assert(render::CanGroupGeometryIndirectDraws(base, base));
-    assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialB, &meshA, false, false}));
-    assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshB, false, false}));
-    assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshA, true, false}));
-
-    assert(render::CanGroupShadowIndirectDraws(base, {nullptr, &materialB, &meshA, false, false}));
-    const render::IndirectDrawGroupingKey masked{nullptr, &materialA, &meshA, false, true};
-    assert(render::CanGroupShadowIndirectDraws(masked, masked));
-    assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialB, &meshA, false, true}));
-    assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialA, &meshA, true, true}));
-
-    assetimport::MeshImportOptions options;
-    assert(options.ToFlags() == 0);
-    options.generateLods = true;
-    options.optimizeVertexCache = true;
-    options.optimizeOverdraw = true;
-    assert(options.ToFlags() == 7);
-
-    const auto meshAssetPath = std::filesystem::temp_directory_path() / "plutoge_large_mesh_metadata_test.plutomesh";
-    assets::AssetManager assetManager;
-    assets::MeshAssetMetadata metadata;
-    metadata.sourceAssetReference = "source.glb";
-    metadata.importOptions = options;
-    render::MeshConfig emptyMeshConfig;
-    std::string errorMessage;
-    assert(assetManager.SaveMeshAsset(meshAssetPath.string(), emptyMeshConfig, {}, &errorMessage, metadata));
-    const auto &loadedMetadata = assetManager.GetMeshAssetMetadata(meshAssetPath.string());
-    assert(loadedMetadata.sourceAssetReference == metadata.sourceAssetReference);
-    assert(loadedMetadata.importOptions.ToFlags() == metadata.importOptions.ToFlags());
-
-    // Version 3 ends immediately after material references. Rewriting the
-    // version and trimming the version-4 metadata verifies disabled defaults.
-    std::ifstream version4Input(meshAssetPath, std::ios::binary);
-    std::vector<char> version3Bytes((std::istreambuf_iterator<char>(version4Input)), std::istreambuf_iterator<char>());
-    version4Input.close();
-    assert(version3Bytes.size() > metadata.sourceAssetReference.size() + 15);
-    const std::uint32_t version3 = 3;
-    std::memcpy(version3Bytes.data() + sizeof(std::uint32_t), &version3, sizeof(version3));
-    version3Bytes.resize(version3Bytes.size() - sizeof(std::uint64_t) - metadata.sourceAssetReference.size() - 3);
-    std::ofstream version3Output(meshAssetPath, std::ios::binary | std::ios::trunc);
-    version3Output.write(version3Bytes.data(), static_cast<std::streamsize>(version3Bytes.size()));
-    version3Output.close();
-    assets::AssetManager legacyAssetManager;
-    const auto &legacyMetadata = legacyAssetManager.GetMeshAssetMetadata(meshAssetPath.string());
-    assert(legacyMetadata.sourceAssetReference.empty());
-    assert(legacyMetadata.importOptions.ToFlags() == 0);
-    std::filesystem::remove(meshAssetPath);
+    const assetimport::MeshImportOptions options{true, true, true};
 
     const auto lodTestDirectory = std::filesystem::temp_directory_path() / "plutoge_lod_generation_test";
     std::filesystem::create_directories(lodTestDirectory);

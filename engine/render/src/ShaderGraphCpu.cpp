@@ -84,7 +84,9 @@ namespace PlutoGE::render
         s.color=material.color;s.metallic=material.metallic;s.roughness=material.roughness;s.emission=material.emission;
         s.normal=s.worldNormal;
         if(!vertexOnly) {
-            s.color*=sample(0,s.uv);
+            const auto albedoSample=sample(0,s.uv);
+            s.color*=albedoSample;
+            s.emission*=glm::vec3(albedoSample);
             if(material.metallicTexture)s.metallic*=sample(2,s.uv)[int(material.metallicTextureChannel)];
             if(material.roughnessTexture)s.roughness*=sample(3,s.uv)[int(material.roughnessTextureChannel)];
         }

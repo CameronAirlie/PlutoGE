@@ -460,6 +460,7 @@ namespace PlutoGE::scene
         }
 
         m_mesh = mesh;
+        m_previousSubmeshModels.clear();
         m_generatedLightmapUvSubmeshes.clear();
         RefreshMeshDerivedState();
         MarkRenderCommandsDirty();
@@ -498,11 +499,11 @@ namespace PlutoGE::scene
         }
     }
 
-    void MeshComponent::UpdateCachedPreviousModels(const glm::mat4 &modelMatrix)
+    void MeshComponent::UpdateCachedPreviousModels()
     {
         for (auto &command : m_cachedRenderCommands)
         {
-            command.previousModel = modelMatrix;
+            command.previousModel = command.model;
             command.previousWorldBounds = command.worldBounds;
         }
     }
@@ -1326,8 +1327,21 @@ namespace PlutoGE::scene
             // Command construction is independent of the Static rendering flag.
             // Any unskinned mesh with no active node animation can reuse its
             // commands while its world transform remains unchanged.
-            const bool canCacheRenderCommands = !jointMatrices &&
-                                                (!m_hasAnimatedNodeSubmeshes || !animationComponent || animationComponent->GetClipCount() == 0);
+            const size_t meshSubmeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
+            const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + static_cast<size_t>(std::max(1, m_submeshCount)), meshSubmeshCount) : meshSubmeshCount;
+            bool canCacheRenderCommands = !jointMatrices;
+            if (canCacheRenderCommands && m_hasAnimatedNodeSubmeshes && animationComponent)
+                for (size_t index = submeshBegin; index < submeshEnd && index < m_mesh->GetSubmeshCount(); ++index)
+                    if (animationComponent->CanAnimateNode(m_mesh->GetAnimationNodes(), m_mesh->GetSubmesh(index).animatedNodeIndex))
+                    {
+                        canCacheRenderCommands = false;
+                        break;
+                    }
+            // A clip replacement can return this component to the cached path.
+            // Never resurrect commands from before the animated interval.
+            if (!canCacheRenderCommands)
+                m_renderCommandCacheDirty = true;
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
             const auto *offsetSource = FindMeshOffsetSource();
@@ -1353,14 +1367,9 @@ namespace PlutoGE::scene
             {
                 renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, true);
 
-                m_previousModelMatrix = modelMatrix;
-                m_hasPreviousModelMatrix = true;
                 return;
             }
 
-            const size_t meshSubmeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
-            const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
-            const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + static_cast<size_t>(std::max(1, m_submeshCount)), meshSubmeshCount) : meshSubmeshCount;
             std::vector<render::RenderCommand> rebuiltCommands;
             if (canCacheRenderCommands)
             {
@@ -1379,16 +1388,17 @@ namespace PlutoGE::scene
                 glm::mat4 submeshModelMatrix = modelMatrix * GetSubmeshOffsetTransform(submeshIndex);
                 if (!jointMatrices && submesh.animatedNodeIndex >= 0)
                 {
-                    submeshModelMatrix *= (animationComponent && animationComponent->GetClipCount() > 0
+                    submeshModelMatrix *= (animationComponent && !canCacheRenderCommands && animationComponent->GetClipCount() > 0
                                                             ? animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
                                                             : ComputeAnimationNodeBindMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex));
                 }
 
                 render::RenderCommand command;
                 command.model = submeshModelMatrix;
-                command.previousModel = m_hasPreviousModelMatrix
-                                            ? m_previousModelMatrix * GetSubmeshOffsetTransform(submeshIndex)
-                                            : submeshModelMatrix;
+                const auto previous = m_previousSubmeshModels.find(submeshIndex);
+                command.previousModel = previous != m_previousSubmeshModels.end()
+                                            ? previous->second : submeshModelMatrix;
+                m_previousSubmeshModels[submeshIndex] = submeshModelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
                 command.shader = material->GetShader();
@@ -1423,11 +1433,9 @@ namespace PlutoGE::scene
                 m_cachedRenderCommandModel = modelMatrix;
                 m_hasCachedRenderCommandModel = true;
                 m_renderCommandCacheDirty = false;
-                UpdateCachedPreviousModels(modelMatrix);
+                UpdateCachedPreviousModels();
             }
 
-            m_previousModelMatrix = modelMatrix;
-            m_hasPreviousModelMatrix = true;
         };
     }
 }

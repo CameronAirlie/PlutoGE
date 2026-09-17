@@ -69,7 +69,15 @@ inline bool CheckVctEmissionCoverage()
             glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(size), data, GL_DYNAMIC_DRAW);
             glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffers[slot]);
         };
-        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false)
+        GLuint emissionTexture = 0;
+        glGenTextures(1, &emissionTexture);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, emissionTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        const glm::vec4 emissionTexel(.25f,.5f,.75f,1);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,1,1,0,GL_RGBA,GL_FLOAT,&emissionTexel);
+        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false, bool textured = false)
         {
             constexpr float volumeSize = 16.0f;
             const float voxelSize = volumeSize / float(resolution);
@@ -157,6 +165,8 @@ inline bool CheckVctEmissionCoverage()
                 voxel->SetUniform("uEmission",useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f));
                 voxel->SetUniform("uCaptureSurface",1);
                 voxel->SetUniform("uMetallicFactor",metallic);
+                voxel->SetUniform("uHasAlbedoTexture",textured?1.0f:0.0f);
+                voxel->SetUniform("uAlbedoTexture",0);
             }
             else
             {
@@ -166,9 +176,13 @@ inline bool CheckVctEmissionCoverage()
                 material.emission = useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f);
                 if(graphProgram)material.graph=graphProgram->data;
                 material.metallic = metallic; material.flags.w = 1;
+                material.flags.x = textured ? 1u : 0u;
                 glm::mat4 model(1);
                 upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
             }
+            glActiveTexture(legacy?GL_TEXTURE0:GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D,emissionTexture);
+            glActiveTexture(GL_TEXTURE0);
             glViewport(0,0,resolution,resolution);
             glDrawArraysInstanced(GL_TRIANGLES,0,GLsizei(vertices.size()),repetitions);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -268,6 +282,13 @@ inline bool CheckVctEmissionCoverage()
                             }
                         }
         const double graphEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true);
+        const double texturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true);
+        const double graphTexturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true,true);
+        if (std::abs(texturedEnergy-8.0)>.32 || std::abs(graphTexturedEnergy-32.0)>1.28)
+        {
+            std::cerr << "Textured VCT emission mismatch: material=" << texturedEnergy << " graph=" << graphTexturedEnergy << '\n';
+            passed=false;
+        }
         if (std::abs(graphEnergy-32.0) > 1.28)
         {
             std::cerr << "VCT graph emission energy: expected=32 actual=" << graphEnergy << '\n';
@@ -310,6 +331,7 @@ inline bool CheckVctEmissionCoverage()
         glBindVertexArray(0); glDeleteVertexArrays(1,&vao); glDeleteBuffers(1,&vbo);
         glDeleteBuffers(GLsizei(buffers.size()),buffers.data());
         glDeleteTextures(GLsizei(textures.size()),textures.data());
+        glDeleteTextures(1,&emissionTexture);
     }
     return passed;
 }

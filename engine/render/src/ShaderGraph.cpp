@@ -292,6 +292,7 @@ ShaderGraphData runtimeShaderGraph() {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
                     graphOpacity *= texAlbedo.a;
                     graphAlbedo *= texAlbedo.rgb;
+                    graphEmission *= texAlbedo.rgb;
                 }
 
                 if (uHasNormalTexture > 0.5)

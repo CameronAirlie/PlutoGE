@@ -3,6 +3,7 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/DdsImage.h"
 #include "PlutoGE/platform/Window.h"
 #include <glad/glad.h>
 
@@ -10,6 +11,8 @@
 #include <cmath>
 #include <cctype>
 #include <fstream>
+#include <filesystem>
+#include <cstring>
 #include <limits>
 #include <string_view>
 #include <vector>
@@ -23,6 +26,21 @@ namespace PlutoGE::render
     {
         unsigned char *LoadImage(const char *path, int *w, int *h, int *channels, int desired)
         {
+            std::string extension = std::filesystem::path(path).extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            if (extension == ".dds")
+            {
+                std::string bytes;
+                if (!content::ReadFile(path, bytes)) return nullptr;
+                DdsImage image;
+                if (!DecodeDds({reinterpret_cast<const unsigned char *>(bytes.data()), bytes.size()}, image)) return nullptr;
+                if (desired != 0 && desired != 4) return nullptr;
+                auto *pixels = static_cast<unsigned char *>(STBI_MALLOC(image.pixels.size()));
+                if (!pixels) return nullptr;
+                std::memcpy(pixels, image.pixels.data(), image.pixels.size());
+                *w = image.width; *h = image.height; *channels = 4;
+                return pixels;
+            }
             if (!content::IsMounted(path)) return stbi_load(path, w, h, channels, desired);
             std::string bytes;
             if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return nullptr;

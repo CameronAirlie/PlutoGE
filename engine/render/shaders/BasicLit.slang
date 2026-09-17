@@ -667,7 +667,8 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 
 FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 {
-    float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
+    const float4 sampledBaseColor = baseColorTexture.Sample(input.uv * uvScale);
+    float4 sampledColor = sampledBaseColor * baseColor;
 
     // Coverage must remain intact for these controlled cost comparisons.
     const bool skipDetailTextures = !transparentPass && pointParameters.w == 5.0 && shaderGraph.header.x == 0;
@@ -692,7 +693,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
     float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
-    float3 surfaceEmission = emission;
+    // Material emission illuminates the albedo texture. An explicit graph
+    // emission output can replace this textured input independently.
+    float3 surfaceEmission = emission * sampledBaseColor.rgb;
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);

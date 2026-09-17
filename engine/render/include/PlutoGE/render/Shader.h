@@ -240,6 +240,7 @@ namespace PlutoGE::render
                 ApplyLodDither();
                 gPosition = FragPos;
                 vec3 albedo = uColor.rgb;
+                vec3 texturedEmission = max(uEmission, vec3(0.0));
                 float opacity = uColor.a;
                 float metallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float roughness = clamp(uRoughnessFactor, 0.04, 1.0);
@@ -248,6 +249,7 @@ namespace PlutoGE::render
                 if (uHasAlbedoTexture > 0.5)
                 {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
+                    texturedEmission *= texAlbedo.rgb;
                     opacity *= texAlbedo.a;
                     albedo *= texAlbedo.rgb;
                 }
@@ -285,7 +287,7 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
-                gEmission = max(uEmission, vec3(0.0));
+                gEmission = texturedEmission;
                 gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
@@ -1448,9 +1450,9 @@ void main()
 
             void main()
             {
-                vec4 color=uColor;
-                if(uHasAlbedoTexture>0.5)color*=texture(uAlbedoTexture,UV);
-                vec3 normal=normalize(Normal), emission=uEmission;
+                vec4 sampledBaseColor=uHasAlbedoTexture>0.5?texture(uAlbedoTexture,UV):vec4(1);
+                vec4 color=uColor*sampledBaseColor;
+                vec3 normal=normalize(Normal), emission=uEmission*sampledBaseColor.rgb;
                 float metallic=uMetallicFactor,roughness=uRoughnessFactor;
                 evaluateShaderGraph(runtimeShaderGraph(),FragPos,normal,normalize(uGraphCameraPosition-FragPos),
                     uGraphTime,UV,color,normal,metallic,roughness,emission);
@@ -2092,9 +2094,12 @@ void main()
             void main()
             {
                 vec4 color = uColor;
+                vec3 emission=max(uEmission,vec3(0));
                 if (uHasAlbedoTexture > 0.5)
                 {
-                    color *= texture(uAlbedoTexture, UV);
+                    vec4 sampledBaseColor = texture(uAlbedoTexture, UV);
+                    color *= sampledBaseColor;
+                    emission *= sampledBaseColor.rgb;
                 }
 
 
@@ -2126,7 +2131,6 @@ void main()
                 }
                 roughness = clamp(roughness, 0.04, 1.0);
 
-                vec3 emission=max(uEmission,vec3(0));
                 evaluateShaderGraph(runtimeShaderGraph(),FragPos,normalize(Normal),normalize(uViewPos-FragPos),
                     uGraphTime,UV,color,normal,metallic,roughness,emission);
                 if(color.a<=uAlphaCutoff) discard;

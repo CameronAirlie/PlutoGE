@@ -3,6 +3,7 @@
 #include "PlutoGE/render/VctVolumePlacement.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 #include "PlutoGE/render/PostProcessResourcePool.h"
+#include "GlassSnapshotBounds.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -2210,39 +2211,64 @@ namespace PlutoGE::render
             if (!transparencyPending)
                 return;
             transparencyPending = false;
+            core::CpuScope transparencyScope("Transparency", core::CpuCategory::Rendering);
+            ScopedGpuTiming transparencyTiming(commands, "RHI Transparency");
             if (!m_transparentPipeline || !m_glassSceneCopyPipeline)
                 throw std::runtime_error("Transparent RHI materials require the Glass shader artifacts");
-            if (!m_glassDepthCopy)
-                m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
-                     "Glass opaque depth snapshot", true}));
+            rhi::TextureHandle snapshot;
+            bool rendering = false;
             for (const auto &pane : transparentDraws)
             {
-                // Each layer sees previously composited panes. A distinct color
-                // snapshot keeps Vulkan descriptors stable through submission.
-                auto &snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height);
-                rhi::RenderingInfo copyInfo;
-                copyInfo.colorAttachments = {snapshot.Get(), m_glassDepthCopy.Get()};
-                copyInfo.width = m_width;
-                copyInfo.height = m_height;
-                commands.BeginRendering(copyInfo);
-                commands.BindPipeline(m_glassSceneCopyPipeline.Get());
-                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
-                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
-                commands.Draw(3);
-                commands.EndRendering();
-                rhi::RenderingInfo transparentInfo;
-                transparentInfo.colorAttachments = {m_outputColor};
-                transparentInfo.depthAttachment = m_depthTarget.Get();
-                transparentInfo.width = m_width;
-                transparentInfo.height = m_height;
-                transparentInfo.clearColor = transparentInfo.clearDepth = false;
-                commands.BeginRendering(transparentInfo);
-                commands.BindTexture(17, snapshot.Get(), m_screenSampler.Get());
-                commands.BindTexture(18, m_glassDepthCopy.Get(), m_shadowSampler.Get());
+                if (pane.surfaceType == 1u) // Glass; ordinary alpha blend uses no scene snapshot.
+                {
+                    if (rendering)
+                    {
+                        commands.EndRendering();
+                        rendering = false;
+                    }
+                    // Refraction retains exact back-to-front dependencies. The
+                    // same scratch image can be overwritten after the preceding
+                    // pane consumed it; RHI barriers order those reads/writes.
+                    if (!snapshot)
+                        snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
+                    if (!m_glassDepthCopy)
+                        m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
+                            {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                             "Glass opaque depth snapshot", true}));
+                    rhi::RenderingInfo copyInfo;
+                    copyInfo.colorAttachments = {snapshot, m_glassDepthCopy.Get()};
+                    copyInfo.width = m_width;
+                    copyInfo.height = m_height;
+                    copyInfo.clearColor = false;
+                    commands.BeginRendering(copyInfo);
+                    commands.SetScissor(GlassSnapshotBounds(pane, viewProjection, glm::vec2(temporalClipOffset),
+                        m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan));
+                    commands.BindPipeline(m_glassSceneCopyPipeline.Get());
+                    commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                    commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                    commands.Draw(3);
+                    commands.EndRendering();
+                }
+                if (!rendering)
+                {
+                    rhi::RenderingInfo transparentInfo;
+                    transparentInfo.colorAttachments = {m_outputColor};
+                    transparentInfo.depthAttachment = m_depthTarget.Get();
+                    transparentInfo.width = m_width;
+                    transparentInfo.height = m_height;
+                    transparentInfo.clearColor = transparentInfo.clearDepth = false;
+                    commands.BeginRendering(transparentInfo);
+                    rendering = true;
+                }
+                // Ordinary alpha blending never samples scene colour/depth.
+                // Bind valid fallback descriptors and keep consecutive blends
+                // in the same rendering scope, preserving their sorted order.
+                commands.BindTexture(17, snapshot ? snapshot : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+                commands.BindTexture(18, snapshot ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 recordDraw(pane, true, m_previousModels.size());
-                commands.EndRendering();
             }
+            if (rendering)
+                commands.EndRendering();
         };
         bool particlesPending = std::ranges::any_of(particles, [](const auto &draw)
             { return !draw.vertices.empty() || !draw.instances.empty(); });

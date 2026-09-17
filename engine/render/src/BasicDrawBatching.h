@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 #include <unordered_map>
 
@@ -10,12 +11,9 @@ namespace PlutoGE::render
 {
     // Batch only after per-object visibility/LOD selection. Shadow and GI source
     // lists retain their original bounds and identities for cache validation.
-    inline bool SameBasicDrawMaterial(const BasicDraw &a, const BasicDraw &b)
+    inline bool SameBasicDrawSurface(const BasicDraw &a, const BasicDraw &b)
     {
-        return a.mesh == b.mesh
-            && a.firstIndex == b.firstIndex
-            && a.indexCount == b.indexCount
-            && a.normalizedLod == b.normalizedLod
+        return a.normalizedLod == b.normalizedLod
             && a.baseColor == b.baseColor
             && a.uvScale == b.uvScale
             && a.baseColorTexture == b.baseColorTexture
@@ -50,6 +48,51 @@ namespace PlutoGE::render
             && a.flipNormalY == b.flipNormalY
             && a.castsShadow == b.castsShadow
             && a.contributesToGi == b.contributesToGi;
+    }
+
+    inline bool SameBasicDrawMaterial(const BasicDraw &a, const BasicDraw &b)
+    {
+        return a.mesh == b.mesh && a.firstIndex == b.firstIndex && a.indexCount == b.indexCount &&
+               SameBasicDrawSurface(a, b);
+    }
+
+    // Packing at mesh upload arranges same-material ranges next to one another.
+    // Merge only consecutive visible ranges with identical transforms/history.
+    // Gaps left by culling, different LODs and moving objects stay separate.
+    inline void MergeAdjacentOpaqueDraws(std::vector<BasicDraw> &draws)
+    {
+        std::size_t output = 0;
+        for (std::size_t input = 0; input < draws.size(); ++input)
+        {
+            auto &draw = draws[input];
+            if (output != 0)
+            {
+                auto &previous = draws[output - 1];
+                if (draw.mesh && previous.mesh == draw.mesh && draw.surfaceType == 0 && draw.alphaMode != 2 &&
+                    !draw.instanceModels && !previous.instanceModels && draw.previousModel && previous.previousModel &&
+                    draw.indexCount != 0 && previous.indexCount != 0 &&
+                    std::uint64_t(previous.firstIndex) + previous.indexCount == draw.firstIndex &&
+                    std::uint64_t(previous.indexCount) + draw.indexCount <= std::numeric_limits<std::uint32_t>::max() &&
+                    previous.model == draw.model && previous.previousModel == draw.previousModel &&
+                    SameBasicDrawSurface(previous, draw))
+                {
+                    previous.indexCount += draw.indexCount;
+                    if (previous.shadowBoundsRadius >= 0 && draw.shadowBoundsRadius >= 0)
+                        previous.shadowBoundsRadius = std::max(previous.shadowBoundsRadius,
+                            glm::length(draw.shadowBoundsCenter - previous.shadowBoundsCenter) + draw.shadowBoundsRadius);
+                    else
+                        previous.shadowBoundsRadius = -1;
+                    // The aggregate sphere is conservative; the first object's
+                    // tight AABB is no longer a valid bound for the merged draw.
+                    previous.occlusionBoundsExtents = glm::vec3(-1);
+                    continue;
+                }
+            }
+            if (input != output)
+                draws[output] = std::move(draw);
+            ++output;
+        }
+        draws.resize(output);
     }
 
     template<class T> inline void HashBatchValue(std::size_t &hash, const T &value)

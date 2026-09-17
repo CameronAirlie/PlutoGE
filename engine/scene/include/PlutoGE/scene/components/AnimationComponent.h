@@ -153,6 +153,8 @@ namespace PlutoGE::scene
         std::vector<glm::mat4> GetAnimatedJointMatrices(const render::Skeleton &skeleton,
                                                         const std::vector<render::AnimationNode> &nodes);
         glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
+        // Conservative across all clips, transitions and layers, including animated ancestors.
+        bool CanAnimateNode(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
         int GetClipCount() const { return static_cast<int>(m_clips.size()); }
         int GetCurrentClipIndex() const { return m_currentClipIndex; }
         void SetCurrentClipIndex(int clipIndex);
@@ -292,6 +294,7 @@ namespace PlutoGE::scene
         std::vector<glm::vec4> m_targetGlobalBindRotations;
         const std::vector<render::AnimationNode> *m_nodeBindingNodes = nullptr;
         std::vector<std::vector<int>> m_nodeChannelBindings;
+        std::vector<bool> m_animatedNodes;
         std::vector<glm::vec3> m_nodeBindTranslations;
         std::vector<glm::vec4> m_nodeBindRotations;
         std::vector<glm::vec3> m_nodeBindScales;

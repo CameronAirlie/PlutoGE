@@ -170,7 +170,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 34;
+        constexpr uint32_t kCookedMeshCacheVersion = 35;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -1958,6 +1958,26 @@ namespace PlutoGE::assetimport
             {
                 const auto &submesh = submeshes[submeshIndex];
                 auto &pending = pendingLods[submeshIndex];
+                // Simplification builds vertex-sized working arrays. A scene-wide
+                // vertex buffer here makes thousands of small submeshes quadratic
+                // in scene size and also measures error against the whole scene.
+                std::unordered_map<uint32_t, uint32_t> localByGlobal;
+                std::vector<uint32_t> globalByLocal;
+                std::vector<unsigned int> localIndices;
+                std::vector<std::array<float, 3>> localPositions;
+                localByGlobal.reserve(submesh.indexCount);
+                localIndices.reserve(submesh.indexCount);
+                for (uint32_t i = 0; i < submesh.indexCount; ++i)
+                {
+                    const auto global = meshData.indices[submesh.indexOffset + i];
+                    const auto [it, inserted] = localByGlobal.emplace(global, static_cast<uint32_t>(globalByLocal.size()));
+                    if (inserted)
+                    {
+                        globalByLocal.push_back(global);
+                        localPositions.push_back(meshData.vertices[global].position);
+                    }
+                    localIndices.push_back(it->second);
+                }
                 uint32_t previousIndexCount = submesh.indexCount;
                 for (const auto &lodTarget : kLodTargets)
                 {
@@ -1970,11 +1990,11 @@ namespace PlutoGE::assetimport
                     std::vector<unsigned int> simplified(submesh.indexCount);
                     const size_t simplifiedIndexCount = meshopt_simplify(
                         simplified.data(),
-                        meshData.indices.data() + submesh.indexOffset,
+                        localIndices.data(),
                         submesh.indexCount,
-                        reinterpret_cast<const float *>(meshData.vertices.data()),
-                        meshData.vertices.size(),
-                        sizeof(render::MeshVertexData),
+                        localPositions.front().data(),
+                        localPositions.size(),
+                        sizeof(localPositions.front()),
                         targetIndexCount,
                         lodTarget.error);
 
@@ -1985,6 +2005,8 @@ namespace PlutoGE::assetimport
                     }
 
                     const uint32_t localIndexOffset = static_cast<uint32_t>(pending.indices.size());
+                    for (uint32_t i = 0; i < alignedSimplifiedIndexCount; ++i)
+                        simplified[i] = globalByLocal[simplified[i]];
                     pending.indices.insert(pending.indices.end(), simplified.begin(), simplified.begin() + alignedSimplifiedIndexCount);
                     pending.lods.push_back(PendingLodRange{
                         .localIndexOffset = localIndexOffset,
@@ -2071,29 +2093,52 @@ namespace PlutoGE::assetimport
                     }
 
                     auto *indices = meshData.indices.data() + lod.indexOffset;
-                    meshopt_optimizeVertexCache(indices, indices, lod.indexCount, meshData.vertices.size());
+                    std::unordered_map<uint32_t, uint32_t> localByGlobal;
+                    std::vector<uint32_t> globalByLocal;
+                    std::vector<unsigned int> localIndices;
+                    std::vector<std::array<float, 3>> positions;
+                    localByGlobal.reserve(lod.indexCount);
+                    localIndices.reserve(lod.indexCount);
+                    for (uint32_t i = 0; i < lod.indexCount; ++i)
+                    {
+                        const auto [it, inserted] = localByGlobal.emplace(indices[i], static_cast<uint32_t>(globalByLocal.size()));
+                        if (inserted)
+                        {
+                            globalByLocal.push_back(indices[i]);
+                            positions.push_back(meshData.vertices[indices[i]].position);
+                        }
+                        localIndices.push_back(it->second);
+                    }
+                    if (optimizeVertexCache || optimizeOverdraw)
+                        meshopt_optimizeVertexCache(localIndices.data(), localIndices.data(), lod.indexCount, positions.size());
                     if (optimizeOverdraw && lod.indexCount <= kLargeMeshOverdrawThreshold)
                     {
                         meshopt_optimizeOverdraw(
-                            indices,
-                            indices,
+                            localIndices.data(),
+                            localIndices.data(),
                             lod.indexCount,
-                            reinterpret_cast<const float *>(meshData.vertices.data()),
-                            meshData.vertices.size(),
-                            sizeof(render::MeshVertexData),
+                            positions.front().data(),
+                            positions.size(),
+                            sizeof(positions.front()),
                             1.05f);
-                        meshopt_optimizeVertexCache(indices, indices, lod.indexCount, meshData.vertices.size());
+                        meshopt_optimizeVertexCache(localIndices.data(), localIndices.data(), lod.indexCount, positions.size());
                     }
+                    for (uint32_t i = 0; i < lod.indexCount; ++i) indices[i] = globalByLocal[localIndices[i]];
                 }
             };
 
-            if (submeshes.size() > 1)
+            // Instances share LOD ranges: do not mutate those ranges concurrently.
+            std::unordered_set<uint32_t> seenRanges;
+            std::vector<render::Submesh> uniqueSubmeshes;
+            for (const auto &submesh : submeshes)
+                if (seenRanges.insert(submesh.indexOffset).second) uniqueSubmeshes.push_back(submesh);
+            if (uniqueSubmeshes.size() > 1)
             {
-                std::for_each(std::execution::par, submeshes.begin(), submeshes.end(), optimizeSubmesh);
+                std::for_each(std::execution::par, uniqueSubmeshes.begin(), uniqueSubmeshes.end(), optimizeSubmesh);
             }
-            else if (!submeshes.empty())
+            else if (!uniqueSubmeshes.empty())
             {
-                optimizeSubmesh(submeshes.front());
+                optimizeSubmesh(uniqueSubmeshes.front());
             }
         }
 
@@ -3887,9 +3932,6 @@ namespace PlutoGE::assetimport
             }
 
             const int animatedNodeIndex = animatedNodeIndices.find(nodeIndex) != animatedNodeIndices.end() ? nodeIndex : activeAnimatedNodeIndex;
-            const glm::mat4 staticTransform = animatedNodeIndex >= 0
-                                                  ? glm::inverse(nodes[static_cast<size_t>(animatedNodeIndex)].globalTransform) * nodeInfo.globalTransform
-                                                  : nodeInfo.globalTransform;
 
             for (unsigned int meshSlot = 0; meshSlot < node->mNumMeshes; ++meshSlot)
             {
@@ -3916,7 +3958,10 @@ namespace PlutoGE::assetimport
                                                    : static_cast<uint32_t>(materialPrimaryUvChannels.empty() ? 0 : materialPrimaryUvChannels.size() - 1);
                 const unsigned int primaryUvChannel = materialIndex < materialPrimaryUvChannels.size() ? materialPrimaryUvChannels[materialIndex] : 0;
                 const bool hasSkinning = sourceMesh.HasBones();
-                const glm::mat4 meshTransform = hasSkinning ? glm::mat4(1.0f) : staticTransform;
+                // Unskinned instances carry nodeIndex and apply the full node
+                // transform at draw time. Keep shared geometry in node space;
+                // baking staticTransform here applies it a second time.
+                const glm::mat4 meshTransform(1.0f);
                 std::string submeshName = ToStdString(node->mName);
                 if (submeshName.empty() && sourceMesh.mName.length > 0)
                 {

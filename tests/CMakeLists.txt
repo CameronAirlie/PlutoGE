@@ -127,8 +127,27 @@ else()
 endif()
 
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
+add_test(NAME PlutoGEMeshLodGenerationTests COMMAND PlutoGELargeMeshOptimizationTests --lod-only)
+
+add_executable(PlutoGEInspectMeshImport EXCLUDE_FROM_ALL ../tools/InspectMeshImport.cpp)
+target_link_libraries(PlutoGEInspectMeshImport PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+add_executable(PlutoGERecookMesh EXCLUDE_FROM_ALL ../tools/RecookMesh.cpp)
+target_link_libraries(PlutoGERecookMesh PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+add_executable(PlutoGEDdsImageTests DdsImageTests.cpp)
+target_include_directories(PlutoGEDdsImageTests PRIVATE ../engine/render/include)
+target_compile_features(PlutoGEDdsImageTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEDdsImageTests COMMAND PlutoGEDdsImageTests)
+add_executable(PlutoGEFbxImportTests FbxImportTests.cpp)
+target_link_libraries(PlutoGEFbxImportTests PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+add_test(NAME PlutoGEFbxImportTests COMMAND PlutoGEFbxImportTests)
+set_tests_properties(PlutoGEFbxImportTests PROPERTIES ENVIRONMENT "PLUTOGE_DISABLE_MESH_DISK_CACHE=1")
 
 if (TARGET OpenAL)
+    foreach(import_target PlutoGEInspectMeshImport PlutoGERecookMesh PlutoGEFbxImportTests)
+        add_custom_command(TARGET ${import_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${import_target}>/$<TARGET_FILE_NAME:OpenAL>)
+    endforeach()
     add_custom_command(TARGET PlutoGELargeMeshOptimizationTests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:OpenAL>

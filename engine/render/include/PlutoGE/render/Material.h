@@ -56,7 +56,7 @@ namespace PlutoGE::render
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
 
-        glm::vec3 emission{0.0f}; // HDR self-illumination color
+        glm::vec3 emission{0.0f}; // HDR self-illumination tint, multiplied by the albedo texture
 
         float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface

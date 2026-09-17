@@ -101,8 +101,9 @@ float fragmentMain(VertexOutput input) : SV_Target
 [shader("fragment")]
 float maskedFragmentMain(VertexOutput input) : SV_Target
 {
-    float4 color=shadowBaseColor.Sample(input.uv*shadowAlpha.xy)*graphColor;
-    float3 normal=normalize(input.worldNormal), emission=graphEmission.xyz;
+    const float4 sampledBaseColor=shadowBaseColor.Sample(input.uv*shadowAlpha.xy);
+    float4 color=sampledBaseColor*graphColor;
+    float3 normal=normalize(input.worldNormal), emission=graphEmission.xyz*sampledBaseColor.rgb;
     float metallic=graphFactors.x, roughness=graphFactors.y;
     evaluateShaderGraph(graph,input.worldPosition,normal,normalize(graphCameraTime.xyz-input.worldPosition),
         graphCameraTime.w,input.uv*shadowAlpha.xy,color,normal,metallic,roughness,emission);

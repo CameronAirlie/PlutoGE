@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 namespace PlutoGE::render
 {
@@ -235,7 +236,7 @@ namespace PlutoGE::scene
     private:
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();
-        void UpdateCachedPreviousModels(const glm::mat4 &modelMatrix);
+        void UpdateCachedPreviousModels();
         MeshComponent *FindMeshOffsetSource() const;
 
         render::Mesh *m_mesh = nullptr;
@@ -244,8 +245,7 @@ namespace PlutoGE::scene
         std::vector<render::Material *> m_submeshMaterials;
         std::vector<std::string> m_materialAssetReferences;
         std::vector<std::string> m_submeshMaterialAssetReferences;
-        glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
-        bool m_hasPreviousModelMatrix = false;
+        std::unordered_map<size_t, glm::mat4> m_previousSubmeshModels;
         bool m_isStatic = false;
         bool m_renderCommandCacheDirty = true;
         bool m_hasCachedRenderCommandModel = false;

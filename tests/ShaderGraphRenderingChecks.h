@@ -197,6 +197,27 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
             throw std::runtime_error("Shader graph pixel mismatch: expected " + std::to_string(expected.x) + "," + std::to_string(expected.y) + "," + std::to_string(expected.z) +
                                      " got " + std::to_string(actual.x) + "," + std::to_string(actual.y) + "," + std::to_string(actual.z));
     };
+    // White emission preserves texture detail even with no external lighting.
+    const std::array<std::byte,8> emissiveTexels{std::byte{64},std::byte{128},std::byte{32},std::byte{255},
+                                               std::byte{0},std::byte{32},std::byte{192},std::byte{255}};
+    rhi::Texture emissiveTexture(device,device.CreateTexture({2,1,rhi::Format::R8G8B8A8Unorm,rhi::TextureUsage::Sampled,"Textured emission"},emissiveTexels));
+    draw.baseColorTexture=emissiveTexture.Get(); draw.emission={1,1,1};
+    expect(sample(std::span(&draw,1),.3f),{64,128,32});
+    expect(sample(std::span(&draw,1),.7f),{0,32,192});
+    draw.shaderGraphProgram=BuildShaderGraphProgram(CreateDefaultShaderGraph());
+    expect(sample(std::span(&draw,1),.3f),{64,128,32});
+    draw.emission={.5f,.25f,1};
+    expect(sample(std::span(&draw,1),.3f),{32,32,32});
+    ShaderGraph explicitEmission;
+    explicitEmission.nodes={{.id=1,.kind=ShaderGraphNodeKind::Vec3,.value={.2f,.4f,.1f,1}},
+                            {.id=100,.kind=ShaderGraphNodeKind::Output}};
+    explicitEmission.links={{1,1,"Vec3",100,"Emission"}};
+    draw.shaderGraphProgram=BuildShaderGraphProgram(explicitEmission);
+    expect(sample(std::span(&draw,1),.3f),{51,102,26});
+    draw.shaderGraphProgram=BuildShaderGraphProgram(CreateDefaultShaderGraph());
+    draw.baseColorTexture={}; draw.emission={.2f,.4f,.1f};
+    expect(sample(std::span(&draw,1)),{51,102,26});
+    draw.emission={0,0,0};
     draw.shaderGraphProgram=BuildShaderGraphProgram(graph);
     expect(sample(std::span(&draw,1)),{51,102,26});
     const std::array overrides{ShaderGraphVariable{"Tint",ShaderGraphValueType::Vec3,{.8f,.2f,.6f,1}}};

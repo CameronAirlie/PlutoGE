@@ -1244,6 +1244,7 @@ namespace PlutoGE::scene
 
     void AnimationComponent::Deserialize(const std::vector<Property> &properties)
     {
+        m_nodeBindingNodes = nullptr;
         int clipCount = 0;
         int stateCount = -1;
         int parameterCount = -1;
@@ -1650,6 +1651,7 @@ namespace PlutoGE::scene
     void AnimationComponent::SetClipsFromImportedAnimations(const std::vector<render::AnimationClip> &animations)
     {
         m_clips = animations;
+        m_nodeBindingNodes = nullptr;
         m_retargetBindingSkeleton = nullptr;
         m_retargetClipCaches.clear();
         for (size_t index = 0; index < m_clips.size(); ++index)
@@ -3075,6 +3077,14 @@ namespace PlutoGE::scene
         return nodeIndex < static_cast<int>(m_nodeMatrices.size()) ? m_nodeMatrices[static_cast<size_t>(nodeIndex)] : glm::mat4(1.0f);
     }
 
+    bool AnimationComponent::CanAnimateNode(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
+    {
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()) || m_clips.empty())
+            return false;
+        EnsureNodeBindingCache(nodes);
+        return m_animatedNodes[static_cast<size_t>(nodeIndex)];
+    }
+
     void AnimationComponent::EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes)
     {
         using Clock = std::chrono::high_resolution_clock;
@@ -3254,6 +3264,7 @@ namespace PlutoGE::scene
             return;
 
         m_nodeBindingNodes = &nodes;
+        m_nodeMatricesDirty = true;
         m_nodeChannelBindings.clear();
         m_nodeChannelBindings.resize(m_clips.size());
         for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
@@ -3262,6 +3273,28 @@ namespace PlutoGE::scene
             bindings.reserve(m_clips[clipIndex].channels.size());
             for (const auto &channel : m_clips[clipIndex].channels)
                 bindings.push_back(ResolveChannelNodeIndex(channel, nodes));
+        }
+
+        std::vector<bool> directlyAnimated(nodes.size(), false);
+        for (const auto &bindings : m_nodeChannelBindings)
+            for (const int index : bindings)
+                if (index >= 0 && static_cast<size_t>(index) < nodes.size())
+                    directlyAnimated[static_cast<size_t>(index)] = true;
+        m_animatedNodes.assign(nodes.size(), false);
+        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+        {
+            // Imports need not put parents before children. Bound the walk to
+            // tolerate malformed cyclic hierarchies without hanging the editor.
+            int ancestor = static_cast<int>(nodeIndex);
+            for (size_t depth = 0; ancestor >= 0 && static_cast<size_t>(ancestor) < nodes.size() && depth < nodes.size(); ++depth)
+            {
+                if (directlyAnimated[static_cast<size_t>(ancestor)])
+                {
+                    m_animatedNodes[nodeIndex] = true;
+                    break;
+                }
+                ancestor = nodes[static_cast<size_t>(ancestor)].parentNodeIndex;
+            }
         }
 
         m_nodeBindTranslations.resize(nodes.size());

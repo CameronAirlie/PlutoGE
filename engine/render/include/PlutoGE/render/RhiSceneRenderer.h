@@ -19,9 +19,16 @@ namespace PlutoGE::scene
 namespace PlutoGE::render
 {
     class RhiSkinningExecutor;
+    class RhiDrawPreparationCache;
     struct RhiSceneTimingStats
     {
         float commandTranslationMs = 0.0f;
+        float visiblePreparationMs = 0.0f;
+        float shadowPreparationMs = 0.0f;
+        float giPreparationMs = 0.0f;
+        float batchingMs = 0.0f;
+        std::size_t reusedDrawPackets = 0;
+        std::size_t rebuiltDrawPackets = 0;
         float translationPreparationMs = 0.0f;
         float meshUploadMs = 0.0f;
         float skinningDeformationMs = 0.0f;
@@ -103,18 +110,7 @@ namespace PlutoGE::render
         {
             m_immediateTextureUploads = enabled;
         }
-        void InvalidateAssetCache()
-        {
-            if (m_normalMipJob.valid())
-                m_normalMipJob.wait();
-            m_normalMipJob = {};
-            m_pendingNormalSource = nullptr;
-            m_srgbTextures.clear();
-            m_linearTextures.clear();
-            m_normalTextures.clear();
-            m_meshes.clear();
-            m_skinnedMeshes.clear();
-        }
+        void InvalidateAssetCache();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
             if (m_upscalerOptions == options)
@@ -168,6 +164,7 @@ namespace PlutoGE::render
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;
+      std::unique_ptr<RhiDrawPreparationCache> m_drawPreparation;
       struct CachedMesh
       {
           std::weak_ptr<const void> lifetime;

@@ -1,32 +1,34 @@
-#include "PlutoGE/render/ShaderGraph.h"
-#include "PlutoGE/scene/SceneStreaming.h"
-#include "PlutoGE/scene/components/SequencerComponent.h"
-#include "PlutoGE/core/CpuTrace.h"
-#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/UISystem.h"
+#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
+#include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
-#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
-#include "PlutoGE/scene/components/DecalComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
-#include "PlutoGE/scene/components/AnimationComponent.h"
-#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
-#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
-#include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/Material.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <btBulletDynamicsCommon.h>
@@ -2414,36 +2416,50 @@ namespace PlutoGE::scene
         }
     }
 
+    void Scene::RefreshEnvironmentComponents() const
+    {
+        if (!m_environmentComponentsDirty)
+            return;
+        m_environmentLights.clear();
+        m_physicalSkies.clear();
+        m_volumetricClouds.clear();
+        const auto collect = [&](auto &&self, Entity *entity) -> void {
+            if (!entity)
+                return;
+            for (auto *light : entity->GetComponents<LightComponent>())
+                m_environmentLights.push_back(light);
+            for (auto *sky : entity->GetComponents<PhysicalSkyComponent>())
+                m_physicalSkies.push_back(sky);
+            for (auto *cloud : entity->GetComponents<VolumetricCloudComponent>())
+                m_volumetricClouds.push_back(cloud);
+            for (auto *child : entity->GetChildren())
+                self(self, child);
+        };
+        for (auto *root : m_rootEntities)
+            collect(collect, root);
+        m_environmentComponentsDirty = false;
+    }
+
+    const std::vector<PhysicalSkyComponent *> &Scene::GetPhysicalSkyComponents() const
+    {
+        RefreshEnvironmentComponents();
+        return m_physicalSkies;
+    }
+
+    const std::vector<VolumetricCloudComponent *> &Scene::GetVolumetricCloudComponents() const
+    {
+        RefreshEnvironmentComponents();
+        return m_volumetricClouds;
+    }
+
     std::vector<Light *> Scene::GetLights() const
     {
+        RefreshEnvironmentComponents();
         std::vector<Light *> lights;
-
-        auto collectLights = [&lights](const Entity *entity, auto &self) -> void
-        {
-            if (!entity || !entity->IsActive())
-            {
-                return;
-            }
-
-            for (auto *lightComponent : entity->GetComponents<LightComponent>())
-            {
-                if (lightComponent && lightComponent->IsEnabled())
-                {
-                    lights.push_back(const_cast<Light *>(&lightComponent->GetLight()));
-                }
-            }
-
-            for (auto *child : entity->GetChildren())
-            {
-                self(child, self);
-            }
-        };
-
-        for (auto *rootEntity : m_rootEntities)
-        {
-            collectLights(rootEntity, collectLights);
-        }
-
+        lights.reserve(m_environmentLights.size());
+        for (auto *component : m_environmentLights)
+            if (component->IsEnabled() && component->GetOwner() && component->GetOwner()->IsActiveInHierarchy())
+                lights.push_back(&component->GetLight());
         return lights;
     }
 
@@ -2494,6 +2510,7 @@ namespace PlutoGE::scene
 
     void Scene::RemoveEntity(Entity *entity)
     {
+        InvalidateEnvironmentComponents();
         if (!entity)
         {
             return;

@@ -286,28 +286,46 @@ namespace PlutoGE::render
             {
                 if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid())
                     continue;
-                HashVctValue(hash, draw.mesh);
-                HashVctValue(hash, draw.model);
-                if (draw.instanceModels)
-                    for (const auto &model : *draw.instanceModels) HashVctValue(hash, model);
-                HashVctValue(hash, draw.castsShadow);
-                HashVctValue(hash, draw.firstIndex);
-                HashVctValue(hash, draw.indexCount);
-                HashVctValue(hash, draw.baseColor);
-                HashVctValue(hash, draw.uvScale);
-                HashVctValue(hash, draw.metallic);
-                HashVctValue(hash, draw.alphaCutoff);
-                HashVctValue(hash, draw.emission);
-                HashVctValue(hash, draw.alphaMode);
-                HashVctValue(hash, draw.baseColorTexture);
-                HashVctValue(hash, draw.metallicTexture);
-                HashVctValue(hash, draw.metallicChannel);
-                if(draw.shaderGraphProgram) {
-                    HashVctValue(hash,draw.shaderGraphProgram->hash);
-                    if(draw.shaderGraphProgram->usesTime)HashVctValue(hash,ShaderGraphTimeSeconds());
-                    if(draw.shaderGraphProgram->usesViewDirection)HashVctValue(hash,lighting.cameraPosition);
-                    for(const auto &texture:draw.graphTextures)HashVctValue(hash,texture);
-                    HashVctValue(hash,draw.graphSamplers);
+                if (draw.preparationRevision)
+                {
+                    HashVctValue(hash, draw.preparationRevision);
+                    HashVctValue(hash, draw.mesh->GetRevision());
+                }
+                else
+                {
+                    HashVctValue(hash, draw.mesh);
+                    HashVctValue(hash, draw.model);
+                    if (draw.instanceModels)
+                        for (const auto &model : *draw.instanceModels)
+                            HashVctValue(hash, model);
+                    HashVctValue(hash, draw.castsShadow);
+                    HashVctValue(hash, draw.firstIndex);
+                    HashVctValue(hash, draw.indexCount);
+                    HashVctValue(hash, draw.baseColor);
+                    HashVctValue(hash, draw.uvScale);
+                    HashVctValue(hash, draw.metallic);
+                    HashVctValue(hash, draw.alphaCutoff);
+                    HashVctValue(hash, draw.emission);
+                    HashVctValue(hash, draw.alphaMode);
+                    HashVctValue(hash, draw.baseColorTexture);
+                    HashVctValue(hash, draw.metallicTexture);
+                    HashVctValue(hash, draw.metallicChannel);
+                    if (draw.shaderGraphProgram)
+                    {
+                        HashVctValue(hash, draw.shaderGraphProgram->hash);
+                        for (const auto &texture : draw.graphTextures)
+                            HashVctValue(hash, texture);
+                        HashVctValue(hash, draw.graphSamplers);
+                    }
+                }
+                // Time/view-dependent graphs still invalidate GI even when
+                // their immutable object/material packet is unchanged.
+                if (draw.shaderGraphProgram)
+                {
+                    if (draw.shaderGraphProgram->usesTime)
+                        HashVctValue(hash, ShaderGraphTimeSeconds());
+                    if (draw.shaderGraphProgram->usesViewDirection)
+                        HashVctValue(hash, lighting.cameraPosition);
                 }
             }
             return hash;
@@ -1143,6 +1161,7 @@ namespace PlutoGE::render
         m_maskedShadowPipeline.Reset();
         m_maskedShadowInstancedPipeline.Reset();
         m_shadowMaterialBuffers.clear();
+        m_shadowSignatureCache.clear();
         m_displayPipeline.Reset();
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
@@ -1466,21 +1485,30 @@ namespace PlutoGE::render
         if (virtualShadowsActive || cascadedShadowsActive)
         {
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
+            m_shadowSignatureCache.resize(shadowDraws.size());
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
             {
                 const auto &draw = shadowDraws[index];
                 if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow && draw.surfaceType != 1 && draw.alphaMode != 2)
                     {
-                    m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
-                    if(draw.shaderGraphProgram && !virtualShadowsActive) {
-                        HashVctValue(m_shadowDrawSignatures[index],draw.shaderGraphProgram->hash);
-                        HashVctValue(m_shadowDrawSignatures[index],graphTime);
-                        HashVctValue(m_shadowDrawSignatures[index],lighting.cameraPosition);
-                        HashVctValue(m_shadowDrawSignatures[index],draw.normalTexture);
-                        HashVctValue(m_shadowDrawSignatures[index],draw.metallicTexture);
-                        HashVctValue(m_shadowDrawSignatures[index],draw.roughnessTexture);
-                        HashVctValue(m_shadowDrawSignatures[index],draw.graphTextures);
-                        HashVctValue(m_shadowDrawSignatures[index],draw.graphSamplers);
+                        auto &cached = m_shadowSignatureCache[index];
+                        const auto meshRevision = draw.mesh->GetRevision();
+                        if (!draw.preparationRevision || cached.packetRevision != draw.preparationRevision ||
+                            cached.meshRevision != meshRevision)
+                        {
+                            cached = {draw.preparationRevision, meshRevision, ShadowDrawSignature(draw)};
+                        }
+                        m_shadowDrawSignatures[index] = cached.signature;
+                        if (draw.shaderGraphProgram && !virtualShadowsActive)
+                        {
+                            HashVctValue(m_shadowDrawSignatures[index], draw.shaderGraphProgram->hash);
+                            HashVctValue(m_shadowDrawSignatures[index], graphTime);
+                            HashVctValue(m_shadowDrawSignatures[index], lighting.cameraPosition);
+                            HashVctValue(m_shadowDrawSignatures[index], draw.normalTexture);
+                            HashVctValue(m_shadowDrawSignatures[index], draw.metallicTexture);
+                            HashVctValue(m_shadowDrawSignatures[index], draw.roughnessTexture);
+                            HashVctValue(m_shadowDrawSignatures[index], draw.graphTextures);
+                            HashVctValue(m_shadowDrawSignatures[index], draw.graphSamplers);
                     }
                     }
             }

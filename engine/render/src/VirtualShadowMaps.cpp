@@ -195,6 +195,29 @@ namespace PlutoGE::render
                     if (cursor == chunks.size()) chunks.emplace_back();
                     auto &chunk = chunks[cursor];
                     const auto models = static_cast<std::uint32_t>(std::min(std::size_t{64}, modelCount - first));
+                    if (draw.preparationRevision && chunk.preparationRevision == draw.preparationRevision &&
+                        chunk.mesh == draw.mesh && chunk.meshRevision == draw.mesh->GetRevision() &&
+                        chunk.firstInstance == first && chunk.submission.instances == models)
+                    {
+                        // Refresh the borrowed packet address even on a hit.
+                        // Clipmap/camera/lighting feedback is still processed
+                        // below; only immutable caster/receiver preparation skips.
+                        chunk.submission.draw = &draw;
+                        if (shadow)
+                        {
+                            const auto signature = signatures[index];
+                            const float radius =
+                                std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
+                            inputs.push_back({glm::vec4(draw.shadowBoundsCenter, radius),
+                                              {count, draw.firstIndex, models, index},
+                                              {std::uint32_t(signature),
+                                               std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}});
+                        }
+                        ++cursor;
+                        continue;
+                    }
+                    chunk.preparationRevision = draw.preparationRevision;
+                    chunk.firstInstance = first;
                     const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
                     const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
                     const auto upload = [&](const auto &parameters)

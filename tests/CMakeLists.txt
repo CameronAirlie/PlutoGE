@@ -487,6 +487,7 @@ add_test(NAME PlutoGEOpenGLParticlePointTests COMMAND PlutoGEOpenGLRhiTests --pa
 add_test(NAME PlutoGEVulkanTemporalMotionTests COMMAND PlutoGEVulkanRhiTests --temporal-motion)
 add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --temporal-motion)
 
+add_test(NAME PlutoGEVulkanPreparationCacheTests COMMAND PlutoGEVulkanRhiTests --preparation-cache)
 add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
 

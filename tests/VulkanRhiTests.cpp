@@ -1,24 +1,25 @@
 #include "FogRenderingChecks.h"
-#include "SkyQuadratureChecks.h"
-#include "ShaderGraphRenderingChecks.h"
-#include "OutlineRenderingChecks.h"
-#include "RenderOptimizationChecks.h"
-#include "SkinningRenderingChecks.h"
-#include "OpaqueBatchingChecks.h"
-#include "TemporalMotionRenderingChecks.h"
-#include "GlassRenderingChecks.h"
 #include "Fsr2RenderingChecks.h"
+#include "GeometryDiagnosticChecks.h"
+#include "GlassRenderingChecks.h"
+#include "OcclusionRenderingChecks.h"
+#include "OpaqueBatchingChecks.h"
+#include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PreparationCacheChecks.h"
+#include "RenderOptimizationChecks.h"
+#include "ShaderGraphRenderingChecks.h"
 #include "ShadowFilteringChecks.h"
+#include "SkinningRenderingChecks.h"
+#include "SkyQuadratureChecks.h"
 #include "SsrRenderingChecks.h"
+#include "TemporalMotionRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
-#include "OcclusionRenderingChecks.h"
-#include "GeometryDiagnosticChecks.h"
 #include "VsmOnlyRenderingChecks.h"
 
 #include <array>
@@ -164,6 +165,11 @@ int main(int argc, char **argv)
         {
             CheckRenderOptimizations(renderer, device, shaders,
                 [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--preparation-cache")
+        {
+            CheckPreparationCache(device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")

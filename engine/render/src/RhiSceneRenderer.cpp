@@ -2,6 +2,9 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
+#include "BasicDrawBatching.h"
+#include "CanonicalGeometry.h"
+#include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -13,11 +16,9 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
-#include "rhi/NormalMipmaps.h"
-#include "BasicDrawBatching.h"
-#include "CanonicalGeometry.h"
-#include "ParticleVisibility.h"
+#include "RhiDrawPreparationCache.h"
 #include "RhiSkinning.h"
+#include "rhi/NormalMipmaps.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -171,8 +172,24 @@ namespace PlutoGE::render
         return true;
     }
 
+    void RhiSceneRenderer::InvalidateAssetCache()
+    {
+        if (m_normalMipJob.valid())
+            m_normalMipJob.wait();
+        m_normalMipJob = {};
+        m_pendingNormalSource = nullptr;
+        m_srgbTextures.clear();
+        m_linearTextures.clear();
+        m_normalTextures.clear();
+        if (m_drawPreparation)
+            m_drawPreparation->Reset();
+        m_meshes.clear();
+        m_skinnedMeshes.clear();
+    }
+
     void RhiSceneRenderer::Shutdown()
     {
+        m_drawPreparation.reset();
         m_skinningExecutor.reset();
         m_particleDraws.clear();
         m_sortedParticles.clear();
@@ -254,7 +271,13 @@ namespace PlutoGE::render
 
         m_sceneCommandCount = commands.size();
         ++m_skinningFrame;
-        std::erase_if(m_meshes, [](const auto &entry) { return entry.second.lifetime.expired(); });
+        if (!m_drawPreparation)
+            m_drawPreparation = std::make_unique<RhiDrawPreparationCache>();
+        auto &preparation = *m_drawPreparation;
+        if (std::erase_if(m_meshes, [](const auto &entry) { return entry.second.lifetime.expired(); }) != 0)
+            preparation.Reset();
+        std::erase_if(preparation.materials,
+                      [&](const auto &entry) { return entry.second.frame + 2 < m_skinningFrame; });
         // Retain offscreen poses briefly, but do not accumulate destroyed
         // animators indefinitely in scenes that spawn disposable characters.
         for (auto model = m_skinnedMeshes.begin(); model != m_skinnedMeshes.end(); )
@@ -263,8 +286,7 @@ namespace PlutoGE::render
             if (model->second.empty()) model = m_skinnedMeshes.erase(model);
             else ++model;
         }
-        std::vector<BasicDraw> draws;
-        draws.reserve(commands.size());
+
         if (m_normalMipJob.valid() &&
             m_normalMipJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
@@ -336,15 +358,13 @@ namespace PlutoGE::render
                             : rhi::TextureHandle{};
         };
 
-        // A frame-local material snapshot is shared by visible, shadow and GI
-        // translation. Mutable materials need no persistent invalidation protocol;
-        // texture uploads and editor changes are observed again next frame.
-        std::unordered_map<const Material *, BasicDraw> preparedMaterials;
-        const auto prepareMaterial = [&](const Material *source) -> const BasicDraw & {
-            const auto [entry, inserted] = preparedMaterials.try_emplace(source);
-            if (!inserted)
-                return entry->second;
-            auto &draw = entry->second;
+        // Direct config edits are legal. Validate each distinct material once
+        // per frame, then use its revision for every list and batching key.
+        const auto prepareMaterial = [&](const Material *source) -> const RhiDrawPreparationCache::MaterialEntry & {
+            auto &entry = preparation.materials[source];
+            if (entry.frame == m_skinningFrame)
+                return entry;
+            BasicDraw draw;
             const auto &material = source->GetConfig();
             draw.baseColor = material.color;
             draw.uvScale = material.uvScale;
@@ -386,20 +406,54 @@ namespace PlutoGE::render
                 uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_linearTextures, "Scene metallic");
             draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
                                                   m_linearTextures, "Scene roughness");
-            return draw;
+            if (entry.revision == 0 || !SameBasicDrawSurface(entry.draw, draw))
+            {
+                entry.revision = preparation.NextRevision();
+                draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
+            }
+            else
+                draw.preparedMaterialHash = entry.draw.preparedMaterialHash;
+            entry.draw = std::move(draw);
+            entry.frame = m_skinningFrame;
+            return entry;
         };
 
-        const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands, std::vector<BasicDraw> &destination,
-                                     bool shadowOnly, bool giOnly = false) {
-            for (const auto &command : sourceCommands)
+        const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
+                                     RhiDrawPreparationCache::List &cache, bool shadowOnly, bool giOnly = false) {
+            const auto materialRevision = [&](const RenderCommand &command) {
+                return command.material ? prepareMaterial(command.material).revision : std::uint64_t{0};
+            };
+            bool unchanged = cache.entries.size() == sourceCommands.size();
+            for (size_t i = 0; i < sourceCommands.size() && unchanged; ++i)
+                unchanged = cache.entries[i].Matches(sourceCommands[i], materialRevision(sourceCommands[i]));
+            if (unchanged)
             {
-                if (!command.mesh || (shadowOnly && !command.castsShadow))
-                    continue;
-                if (shadowOnly && command.material)
+                m_timingStats.reusedDrawPackets += sourceCommands.size();
+                return false;
+            }
+            cache.entries.resize(sourceCommands.size());
+            auto &destination = cache.draws;
+            destination.clear();
+            destination.reserve(sourceCommands.size());
+            for (size_t i = 0; i < sourceCommands.size(); ++i)
+            {
+                const auto &command = sourceCommands[i];
+                const auto revision = materialRevision(command);
+                auto &entry = cache.entries[i];
+                if (entry.Matches(command, revision))
                 {
-                    const auto &material = command.material->GetConfig();
-                    if (!material.castsShadow || material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend)
-                        continue;
+                    if (entry.emitted)
+                        destination.push_back(entry.draw);
+                    ++m_timingStats.reusedDrawPackets;
+                    continue;
+                }
+                entry.valid = false;
+                if (!command.mesh ||
+                    (shadowOnly && (!command.castsShadow ||
+                                    (command.material && !prepareMaterial(command.material).draw.castsShadow))))
+                {
+                    entry.Store(command, revision, nullptr);
+                    continue;
                 }
                 BasicMesh *renderMesh = nullptr;
                 const CachedMesh *rigidMesh = nullptr;
@@ -523,7 +577,7 @@ namespace PlutoGE::render
                     if (const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({firstIndex, indexCount}));
                         canonical != rigidMesh->canonicalGeometry.end())
                         firstIndex = canonical->second;
-                BasicDraw draw = command.material ? prepareMaterial(command.material) : BasicDraw{};
+                BasicDraw draw = command.material ? prepareMaterial(command.material).draw : BasicDraw{};
                 draw.mesh = renderMesh;
                 draw.model = command.model;
                 draw.castsShadow = draw.castsShadow && command.castsShadow;
@@ -560,18 +614,46 @@ namespace PlutoGE::render
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
+                draw.preparationRevision =
+                    !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels
+                        ? preparation.NextRevision()
+                        : 0;
+                if (!command.material)
+                    draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
+                entry.Store(command, revision, &draw);
                 destination.push_back(std::move(draw));
+                ++m_timingStats.rebuiltDrawPackets;
             }
+            return true;
         };
-        appendDraws(commands, draws, false);
-        BatchOpaqueDraws(draws);
-        MergeAdjacentOpaqueDraws(draws);
-        std::vector<BasicDraw> shadowDraws;
-        if (lighting.shadowsEnabled)
+        const auto visibleStart = std::chrono::steady_clock::now();
+        core::CpuScope visibleScope("Visible packet preparation", core::CpuCategory::Rendering);
+        const bool visibleChanged = appendDraws(commands, preparation.visible, false);
+        visibleScope.End();
+        const auto batchingStart = std::chrono::steady_clock::now();
+        m_timingStats.visiblePreparationMs = millisecondsBetween(visibleStart, batchingStart);
+        core::CpuScope batchingScope("Opaque packet batching", core::CpuCategory::Rendering);
+        if (visibleChanged)
         {
-            shadowDraws.reserve(shadowCommands.size());
-            appendDraws(shadowCommands, shadowDraws, true);
+            preparation.batched = preparation.visible.draws;
+            BatchOpaqueDraws(preparation.batched);
+            MergeAdjacentOpaqueDraws(preparation.batched);
+            for (auto &draw : preparation.batched)
+                if (draw.preparationRevision)
+                    draw.preparationRevision = preparation.NextRevision();
         }
+        auto &draws = preparation.batched;
+        batchingScope.End();
+        const auto shadowStart = std::chrono::steady_clock::now();
+        m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
+        core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
+        if (lighting.shadowsEnabled)
+            appendDraws(shadowCommands, preparation.shadows, true);
+        else
+            preparation.shadows = {};
+        auto &shadowDraws = preparation.shadows.draws;
+        shadowPacketScope.End();
+        m_timingStats.shadowPreparationMs = millisecondsBetween(shadowStart, std::chrono::steady_clock::now());
         translationScope.End();
         const auto translationEnd = std::chrono::steady_clock::now();
         core::CpuScope setupScope("Scene setup", core::CpuCategory::Rendering);
@@ -858,15 +940,19 @@ namespace PlutoGE::render
         const auto setupEnd = std::chrono::steady_clock::now();
         core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
-        std::vector<BasicDraw> giDraws;
+        auto &giDraws = preparation.gi.draws;
         if (std::ranges::any_of(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::VCTGI; }))
         {
             // shadowCommands is the frontend's unculled scene list. GI needs
             // its materials and non-shadow-casting surfaces as well.
             const auto sceneCommands = shadowCommands.empty() ? commands : shadowCommands;
-            giDraws.reserve(sceneCommands.size());
-            appendDraws(sceneCommands, giDraws, false, true);
+            core::CpuScope giScope("GI packet preparation", core::CpuCategory::Rendering);
+            const auto start = std::chrono::steady_clock::now();
+            appendDraws(sceneCommands, preparation.gi, false, true);
+            m_timingStats.giPreparationMs = millisecondsBetween(start, std::chrono::steady_clock::now());
         }
+        else
+            preparation.gi = {};
         std::size_t particleDrawCount = 0;
         const auto acquireParticleDraw = [&]() -> BasicParticleDraw &
         {

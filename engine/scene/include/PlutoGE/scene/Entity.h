@@ -35,6 +35,13 @@ namespace PlutoGE::scene
         Entity(const EntityConfig &config = {});
         Entity(EntityID id, const EntityConfig &config);
         ~Entity() = default;
+        bool IsActiveInHierarchy() const
+        {
+            for (const Entity *entity = this; entity; entity = entity->GetParent())
+                if (!entity->IsActive())
+                    return false;
+            return true;
+        }
 
         glm::mat4 GetLocalTransform() const;
         glm::mat4 GetWorldTransform() const;

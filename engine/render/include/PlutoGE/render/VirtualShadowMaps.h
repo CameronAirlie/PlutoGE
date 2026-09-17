@@ -57,7 +57,16 @@ namespace PlutoGE::render
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
         [[nodiscard]] VirtualShadowStats GetStats() const;
     private:
-        struct Chunk { Submission submission; rhi::Buffer uniform; rhi::TextureHandle texture; std::vector<std::byte> uploaded; const void *mesh = nullptr; std::uint64_t meshRevision = 0; };
+      struct Chunk
+      {
+          Submission submission;
+          rhi::Buffer uniform;
+          rhi::TextureHandle texture;
+          std::vector<std::byte> uploaded;
+          const void *mesh = nullptr;
+          std::uint64_t meshRevision = 0, preparationRevision = 0;
+          std::size_t firstInstance = 0;
+      };
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, 5> m_raster;

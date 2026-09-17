@@ -26,6 +26,9 @@ namespace PlutoGE::scene
     class FoliageComponent;
     class DecalComponent;
     class MeshComponent;
+    class LightComponent;
+    class PhysicalSkyComponent;
+    class VolumetricCloudComponent;
     class CanvasComponent;
     class RmlWidgetComponent;
     class ParticleSystemComponent;
@@ -188,6 +191,8 @@ namespace PlutoGE::scene
                            float fadeDuration = 0.0f);
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
+        const std::vector<PhysicalSkyComponent *> &GetPhysicalSkyComponents() const;
+        const std::vector<VolumetricCloudComponent *> &GetVolumetricCloudComponents() const;
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
         void SubmitRenderCommands();
@@ -220,6 +225,17 @@ namespace PlutoGE::scene
 
     protected:
         friend class Entity;
+        // Rebuilt lazily in hierarchy order after structural edits. Enable and
+        // active flags are evaluated at query time, including inactive ancestors.
+        void InvalidateEnvironmentComponents()
+        {
+            m_environmentComponentsDirty = true;
+        }
+        void RefreshEnvironmentComponents() const;
+        mutable bool m_environmentComponentsDirty = true;
+        mutable std::vector<LightComponent *> m_environmentLights;
+        mutable std::vector<PhysicalSkyComponent *> m_physicalSkies;
+        mutable std::vector<VolumetricCloudComponent *> m_volumetricClouds;
         void AddLight(Light *light) { m_lights.push_back(light); }
         void RemoveLight(Light *light)
         {

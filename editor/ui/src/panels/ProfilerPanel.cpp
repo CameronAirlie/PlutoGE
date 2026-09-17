@@ -245,6 +245,11 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.visibleDrawCount),
                     static_cast<unsigned long long>(rhiScene.visibleInstanceCount),
                     static_cast<unsigned long long>(rhiScene.shadowCandidateCount));
+        ImGui::Text("    Packets: visible %.2f / shadow %.2f / GI %.2f / batching %.2f ms",
+                    rhiScene.visiblePreparationMs, rhiScene.shadowPreparationMs, rhiScene.giPreparationMs,
+                    rhiScene.batchingMs);
+        ImGui::Text("    Packet reuse: %zu reused / %zu rebuilt", rhiScene.reusedDrawPackets,
+                    rhiScene.rebuiltDrawPackets);
         ImGui::Text("    Upscaler + resize: %.2f ms", rhiScene.translationPreparationMs);
         ImGui::Text("    Mesh preparation (includes skinning): %.2f ms (%llu attempts)", rhiScene.meshUploadMs,
                     static_cast<unsigned long long>(rhiScene.meshUploadCount));

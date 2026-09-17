@@ -1,19 +1,21 @@
-#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/Entity.h"
-#include "PlutoGE/scene/components/Component.h"
-#include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
-#include <unordered_map>
+#include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
-#include "PlutoGE/scene/components/DecalComponent.h"
-#include "PlutoGE/scene/components/TerrainComponent.h"
-#include "PlutoGE/scene/components/FoliageComponent.h"
-#include "PlutoGE/scene/components/UIComponent.h"
-#include "PlutoGE/scripting/ScriptRuntime.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scripting/ScriptRuntime.h"
+#include <unordered_map>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -232,6 +234,8 @@ namespace PlutoGE::scene
 
         m_children.push_back(child);
         child->m_parent = this;
+        if (m_scene)
+            m_scene->InvalidateEnvironmentComponents();
         child->SetSceneRecursive(m_scene);
         child->MarkTransformDirtyRecursive();
         child->MarkShadowSceneDirty();
@@ -258,6 +262,7 @@ namespace PlutoGE::scene
         if (m_scene)
         {
             m_scene->m_rootEntities.push_back(this);
+            m_scene->InvalidateEnvironmentComponents();
         }
 
         MarkShadowSceneDirty();
@@ -291,6 +296,10 @@ namespace PlutoGE::scene
 
         component->m_entity = this;
         m_componentBuckets[typeID].push_back(component);
+        if (m_scene &&
+            (typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
+             typeID == GetComponentTypeID<VolumetricCloudComponent>()))
+            m_scene->InvalidateEnvironmentComponents();
         ++m_componentRevision;
     }
 
@@ -303,6 +312,10 @@ namespace PlutoGE::scene
         }
 
         auto &bucket = m_componentBuckets[typeID];
+        if (m_scene &&
+            (typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
+             typeID == GetComponentTypeID<VolumetricCloudComponent>()))
+            m_scene->InvalidateEnvironmentComponents();
         bucket.erase(std::remove(bucket.begin(), bucket.end(), component), bucket.end());
         component->m_entity = nullptr;
         ++m_componentRevision;
@@ -436,6 +449,10 @@ namespace PlutoGE::scene
             return;
         }
 
+        if (m_scene)
+            m_scene->InvalidateEnvironmentComponents();
+        if (scene)
+            scene->InvalidateEnvironmentComponents();
         if (m_scene)
         {
             for (auto *lightComponent : GetComponents<LightComponent>())

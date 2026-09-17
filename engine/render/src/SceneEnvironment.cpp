@@ -6,9 +6,9 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
+#include <algorithm>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <algorithm>
 
 namespace PlutoGE::render
 {
@@ -20,72 +20,52 @@ namespace PlutoGE::render
             float distanceSquared = 0.0f;
         };
 
-        const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Entity *entity)
-        {
-            if (!entity || !entity->IsActive())
-                return nullptr;
-            for (const auto *sky : entity->GetComponents<scene::PhysicalSkyComponent>())
-                if (sky && sky->IsEnabled())
-                    return sky;
-            for (const auto *child : entity->GetChildren())
-                if (const auto *sky = FindPhysicalSky(child))
-                    return sky;
-            return nullptr;
-        }
-
         const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Scene *scene)
         {
-            if (!scene)
-                return nullptr;
-            for (const auto *root : scene->GetRootEntities())
-                if (const auto *sky = FindPhysicalSky(root))
-                    return sky;
+            if (scene)
+                for (const auto *sky : scene->GetPhysicalSkyComponents())
+                    if (sky->IsEnabled() && sky->GetOwner() && sky->GetOwner()->IsActiveInHierarchy())
+                        return sky;
             return nullptr;
         }
 
-        glm::vec3 AtmosphericSunTransmittance(const scene::PhysicalSkyComponent &sky,
-                                              const glm::vec3 &sunDirection)
+        glm::vec3 AtmosphericSunTransmittance(const scene::PhysicalSkyComponent &sky, const glm::vec3 &sunDirection)
         {
             const float airMass = 1.0f / std::max(sunDirection.y + 0.075f, 0.04f);
-            const glm::vec3 extinction =
-                glm::vec3(0.028f, 0.067f, 0.155f) * std::max(sky.GetRayleighStrength(), 0.0f) +
-                glm::vec3(0.035f) * std::max(sky.GetMieStrength(), 0.0f) +
-                glm::vec3(0.004f, 0.012f, 0.002f) * std::max(sky.GetOzoneStrength(), 0.0f);
+            const glm::vec3 extinction = glm::vec3(0.028f, 0.067f, 0.155f) * std::max(sky.GetRayleighStrength(), 0.0f) +
+                                         glm::vec3(0.035f) * std::max(sky.GetMieStrength(), 0.0f) +
+                                         glm::vec3(0.004f, 0.012f, 0.002f) * std::max(sky.GetOzoneStrength(), 0.0f);
             return glm::exp(-extinction * airMass) * glm::max(sky.GetSunColor(), glm::vec3(0.0f));
         }
 
-        void CollectAtmosphere(const scene::Entity *entity, const glm::vec3 &cameraPosition,
+        void CollectAtmosphere(const scene::Scene *scene, const glm::vec3 &cameraPosition,
                                const render::BasicLighting &lighting,
-                               std::vector<render::BasicPostProcessEffect> &effects,
-                               std::vector<CloudPacket> &clouds, bool &hasSky)
+                               std::vector<render::BasicPostProcessEffect> &effects, std::vector<CloudPacket> &clouds)
         {
-            if (!entity || !entity->IsActive())
+            if (!scene)
                 return;
-            if (!hasSky)
-                for (const auto *sky : entity->GetComponents<scene::PhysicalSkyComponent>())
-                    if (sky && sky->IsEnabled())
-                    {
-                        render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
-                        // Horizon attenuation can make a valid sun's intensity zero.
-                        // Keep its direction so sunset cannot reset the sky to daytime.
-                        glm::vec3 sunDirection = -lighting.directionalDirection;
-                        if (glm::dot(sunDirection, sunDirection) < 0.000001f)
-                            sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
-                        effect.exposure = sky->GetExposure();
-                        effect.parameters[0] = {glm::normalize(sunDirection), sky->GetRayleighStrength()};
-                        effect.parameters[1] = {sky->GetSunColor(), sky->GetMieStrength()};
-                        effect.parameters[2] = {sky->GetMoonColor(), sky->GetMieAnisotropy()};
-                        effect.parameters[3] = {sky->GetGroundColor(), sky->GetOzoneStrength()};
-                        effect.parameters[4] = {sky->GetSunIntensity(), sky->GetSunAngularRadius(),
-                                                sky->GetNightIntensity(), sky->GetStarIntensity()};
-                        effect.parameters[5] = {sky->GetMoonIntensity(), sky->GetMoonAngularRadius(), 0.0f, 0.0f};
-                        effects.push_back(effect);
-                        hasSky = true;
-                        break;
-                    }
+            if (const auto *sky = FindPhysicalSky(scene))
+            {
+                render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
+                // Horizon attenuation can make a valid sun's intensity zero.
+                // Keep its direction so sunset cannot reset the sky to daytime.
+                glm::vec3 sunDirection = -lighting.directionalDirection;
+                if (glm::dot(sunDirection, sunDirection) < 0.000001f)
+                    sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
+                effect.exposure = sky->GetExposure();
+                effect.parameters[0] = {glm::normalize(sunDirection), sky->GetRayleighStrength()};
+                effect.parameters[1] = {sky->GetSunColor(), sky->GetMieStrength()};
+                effect.parameters[2] = {sky->GetMoonColor(), sky->GetMieAnisotropy()};
+                effect.parameters[3] = {sky->GetGroundColor(), sky->GetOzoneStrength()};
+                effect.parameters[4] = {sky->GetSunIntensity(), sky->GetSunAngularRadius(), sky->GetNightIntensity(),
+                                        sky->GetStarIntensity()};
+                effect.parameters[5] = {sky->GetMoonIntensity(), sky->GetMoonAngularRadius(), 0.0f, 0.0f};
+                effects.push_back(effect);
+            }
 
-            for (const auto *cloud : entity->GetComponents<scene::VolumetricCloudComponent>())
-                if (cloud && cloud->IsEnabled() && cloud->GetDensity() > 0.0f && cloud->GetCoverage() > 0.0f)
+            for (const auto *cloud : scene->GetVolumetricCloudComponents())
+                if (cloud && cloud->IsEnabled() && cloud->GetOwner() && cloud->GetOwner()->IsActiveInHierarchy() &&
+                    cloud->GetDensity() > 0.0f && cloud->GetCoverage() > 0.0f)
                 {
                     render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::VolumetricCloud};
                     glm::vec3 lightDirection = -lighting.directionalDirection;
@@ -93,9 +73,10 @@ namespace PlutoGE::render
                         lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
                     lightDirection = glm::normalize(lightDirection);
                     const float horizonVisibility = glm::smoothstep(-0.02f, 0.03f, lightDirection.y);
-                    const glm::vec3 windDirection = glm::dot(cloud->GetWindDirection(), cloud->GetWindDirection()) > 0.000001f
-                                                        ? glm::normalize(cloud->GetWindDirection())
-                                                        : glm::vec3(0.0f);
+                    const glm::vec3 windDirection =
+                        glm::dot(cloud->GetWindDirection(), cloud->GetWindDirection()) > 0.000001f
+                            ? glm::normalize(cloud->GetWindDirection())
+                            : glm::vec3(0.0f);
                     effect.quality = static_cast<std::uint32_t>(std::clamp(cloud->GetPrimaryStepCount(), 1, 128)) |
                                      (static_cast<std::uint32_t>(std::clamp(cloud->GetLightStepCount(), 1, 16)) << 8u);
                     effect.parameters[0] = {cloud->GetCloudColor(), cloud->GetCoverage()};
@@ -107,16 +88,15 @@ namespace PlutoGE::render
                     effect.parameters[4] = {cloud->GetScatteringAlbedo(), cloud->GetAnisotropy(),
                                             cloud->GetAmbientLight(), cloud->GetBaseNoiseScale()};
                     effect.parameters[5] = {cloud->GetDetailNoiseScale(), cloud->GetDetailErosion(), 0.0f, 0.0f};
-                    const glm::mat4 volumeTransform = entity->GetWorldTransform() *
-                                                      glm::scale(glm::mat4(1.0f), cloud->GetSize());
+                    const auto *entity = cloud->GetOwner();
+                    const glm::mat4 volumeTransform =
+                        entity->GetWorldTransform() * glm::scale(glm::mat4(1.0f), cloud->GetSize());
                     effect.worldToLocal = glm::inverse(volumeTransform);
                     const glm::vec3 offset = entity->GetWorldPosition() - cameraPosition;
                     clouds.push_back({effect, glm::dot(offset, offset)});
                 }
-            for (const auto *child : entity->GetChildren())
-                CollectAtmosphere(child, cameraPosition, lighting, effects, clouds, hasSky);
         }
-    }
+    } // namespace
 
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene)
     {
@@ -152,17 +132,14 @@ namespace PlutoGE::render
         return lighting;
     }
 
-    std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene,
-                                                           const BasicLighting &lighting)
+    std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene, const BasicLighting &lighting)
     {
         std::vector<render::BasicPostProcessEffect> atmosphereEffects;
         std::vector<CloudPacket> clouds;
-        bool hasSky = false;
-        if (scene)
-            for (const auto *root : scene->GetRootEntities())
-                CollectAtmosphere(root, lighting.cameraPosition, lighting, atmosphereEffects, clouds, hasSky);
-        std::sort(clouds.begin(), clouds.end(), [](const CloudPacket &lhs, const CloudPacket &rhs)
-                  { return lhs.distanceSquared > rhs.distanceSquared; });
+        CollectAtmosphere(scene, lighting.cameraPosition, lighting, atmosphereEffects, clouds);
+        std::sort(clouds.begin(), clouds.end(), [](const CloudPacket &lhs, const CloudPacket &rhs) {
+            return lhs.distanceSquared > rhs.distanceSquared;
+        });
         for (auto &cloud : clouds)
         {
             if (const auto *sky = FindPhysicalSky(scene); sky && cloud.effect.parameters[2].y <= -0.02f)
@@ -181,4 +158,4 @@ namespace PlutoGE::render
 
         return atmosphereEffects;
     }
-}
+} // namespace PlutoGE::render

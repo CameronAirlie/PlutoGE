@@ -116,6 +116,44 @@ namespace PlutoGE::render
         HashBatchValue(hash, value.generation);
     }
 
+    inline std::size_t BasicMaterialBatchHash(const BasicDraw &draw)
+    {
+        std::size_t hash = 0;
+        HashBatchValue(hash, draw.baseColor);
+        HashBatchValue(hash, draw.uvScale);
+        HashBatchValue(hash, draw.baseColorTexture);
+        HashBatchValue(hash, draw.normalTexture);
+        HashBatchValue(hash, draw.metallicTexture);
+        HashBatchValue(hash, draw.roughnessTexture);
+        HashBatchValue(hash, draw.metallic);
+        HashBatchValue(hash, draw.roughness);
+        HashBatchValue(hash, draw.emission);
+        HashBatchValue(hash, draw.subsurface);
+        HashBatchValue(hash, draw.subsurfaceColor);
+        HashBatchValue(hash, draw.subsurfaceRadius);
+        HashBatchValue(hash, draw.surfaceType);
+        HashBatchValue(hash, draw.transmission);
+        HashBatchValue(hash, draw.ior);
+        HashBatchValue(hash, draw.thickness);
+        HashBatchValue(hash, draw.attenuationColor);
+        HashBatchValue(hash, draw.attenuationDistance);
+        HashBatchValue(hash, draw.shaderGraphProgram ? draw.shaderGraphProgram->hash : 0ull);
+        HashBatchValue(hash, draw.outlineWidth);
+        HashBatchValue(hash, draw.outlineColor);
+        HashBatchValue(hash, draw.twoSided);
+        HashBatchValue(hash, draw.alphaCutoff);
+        HashBatchValue(hash, draw.alphaMode);
+        HashBatchValue(hash, draw.metallicChannel);
+        HashBatchValue(hash, draw.roughnessChannel);
+        HashBatchValue(hash, draw.flipNormalY);
+        for (const auto texture : draw.graphTextures)
+            HashBatchValue(hash, texture);
+        for (const auto sampler : draw.graphSamplers)
+            HashBatchValue(hash, sampler);
+        HashBatchValue(hash, draw.graphPassOrder);
+        return hash;
+    }
+
     inline void BatchOpaqueDraws(std::vector<BasicDraw> &draws)
     {
         struct Group
@@ -139,34 +177,9 @@ namespace PlutoGE::render
                 HashBatchValue(hash, draw.firstIndex);
                 HashBatchValue(hash, draw.indexCount);
                 HashBatchValue(hash, draw.normalizedLod);
-                HashBatchValue(hash, draw.baseColor);
-                HashBatchValue(hash, draw.uvScale);
-                HashBatchValue(hash, draw.baseColorTexture);
-                HashBatchValue(hash, draw.normalTexture);
-                HashBatchValue(hash, draw.metallicTexture);
-                HashBatchValue(hash, draw.roughnessTexture);
-                HashBatchValue(hash, draw.metallic);
-                HashBatchValue(hash, draw.roughness);
-                HashBatchValue(hash, draw.emission);
-                HashBatchValue(hash, draw.subsurface);
-                HashBatchValue(hash, draw.subsurfaceColor);
-                HashBatchValue(hash, draw.subsurfaceRadius);
-                HashBatchValue(hash, draw.surfaceType);
-                HashBatchValue(hash, draw.transmission);
-                HashBatchValue(hash, draw.ior);
-                HashBatchValue(hash, draw.thickness);
-                HashBatchValue(hash, draw.attenuationColor);
-                HashBatchValue(hash, draw.attenuationDistance);
-                HashBatchValue(hash, draw.shaderGraphProgram ? draw.shaderGraphProgram->hash : 0ull);
-                HashBatchValue(hash, draw.outlineWidth);
-                HashBatchValue(hash, draw.outlineColor);
+                HashBatchValue(hash,
+                               draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw));
                 HashBatchValue(hash, draw.outlinePass);
-                HashBatchValue(hash, draw.twoSided);
-                HashBatchValue(hash, draw.alphaCutoff);
-                HashBatchValue(hash, draw.alphaMode);
-                HashBatchValue(hash, draw.metallicChannel);
-                HashBatchValue(hash, draw.roughnessChannel);
-                HashBatchValue(hash, draw.flipNormalY);
                 HashBatchValue(hash, draw.castsShadow);
                 HashBatchValue(hash, draw.contributesToGi);
                 auto &candidates = groups[hash];

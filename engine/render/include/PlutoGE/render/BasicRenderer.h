@@ -281,6 +281,10 @@ namespace PlutoGE::render
         // existing conservative sphere fallback; never reuse for deformed meshes.
         glm::vec3 occlusionBoundsCenter{0.0f};
         glm::vec3 occlusionBoundsExtents{-1.0f};
+        // Renderer-owned immutable preparation token; zero for externally
+        // authored/mutable packets. Consumers must retain mesh-revision checks.
+        std::uint64_t preparationRevision = 0;
+        std::size_t preparedMaterialHash = 0;
     };
 
     struct BasicParticleVertex
@@ -581,6 +585,11 @@ namespace PlutoGE::render
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
         std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
         std::vector<std::uint64_t> m_shadowDrawSignatures;
+        struct ShadowSignatureCache
+        {
+            std::uint64_t packetRevision = 0, meshRevision = 0, signature = 0;
+        };
+        std::vector<ShadowSignatureCache> m_shadowSignatureCache;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;

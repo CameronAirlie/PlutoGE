@@ -413,6 +413,10 @@ namespace PlutoGE::ui
                << rhiScene.visibleDrawCount << " translated groups / "
                << rhiScene.visibleInstanceCount << " instances, "
                << rhiScene.shadowCandidateCount << " shadow candidates)\n";
+        report << "RHI packet preparation: visible " << rhiScene.visiblePreparationMs << " ms, shadow "
+               << rhiScene.shadowPreparationMs << " ms, GI " << rhiScene.giPreparationMs << " ms, batching "
+               << rhiScene.batchingMs << " ms (" << rhiScene.reusedDrawPackets << " reused / "
+               << rhiScene.rebuiltDrawPackets << " rebuilt)\n";
         report << "RHI translation / Upscaler + resize: " << rhiScene.translationPreparationMs << " ms\n";
         report << "RHI translation / Mesh preparation (includes skinning): " << rhiScene.meshUploadMs
                << " ms (" << rhiScene.meshUploadCount << " attempts)\n";

@@ -169,6 +169,7 @@ namespace PlutoGE::render
         // w=1 carries an explicitly deformed previous position. Static mesh
         // aggregates keep w=0 and use position for object-only motion.
         std::array<float, 4> previousPosition{};
+        std::array<float, 2> uv2{};
     };
 
     struct BasicMeshData
@@ -241,6 +242,8 @@ namespace PlutoGE::render
         rhi::TextureHandle normalTexture;
         rhi::TextureHandle metallicTexture;
         rhi::TextureHandle roughnessTexture;
+        rhi::TextureHandle emissionTexture;
+        int emissionTexCoord = 0;
         std::array<rhi::TextureHandle,4> graphTextures{};
         std::array<std::uint32_t,4> graphSamplers{};
         float metallic = 0.0f;

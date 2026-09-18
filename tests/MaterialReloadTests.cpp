@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/platform/Window.h"
+#include "EmissionMaterialChecks.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -21,8 +22,7 @@ int main() try
     std::filesystem::create_directories(path.parent_path());
     struct Cleanup {
         std::filesystem::path path;
-        ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec);
-            std::filesystem::remove(path.parent_path(), ec); std::filesystem::remove(path.parent_path().parent_path(), ec); }
+        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path.parent_path().parent_path(), ec); }
     } cleanup{path};
     const auto write = [&](const char *mode, float cutoff) {
         std::ofstream file(path);
@@ -58,7 +58,8 @@ int main() try
     assets.ReloadMaterialAssets();
     require(assets.LoadMaterialAsset(reference) == material && material->GetConfig().alphaMode == render::AlphaMode::Opaque,
         "A missing material file invalidated the last loaded material");
-    std::cout << "Material reload checks passed\n";
+    CheckEmissionMaterial(assets, root);
+    std::cout << "Material reload and emissive import checks passed\n";
     return 0;
 }
 catch (const std::exception &error)

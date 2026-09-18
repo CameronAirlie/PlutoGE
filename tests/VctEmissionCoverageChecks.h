@@ -77,7 +77,7 @@ inline bool CheckVctEmissionCoverage()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         const glm::vec4 emissionTexel(.25f,.5f,.75f,1);
         glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,1,1,0,GL_RGBA,GL_FLOAT,&emissionTexel);
-        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false, bool textured = false)
+        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false, bool textured = false, bool emissiveMap = false)
         {
             constexpr float volumeSize = 16.0f;
             const float voxelSize = volumeSize / float(resolution);
@@ -167,19 +167,24 @@ inline bool CheckVctEmissionCoverage()
                 voxel->SetUniform("uMetallicFactor",metallic);
                 voxel->SetUniform("uHasAlbedoTexture",textured?1.0f:0.0f);
                 voxel->SetUniform("uAlbedoTexture",0);
+                voxel->SetUniform("uHasEmissionTexture",emissiveMap?1.0f:0.0f);
+                voxel->SetUniform("uEmissionTexture",30);
             }
             else
             {
                 struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
-                struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; ShaderGraphProgramData graph{}; glm::vec4 cameraTime{0}; glm::vec4 factors{1}; } material;
-                static_assert(sizeof(MaterialPass)==96+sizeof(ShaderGraphProgramData));
+                struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; ShaderGraphProgramData graph{}; glm::vec4 cameraTime{0}; glm::vec4 factors{1}; glm::uvec4 emissionParameters{0}; } material;
+                static_assert(sizeof(MaterialPass)==112+sizeof(ShaderGraphProgramData));
                 material.emission = useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f);
                 if(graphProgram)material.graph=graphProgram->data;
                 material.metallic = metallic; material.flags.w = 1;
                 material.flags.x = textured ? 1u : 0u;
+                material.emissionParameters.x = emissiveMap ? 1u : 0u;
                 glm::mat4 model(1);
                 upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
             }
+            glActiveTexture(legacy?GL_TEXTURE30:GL_TEXTURE20);
+            glBindTexture(GL_TEXTURE_2D,emissionTexture);
             glActiveTexture(legacy?GL_TEXTURE0:GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D,emissionTexture);
             glActiveTexture(GL_TEXTURE0);
@@ -283,6 +288,11 @@ inline bool CheckVctEmissionCoverage()
                         }
         const double graphEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true);
         const double texturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true);
+        const double mappedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true,true);
+        if (std::abs(mappedEnergy-8.0)>.32) {
+            std::cerr << "VCT emission map multiplied albedo or was ignored: " << mappedEnergy << '\n';
+            passed=false;
+        }
         const double graphTexturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true,true);
         if (std::abs(texturedEnergy-8.0)>.32 || std::abs(graphTexturedEnergy-32.0)>1.28)
         {

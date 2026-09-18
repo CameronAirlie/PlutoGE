@@ -11,6 +11,7 @@
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
+#include "EmissionTextureRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -264,6 +265,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             };
             CheckGlassRendering(basicRenderer, read);
             CheckTransparencyDepth(basicRenderer, device, read);
+            CheckEmissionTexture(basicRenderer, device, read);
             if (glGetError() != GL_NO_ERROR) return 1;
             return 0;
         }

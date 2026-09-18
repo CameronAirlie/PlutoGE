@@ -103,6 +103,7 @@ namespace PlutoGE::render
             }
             output.tangent[3]=(vertex.tangent[3]==0 ? 1 : vertex.tangent[3])*(determinant<0 ? -1.0f : 1.0f);
             output.uv=vertex.uv;
+            output.uv2=vertex.uv2;
             const auto &old = previous.size() == source.size() ? previous[index].position : output.position;
             output.previousPosition = {old[0], old[1], old[2], 1};
             result[index] = output;

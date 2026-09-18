@@ -63,6 +63,8 @@ namespace PlutoGE::assetimport
         float thickness = 0.01f;
         glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f};
         float attenuationDistance = 1.0f;
+        int emissionTextureIndex = -1;
+        int emissionTexCoord = 0;
         int albedoTextureIndex = -1;
         int normalTextureIndex = -1;
         int metallicRoughnessTextureIndex = -1;

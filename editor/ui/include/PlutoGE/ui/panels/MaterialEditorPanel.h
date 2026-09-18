@@ -37,6 +37,8 @@ namespace PlutoGE::ui
         render::TextureChannel m_metallicTextureChannel = render::TextureChannel::Red;
         float m_roughness = 0.55f;
         glm::vec3 m_emission{0.0f};
+        std::string m_emissionTexturePath;
+        int m_emissionTexCoord = 0;
         float m_subsurface = 0.0f;
         glm::vec3 m_subsurfaceColor{1.0f, 0.35f, 0.2f};
         float m_subsurfaceRadius = 1.0f;

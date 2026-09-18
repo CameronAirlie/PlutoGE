@@ -2393,6 +2393,15 @@ namespace PlutoGE::assets
                     {
                         config.flipNormalY = value == "true" || value == "1";
                     }
+                    else if (key == "EmissionTexture")
+                    {
+                        const std::string texturePath = ResolveMaterialTexturePath(value);
+                        config.emissionTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
+                    }
+                    else if (key == "EmissionTexCoord")
+                    {
+                        config.emissionTexCoord = value == "1" ? 1 : 0;
+                    }
                     else if (key == "AlbedoTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
@@ -2553,6 +2562,8 @@ namespace PlutoGE::assets
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
+        output << "EmissionTexture=" << (config.emissionTexture ? PersistMaterialTexturePath(config.emissionTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "EmissionTexCoord=" << config.emissionTexCoord << "\n";
         output << "Emission=" << config.emission.r << "," << config.emission.g << "," << config.emission.b << "\n";
         output << "Subsurface=" << config.subsurface << "\n";
         output << "SubsurfaceColor=" << config.subsurfaceColor.r << "," << config.subsurfaceColor.g << "," << config.subsurfaceColor.b << "\n";
@@ -2609,6 +2620,7 @@ namespace PlutoGE::assets
             cachedConfig.albedoTexture = reloadTexture(config.albedoTexture, render::TextureColorSpace::SRGB);
             cachedConfig.normalTexture = reloadTexture(config.normalTexture, render::TextureColorSpace::Linear);
             cachedConfig.metallicTexture = reloadTexture(config.metallicTexture, render::TextureColorSpace::Linear);
+            cachedConfig.emissionTexture = reloadTexture(config.emissionTexture, render::TextureColorSpace::SRGB);
             cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture, render::TextureColorSpace::Linear);
             cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())

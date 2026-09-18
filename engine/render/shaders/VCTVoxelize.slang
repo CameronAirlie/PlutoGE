@@ -42,10 +42,12 @@ struct MaterialParameters
     ShaderGraphData graph;
     float4 graphCameraTime;
     float4 graphFactors;
+    uint4 emissionParameters;
 };
 [[vk::binding(0, 0)]] cbuffer VoxelConstants : register(b0, space0) { VoxelParameters voxel; };
 [[vk::binding(1, 0)]] cbuffer ObjectConstants : register(b1, space0) { ObjectParameters object; };
 [[vk::binding(2, 0)]] cbuffer MaterialConstants : register(b2, space0) { MaterialParameters material; };
+[[vk::binding(20, 0)]] Sampler2D emissionTexture : register(t20, space0);
 [[vk::binding(3, 0)]] Sampler2D albedoTexture : register(t3, space0);
 [[vk::binding(9, 0)]] Sampler2D metallicTexture : register(t9, space0);
 [[vk::binding(10, 0)]] Sampler2D shadowTexture0 : register(t10, space0);
@@ -77,10 +79,14 @@ float4 shaderGraphTexture(int slot, float2 uv)
     return graphRoughnessTexture.SampleLevel(uv,0.0);
 }
 
-struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
-struct VertexOutput { float3 worldPosition : POSITION0; float3 worldNormal : NORMAL0; float2 uv : TEXCOORD0; };
+struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; float2 uv2 : TEXCOORD1; };
+struct VertexOutput { float3 worldPosition : POSITION0; float3 worldNormal : NORMAL0; float2 uv : TEXCOORD0; float2 uv2 : TEXCOORD1; };
 struct GeometryOutput
 {
+    float2 uv2 : TEXCOORD12;
+    nointerpolation float2 uv2A : TEXCOORD13;
+    nointerpolation float2 uv2B : TEXCOORD14;
+    nointerpolation float2 uv2C : TEXCOORD15;
     float2 rasterCell : TEXCOORD1;
     nointerpolation float3 triangleA : TEXCOORD2;
     nointerpolation float3 triangleB : TEXCOORD3;
@@ -157,6 +163,7 @@ VertexOutput vertexMain(VertexInput input)
     output.worldPosition = mul(object.model, float4(input.position, 1.0)).xyz;
     output.worldNormal = normalize(mul((float3x3)object.model, input.normal));
     output.uv = input.uv * material.uvScale;
+    output.uv2 = input.uv2 * material.uvScale;
     output.worldPosition += shaderGraphVertexOffset(material.graph,output.worldPosition,output.worldNormal,
         normalize(material.graphCameraTime.xyz-output.worldPosition),material.graphCameraTime.w,output.uv,
         material.baseColor,material.metallic,material.graphFactors.x,material.emission);
@@ -196,6 +203,8 @@ void geometryMain(triangle VertexOutput vertices[3], inout TriangleStream<Geomet
         output.worldPosition = vertices[vertex].worldPosition;
         output.worldNormal = vertices[vertex].worldNormal;
         output.uv = vertices[vertex].uv;
+        output.uv2 = vertices[vertex].uv2;
+        output.uv2A = vertices[0].uv2; output.uv2B = vertices[1].uv2; output.uv2C = vertices[2].uv2;
         output.triangleA = positions[0]; output.triangleB = positions[1]; output.triangleC = positions[2];
         output.uvA = vertices[0].uv; output.uvB = vertices[1].uv; output.uvC = vertices[2].uv;
         output.normalA = vertices[0].worldNormal; output.normalB = vertices[1].worldNormal; output.normalC = vertices[2].worldNormal;
@@ -219,6 +228,7 @@ void fragmentMain(GeometryOutput input)
         input.worldPosition = voxel.volumeOrigin + (input.triangleA * barycentric.x +
             input.triangleB * barycentric.y + input.triangleC * barycentric.z) *
             (voxel.volumeSize / float(voxel.resolution));
+        input.uv2 = input.uv2A * barycentric.x + input.uv2B * barycentric.y + input.uv2C * barycentric.z;
         input.uv = input.uvA * barycentric.x + input.uvB * barycentric.y + input.uvC * barycentric.z;
         input.worldNormal = input.normalA * barycentric.x + input.normalB * barycentric.y + input.normalC * barycentric.z;
     }
@@ -230,7 +240,8 @@ void fragmentMain(GeometryOutput input)
     float metallic = saturate(material.metallic);
     if (material.hasMetallicTexture != 0) metallic *= metallicTexture.Sample(input.uv)[min(material.metallicChannel,3)];
     float roughness=material.graphFactors.x;
-    float3 emission=material.emission * sampledBaseColor.rgb;
+    float3 emission=material.emission * (material.emissionParameters.x != 0
+        ? emissionTexture.Sample(material.emissionParameters.y == 1 ? input.uv2 : input.uv).rgb : sampledBaseColor.rgb);
     evaluateShaderGraph(material.graph,input.worldPosition,normal,normalize(material.graphCameraTime.xyz-input.worldPosition),
         material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;

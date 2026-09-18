@@ -320,6 +320,7 @@ namespace PlutoGE::scene
             glm::vec3 worldPositions[3]{};
             glm::vec3 worldNormals[3]{};
             glm::vec2 primaryUvs[3]{};
+            glm::vec2 emissionUvs[3]{};
             glm::vec2 lightmapUvs[3]{};
             glm::vec3 baseColor{1.0f};
             float baseAlpha = 1.0f;
@@ -2391,6 +2392,7 @@ namespace PlutoGE::scene
             for(int i=0;i<3;++i) {
                 sample.worldPosition+=triangle.worldPositions[i]*barycentric[i];
                 sample.uv+=triangle.primaryUvs[i]*barycentric[i];
+                sample.uv2+=triangle.emissionUvs[i]*barycentric[i];
             }
             sample.worldNormal=NormalizeOr(triangle.worldNormals[0]*barycentric.x+triangle.worldNormals[1]*barycentric.y+
                 triangle.worldNormals[2]*barycentric.z,glm::vec3(0,0,1));
@@ -2964,6 +2966,7 @@ namespace PlutoGE::scene
                                                      sourceVertex.normal[2]), glm::vec3(0.0f));
                         triangle.primaryUvs[vertexIndex] =
                             glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material.GetConfig().uvScale;
+                        triangle.emissionUvs[vertexIndex] = glm::vec2(sourceVertex.uv2[0], sourceVertex.uv2[1]) * material.GetConfig().uvScale;
                         triangle.lightmapUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
                         if(triangle.graphMaterial.shaderGraphProgram) {
                             render::ShaderGraphSample sample;
@@ -3120,6 +3123,7 @@ namespace PlutoGE::scene
                                 glm::vec3(0.0f));
                             const glm::vec2 sourcePrimaryUv(sourceVertex.uv[0], sourceVertex.uv[1]);
                             triangle.primaryUvs[vertexIndex] = sourcePrimaryUv * material->GetConfig().uvScale;
+                            triangle.emissionUvs[vertexIndex] = glm::vec2(sourceVertex.uv2[0], sourceVertex.uv2[1]) * material->GetConfig().uvScale;
                         if(triangle.graphMaterial.shaderGraphProgram) {
                             render::ShaderGraphSample sample;
                             sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];

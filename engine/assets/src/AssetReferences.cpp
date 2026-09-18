@@ -165,7 +165,7 @@ namespace PlutoGE::assets
             const auto key = line.substr(0, equals);
             const auto value = line.substr(equals + 1);
             if ((extension == ".plutomaterial" || extension == ".mat") &&
-                (key == "AlbedoTexture" || key == "NormalTexture" || key == "MetallicTexture" || key == "RoughnessTexture"))
+                (key == "AlbedoTexture" || key == "NormalTexture" || key == "MetallicTexture" || key == "RoughnessTexture" || key == "EmissionTexture"))
             {
                 if (!value.empty() && value.find("://") == std::string_view::npos &&
                     !std::filesystem::path(value).is_absolute())

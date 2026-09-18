@@ -73,6 +73,9 @@ namespace PlutoGE::render
         setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
+        setInt("uEmissionTexCoord", m_config.emissionTexCoord);
+        setFloat("uHasEmissionTexture", m_config.emissionTexture ? 1.0f : 0.0f);
+        if (m_config.emissionTexture) setTexture("uEmissionTexture", m_config.emissionTexture, 30);
         setVec3("uEmission", glm::max(m_config.emission, glm::vec3(0.0f)));
         setFloat("uSubsurfaceFactor", glm::clamp(m_config.subsurface, 0.0f, 1.0f));
         setVec3("uSubsurfaceColor", glm::max(m_config.subsurfaceColor, glm::vec3(0.0f)));

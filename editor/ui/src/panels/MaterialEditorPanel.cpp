@@ -424,6 +424,8 @@ namespace PlutoGE::ui
             m_metallicTextureChannel = render::TextureChannel::Red;
             m_roughness = 0.55f;
             m_emission = glm::vec3(0.0f);
+            m_emissionTexturePath.clear();
+            m_emissionTexCoord = 0;
             m_roughnessTexturePath.clear();
             m_roughnessTextureChannel = render::TextureChannel::Red;
             m_transmission = 0.0f;
@@ -458,6 +460,8 @@ namespace PlutoGE::ui
         m_metallicTextureChannel = config.metallicTextureChannel;
         m_roughness = config.roughness;
         m_emission = config.emission;
+        m_emissionTexturePath = config.emissionTexture ? config.emissionTexture->GetFilePath() : std::string{};
+        m_emissionTexCoord = config.emissionTexCoord;
         m_roughnessTexturePath = config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{};
         m_roughnessTextureChannel = config.roughnessTextureChannel;
         m_transmission = config.transmission;
@@ -509,6 +513,8 @@ namespace PlutoGE::ui
         previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
         previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
         previewConfig.emission = m_emission;
+        previewConfig.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, render::TextureColorSpace::SRGB);
+        previewConfig.emissionTexCoord = m_emissionTexCoord;
         previewConfig.transmission = m_transmission;
         previewConfig.subsurface = m_subsurface;
         previewConfig.subsurfaceColor = m_subsurfaceColor;
@@ -531,6 +537,8 @@ namespace PlutoGE::ui
         HashPreviewValue(previewRevision, m_normalTexturePath);
         HashPreviewValue(previewRevision, m_metallicTexturePath);
         HashPreviewValue(previewRevision, m_roughnessTexturePath);
+        HashPreviewValue(previewRevision, m_emissionTexturePath);
+        HashPreviewValue(previewRevision, m_emissionTexCoord);
         HashPreviewValue(previewRevision, static_cast<int>(m_metallicTextureChannel));
         HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
         HashPreviewValue(previewRevision, m_flipNormalY);
@@ -692,6 +700,11 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
+        if (RenderTexturePathControl(reference, "EmissionMap", "Emission Texture", m_emissionTexturePath))
+            m_dirty = true;
+        const char *emissionUvs[] = {"UV 0 (primary)", "UV 1 (secondary)"};
+        if (ImGui::Combo("Emission UV Set", &m_emissionTexCoord, emissionUvs, 2))
+            m_dirty = true;
         float emission[3] = {m_emission.r, m_emission.g, m_emission.b};
         if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
         {
@@ -793,6 +806,8 @@ namespace PlutoGE::ui
             config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
             config.emission = glm::max(m_emission, glm::vec3(0.0f));
+            config.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, render::TextureColorSpace::SRGB);
+            config.emissionTexCoord = m_emissionTexCoord;
             config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
             config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
             config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);

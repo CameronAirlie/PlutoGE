@@ -62,8 +62,9 @@ namespace PlutoGE::render
             std::array<glm::vec4, 4> glassFog{};
             ShaderGraphProgramData shaderGraph;
             glm::vec4 shaderGraphFrame{0};
+            glm::uvec4 emissionParameters{0};
         };
-        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 16);
+        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 32);
 
         struct alignas(16) GraphShadowMaterial
         {
@@ -211,6 +212,7 @@ namespace PlutoGE::render
             std::uint32_t metallicChannel = 0, padding = 0;
             ShaderGraphProgramData graph;
             glm::vec4 graphCameraTime{0}, graphFactors{0};
+            glm::uvec4 emissionParameters{0};
         };
         struct alignas(16) VctResolveParameters
         { std::uint32_t resolution = 1, destinationZOffset = 0; float secondaryGain = 0.0f; std::uint32_t padding = 0; };
@@ -241,7 +243,7 @@ namespace PlutoGE::render
         { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
         static_assert(sizeof(VctVoxelParameters) == 1280);
         static_assert(sizeof(VctObjectParameters) == 64);
-        static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+32);
+        static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+48);
         static_assert(sizeof(VctResolveParameters) == 16);
         static_assert(sizeof(VctMipParameters) == 32);
         static_assert(sizeof(VctTraceParameters) == 256);
@@ -306,6 +308,8 @@ namespace PlutoGE::render
                     HashVctValue(hash, draw.metallic);
                     HashVctValue(hash, draw.alphaCutoff);
                     HashVctValue(hash, draw.emission);
+                    HashVctValue(hash, draw.emissionTexture);
+                    HashVctValue(hash, draw.emissionTexCoord);
                     HashVctValue(hash, draw.alphaMode);
                     HashVctValue(hash, draw.baseColorTexture);
                     HashVctValue(hash, draw.metallicTexture);
@@ -452,6 +456,7 @@ namespace PlutoGE::render
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float};
             descriptor.resourceBindings = {
+                {26,1,18,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {22,1,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {23,1,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {24,1,16,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
@@ -481,6 +486,7 @@ namespace PlutoGE::render
                     {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))},
                     {3, rhi::Format::R32G32B32A32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, tangent))},
                     {4, rhi::Format::R32G32B32A32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, previousPosition))},
+                    {5, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv2))},
                 },
             };
             // The migration renderer accepts existing scene assets whose
@@ -962,12 +968,14 @@ namespace PlutoGE::render
                 voxelization.resourceBindings.push_back({14,0,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
                 voxelization.resourceBindings.push_back({15,0,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
                 for(unsigned i=0;i<4;++i)voxelization.resourceBindings.push_back({16+i,0,16+i,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics});
+                voxelization.resourceBindings.push_back({20,0,20,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment});
                 voxelization.vertexLayout = {
                     .stride = sizeof(BasicVertex),
                     .attributes = {
                         {0, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
                         {1, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, normal))},
-                        {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
+                        {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))},
+                        {3, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv2))}}};
                 voxelization.cullMode = rhi::CullMode::None;
                 voxelization.depthTest = false;
                 voxelization.depthWrite = false;
@@ -2039,6 +2047,7 @@ namespace PlutoGE::render
                           std::max(draw.attenuationDistance, 0.0001f)),
                 glm::vec4(1.0f / m_width, 1.0f / m_height,
                           m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
+            materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, 0u, 0u};
             if (draw.shaderGraphProgram)
             {
                 materialParameters.shaderGraph = draw.shaderGraphProgram->data;
@@ -2092,6 +2101,7 @@ namespace PlutoGE::render
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
             for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
+            commands.BindTexture(26, draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
             previousMaterialTextures = materialTextures;
             geometryResourcesBound = true;
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
@@ -3267,6 +3277,8 @@ namespace PlutoGE::render
                     if(draw.shaderGraphProgram) material.graph=draw.shaderGraphProgram->data;
                     material.graphCameraTime={cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime};
                     material.graphFactors.x=draw.roughness;
+                    material.emissionParameters={draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, 0u, 0u};
+                    commands.BindTexture(20,draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
                     m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
                     commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
                     commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());

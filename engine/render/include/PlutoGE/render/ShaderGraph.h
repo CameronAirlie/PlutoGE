@@ -155,6 +155,7 @@ namespace PlutoGE::render
     {
         glm::vec3 worldPosition{0}, worldNormal{0,0,1}, viewDirection{0,0,1};
         glm::vec2 uv{0}, screenUV{0};
+        glm::vec2 uv2{0};
         float time=0;
         glm::vec4 color{1};
         glm::vec3 normal{0,0,1}, emission{0}, vertexOffset{0};

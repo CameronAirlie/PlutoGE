@@ -181,6 +181,9 @@ namespace PlutoGE::render
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
+            uniform sampler2D uEmissionTexture;
+            uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionTexCoord = 0;
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
             uniform float uSubsurfaceRadius = 1.0;
@@ -249,11 +252,12 @@ namespace PlutoGE::render
                 if (uHasAlbedoTexture > 0.5)
                 {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
-                    texturedEmission *= texAlbedo.rgb;
+                    if (uHasEmissionTexture < 0.5) texturedEmission *= texAlbedo.rgb;
                     opacity *= texAlbedo.a;
                     albedo *= texAlbedo.rgb;
                 }
 
+                if (uHasEmissionTexture > 0.5) texturedEmission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
                 if (uAlphaMode == 1 && opacity < uAlphaCutoff)
                 {
                     discard;
@@ -1483,6 +1487,7 @@ void main()
             layout(location = 0) in vec3 aPos;
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
+            layout(location = 4) in vec2 aUV2;
             layout(location = 3) in vec4 aTangent;
             layout(location = 5) in mat4 aModel;
             layout(location = 14) in ivec4 aJoints;
@@ -1496,6 +1501,7 @@ void main()
             out vec3 FragPos;
             out vec3 Normal;
             out vec2 UV;
+            out vec2 UV2;
             out mat3 TBN;
             out vec4 ClipPos;
 
@@ -1535,6 +1541,7 @@ void main()
                 FragPos = worldPosition.xyz;
                 Normal = worldNormal;
                 UV = aUV;
+                UV2 = aUV2 * uUVScale;
                 TBN = mat3(worldTangent, normalize(worldBitangent), worldNormal);
                 ClipPos = uProjection * uView * worldPosition;
                 gl_Position = ClipPos;
@@ -1548,6 +1555,7 @@ void main()
             in vec3 FragPos;
             in vec3 Normal;
             in vec2 UV;
+            in vec2 UV2;
             in mat3 TBN;
             in vec4 ClipPos;
 
@@ -1555,6 +1563,9 @@ void main()
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0);
             uniform vec3 uEmission = vec3(0.0);
+            uniform sampler2D uEmissionTexture;
+            uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionTexCoord = 0;
             uniform int uSurfaceType = 0;
             uniform int uTwoSided = 0;
             uniform float uAlphaCutoff = 0.01;
@@ -2099,10 +2110,11 @@ void main()
                 {
                     vec4 sampledBaseColor = texture(uAlbedoTexture, UV);
                     color *= sampledBaseColor;
-                    emission *= sampledBaseColor.rgb;
+                    if (uHasEmissionTexture < 0.5) emission *= sampledBaseColor.rgb;
                 }
 
 
+                if (uHasEmissionTexture > 0.5) emission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
                 vec3 normal = normalize(Normal);
                 if (uHasNormalTexture > 0.5)
                 {

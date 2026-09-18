@@ -178,6 +178,9 @@ ShaderGraphData runtimeShaderGraph() {
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
+            uniform sampler2D uEmissionTexture;
+            uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionTexCoord = 0;
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
             uniform float uSubsurfaceRadius = 1.0;
@@ -292,9 +295,11 @@ ShaderGraphData runtimeShaderGraph() {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
                     graphOpacity *= texAlbedo.a;
                     graphAlbedo *= texAlbedo.rgb;
-                    graphEmission *= texAlbedo.rgb;
+                    if (uHasEmissionTexture < 0.5) graphEmission *= texAlbedo.rgb;
                 }
 
+                if (uHasEmissionTexture > 0.5)
+                    graphEmission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
                 if (uHasNormalTexture > 0.5)
                 {
                     graphNormal = texture(uNormalTexture, UV).rgb;

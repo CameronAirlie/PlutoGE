@@ -65,17 +65,17 @@ namespace PlutoGE::render
     {
         const auto sample=[&](int slot,glm::vec2 uv) {
             const Texture *textures[]{material.albedoTexture,material.normalTexture,material.metallicTexture,material.roughnessTexture};
-            const auto *texture=slot>=0 && slot<4?textures[slot]:slot>=4&&slot<8?material.graphTextures[slot-4]:nullptr;
+            const auto *texture=slot>=0 && slot<4?textures[slot]:slot>=4&&slot<8?material.graphTextures[slot-4]:slot==10?material.emissionTexture:nullptr;
             if(!texture || texture->GetRgba8Pixels().empty())return slot==1?glm::vec4(.5f,.5f,1,1):glm::vec4(1);
             const auto pixels=texture->GetRgba8Pixels();
             const int w=texture->GetWidth(),h=texture->GetHeight();
-            const unsigned mode=slot>=4?material.graphSamplers[slot-4]:0;
+            const unsigned mode=slot>=4&&slot<8?material.graphSamplers[slot-4]:0;
             const glm::vec2 p=(mode>=2?glm::clamp(uv,glm::vec2(0),glm::vec2(1)):glm::fract(uv))*glm::vec2(w,h)-.5f, f=glm::fract(p);
             const int x=int(std::floor(p.x)),y=int(std::floor(p.y));
             const auto texel=[&](int x,int y){
                 const int at=((mode>=2?std::clamp(y,0,h-1):(y%h+h)%h)*w+(mode>=2?std::clamp(x,0,w-1):(x%w+w)%w))*4;
                 glm::vec4 c{float(pixels[at]),float(pixels[at+1]),float(pixels[at+2]),float(pixels[at+3])};c/=255.0f;
-                if(slot==0)for(int j=0;j<3;++j)c[j]=c[j]<=.04045f?c[j]/12.92f:std::pow((c[j]+.055f)/1.055f,2.4f);
+                if(slot==0 || slot==10)for(int j=0;j<3;++j)c[j]=c[j]<=.04045f?c[j]/12.92f:std::pow((c[j]+.055f)/1.055f,2.4f);
                 return c;
             };
             if(mode&1)return texel(int(std::floor(p.x+.5f)),int(std::floor(p.y+.5f)));
@@ -86,7 +86,7 @@ namespace PlutoGE::render
         if(!vertexOnly) {
             const auto albedoSample=sample(0,s.uv);
             s.color*=albedoSample;
-            s.emission*=glm::vec3(albedoSample);
+            s.emission*=glm::vec3(material.emissionTexture ? sample(10,material.emissionTexCoord==1?s.uv2:s.uv) : albedoSample);
             if(material.metallicTexture)s.metallic*=sample(2,s.uv)[int(material.metallicTextureChannel)];
             if(material.roughnessTexture)s.roughness*=sample(3,s.uv)[int(material.roughnessTextureChannel)];
         }

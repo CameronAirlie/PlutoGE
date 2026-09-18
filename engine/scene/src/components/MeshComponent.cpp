@@ -208,6 +208,8 @@ namespace PlutoGE::scene
             std::optional<float> metallic;
             std::optional<float> roughness;
             std::optional<glm::vec3> emission;
+            std::optional<std::string> emissionPath;
+            std::optional<int> emissionTexCoord;
             std::optional<float> subsurface;
             std::optional<glm::vec3> subsurfaceColor;
             std::optional<float> subsurfaceRadius;
@@ -233,6 +235,8 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "UvScale", PropertyType::String, SerializeVec2(config.uvScale)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
+            properties.push_back({prefix + "EmissionPath", PropertyType::String, config.emissionTexture ? config.emissionTexture->GetFilePath() : std::string{}});
+            properties.push_back({prefix + "EmissionTexCoord", PropertyType::String, std::to_string(config.emissionTexCoord)});
             properties.push_back({prefix + "Emission", PropertyType::String, SerializeVec3(config.emission)});
             properties.push_back({prefix + "Subsurface", PropertyType::Float, std::to_string(config.subsurface)});
             properties.push_back({prefix + "SubsurfaceColor", PropertyType::String, SerializeVec3(config.subsurfaceColor)});
@@ -297,6 +301,10 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.roughness = std::stof(value);
             }
+            else if (fieldName == "EmissionPath")
+                serializedMaterial.emissionPath = value;
+            else if (fieldName == "EmissionTexCoord")
+                serializedMaterial.emissionTexCoord = value == "1" ? 1 : 0;
             else if (fieldName == "Emission")
             {
                 serializedMaterial.emission = ParseVec3(value);
@@ -392,6 +400,13 @@ namespace PlutoGE::scene
             {
                 material.SetRoughness(*serializedMaterial.roughness);
             }
+            if (serializedMaterial.emissionPath.has_value())
+            {
+                const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.emissionPath);
+                material.SetEmissionTexture(serializedMaterial.emissionPath->empty() ? nullptr : render::Texture::LoadFromFile(path.c_str(), render::TextureColorSpace::SRGB));
+            }
+            if (serializedMaterial.emissionTexCoord.has_value())
+                material.SetEmissionTexCoord(*serializedMaterial.emissionTexCoord);
             if (serializedMaterial.emission.has_value())
             {
                 material.SetEmission(*serializedMaterial.emission);

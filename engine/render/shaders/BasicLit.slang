@@ -16,6 +16,7 @@ struct VertexInput
     float2 uv : TEXCOORD0;
     float4 tangent : TANGENT;
     float4 previousPosition : TEXCOORD1;
+    float2 uv2 : TEXCOORD2;
 };
 
 struct VertexOutput
@@ -29,6 +30,7 @@ struct VertexOutput
     float4 previousClip : TEXCOORD4;
     float objectDebug : TEXCOORD5;
     float outlineWidth : TEXCOORD6;
+    float2 uv2 : TEXCOORD7;
 };
 
 struct FragmentOutput
@@ -118,7 +120,10 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 glassFog[4];
     ShaderGraphData shaderGraph;
     float4 shaderGraphFrame;
+    uint4 emissionParameters; // map present, UV set
 };
+
+[[vk::binding(18, 1)]] Sampler2D emissionTexture : register(t18, space1);
 
 [[vk::binding(1, 1)]]
 Sampler2D baseColorTexture : register(t1, space1);
@@ -632,6 +637,7 @@ VertexOutput vertexMain(VertexInput input)
     output.outlineWidth = objectDebugParameters.y;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
+    output.uv2 = input.uv2;
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     return output;
@@ -660,6 +666,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     output.outlineWidth = instance.debugParameters.y;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
     output.uv = input.uv;
+    output.uv2 = input.uv2;
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)instance.model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     return output;
@@ -695,7 +702,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
     // Material emission illuminates the albedo texture. An explicit graph
     // emission output can replace this textured input independently.
-    float3 surfaceEmission = emission * sampledBaseColor.rgb;
+    float3 surfaceEmission = emission * (emissionParameters.x != 0
+        ? emissionTexture.Sample((emissionParameters.y == 1 ? input.uv2 : input.uv) * uvScale).rgb
+        : sampledBaseColor.rgb);
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);

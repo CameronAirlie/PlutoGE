@@ -9,17 +9,18 @@ namespace PlutoGE::render::detail
         ShaderSource voxel;
         voxel.vertexSource = R"(#version 430 core
 layout(location=0) in vec3 aPos;layout(location=1) in vec3 aNormal;layout(location=2) in vec2 aUV;
+layout(location=4) in vec2 aUV2;
 layout(location=5) in mat4 aInstanceModel;
 layout(location=14) in ivec4 aJoints;layout(location=15) in vec4 aWeights;
 uniform mat4 uModel;uniform vec2 uUVScale;uniform int uUseSkinning,uUseInstancing;uniform mat4 uJointMatrices[128];
-out VS { vec3 p; vec3 n; vec2 uv; } v;
+out VS { vec3 p; vec3 n; vec2 uv; vec2 emissionUv; } v;
 void main(){mat4 skin=mat4(1);if(uUseSkinning!=0){float w=aWeights.x+aWeights.y+aWeights.z+aWeights.w;if(w>.0001)skin=uJointMatrices[clamp(aJoints.x,0,127)]*aWeights.x+uJointMatrices[clamp(aJoints.y,0,127)]*aWeights.y+uJointMatrices[clamp(aJoints.z,0,127)]*aWeights.z+uJointMatrices[clamp(aJoints.w,0,127)]*aWeights.w;}
  mat4 model=uUseInstancing!=0?aInstanceModel:uModel;vec4 local=skin*vec4(aPos,1),p=model*local;mat3 model3=mat3(model);vec3 c0=cross(model3[1],model3[2]),c1=cross(model3[2],model3[0]),c2=cross(model3[0],model3[1]);float orientation=dot(model3[0],c0)<0?-1.0:1.0;mat3 normalMatrix=mat3(c0,c1,c2)*orientation;
- v.p=p.xyz;v.n=normalize(normalMatrix*(mat3(skin)*aNormal));v.uv=aUV*uUVScale;gl_Position=p;})";
+ v.p=p.xyz;v.n=normalize(normalMatrix*(mat3(skin)*aNormal));v.uv=aUV*uUVScale;v.emissionUv=aUV2*uUVScale;gl_Position=p;})";
         voxel.geometrySource = R"(#version 430 core
 layout(triangles) in; layout(triangle_strip,max_vertices=4) out;
-in VS { vec3 p; vec3 n; vec2 uv; } vin[];
-out GS { vec3 p; vec3 n; vec2 uv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
+in VS { vec3 p; vec3 n; vec2 uv; vec2 emissionUv; } vin[];
+out GS { vec3 p; vec3 n; vec2 uv; vec2 emissionUv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec2 emissionUvA; flat vec2 emissionUvB; flat vec2 emissionUvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
 uniform vec4 uGraphHeader=vec4(0);
 uniform vec3 uVolumeOrigin,uEmission;uniform float uVolumeSize;uniform int uVoxelResolution;
 vec2 projected(vec3 p,int axis){return axis==0?p.zy:axis==1?p.xz:p.xy;}
@@ -39,18 +40,19 @@ void main()
         int vertex=min(i,2);
         g.rasterCell=emissive?vec2(i%2==0?lo.x:hi.x,i<2?lo.y:hi.y):projection[i];
         gl_Position=vec4(g.rasterCell/float(uVoxelResolution)*2.0-1.0,0,1);
-        g.p=vin[vertex].p;g.n=vin[vertex].n;g.uv=vin[vertex].uv;
+        g.p=vin[vertex].p;g.n=vin[vertex].n;g.uv=vin[vertex].uv;g.emissionUv=vin[vertex].emissionUv;
         g.triangleA=positions[0];g.triangleB=positions[1];g.triangleC=positions[2];
-        g.uvA=vin[0].uv;g.uvB=vin[1].uv;g.uvC=vin[2].uv;
+        g.uvA=vin[0].uv;g.uvB=vin[1].uv;g.uvC=vin[2].uv;g.emissionUvA=vin[0].emissionUv;g.emissionUvB=vin[1].emissionUv;g.emissionUvC=vin[2].emissionUv;
         g.normalA=vin[0].n;g.normalB=vin[1].n;g.normalC=vin[2].n;g.axis=axis;
         EmitVertex();
     }
     EndPrimitive();
 })";
         voxel.fragmentSource = R"(#version 430 core
-layout(r32ui,binding=0) uniform uimage3D uAccumulationR;layout(r32ui,binding=1) uniform uimage3D uAccumulationG;layout(r32ui,binding=2) uniform uimage3D uAccumulationB;layout(r32ui,binding=3) uniform uimage3D uAccumulationCount;layout(r32ui,binding=4) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
+layout(r32ui,binding=0) uniform uimage3D uAccumulationR;layout(r32ui,binding=1) uniform uimage3D uAccumulationG;layout(r32ui,binding=2) uniform uimage3D uAccumulationB;layout(r32ui,binding=3) uniform uimage3D uAccumulationCount;layout(r32ui,binding=4) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; vec2 emissionUv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec2 emissionUvA; flat vec2 emissionUvB; flat vec2 emissionUvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
 uniform vec3 uVolumeOrigin,uEmission,uLightDirection,uLightColor;uniform float uVolumeSize,uLightIntensity;uniform int uHasInjectionLight,uInjectionLightHasShadow;
 const int MAX_LOCAL_LIGHTS=7;uniform int uLocalLightCount,uLocalLightType[MAX_LOCAL_LIGHTS];uniform vec3 uLocalLightPosition[MAX_LOCAL_LIGHTS],uLocalLightDirection[MAX_LOCAL_LIGHTS],uLocalLightColor[MAX_LOCAL_LIGHTS];uniform float uLocalLightIntensity[MAX_LOCAL_LIGHTS],uLocalLightRange[MAX_LOCAL_LIGHTS];
+uniform sampler2D uEmissionTexture; uniform float uHasEmissionTexture; uniform int uEmissionTexCoord;
 uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform float uHasAlbedoTexture,uHasMetallicTexture,uMetallicFactor,uAlphaCutoff;uniform int uMetallicTextureChannel,uAlphaMode,uSurfaceType;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4],uViewMatrix;uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
@@ -77,7 +79,7 @@ float visibility(vec3 p,vec3 n,vec3 lightDirection){if(uShadowCascadeCount<=0)re
 layout(r32ui,binding=5) uniform uimage3D uSurfaceRecord;
 uniform int uCaptureSurface;
 void main(){
- vec3 worldPosition=g.p,worldNormal=g.n;vec2 materialUv=g.uv;
+ vec3 worldPosition=g.p,worldNormal=g.n;vec2 materialUv=g.uv,emissionUv=g.emissionUv;
  float areaCoverage=1.0;
  if(any(greaterThan(uEmission,vec3(0))) || uGraphHeader.x>0){
   vec3 barycentric;
@@ -85,12 +87,13 @@ void main(){
   if(areaCoverage<=0.0)discard;
   worldPosition=uVolumeOrigin+(g.triangleA*barycentric.x+g.triangleB*barycentric.y+g.triangleC*barycentric.z)*(uVolumeSize/float(imageSize(uAccumulationR).x));
   worldNormal=g.normalA*barycentric.x+g.normalB*barycentric.y+g.normalC*barycentric.z;
+  emissionUv=g.emissionUvA*barycentric.x+g.emissionUvB*barycentric.y+g.emissionUvC*barycentric.z;
   materialUv=g.uvA*barycentric.x+g.uvB*barycentric.y+g.uvC*barycentric.z;
  }
  vec3 tc=(worldPosition-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 sampledBaseColor=uHasAlbedoTexture>.5?texture(uAlbedoTexture,materialUv):vec4(1);vec4 a=uColor*sampledBaseColor;
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,materialUv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
- vec3 graphNormal=normalize(worldNormal),graphEmission=uEmission*sampledBaseColor.rgb;float graphRoughness=uRoughnessFactor;
+ vec3 graphNormal=normalize(worldNormal),graphEmission=uEmission*(uHasEmissionTexture>.5?texture(uEmissionTexture,uEmissionTexCoord==1?emissionUv:materialUv).rgb:sampledBaseColor.rgb);float graphRoughness=uRoughnessFactor;
  evaluateShaderGraph(runtimeShaderGraph(),worldPosition,graphNormal,normalize(uGraphCameraPosition-worldPosition),uGraphTime,materialUv,a,graphNormal,metallic,graphRoughness,graphEmission);
  worldNormal=graphNormal;if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
  bool glassSurface=uSurfaceType==1;bool alphaBlend=uAlphaMode==2;float radianceCoverage=areaCoverage*((glassSurface||alphaBlend)?clamp(a.a,0,1):1.0);float opacity=glassSurface?0.0:radianceCoverage;vec3 normal=normalize(worldNormal),directRadiance=vec3(0);if(uHasInjectionLight!=0){vec3 lightDir=normalize(-uLightDirection);float ndl=max(dot(normal,lightDir),0);float shadow=uInjectionLightHasShadow!=0?visibility(worldPosition,worldNormal,uLightDirection):1;directRadiance=uLightColor*uLightIntensity*ndl*shadow;}for(int i=0;i<MAX_LOCAL_LIGHTS;i++){if(i>=uLocalLightCount)break;vec3 toLight=uLocalLightPosition[i]-worldPosition;float distanceToLight=length(toLight),range=max(uLocalLightRange[i],.0001);if(distanceToLight>=range)continue;vec3 lightDir=toLight/max(distanceToLight,.0001);float attenuation=(1.0-smoothstep(range*.9,range,distanceToLight))/max(distanceToLight*distanceToLight,.0001);if(uLocalLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLocalLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}directRadiance+=uLocalLightColor[i]*uLocalLightIntensity[i]*attenuation*max(dot(normal,lightDir),0.0);}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(1.0/3.14159265):vec3(0);vec3 r=(uGraphHeader.y>0.5?a.rgb:diffuseBounce)+max(graphEmission,vec3(0));

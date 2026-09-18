@@ -93,7 +93,7 @@ namespace PlutoGE::ui
               {
                   const auto &config = preloadedMaterial->GetConfig();
                   for (const render::Texture *texture :
-                       {config.albedoTexture, config.normalTexture, config.metallicTexture, config.roughnessTexture})
+                       {config.albedoTexture, config.normalTexture, config.metallicTexture, config.roughnessTexture, config.emissionTexture})
                   {
                       if (!texture)
                           continue;
@@ -1228,6 +1228,8 @@ namespace PlutoGE::ui
                 return &textureHandles.back();
             };
 
+            config.emissionTexture = assignTexture(material.emissionTextureIndex);
+            config.emissionTexCoord = material.emissionTexCoord;
             config.albedoTexture = assignTexture(material.albedoTextureIndex);
             config.normalTexture = assignTexture(material.normalTextureIndex);
             if (auto *packedTexture = assignTexture(material.metallicRoughnessTextureIndex))

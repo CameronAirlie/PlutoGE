@@ -56,7 +56,9 @@ namespace PlutoGE::render
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
 
-        glm::vec3 emission{0.0f}; // HDR self-illumination tint, multiplied by the albedo texture
+        glm::vec3 emission{0.0f}; // HDR emission factor; legacy materials without a map use albedo.
+        Texture *emissionTexture = nullptr;
+        int emissionTexCoord = 0; // 0: primary UVs, 1: secondary UVs
 
         float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface
@@ -111,6 +113,8 @@ namespace PlutoGE::render
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        void SetEmissionTexture(Texture *texture) { m_config.emissionTexture = texture; }
+        void SetEmissionTexCoord(int texCoord) { m_config.emissionTexCoord = texCoord == 1 ? 1 : 0; }
         void SetEmission(const glm::vec3 &emission) { m_config.emission = emission; }
         void SetSubsurface(float subsurface) { m_config.subsurface = subsurface; }
         void SetSubsurfaceColor(const glm::vec3 &color) { m_config.subsurfaceColor = color; }

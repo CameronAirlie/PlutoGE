@@ -25,6 +25,8 @@ namespace PlutoGE::render
             && a.metallic == b.metallic
             && a.roughness == b.roughness
             && a.emission == b.emission
+            && a.emissionTexture == b.emissionTexture
+            && a.emissionTexCoord == b.emissionTexCoord
             && a.subsurface == b.subsurface
             && a.subsurfaceColor == b.subsurfaceColor
             && a.subsurfaceRadius == b.subsurfaceRadius
@@ -128,6 +130,8 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.metallic);
         HashBatchValue(hash, draw.roughness);
         HashBatchValue(hash, draw.emission);
+        HashBatchValue(hash, draw.emissionTexture);
+        HashBatchValue(hash, draw.emissionTexCoord);
         HashBatchValue(hash, draw.subsurface);
         HashBatchValue(hash, draw.subsurfaceColor);
         HashBatchValue(hash, draw.subsurfaceRadius);

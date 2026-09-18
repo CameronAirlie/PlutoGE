@@ -45,13 +45,14 @@ namespace PlutoGE::render
             add(vertex.position);
             add(vertex.normal);
             add(vertex.uv);
+            add(vertex.uv2);
             add(vertex.tangent);
             add(vertex.previousPosition);
             vertexHashes.push_back(hash);
         }
         const auto sameVertex = [](const BasicVertex &a, const BasicVertex &b) {
             return a.position == b.position && a.normal == b.normal && a.uv == b.uv && a.tangent == b.tangent &&
-                   a.previousPosition == b.previousPosition;
+                   a.previousPosition == b.previousPosition && a.uv2 == b.uv2;
         };
         std::unordered_map<std::size_t, std::vector<GeometryRange>> buckets;
         std::unordered_map<std::uint64_t, std::uint32_t> result;

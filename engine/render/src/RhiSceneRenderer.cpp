@@ -371,6 +371,8 @@ namespace PlutoGE::render
             draw.metallic = material.metallic;
             draw.roughness = material.roughness;
             draw.emission = material.emission;
+            draw.emissionTexCoord = material.emissionTexCoord;
+            draw.emissionTexture = uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene emission");
             draw.subsurface = material.subsurface;
             draw.subsurfaceColor = material.subsurfaceColor;
             draw.subsurfaceRadius = material.subsurfaceRadius;
@@ -539,7 +541,7 @@ namespace PlutoGE::render
                         std::vector<BasicVertex> vertices;
                         vertices.reserve(source.vertices.size());
                         for (const auto &vertex : source.vertices)
-                            vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
+                            vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent, {}, vertex.uv2});
                         std::vector<GeometryRange> ranges;
                         for (size_t submesh = 0; submesh < command.mesh->GetSubmeshCount(); ++submesh)
                             for (size_t lod = 0; lod < command.mesh->GetSubmeshLodCount(submesh); ++lod)

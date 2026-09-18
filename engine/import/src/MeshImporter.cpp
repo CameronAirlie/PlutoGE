@@ -170,7 +170,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 35;
+        constexpr uint32_t kCookedMeshCacheVersion = 36;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -178,6 +178,7 @@ namespace PlutoGE::assetimport
                    a.surfaceType == b.surfaceType && a.alphaMode == b.alphaMode &&
                    a.alphaCutoff == b.alphaCutoff && a.castsShadow == b.castsShadow && a.twoSided == b.twoSided &&
                    a.metallic == b.metallic && a.roughness == b.roughness && a.emission == b.emission &&
+                   a.emissionTextureIndex == b.emissionTextureIndex && a.emissionTexCoord == b.emissionTexCoord &&
                    a.subsurface == b.subsurface && a.subsurfaceColor == b.subsurfaceColor &&
                    a.subsurfaceRadius == b.subsurfaceRadius && a.transmission == b.transmission &&
                    a.ior == b.ior && a.thickness == b.thickness &&
@@ -516,6 +517,8 @@ namespace PlutoGE::assetimport
             WritePod(output, material.attenuationColor.g);
             WritePod(output, material.attenuationColor.b);
             WritePod(output, material.attenuationDistance);
+            WritePod(output, material.emissionTextureIndex);
+            WritePod(output, material.emissionTexCoord);
             WritePod(output, material.albedoTextureIndex);
             WritePod(output, material.normalTextureIndex);
             WritePod(output, material.metallicRoughnessTextureIndex);
@@ -549,6 +552,8 @@ namespace PlutoGE::assetimport
             material.attenuationColor.g = ReadPod<float>(input);
             material.attenuationColor.b = ReadPod<float>(input);
             material.attenuationDistance = ReadPod<float>(input);
+            material.emissionTextureIndex = ReadPod<int>(input);
+            material.emissionTexCoord = ReadPod<int>(input);
             material.albedoTextureIndex = ReadPod<int>(input);
             material.normalTextureIndex = ReadPod<int>(input);
             material.metallicRoughnessTextureIndex = ReadPod<int>(input);
@@ -1206,6 +1211,10 @@ namespace PlutoGE::assetimport
                 parsedMaterial.castsShadow = false;
             }
 
+            parsedMaterial.emissionTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures, ResolveImageIndex(model, material.emissiveTexture.index),
+                ImportedTextureColorSpace::SRGB, textureVariantByCacheKey);
+            parsedMaterial.emissionTexCoord = material.emissiveTexture.texCoord;
             const int albedoImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
             const int normalImageIndex = ResolveImageIndex(model, material.normalTexture.index);
             const int metallicRoughnessImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);

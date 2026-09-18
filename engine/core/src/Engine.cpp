@@ -152,6 +152,8 @@ namespace PlutoGE::core
                     HashValue(fingerprint, material.attenuationColor.g);
                     HashValue(fingerprint, material.attenuationColor.b);
                     HashValue(fingerprint, material.attenuationDistance);
+                    HashValue(fingerprint, material.emissionTextureIndex);
+                    HashValue(fingerprint, material.emissionTexCoord);
                     HashValue(fingerprint, material.albedoTextureIndex);
                     HashValue(fingerprint, material.normalTextureIndex);
                     HashValue(fingerprint, material.metallicRoughnessTextureIndex);
@@ -434,6 +436,8 @@ namespace PlutoGE::core
                     config.thickness = material.thickness;
                     config.attenuationColor = material.attenuationColor;
                     config.attenuationDistance = material.attenuationDistance;
+                    config.emissionTexture = loadImportedTexture(material.emissionTextureIndex);
+                    config.emissionTexCoord = material.emissionTexCoord;
                     config.albedoTexture = loadImportedTexture(material.albedoTextureIndex);
                     config.normalTexture = loadImportedTexture(material.normalTextureIndex);
                     config.flipNormalY = material.flipNormalY;

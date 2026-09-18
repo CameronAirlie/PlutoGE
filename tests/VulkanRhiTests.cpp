@@ -3,6 +3,7 @@
 #include "GeometryDiagnosticChecks.h"
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
+#include "EmissionTextureRenderingChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "OutlineRenderingChecks.h"
@@ -167,6 +168,7 @@ int main(int argc, char **argv)
             const auto read = [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); };
             CheckGlassRendering(renderer, read);
             CheckTransparencyDepth(renderer, device, read);
+            CheckEmissionTexture(renderer, device, read);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")

@@ -115,6 +115,8 @@ namespace PlutoGE::render
                     commandHash = HashBytes(glm::value_ptr(config.emission), sizeof(glm::vec3), commandHash);
                     commandHash = HashBytes(glm::value_ptr(config.uvScale), sizeof(glm::vec2), commandHash);
                     commandHash = HashValue(config.albedoTexture, commandHash);
+                    commandHash = HashValue(config.emissionTexture, commandHash);
+                    commandHash = HashValue(config.emissionTexCoord, commandHash);
                     commandHash = HashValue(config.metallicTexture, commandHash);
                     commandHash = HashValue(config.metallic, commandHash);
                     commandHash = HashValue(config.metallicTextureChannel, commandHash);

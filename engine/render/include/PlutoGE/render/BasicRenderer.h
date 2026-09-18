@@ -16,6 +16,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -665,6 +666,7 @@ namespace PlutoGE::render
             std::uint64_t pendingSignature = 0;
             std::uint64_t lastUpdateFrame = 0;
             std::vector<BasicDraw> pendingDraws;
+            std::vector<std::pair<const BasicMesh *, std::uint64_t>> pendingMeshes;
             BasicLighting pendingLighting;
             float pendingGraphTime=0;
             bool pendingInjectLocalLights = false;

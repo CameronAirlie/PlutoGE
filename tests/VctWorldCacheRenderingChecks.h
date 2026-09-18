@@ -45,6 +45,27 @@ inline void CheckVctRemovedCharacter(PlutoGE::render::BasicRenderer &renderer)
     character.reset();
     for (int frame = 0; frame < 16; ++frame) render();
     std::cout << "VCT removed character: passed\n";
+
+    // Play-mode teardown also removes rigid meshes eligible for GI. Keep the
+    // history owner unchanged so the progressive job survives the transition.
+    auto rigid = std::make_unique<BasicMesh>(renderer.CreateMesh({vertices, indices}));
+    BasicDraw rigidDraw;
+    rigidDraw.mesh = rigid.get();
+    draws.push_back(rigidDraw);
+    render();
+    draws.pop_back();
+    rigid.reset();
+    for (int frame = 0; frame < 16; ++frame) render();
+    std::cout << "VCT removed rigid mesh: passed\n";
+
+    // Reusing the same BasicMesh object for different GPU buffers must also
+    // invalidate a queued job, even though its pointer is unchanged.
+    draws.push_back(BasicDraw{});
+    draws.back().mesh = &mesh;
+    render();
+    mesh = renderer.CreateMesh({vertices, indices});
+    for (int frame = 0; frame < 16; ++frame) render();
+    std::cout << "VCT replaced rigid mesh: passed\n";
 }
 
 // Rasterize and voxelize two facing surfaces. The ceiling emits red light;

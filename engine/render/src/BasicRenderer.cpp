@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace PlutoGE::render
@@ -3044,6 +3045,13 @@ namespace PlutoGE::render
         const float localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
         const float secondaryBounce = std::clamp(effect.parameters[5].y, 0.0f, 1.0f);
         auto contentSignature = VctContentSignature(draws, lighting, effect.parameters[4].w > 0.5f, localLightBounce);
+        // Progressive jobs borrow meshes from the current scene. Validate their
+        // identities using only live draws before touching any queued pointer.
+        // Revisions also distinguish a replacement allocated at the same address.
+        std::unordered_map<const BasicMesh *, std::uint64_t> liveMeshes;
+        for (const auto &draw : draws)
+            if (draw.mesh && draw.contributesToGi && draw.surfaceType != 1 && draw.alphaMode != 2)
+                liveMeshes.emplace(draw.mesh, draw.mesh->GetRevision());
         // Strength changes reuse the original injection and cached unit bounce.
         const auto updateInterval = static_cast<std::uint64_t>(
             std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
@@ -3051,6 +3059,17 @@ namespace PlutoGE::render
         for (std::uint32_t index = 0; index < cascadeCount; ++index)
         {
             auto &cascade = m_vctCascades[index];
+            if (cascade.rebuilding && std::ranges::any_of(cascade.pendingMeshes,
+                [&](const auto &mesh) {
+                    const auto live = liveMeshes.find(mesh.first);
+                    return live == liveMeshes.end() || live->second != mesh.second;
+                }))
+            {
+                cascade.pendingDraws.clear();
+                cascade.pendingMeshes.clear();
+                cascade.rebuilding = false;
+                cascade.valid = false;
+            }
             const bool stationary = useCache && index + 1 == cascadeCount;
             const float size = stationary ? m_vctCacheOriginSize.w : baseSize * std::pow(3.0f, static_cast<float>(index));
             const glm::vec3 desired = stationary ? glm::vec3(m_vctCacheOriginSize) :
@@ -3070,6 +3089,7 @@ namespace PlutoGE::render
                 cascade.pendingSignature = contentSignature;
                 cascade.pendingGraphTime=ShaderGraphTimeSeconds();
                 cascade.pendingDraws.clear();
+                cascade.pendingMeshes.clear();
                 for (const auto &draw : draws)
                 {
                     // This queue survives across frames. Animated meshes are
@@ -3079,6 +3099,7 @@ namespace PlutoGE::render
                     if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 ||
                         !draw.mesh || !draw.mesh->IsValid())
                         continue;
+                    cascade.pendingMeshes.emplace_back(draw.mesh, draw.mesh->GetRevision());
                     if (draw.instanceModels && !draw.instanceModels->empty())
                         for (const auto &model : *draw.instanceModels)
                         {
@@ -3388,6 +3409,7 @@ namespace PlutoGE::render
                         commands.ShaderMemoryBarrier();
                     }
                 cascade.pendingDraws.clear();
+                cascade.pendingMeshes.clear();
                 if (stageDirect)
                 {
                     cascade.secondaryPass = true;

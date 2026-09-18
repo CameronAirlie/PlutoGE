@@ -59,6 +59,7 @@ namespace PlutoGE::ui
         void UpdatePanels();
 
         void ShutdownPanels();
+        void OnProjectChanged();
 
         void BeginPanelUpdate();
 

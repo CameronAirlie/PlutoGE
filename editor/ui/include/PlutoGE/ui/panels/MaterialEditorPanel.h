@@ -16,6 +16,7 @@ namespace PlutoGE::ui
         ~MaterialEditorPanel() override = default;
 
         void Render() override;
+        void OnProjectChanged() override;
 
     private:
         void LoadActiveMaterial();

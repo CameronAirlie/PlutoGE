@@ -46,6 +46,7 @@ namespace PlutoGE::ui
         ~ContentBrowserPanel() override;
 
         void Render() override;
+        void OnProjectChanged() override;
         std::string RevealAsset(std::string reference);
 
     private:

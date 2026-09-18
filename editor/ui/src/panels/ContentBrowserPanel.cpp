@@ -343,6 +343,49 @@ namespace PlutoGE::ui
     ContentBrowserPanel::ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
     ContentBrowserPanel::~ContentBrowserPanel() = default;
 
+    void ContentBrowserPanel::OnProjectChanged()
+    {
+        m_referenceSearch.reset();
+        m_thumbnailCache.reset();
+        m_filterBuffer.fill(0);
+        m_selectedAssetIndex = -1;
+        m_selectedFolder.clear();
+        m_openModelReference.clear();
+        m_openModelName.clear();
+        m_openModelObjects.clear();
+        m_surfaceEditorReference.clear();
+        m_surfaceDraft = {};
+        m_surfaceError.clear();
+        m_assetCacheDirty = true;
+        m_cachedProject = nullptr;
+        m_cachedFilter.clear();
+        m_cachedFolder.clear();
+        m_cachedAssetReferences.clear();
+        m_cachedAssetFolders.clear();
+        m_cachedAssetFileNames.clear();
+        m_cachedAssetRelativePaths.clear();
+        m_cachedFolders.clear();
+        m_cachedFolderParents.clear();
+        m_cachedChildFolders.clear();
+        m_cachedChildFolderLabels.clear();
+        m_cachedChildFolderDisplayNames.clear();
+        m_cachedFolderLabels.clear();
+        m_cachedFolderHasChildren.clear();
+        m_cachedFolderChildIndices.clear();
+        m_cachedRootFolderIndices.clear();
+        m_filteredAssetIndices.clear();
+        m_filteredAssetDisplayNames.clear();
+        m_pendingMenuAction = PendingMenuAction::None;
+        m_pendingFileAction = PendingFileAction::None;
+        m_fileActionSource.clear();
+        m_fileActionDestination.clear();
+        m_clipboardPath.clear();
+        m_renameSource.clear();
+        m_renameBuffer.fill(0);
+        m_openRenamePopup = false;
+        m_openDeletePopup = false;
+    }
+
     namespace
     {
         int ResizeStringInput(ImGuiInputTextCallbackData *data)

@@ -32,11 +32,14 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr std::size_t kTexturePathBufferSize = 512;
+        std::unordered_map<std::string, std::array<char, kTexturePathBufferSize>> texturePathBuffers;
+        std::unordered_map<std::string, std::array<char, 512>> shaderGraphPathBuffers;
+        std::unordered_map<std::string, std::string> shaderGraphReferences;
+        std::unordered_map<std::string, std::string> texturePaths;
 
         std::array<char, kTexturePathBufferSize> &GetTexturePathBuffer(const std::string &materialReference, const char *slotName)
         {
-            static std::unordered_map<std::string, std::array<char, kTexturePathBufferSize>> buffers;
-            return buffers[materialReference + ":" + slotName];
+            return texturePathBuffers[materialReference + ":" + slotName];
         }
 
         const char *TextureChannelLabel(render::TextureChannel channel)
@@ -131,9 +134,8 @@ namespace PlutoGE::ui
         bool RenderShaderGraphReferenceControl(const std::string &materialReference, std::string &reference)
         {
             bool changed = false;
-            constexpr std::size_t kShaderGraphPathBufferSize = 512;
-            static std::unordered_map<std::string, std::array<char, kShaderGraphPathBufferSize>> buffers;
-            static std::unordered_map<std::string, std::string> cachedReferences;
+            auto &buffers = shaderGraphPathBuffers;
+            auto &cachedReferences = shaderGraphReferences;
 
             std::vector<std::pair<std::string, std::string>> shaderGraphs;
             shaderGraphs.emplace_back("Default Lit", std::string(assets::Project::kBuiltinDefaultShaderGraphReference));
@@ -261,7 +263,7 @@ namespace PlutoGE::ui
             bool changed = false;
             const std::string key = materialReference + ":" + slotName;
             auto &buffer = GetTexturePathBuffer(materialReference, slotName);
-            static std::unordered_map<std::string, std::string> cachedPaths;
+            auto &cachedPaths = texturePaths;
             auto &cachedPath = cachedPaths[key];
             if (cachedPath != path)
             {
@@ -395,6 +397,16 @@ namespace PlutoGE::ui
         ImGui::PopID();
 
         return changed;
+    }
+
+    void MaterialEditorPanel::OnProjectChanged()
+    {
+        m_loadedReference.clear();
+        m_dirty = false;
+        texturePathBuffers.clear();
+        shaderGraphPathBuffers.clear();
+        shaderGraphReferences.clear();
+        texturePaths.clear();
     }
 
     void MaterialEditorPanel::LoadActiveMaterial()

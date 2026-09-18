@@ -31,6 +31,7 @@ namespace PlutoGE::ui
         virtual void Initialize() {} // Optional initialization logic for the panel
         virtual void Render() = 0;   // Pure virtual function to render the panel
         virtual void Shutdown() {}   // Optional cleanup logic for the panel
+        virtual void OnProjectChanged() {}
 
     private:
         void ApplyFloatingWindowState();

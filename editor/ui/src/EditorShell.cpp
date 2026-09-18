@@ -2337,6 +2337,9 @@ namespace PlutoGE::ui
         }
 
         m_project = std::move(loadedProject);
+        m_activeMaterialAssetReference.clear();
+        m_panelManager.OnProjectChanged();
+        ClearCachedMaterialPreviews();
         m_undoStack.clear();
         m_redoStack.clear();
         ApplyProjectContext();
@@ -2436,6 +2439,9 @@ namespace PlutoGE::ui
         // Vulkan host without recreating its window and render device.
         createdProject->GetManifest().graphicsApi = m_engine.GetConfig().graphicsApi;
         m_project = std::move(createdProject);
+        m_activeMaterialAssetReference.clear();
+        m_panelManager.OnProjectChanged();
+        ClearCachedMaterialPreviews();
         ApplyProjectContext();
         m_project->GetManifest().editorFontSize = m_panelManager.GetEditorFontSize();
         m_project->GetManifest().editorFont = m_panelManager.GetEditorFont();

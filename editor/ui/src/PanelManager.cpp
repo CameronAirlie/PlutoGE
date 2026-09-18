@@ -381,6 +381,12 @@ namespace PlutoGE::ui
         m_timingStats.panelUpdates = std::move(completedTimings);
     }
 
+    void PanelManager::OnProjectChanged()
+    {
+        for (auto *panel : m_panels)
+            panel->OnProjectChanged();
+    }
+
     void PanelManager::ShutdownPanels()
     {
         ClearCachedMaterialPreviews();

@@ -119,6 +119,14 @@ namespace PlutoGE::scene
         void SetMeshRotationOffset(const glm::vec3 &offset);
         const glm::vec3 &GetMeshRotationOffset() const;
         glm::mat4 GetMeshOffsetTransform() const;
+        // Per-entity compensation for origin edits; never inherited by submeshes.
+        const glm::vec3 &GetPivotOffset() const { return m_pivotOffset; }
+        void SetPivotOffset(const glm::vec3 &offset)
+        {
+            if (m_pivotOffset == offset) return;
+            m_pivotOffset = offset;
+            MarkRenderCommandsDirty();
+        }
         void SetSubmeshPositionOffset(size_t submeshIndex, const glm::vec3 &offset);
         glm::vec3 GetSubmeshPositionOffset(size_t submeshIndex) const;
         void SetSubmeshRotationOffset(size_t submeshIndex, const glm::vec3 &offset);
@@ -258,6 +266,7 @@ namespace PlutoGE::scene
         std::string m_modelAssetId;
         std::uint64_t m_modelObjectId = 0;
         glm::vec3 m_meshPositionOffset{0.0f};
+        glm::vec3 m_pivotOffset{0.0f};
         glm::vec3 m_meshRotationOffset{0.0f};
         std::vector<glm::vec3> m_submeshPositionOffsets;
         std::vector<glm::vec3> m_submeshRotationOffsets;

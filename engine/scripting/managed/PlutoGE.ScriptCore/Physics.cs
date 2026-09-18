@@ -31,6 +31,7 @@ public static class Physics
         return Raycast(origin, direction, maxDistance, ignoredEntity?.EntityId ?? 0, out hit);
     }
 
+    /// <summary>Hits colliders whose entity or any ancestor has the tag. Returns the collider entity.</summary>
     public static bool RaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, string tag, out RaycastHit hit)
     {
         return RaycastTagged(origin, direction, maxDistance, tag, 0, out hit);

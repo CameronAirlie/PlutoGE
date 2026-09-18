@@ -61,6 +61,16 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        bool HasTagInHierarchy(const Entity *entity, const std::string &tag)
+        {
+            for (auto *current = entity; current; current = current->GetParent())
+            {
+                if (current->HasTag(tag))
+                    return true;
+            }
+            return false;
+        }
+
         void CollectRuntimeScriptComponents(Entity *entity, std::vector<ScriptComponent *> &scriptComponents)
         {
             if (!entity)
@@ -3534,7 +3544,7 @@ namespace PlutoGE::scene
 
                 const auto *collisionObject = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 const auto *entity = collisionObject ? static_cast<const Entity *>(collisionObject->getUserPointer()) : nullptr;
-                return entity && entity->HasTag(m_tag);
+                return HasTagInHierarchy(entity, m_tag);
             }
 
         private:
@@ -3555,7 +3565,7 @@ namespace PlutoGE::scene
         auto *entity = callback.m_collisionObject
                            ? static_cast<Entity *>(callback.m_collisionObject->getUserPointer())
                            : nullptr;
-        if (!entity || !entity->HasTag(tag))
+        if (!entity || !HasTagInHierarchy(entity, tag))
         {
             return false;
         }

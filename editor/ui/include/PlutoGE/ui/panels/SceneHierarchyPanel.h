@@ -32,6 +32,7 @@ namespace PlutoGE::ui
         {
             Empty,
             Cube,
+            CarHierarchy,
             Camera,
             DirectionalLight,
             PointLight,
@@ -52,7 +53,7 @@ namespace PlutoGE::ui
         bool IsEntitySelected(scene::Entity *entity) const;
         void SelectEntity(scene::Entity *entity, bool additive, bool rangeToggle);
         void GroupSelectedEntities();
-        void SetPivotToMeshBounds(scene::Entity *entity, bool bottomCenter);
+        void SetSelectedPivotsToMeshBounds(bool combined, bool bottomCenter);
 
         std::uint32_t m_renamingEntityId = 0;
         std::uint32_t m_pendingDeleteEntityId = 0;

@@ -788,6 +788,7 @@ namespace PlutoGE::scene
             {"MeshAssetReference", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
+            {"PivotOffset", PropertyType::Vec3, SerializeVec3(m_pivotOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
         };
         if (!m_generatedLightmapUvSubmeshes.empty())
@@ -938,6 +939,10 @@ namespace PlutoGE::scene
                     {
                     }
                 }
+            }
+            else if (property.name == "PivotOffset")
+            {
+                SetPivotOffset(ParseVec3(property.value, glm::vec3(0.0f)));
             }
             else if (property.name == "MeshPositionOffset")
             {
@@ -1260,14 +1265,14 @@ namespace PlutoGE::scene
     glm::mat4 MeshComponent::GetMeshOffsetTransform() const
     {
         const auto *source = FindMeshOffsetSource();
-        if (source->m_meshPositionOffset == glm::vec3(0.0f) &&
+        if (m_pivotOffset + source->m_meshPositionOffset == glm::vec3(0.0f) &&
             source->m_meshRotationOffset == glm::vec3(0.0f))
         {
             return glm::mat4(1.0f);
         }
 
         glm::mat4 transform(1.0f);
-        transform = glm::translate(transform, source->m_meshPositionOffset);
+        transform = glm::translate(transform, m_pivotOffset + source->m_meshPositionOffset);
         transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.x), glm::vec3(1.0f, 0.0f, 0.0f));
         transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.y), glm::vec3(0.0f, 1.0f, 0.0f));
         transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.z), glm::vec3(0.0f, 0.0f, 1.0f));

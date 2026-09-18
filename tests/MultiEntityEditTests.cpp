@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/HierarchyTransforms.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/scene/Scene.h"
@@ -72,6 +73,142 @@ namespace
         Require(TransformSelection({parent}, glm::mat4(1), error), error.c_str());
         Require(parent->GetLocalTransform() == unchanged, "Identity gizmo generated an edit");
     }
+    void MatrixNear(const glm::mat4 &a, const glm::mat4 &b)
+    {
+        for (int c = 0; c < 4; ++c)
+            Require(glm::length(a[c] - b[c]) < 0.002f, "World matrix changed");
+    }
+    void HierarchyPivots()
+    {
+        Scene scene;
+        auto *parent = scene.AddEntity(std::make_unique<Entity>());
+        parent->SetRotation({23, -41, 17});
+        parent->SetScale({-2, 3, 0.7f});
+        auto *group = scene.AddEntity(std::make_unique<Entity>(), parent);
+        group->SetWorldPosition({7, 3, -2});
+        auto *a = scene.AddEntity(std::make_unique<Entity>(), parent);
+        auto *b = scene.AddEntity(std::make_unique<Entity>(), parent);
+        a->SetPosition({3, 2, -1});
+        a->SetRotation({34, 58, -19});
+        a->SetScale({2, -0.5f, 4});
+        b->SetRotation({-70, 25, 89});
+        b->SetScale({0, 2, 1});
+        const auto aWorld = a->GetWorldTransform(), bWorld = b->GetWorldTransform();
+        const auto rotation = a->GetRotation(), scale = a->GetScale();
+        ReparentIntoTranslationGroup(*a, *group);
+        ReparentIntoTranslationGroup(*b, *group);
+        MatrixNear(aWorld, a->GetWorldTransform());
+        MatrixNear(bWorld, b->GetWorldTransform());
+        Require(a->GetRotation() == rotation && a->GetScale() == scale, "Grouping altered local rotation/scale");
+        Require(MoveEntityPivot(*group, {-4, 6, 8}), "Group pivot rejected");
+        MatrixNear(aWorld, a->GetWorldTransform());
+        MatrixNear(bWorld, b->GetWorldTransform());
+        auto *mesh = a->CreateComponent<MeshComponent>(MeshComponentConfig{});
+        mesh->SetMeshAssetReference("shared-mesh");
+        mesh->SetMeshPositionOffset({1, -3, 2});
+        mesh->SetMeshRotationOffset({12, 26, -31});
+        auto *child = scene.AddEntity(std::make_unique<Entity>(), a);
+        child->SetPosition({2, 1, 4});
+        auto *childMesh = child->CreateComponent<MeshComponent>(MeshComponentConfig{});
+        childMesh->SetMeshAssetReference("shared-mesh");
+        childMesh->SetSubmeshIndex(0);
+        const auto geometry = a->GetWorldTransform() * mesh->GetMeshOffsetTransform();
+        const auto childGeometry = child->GetWorldTransform() * childMesh->GetMeshOffsetTransform();
+        Require(MoveEntityPivot(*a, {2, 8, -3}), "Mesh pivot rejected");
+        Near(a->GetWorldPosition(), {2, 8, -3});
+        MatrixNear(geometry, a->GetWorldTransform() * mesh->GetMeshOffsetTransform());
+        MatrixNear(childGeometry, child->GetWorldTransform() * childMesh->GetMeshOffsetTransform());
+        Require(MoveEntityPivot(*child, {5, -1, 7}), "Submesh pivot rejected");
+        MatrixNear(geometry, a->GetWorldTransform() * mesh->GetMeshOffsetTransform());
+        MatrixNear(childGeometry, child->GetWorldTransform() * childMesh->GetMeshOffsetTransform());
+        Require(MoveEntityPivot(*a, {-2, 3, 4}), "Repeated pivot rejected");
+        MatrixNear(geometry, a->GetWorldTransform() * mesh->GetMeshOffsetTransform());
+        MatrixNear(childGeometry, child->GetWorldTransform() * childMesh->GetMeshOffsetTransform());
+        MeshComponent restored({});
+        mesh->SetMeshAssetReference("");
+        restored.Deserialize(mesh->Serialize());
+        Near(restored.GetPivotOffset(), mesh->GetPivotOffset());
+        MatrixNear(restored.GetMeshOffsetTransform(), mesh->GetMeshOffsetTransform());
+        childMesh->SetMeshAssetReference("");
+        const auto savedChildGeometry = child->GetWorldTransform() * childMesh->GetMeshOffsetTransform();
+        std::string snapshot, error;
+        Require(SceneSerializer::SaveToString(scene, snapshot, &error), error.c_str());
+        auto loaded = LoadSceneSnapshot(snapshot, error);
+        Require(loaded != nullptr, error.c_str());
+        auto *loadedA = loaded->FindEntityByID(a->GetID());
+        auto *loadedChild = loaded->FindEntityByID(child->GetID());
+        Near(loadedA->GetWorldPosition(), a->GetWorldPosition());
+        MatrixNear(geometry, loadedA->GetWorldTransform() * loadedA->GetComponent<MeshComponent>()->GetMeshOffsetTransform());
+        MatrixNear(savedChildGeometry, loadedChild->GetWorldTransform() * loadedChild->GetComponent<MeshComponent>()->GetMeshOffsetTransform());
+        const auto before = b->GetPosition();
+        Require(!MoveEntityPivot(*b, {9, 8, 7}), "Singular pivot accepted");
+        Near(before, b->GetPosition());
+    }
+    void SelectionPivots()
+    {
+        PlutoGE::render::MeshConfig config;
+        config.data.vertices = {
+            {.position = {0, 0, 0}}, {.position = {2, 0, 0}}, {.position = {0, 4, 0}}};
+        config.data.indices = {0, 1, 2};
+        PlutoGE::render::Mesh mesh(config);
+        Scene scene;
+        auto *a = scene.AddEntity(std::make_unique<Entity>());
+        auto *b = scene.AddEntity(std::make_unique<Entity>());
+        a->SetPosition({-10, 0, 0});
+        b->SetPosition({10, 0, 0});
+        b->SetScale({3, 1, 1});
+        auto *ma = a->CreateComponent<MeshComponent>(MeshComponentConfig{.mesh = &mesh});
+        auto *mb = b->CreateComponent<MeshComponent>(MeshComponentConfig{.mesh = &mesh});
+        const auto worldA = a->GetWorldTransform() * ma->GetMeshOffsetTransform();
+        const auto worldB = b->GetWorldTransform() * mb->GetMeshOffsetTransform();
+        const auto unchanged = [&]()
+        {
+            MatrixNear(worldA, a->GetWorldTransform() * ma->GetMeshOffsetTransform());
+            MatrixNear(worldB, b->GetWorldTransform() * mb->GetMeshOffsetTransform());
+        };
+        std::string error;
+        Require(SetSelectionPivotsToMeshBounds({a, b}, false, false, error), error.c_str());
+        Near(a->GetWorldPosition(), {-9, 2, 0});
+        Near(b->GetWorldPosition(), {13, 2, 0});
+        unchanged();
+        Require(SetSelectionPivotsToMeshBounds({a, b}, true, false, error), error.c_str());
+        Near(a->GetWorldPosition(), {3, 2, 0});
+        Near(b->GetWorldPosition(), {3, 2, 0});
+        unchanged();
+        Require(SetSelectionPivotsToMeshBounds({b, a}, true, true, error), error.c_str());
+        Near(a->GetWorldPosition(), {3, 0, 0});
+        Near(b->GetWorldPosition(), {3, 0, 0});
+        unchanged();
+        Require(SetSelectionPivotsToMeshBounds({a, b}, false, true, error), error.c_str());
+        Near(a->GetWorldPosition(), {-9, 0, 0});
+        Near(b->GetWorldPosition(), {13, 0, 0});
+        unchanged();
+        auto *empty = scene.AddEntity(std::make_unique<Entity>());
+        const auto before = a->GetWorldPosition();
+        Require(!SetSelectionPivotsToMeshBounds({a, empty}, false, false, error), "Empty bounds accepted");
+        Near(a->GetWorldPosition(), before);
+        b->SetScale({0, 1, 1});
+        Require(!SetSelectionPivotsToMeshBounds({a, b}, true, false, error), "Singular selection accepted");
+        Near(a->GetWorldPosition(), before);
+        b->SetScale({3, 1, 1});
+        // Selecting both a group and its child must retain each requested pivot,
+        // regardless of the selection order.
+        auto *group = scene.AddEntity(std::make_unique<Entity>());
+        a->SetParent(group);
+        b->SetParent(group);
+        for (bool childFirst : {false, true})
+        {
+            const std::vector<Entity *> selected = childFirst ? std::vector<Entity *>{a, group} : std::vector<Entity *>{group, a};
+            Require(SetSelectionPivotsToMeshBounds(selected, false, false, error), error.c_str());
+            Near(group->GetWorldPosition(), {3, 2, 0});
+            Near(a->GetWorldPosition(), {-9, 2, 0});
+            unchanged();
+            Require(SetSelectionPivotsToMeshBounds(selected, true, true, error), error.c_str());
+            Near(group->GetWorldPosition(), {3, 0, 0});
+            Near(a->GetWorldPosition(), {3, 0, 0});
+            unchanged();
+        }
+    }
     void PropertiesAndHistory()
     {
         auto scene = std::make_unique<Scene>();
@@ -118,7 +255,7 @@ namespace
 }
 int main()
 {
-    try { Selection(); Transforms(); PropertiesAndHistory(); std::cout << "PASS: multi-selection, group transforms, common properties and history\n"; }
+    try { Selection(); Transforms(); HierarchyPivots(); SelectionPivots(); PropertiesAndHistory(); std::cout << "PASS: multi-selection, group transforms, common properties and history\n"; }
     catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
 

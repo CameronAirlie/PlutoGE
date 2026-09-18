@@ -180,6 +180,14 @@ ShaderGraphData runtimeShaderGraph() {
             uniform vec3 uEmission = vec3(0.0);
             uniform sampler2D uEmissionTexture;
             uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionChannelMask = 0;
+            uniform vec4 uEmissionChannels[3];
+            vec3 mapEmission(vec3 sampleValue) {
+                if (uEmissionChannelMask == 0) return sampleValue;
+                return sampleValue.r * uEmissionChannels[0].rgb * uEmissionChannels[0].a
+                     + sampleValue.g * uEmissionChannels[1].rgb * uEmissionChannels[1].a
+                     + sampleValue.b * uEmissionChannels[2].rgb * uEmissionChannels[2].a;
+            }
             uniform int uEmissionTexCoord = 0;
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
@@ -299,7 +307,7 @@ ShaderGraphData runtimeShaderGraph() {
                 }
 
                 if (uHasEmissionTexture > 0.5)
-                    graphEmission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
+                    graphEmission *= mapEmission(texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb);
                 if (uHasNormalTexture > 0.5)
                 {
                     graphNormal = texture(uNormalTexture, UV).rgb;

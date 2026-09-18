@@ -27,6 +27,7 @@ namespace PlutoGE::render
             && a.emission == b.emission
             && a.emissionTexture == b.emissionTexture
             && a.emissionTexCoord == b.emissionTexCoord
+            && a.emissionChannelMask == b.emissionChannelMask && a.emissionChannels == b.emissionChannels
             && a.subsurface == b.subsurface
             && a.subsurfaceColor == b.subsurfaceColor
             && a.subsurfaceRadius == b.subsurfaceRadius
@@ -132,6 +133,8 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.emission);
         HashBatchValue(hash, draw.emissionTexture);
         HashBatchValue(hash, draw.emissionTexCoord);
+        HashBatchValue(hash, draw.emissionChannelMask);
+        for (const auto &channel : draw.emissionChannels) HashBatchValue(hash, channel);
         HashBatchValue(hash, draw.subsurface);
         HashBatchValue(hash, draw.subsurfaceColor);
         HashBatchValue(hash, draw.subsurfaceRadius);

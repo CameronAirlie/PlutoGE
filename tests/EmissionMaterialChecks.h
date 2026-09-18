@@ -42,4 +42,15 @@ inline void CheckEmissionMaterial(PlutoGE::assets::AssetManager &assets, const s
     require(assets.SaveMaterialAsset("project://emission.plutomaterial",config),"Could not update emission material");
     assets.ReloadMaterialAssets();
     require(loaded->GetConfig().emissionTexture&&loaded->GetConfig().emissionTexCoord==0,"Reload lost emission map settings");
+    config.emissionChannelMask=true;config.emissionTexCoord=1;
+    config.emissionChannels={{{0,0,1,.5f},{1,0,0,.25f},{0,1,0,1}}};
+    require(assets.SaveMaterialAsset("project://emission.plutomaterial",config),"Could not save emission masks");
+    assets.ReloadMaterialAssets();
+    require(loaded->GetConfig().emissionChannelMask&&loaded->GetConfig().emissionChannels==config.emissionChannels,
+        "Emission masks did not survive save/reload");
+    sample.uv2={.75f,.5f};
+    const auto mapped=render::EvaluateMaterialShaderGraph(loaded->GetConfig(),sample).emission;
+    require(mapped.r==.25f&&mapped.g==0&&mapped.b>.25f&&mapped.b<.252f,
+        "CPU emission masks used sRGB decoding or wrong channel assignments");
+
 }

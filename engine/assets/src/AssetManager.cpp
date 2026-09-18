@@ -2398,6 +2398,13 @@ namespace PlutoGE::assets
                         const std::string texturePath = ResolveMaterialTexturePath(value);
                         config.emissionTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
                     }
+                    else if (key == "EmissionChannelMask")
+                        config.emissionChannelMask = value == "true" || value == "1";
+                    else if (key == "EmissionRed" || key == "EmissionGreen" || key == "EmissionBlue")
+                    {
+                        const int channel = key == "EmissionRed" ? 0 : key == "EmissionGreen" ? 1 : 2;
+                        config.emissionChannels[channel] = glm::max(ParseVec4Or(value, config.emissionChannels[channel]), glm::vec4(0));
+                    }
                     else if (key == "EmissionTexCoord")
                     {
                         config.emissionTexCoord = value == "1" ? 1 : 0;
@@ -2470,6 +2477,8 @@ namespace PlutoGE::assets
                     config.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
                 }
                 ResolveMaterialShaderGraph(config);
+                if (config.emissionTexture && config.emissionChannelMask)
+                    config.emissionTexture = render::Texture::LoadFromFile(config.emissionTexture->GetFilePath().c_str(), render::TextureColorSpace::Linear);
                 material = new render::Material(config);
             }
         }
@@ -2563,6 +2572,13 @@ namespace PlutoGE::assets
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
         output << "EmissionTexture=" << (config.emissionTexture ? PersistMaterialTexturePath(config.emissionTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "EmissionChannelMask=" << (config.emissionChannelMask ? "true" : "false") << "\n";
+        const char *emissionChannelNames[]{"EmissionRed", "EmissionGreen", "EmissionBlue"};
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto &c = config.emissionChannels[i];
+            output << emissionChannelNames[i] << "=" << c.r << "," << c.g << "," << c.b << "," << c.a << "\n";
+        }
         output << "EmissionTexCoord=" << config.emissionTexCoord << "\n";
         output << "Emission=" << config.emission.r << "," << config.emission.g << "," << config.emission.b << "\n";
         output << "Subsurface=" << config.subsurface << "\n";
@@ -2620,7 +2636,7 @@ namespace PlutoGE::assets
             cachedConfig.albedoTexture = reloadTexture(config.albedoTexture, render::TextureColorSpace::SRGB);
             cachedConfig.normalTexture = reloadTexture(config.normalTexture, render::TextureColorSpace::Linear);
             cachedConfig.metallicTexture = reloadTexture(config.metallicTexture, render::TextureColorSpace::Linear);
-            cachedConfig.emissionTexture = reloadTexture(config.emissionTexture, render::TextureColorSpace::SRGB);
+            cachedConfig.emissionTexture = reloadTexture(config.emissionTexture, config.emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
             cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture, render::TextureColorSpace::Linear);
             cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())

@@ -52,7 +52,15 @@ void main()
 layout(r32ui,binding=0) uniform uimage3D uAccumulationR;layout(r32ui,binding=1) uniform uimage3D uAccumulationG;layout(r32ui,binding=2) uniform uimage3D uAccumulationB;layout(r32ui,binding=3) uniform uimage3D uAccumulationCount;layout(r32ui,binding=4) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; vec2 emissionUv; vec2 rasterCell; flat vec3 triangleA; flat vec3 triangleB; flat vec3 triangleC; flat vec2 uvA; flat vec2 uvB; flat vec2 uvC; flat vec2 emissionUvA; flat vec2 emissionUvB; flat vec2 emissionUvC; flat vec3 normalA; flat vec3 normalB; flat vec3 normalC; flat int axis; } g;
 uniform vec3 uVolumeOrigin,uEmission,uLightDirection,uLightColor;uniform float uVolumeSize,uLightIntensity;uniform int uHasInjectionLight,uInjectionLightHasShadow;
 const int MAX_LOCAL_LIGHTS=7;uniform int uLocalLightCount,uLocalLightType[MAX_LOCAL_LIGHTS];uniform vec3 uLocalLightPosition[MAX_LOCAL_LIGHTS],uLocalLightDirection[MAX_LOCAL_LIGHTS],uLocalLightColor[MAX_LOCAL_LIGHTS];uniform float uLocalLightIntensity[MAX_LOCAL_LIGHTS],uLocalLightRange[MAX_LOCAL_LIGHTS];
-uniform sampler2D uEmissionTexture; uniform float uHasEmissionTexture; uniform int uEmissionTexCoord;
+uniform int uEmissionChannelMask = 0;
+            uniform vec4 uEmissionChannels[3];
+            vec3 mapEmission(vec3 sampleValue) {
+                if (uEmissionChannelMask == 0) return sampleValue;
+                return sampleValue.r * uEmissionChannels[0].rgb * uEmissionChannels[0].a
+                     + sampleValue.g * uEmissionChannels[1].rgb * uEmissionChannels[1].a
+                     + sampleValue.b * uEmissionChannels[2].rgb * uEmissionChannels[2].a;
+            }
+            uniform sampler2D uEmissionTexture; uniform float uHasEmissionTexture; uniform int uEmissionTexCoord;
 uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform float uHasAlbedoTexture,uHasMetallicTexture,uMetallicFactor,uAlphaCutoff;uniform int uMetallicTextureChannel,uAlphaMode,uSurfaceType;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4],uViewMatrix;uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
@@ -93,7 +101,7 @@ void main(){
  vec3 tc=(worldPosition-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 sampledBaseColor=uHasAlbedoTexture>.5?texture(uAlbedoTexture,materialUv):vec4(1);vec4 a=uColor*sampledBaseColor;
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,materialUv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
- vec3 graphNormal=normalize(worldNormal),graphEmission=uEmission*(uHasEmissionTexture>.5?texture(uEmissionTexture,uEmissionTexCoord==1?emissionUv:materialUv).rgb:sampledBaseColor.rgb);float graphRoughness=uRoughnessFactor;
+ vec3 graphNormal=normalize(worldNormal),graphEmission=uEmission*(uHasEmissionTexture>.5?mapEmission(texture(uEmissionTexture,uEmissionTexCoord==1?emissionUv:materialUv).rgb):sampledBaseColor.rgb);float graphRoughness=uRoughnessFactor;
  evaluateShaderGraph(runtimeShaderGraph(),worldPosition,graphNormal,normalize(uGraphCameraPosition-worldPosition),uGraphTime,materialUv,a,graphNormal,metallic,graphRoughness,graphEmission);
  worldNormal=graphNormal;if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
  bool glassSurface=uSurfaceType==1;bool alphaBlend=uAlphaMode==2;float radianceCoverage=areaCoverage*((glassSurface||alphaBlend)?clamp(a.a,0,1):1.0);float opacity=glassSurface?0.0:radianceCoverage;vec3 normal=normalize(worldNormal),directRadiance=vec3(0);if(uHasInjectionLight!=0){vec3 lightDir=normalize(-uLightDirection);float ndl=max(dot(normal,lightDir),0);float shadow=uInjectionLightHasShadow!=0?visibility(worldPosition,worldNormal,uLightDirection):1;directRadiance=uLightColor*uLightIntensity*ndl*shadow;}for(int i=0;i<MAX_LOCAL_LIGHTS;i++){if(i>=uLocalLightCount)break;vec3 toLight=uLocalLightPosition[i]-worldPosition;float distanceToLight=length(toLight),range=max(uLocalLightRange[i],.0001);if(distanceToLight>=range)continue;vec3 lightDir=toLight/max(distanceToLight,.0001);float attenuation=(1.0-smoothstep(range*.9,range,distanceToLight))/max(distanceToLight*distanceToLight,.0001);if(uLocalLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLocalLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}directRadiance+=uLocalLightColor[i]*uLocalLightIntensity[i]*attenuation*max(dot(normal,lightDir),0.0);}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(1.0/3.14159265):vec3(0);vec3 r=(uGraphHeader.y>0.5?a.rgb:diffuseBounce)+max(graphEmission,vec3(0));

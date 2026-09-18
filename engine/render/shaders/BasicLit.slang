@@ -120,7 +120,8 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 glassFog[4];
     ShaderGraphData shaderGraph;
     float4 shaderGraphFrame;
-    uint4 emissionParameters; // map present, UV set
+    uint4 emissionParameters; // map present, UV set, RGB channel masks
+    float4 emissionChannels[3];
 };
 
 [[vk::binding(18, 1)]] Sampler2D emissionTexture : register(t18, space1);
@@ -702,9 +703,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
     // Material emission illuminates the albedo texture. An explicit graph
     // emission output can replace this textured input independently.
-    float3 surfaceEmission = emission * (emissionParameters.x != 0
+    float3 emissionSample = emissionParameters.x != 0
         ? emissionTexture.Sample((emissionParameters.y == 1 ? input.uv2 : input.uv) * uvScale).rgb
-        : sampledBaseColor.rgb);
+        : sampledBaseColor.rgb;
+    if (emissionParameters.x != 0 && emissionParameters.z != 0)
+        emissionSample = emissionSample.r * emissionChannels[0].rgb * emissionChannels[0].a
+                       + emissionSample.g * emissionChannels[1].rgb * emissionChannels[1].a
+                       + emissionSample.b * emissionChannels[2].rgb * emissionChannels[2].a;
+    float3 surfaceEmission = emission * emissionSample;
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);

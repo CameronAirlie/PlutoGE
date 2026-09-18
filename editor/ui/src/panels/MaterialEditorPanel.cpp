@@ -426,6 +426,8 @@ namespace PlutoGE::ui
             m_emission = glm::vec3(0.0f);
             m_emissionTexturePath.clear();
             m_emissionTexCoord = 0;
+            m_emissionChannelMask = false;
+            m_emissionChannels = {{{1,0,0,1},{0,1,0,1},{0,0,1,1}}};
             m_roughnessTexturePath.clear();
             m_roughnessTextureChannel = render::TextureChannel::Red;
             m_transmission = 0.0f;
@@ -462,6 +464,8 @@ namespace PlutoGE::ui
         m_emission = config.emission;
         m_emissionTexturePath = config.emissionTexture ? config.emissionTexture->GetFilePath() : std::string{};
         m_emissionTexCoord = config.emissionTexCoord;
+        m_emissionChannelMask = config.emissionChannelMask;
+        m_emissionChannels = config.emissionChannels;
         m_roughnessTexturePath = config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{};
         m_roughnessTextureChannel = config.roughnessTextureChannel;
         m_transmission = config.transmission;
@@ -513,8 +517,10 @@ namespace PlutoGE::ui
         previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
         previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
         previewConfig.emission = m_emission;
-        previewConfig.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, render::TextureColorSpace::SRGB);
+        previewConfig.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, m_emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
         previewConfig.emissionTexCoord = m_emissionTexCoord;
+        previewConfig.emissionChannelMask = m_emissionChannelMask;
+        previewConfig.emissionChannels = m_emissionChannels;
         previewConfig.transmission = m_transmission;
         previewConfig.subsurface = m_subsurface;
         previewConfig.subsurfaceColor = m_subsurfaceColor;
@@ -539,6 +545,9 @@ namespace PlutoGE::ui
         HashPreviewValue(previewRevision, m_roughnessTexturePath);
         HashPreviewValue(previewRevision, m_emissionTexturePath);
         HashPreviewValue(previewRevision, m_emissionTexCoord);
+        HashPreviewValue(previewRevision, m_emissionChannelMask);
+        for (const auto &channel : m_emissionChannels)
+            for (int i=0;i<4;++i) HashPreviewValue(previewRevision, channel[i]);
         HashPreviewValue(previewRevision, static_cast<int>(m_metallicTextureChannel));
         HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
         HashPreviewValue(previewRevision, m_flipNormalY);
@@ -705,6 +714,22 @@ namespace PlutoGE::ui
         const char *emissionUvs[] = {"UV 0 (primary)", "UV 1 (secondary)"};
         if (ImGui::Combo("Emission UV Set", &m_emissionTexCoord, emissionUvs, 2))
             m_dirty = true;
+        if (ImGui::Checkbox("Emission RGB Channel Masks", &m_emissionChannelMask)) m_dirty = true;
+        if (m_emissionChannelMask)
+        {
+            ImGui::TextWrapped("Each texture channel controls a separate emission colour and intensity.");
+            const char *names[]{"Red mask", "Green mask", "Blue mask"};
+            for (int i=0;i<3;++i)
+            {
+                ImGui::PushID(i);
+                auto &channel = m_emissionChannels[i];
+                if (ImGui::ColorEdit3(names[i], &channel.x, ImGuiColorEditFlags_Float)) m_dirty = true;
+                if (ImGui::DragFloat("Intensity", &channel.w, .05f, 0.0f, 10000.0f)) {
+                    channel.w = std::max(channel.w, 0.0f); m_dirty = true;
+                }
+                ImGui::PopID();
+            }
+        }
         float emission[3] = {m_emission.r, m_emission.g, m_emission.b};
         if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
         {
@@ -806,8 +831,10 @@ namespace PlutoGE::ui
             config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
             config.emission = glm::max(m_emission, glm::vec3(0.0f));
-            config.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, render::TextureColorSpace::SRGB);
+            config.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, m_emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
             config.emissionTexCoord = m_emissionTexCoord;
+            config.emissionChannelMask = m_emissionChannelMask;
+            config.emissionChannels = m_emissionChannels;
             config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
             config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
             config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);

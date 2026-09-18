@@ -75,7 +75,7 @@ namespace PlutoGE::render
             const auto texel=[&](int x,int y){
                 const int at=((mode>=2?std::clamp(y,0,h-1):(y%h+h)%h)*w+(mode>=2?std::clamp(x,0,w-1):(x%w+w)%w))*4;
                 glm::vec4 c{float(pixels[at]),float(pixels[at+1]),float(pixels[at+2]),float(pixels[at+3])};c/=255.0f;
-                if(slot==0 || slot==10)for(int j=0;j<3;++j)c[j]=c[j]<=.04045f?c[j]/12.92f:std::pow((c[j]+.055f)/1.055f,2.4f);
+                if(slot==0 || (slot==10 && !material.emissionChannelMask))for(int j=0;j<3;++j)c[j]=c[j]<=.04045f?c[j]/12.92f:std::pow((c[j]+.055f)/1.055f,2.4f);
                 return c;
             };
             if(mode&1)return texel(int(std::floor(p.x+.5f)),int(std::floor(p.y+.5f)));
@@ -86,7 +86,13 @@ namespace PlutoGE::render
         if(!vertexOnly) {
             const auto albedoSample=sample(0,s.uv);
             s.color*=albedoSample;
-            s.emission*=glm::vec3(material.emissionTexture ? sample(10,material.emissionTexCoord==1?s.uv2:s.uv) : albedoSample);
+            auto emissionSample = glm::vec3(material.emissionTexture ? sample(10,material.emissionTexCoord==1?s.uv2:s.uv) : albedoSample);
+            if (material.emissionTexture && material.emissionChannelMask) {
+                glm::vec3 mapped(0);
+                for (int i=0;i<3;++i) mapped += emissionSample[i] * glm::vec3(material.emissionChannels[i]) * material.emissionChannels[i].w;
+                emissionSample = mapped;
+            }
+            s.emission *= emissionSample;
             if(material.metallicTexture)s.metallic*=sample(2,s.uv)[int(material.metallicTextureChannel)];
             if(material.roughnessTexture)s.roughness*=sample(3,s.uv)[int(material.roughnessTextureChannel)];
         }

@@ -372,7 +372,11 @@ namespace PlutoGE::render
             draw.roughness = material.roughness;
             draw.emission = material.emission;
             draw.emissionTexCoord = material.emissionTexCoord;
-            draw.emissionTexture = uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene emission");
+            draw.emissionChannelMask = material.emissionChannelMask;
+            draw.emissionChannels = material.emissionChannels;
+            draw.emissionTexture = material.emissionChannelMask
+                ? uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Unorm, m_linearTextures, "Emission masks")
+                : uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene emission");
             draw.subsurface = material.subsurface;
             draw.subsurfaceColor = material.subsurfaceColor;
             draw.subsurfaceRadius = material.subsurfaceRadius;

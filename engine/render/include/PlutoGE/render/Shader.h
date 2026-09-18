@@ -183,6 +183,14 @@ namespace PlutoGE::render
             uniform vec3 uEmission = vec3(0.0);
             uniform sampler2D uEmissionTexture;
             uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionChannelMask = 0;
+            uniform vec4 uEmissionChannels[3];
+            vec3 mapEmission(vec3 sampleValue) {
+                if (uEmissionChannelMask == 0) return sampleValue;
+                return sampleValue.r * uEmissionChannels[0].rgb * uEmissionChannels[0].a
+                     + sampleValue.g * uEmissionChannels[1].rgb * uEmissionChannels[1].a
+                     + sampleValue.b * uEmissionChannels[2].rgb * uEmissionChannels[2].a;
+            }
             uniform int uEmissionTexCoord = 0;
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
@@ -257,7 +265,7 @@ namespace PlutoGE::render
                     albedo *= texAlbedo.rgb;
                 }
 
-                if (uHasEmissionTexture > 0.5) texturedEmission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
+                if (uHasEmissionTexture > 0.5) texturedEmission *= mapEmission(texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb);
                 if (uAlphaMode == 1 && opacity < uAlphaCutoff)
                 {
                     discard;
@@ -1565,6 +1573,14 @@ void main()
             uniform vec3 uEmission = vec3(0.0);
             uniform sampler2D uEmissionTexture;
             uniform float uHasEmissionTexture = 0.0;
+            uniform int uEmissionChannelMask = 0;
+            uniform vec4 uEmissionChannels[3];
+            vec3 mapEmission(vec3 sampleValue) {
+                if (uEmissionChannelMask == 0) return sampleValue;
+                return sampleValue.r * uEmissionChannels[0].rgb * uEmissionChannels[0].a
+                     + sampleValue.g * uEmissionChannels[1].rgb * uEmissionChannels[1].a
+                     + sampleValue.b * uEmissionChannels[2].rgb * uEmissionChannels[2].a;
+            }
             uniform int uEmissionTexCoord = 0;
             uniform int uSurfaceType = 0;
             uniform int uTwoSided = 0;
@@ -2114,7 +2130,7 @@ void main()
                 }
 
 
-                if (uHasEmissionTexture > 0.5) emission *= texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb;
+                if (uHasEmissionTexture > 0.5) emission *= mapEmission(texture(uEmissionTexture, uEmissionTexCoord == 1 ? UV2 : UV).rgb);
                 vec3 normal = normalize(Normal);
                 if (uHasNormalTexture > 0.5)
                 {

@@ -244,6 +244,9 @@ namespace PlutoGE::render
         rhi::TextureHandle roughnessTexture;
         rhi::TextureHandle emissionTexture;
         int emissionTexCoord = 0;
+        bool emissionChannelMask = false;
+        // RGB selects output colour; W is independent channel intensity.
+        std::array<glm::vec4, 3> emissionChannels{{{1,0,0,1}, {0,1,0,1}, {0,0,1,1}}};
         std::array<rhi::TextureHandle,4> graphTextures{};
         std::array<std::uint32_t,4> graphSamplers{};
         float metallic = 0.0f;

@@ -52,4 +52,27 @@ void CheckEmissionTexture(PlutoGE::render::BasicRenderer &renderer,
         require(dim[0]>=26&&dim[0]<=29&&dim[1]>=126&&dim[1]<=129,"Emission factor not applied");
         draw.emission={1,1,1};
     }
+    rhi::Texture mask(device,device.CreateTexture({2,1,rhi::Format::R8G8B8A8Unorm,
+        rhi::TextureUsage::Sampled,"Linear emission masks",false},pixels));
+    draw.emissionTexture=mask.Get(); draw.emissionChannelMask=true;
+    draw.emissionTexCoord=1; draw.alphaMode=0;
+    draw.emissionChannels={{{0,0,1,.5f},{1,0,0,.25f},{0,1,0,1}}};
+    const auto mapped=sample();
+    require(mapped[0]>=62&&mapped[0]<=65&&mapped[1]<3&&mapped[2]>=62&&mapped[2]<=65,
+        "Emission masks lost channel colours, linear values, or independent intensities");
+    draw.emissionChannels[1].w=0;
+    const auto disabled=sample();
+    require(disabled[0]<3&&disabled[2]>=62,"Disabling one emission channel affected another");
+    const std::array<std::byte,4> bluePixel{std::byte{0},std::byte{0},std::byte{128},std::byte{255}};
+    rhi::Texture blueMask(device,device.CreateTexture({1,1,rhi::Format::R8G8B8A8Unorm,
+        rhi::TextureUsage::Sampled,"Blue emission mask",false},bluePixel));
+    draw.emissionTexture=blueMask.Get();
+    const auto blueMapped=sample();
+    require(blueMapped[0]<3&&blueMapped[1]>=126&&blueMapped[1]<=129&&blueMapped[2]<3,
+        "Blue emission mask did not use its assigned colour");
+    draw.emissionTexture=mask.Get();
+    draw.emissionTexCoord=0;
+    const auto maskedBlack=sample();
+    require(maskedBlack[0]<3&&maskedBlack[1]<3&&maskedBlack[2]<3,"Black emission masks glow");
+
 }

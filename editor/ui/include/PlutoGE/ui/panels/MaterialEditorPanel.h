@@ -39,6 +39,8 @@ namespace PlutoGE::ui
         glm::vec3 m_emission{0.0f};
         std::string m_emissionTexturePath;
         int m_emissionTexCoord = 0;
+        bool m_emissionChannelMask = false;
+        std::array<glm::vec4,3> m_emissionChannels{{{1,0,0,1},{0,1,0,1},{0,0,1,1}}};
         float m_subsurface = 0.0f;
         glm::vec3 m_subsurfaceColor{1.0f, 0.35f, 0.2f};
         float m_subsurfaceRadius = 1.0f;

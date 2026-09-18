@@ -59,6 +59,9 @@ namespace PlutoGE::render
         glm::vec3 emission{0.0f}; // HDR emission factor; legacy materials without a map use albedo.
         Texture *emissionTexture = nullptr;
         int emissionTexCoord = 0; // 0: primary UVs, 1: secondary UVs
+        bool emissionChannelMask = false;
+        // RGB selects output colour; W is independent channel intensity.
+        std::array<glm::vec4, 3> emissionChannels{{{1,0,0,1}, {0,1,0,1}, {0,0,1,1}}};
 
         float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface

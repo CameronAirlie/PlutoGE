@@ -43,6 +43,7 @@ struct MaterialParameters
     float4 graphCameraTime;
     float4 graphFactors;
     uint4 emissionParameters;
+    float4 emissionChannels[3];
 };
 [[vk::binding(0, 0)]] cbuffer VoxelConstants : register(b0, space0) { VoxelParameters voxel; };
 [[vk::binding(1, 0)]] cbuffer ObjectConstants : register(b1, space0) { ObjectParameters object; };
@@ -240,8 +241,13 @@ void fragmentMain(GeometryOutput input)
     float metallic = saturate(material.metallic);
     if (material.hasMetallicTexture != 0) metallic *= metallicTexture.Sample(input.uv)[min(material.metallicChannel,3)];
     float roughness=material.graphFactors.x;
-    float3 emission=material.emission * (material.emissionParameters.x != 0
-        ? emissionTexture.Sample(material.emissionParameters.y == 1 ? input.uv2 : input.uv).rgb : sampledBaseColor.rgb);
+    float3 emissionSample = material.emissionParameters.x != 0
+        ? emissionTexture.Sample(material.emissionParameters.y == 1 ? input.uv2 : input.uv).rgb : sampledBaseColor.rgb;
+    if (material.emissionParameters.x != 0 && material.emissionParameters.z != 0)
+        emissionSample = emissionSample.r * material.emissionChannels[0].rgb * material.emissionChannels[0].a
+                       + emissionSample.g * material.emissionChannels[1].rgb * material.emissionChannels[1].a
+                       + emissionSample.b * material.emissionChannels[2].rgb * material.emissionChannels[2].a;
+    float3 emission = material.emission * emissionSample;
     evaluateShaderGraph(material.graph,input.worldPosition,normal,normalize(material.graphCameraTime.xyz-input.worldPosition),
         material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;

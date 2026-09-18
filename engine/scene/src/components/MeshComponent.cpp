@@ -210,6 +210,8 @@ namespace PlutoGE::scene
             std::optional<glm::vec3> emission;
             std::optional<std::string> emissionPath;
             std::optional<int> emissionTexCoord;
+            std::optional<bool> emissionChannelMask;
+            std::array<std::optional<glm::vec4>,3> emissionChannels;
             std::optional<float> subsurface;
             std::optional<glm::vec3> subsurfaceColor;
             std::optional<float> subsurfaceRadius;
@@ -236,6 +238,9 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
             properties.push_back({prefix + "EmissionPath", PropertyType::String, config.emissionTexture ? config.emissionTexture->GetFilePath() : std::string{}});
+            properties.push_back({prefix + "EmissionChannelMask", PropertyType::Bool, config.emissionChannelMask ? "true" : "false"});
+            const char *names[]{"EmissionRed", "EmissionGreen", "EmissionBlue"};
+            for (int i=0;i<3;++i) properties.push_back({prefix + names[i], PropertyType::String, SerializeVec4(config.emissionChannels[i])});
             properties.push_back({prefix + "EmissionTexCoord", PropertyType::String, std::to_string(config.emissionTexCoord)});
             properties.push_back({prefix + "Emission", PropertyType::String, SerializeVec3(config.emission)});
             properties.push_back({prefix + "Subsurface", PropertyType::Float, std::to_string(config.subsurface)});
@@ -303,6 +308,10 @@ namespace PlutoGE::scene
             }
             else if (fieldName == "EmissionPath")
                 serializedMaterial.emissionPath = value;
+            else if (fieldName == "EmissionChannelMask")
+                serializedMaterial.emissionChannelMask = value == "true" || value == "1";
+            else if (fieldName == "EmissionRed" || fieldName == "EmissionGreen" || fieldName == "EmissionBlue")
+                serializedMaterial.emissionChannels[fieldName == "EmissionRed" ? 0 : fieldName == "EmissionGreen" ? 1 : 2] = glm::max(ParseVec4(value), glm::vec4(0));
             else if (fieldName == "EmissionTexCoord")
                 serializedMaterial.emissionTexCoord = value == "1" ? 1 : 0;
             else if (fieldName == "Emission")
@@ -400,10 +409,12 @@ namespace PlutoGE::scene
             {
                 material.SetRoughness(*serializedMaterial.roughness);
             }
+            if (serializedMaterial.emissionChannelMask.has_value()) material.GetConfig().emissionChannelMask = *serializedMaterial.emissionChannelMask;
+            for (int i=0;i<3;++i) if (serializedMaterial.emissionChannels[i].has_value()) material.GetConfig().emissionChannels[i] = *serializedMaterial.emissionChannels[i];
             if (serializedMaterial.emissionPath.has_value())
             {
                 const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.emissionPath);
-                material.SetEmissionTexture(serializedMaterial.emissionPath->empty() ? nullptr : render::Texture::LoadFromFile(path.c_str(), render::TextureColorSpace::SRGB));
+                material.SetEmissionTexture(serializedMaterial.emissionPath->empty() ? nullptr : render::Texture::LoadFromFile(path.c_str(), material.GetConfig().emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB));
             }
             if (serializedMaterial.emissionTexCoord.has_value())
                 material.SetEmissionTexCoord(*serializedMaterial.emissionTexCoord);

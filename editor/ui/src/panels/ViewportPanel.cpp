@@ -1,5 +1,6 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/ViewportPicking.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 
 // Editor selection access is validated by EditorShell before panel use.
@@ -97,11 +98,7 @@ namespace PlutoGE::ui
             return "Unknown";
         }
 
-        struct PickRay
-        {
-            glm::vec3 origin{0.0f};
-            glm::vec3 direction{0.0f, 0.0f, -1.0f};
-        };
+        using PickRay = ViewportPickRay;
 
         struct ProjectedPoint
         {
@@ -1049,12 +1046,11 @@ namespace PlutoGE::ui
                     continue;
 
                 const glm::mat4 world = ComputePickSubmeshTransform(entity, meshComponent, submeshIndex, submesh, animation);
-                const glm::mat4 inverseWorld = glm::inverse(world);
-                const glm::vec3 localOrigin(inverseWorld * glm::vec4(ray.origin, 1.0f));
-                glm::vec3 localDirection(inverseWorld * glm::vec4(ray.direction, 0.0f));
-                if (glm::dot(localDirection, localDirection) <= kRayEpsilon)
+                const auto localRay = TransformViewportPickRay(ray, world);
+                if (!localRay)
                     continue;
-                localDirection = glm::normalize(localDirection);
+                const auto &localOrigin = localRay->origin;
+                const auto &localDirection = localRay->direction;
                 if (!IntersectBoundsDistance(submesh.bounds, localOrigin, localDirection))
                     continue;
 
@@ -1392,15 +1388,13 @@ namespace PlutoGE::ui
                     }
 
                     const glm::mat4 submeshWorldTransform = ComputePickSubmeshTransform(*entity, *meshComponent, submeshIndex, submesh, animationComponent);
-                    const glm::mat4 inverseSubmeshWorldTransform = glm::inverse(submeshWorldTransform);
-                    glm::vec3 localOrigin = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->origin, 1.0f));
-                    glm::vec3 localDirection = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->direction, 0.0f));
-                    const float directionLengthSquared = glm::dot(localDirection, localDirection);
-                    if (directionLengthSquared <= kRayEpsilon)
+                    const auto localRay = TransformViewportPickRay(*ray, submeshWorldTransform);
+                    if (!localRay)
                     {
                         continue;
                     }
-                    localDirection = glm::normalize(localDirection);
+                    const auto &localOrigin = localRay->origin;
+                    const auto &localDirection = localRay->direction;
 
                     const auto boundsDistance = IntersectBoundsDistance(submesh.bounds, localOrigin, localDirection);
                     if (!boundsDistance.has_value())

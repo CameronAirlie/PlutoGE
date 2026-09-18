@@ -10,6 +10,7 @@
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "GlassRenderingChecks.h"
+#include "TransparencyDepthRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -239,6 +240,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                              std::string_view(argv[1]) == "--outline" ||
                              std::string_view(argv[1]) == "--temporal-motion" ||
                              std::string_view(argv[1]) == "--particles-points-only" ||
+                             std::string_view(argv[1]) == "--transparency-only" ||
                              std::string_view(argv[1]) == "--opaque-batching" ||
                              std::string_view(argv[1]) == "--render-optimizations"))
                 shaders.virtualShadows = {};
@@ -252,6 +254,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")
+        {
+            const auto read = [&](render::rhi::TextureHandle texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            };
+            CheckGlassRendering(basicRenderer, read);
+            CheckTransparencyDepth(basicRenderer, device, read);
+            if (glGetError() != GL_NO_ERROR) return 1;
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
         {
             CheckGeometryDiagnostics(basicRenderer, device, [&](auto texture) {

@@ -109,7 +109,7 @@ cbuffer MaterialParameters : register(b0, space1)
     uint metallicChannel;
     uint roughnessChannel;
     uint flipNormalY;
-    uint materialPadding;
+    uint materialTwoSided;
     float4 subsurfaceColorStrength;
     float4 subsurfaceRadiusPadding;
     float4 glassParameters; // surface type, transmission, IOR, thickness
@@ -683,7 +683,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         const float3 bitangent = normalize(cross(normal, tangent)) * input.worldTangent.w;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
     }
-    if (transparentPass && dot(normal, cameraPositionAmbient.xyz - input.worldPosition) < 0.0)
+    if ((transparentPass || alphaMode == 2) && dot(normal, cameraPositionAmbient.xyz - input.worldPosition) < 0.0)
         normal = -normal;
     float sampledMetallic = 1.0;
     if (hasMetallicTexture != 0 && !skipDetailTextures)
@@ -700,6 +700,17 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
     if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
+    if (alphaMode == 2 && glassParameters.x < 0.5)
+    {
+        // Complementary coverage tests keep solid BLEND texels depth-correct,
+        // including overlapping triangles inside one draw. Evaluate after the
+        // shader graph so animated opacity follows the same rule in both passes.
+        // Exported interior atlases can encode solid regions as 253/255 alpha.
+        // Treat the final 1% as opaque; retain ordinary fractional coverage.
+        const bool opaqueCoverage = sampledColor.a >= 0.99;
+        if (transparentPass == opaqueCoverage) discard;
+        if (!transparentPass) sampledColor.a = 1.0;
+    }
     if (!transparentPass && (pointParameters.w == 4.0 || pointParameters.w == 10.0))
     {
         // Retain material evaluation, alpha coverage, MRT bandwidth and motion;
@@ -969,8 +980,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 }
 
 [shader("fragment")]
-FragmentOutput fragmentMain(VertexOutput input)
+FragmentOutput fragmentMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
+    // The shared opaque pipeline has culling disabled. Preserve the culling
+    // used by the transparent pipeline when rendering its solid coverage.
+    if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;
     if (input.outlineWidth > 0.0)
     {
         FragmentOutput output;
@@ -983,7 +997,7 @@ FragmentOutput fragmentMain(VertexOutput input)
         output.debug = float4(0.0, 0.0, 1.0, 1.0);
         return output;
     }
-    if (pointParameters.w == 10.0 && alphaMode != 1 && shaderGraph.header.x == 0)
+    if (pointParameters.w == 10.0 && alphaMode == 0 && shaderGraph.header.x == 0)
     {
         FragmentOutput output;
         output.color = float4(0.5, 0.5, 0.5, 1);

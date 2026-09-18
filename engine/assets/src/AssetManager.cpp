@@ -2244,6 +2244,24 @@ namespace PlutoGE::assets
 
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference)
     {
+        return LoadMaterialAsset(assetReference, false);
+    }
+
+    void AssetManager::ReloadMaterialAssets()
+    {
+        // Loading can grow the cache. Keep a stable list, and retain built-in
+        // materials that have no file to reread.
+        std::vector<std::string> references;
+        references.reserve(m_materialCache.size());
+        for (const auto &[reference, material] : m_materialCache)
+            if (material && !Project::IsEngineAssetReference(reference))
+                references.push_back(reference);
+        for (const auto &reference : references)
+            LoadMaterialAsset(reference, true);
+    }
+
+    render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference, bool reload)
+    {
         if (assetReference.empty())
         {
             return nullptr;
@@ -2262,10 +2280,11 @@ namespace PlutoGE::assets
         }
 
         auto it = m_materialCache.find(cacheKey);
-        if (it != m_materialCache.end())
+        if (it != m_materialCache.end() && !reload)
         {
             return it->second;
         }
+        render::Material *cachedMaterial = it != m_materialCache.end() ? it->second : nullptr;
 
         render::Material *material = nullptr;
         if (assetReference == Project::kBuiltinDefaultMaterialReference)
@@ -2448,7 +2467,20 @@ namespace PlutoGE::assets
 
         if (material)
         {
+            if (cachedMaterial)
+            {
+                // Components and render-command caches share this pointer.
+                // Replace its saved configuration, not the object itself.
+                cachedMaterial->GetConfig() = std::move(material->GetConfig());
+                delete material;
+                material = cachedMaterial;
+            }
             m_materialCache[cacheKey] = material;
+        }
+        else if (cachedMaterial)
+        {
+            // A temporarily missing file must not invalidate live scene data.
+            material = cachedMaterial;
         }
         return material;
     }

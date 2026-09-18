@@ -53,7 +53,7 @@ namespace PlutoGE::render
             std::uint32_t metallicChannel = 0;
             std::uint32_t roughnessChannel = 0;
             std::uint32_t flipNormalY = 0;
-            std::uint32_t padding = 0;
+            std::uint32_t twoSided = 0;
             glm::vec4 subsurfaceColorStrength{1.0f, 0.35f, 0.2f, 0.0f};
             glm::vec4 subsurfaceRadiusPadding{1.0f, 0.0f, 0.0f, 0.0f};
             glm::vec4 glassParameters{0.0f, 0.0f, 1.45f, 0.01f};
@@ -2029,7 +2029,7 @@ namespace PlutoGE::render
                 draw.metallicTexture ? 1u : 0u,
                 draw.roughnessTexture ? 1u : 0u,
                 draw.metallicChannel, draw.roughnessChannel,
-                draw.flipNormalY ? 1u : 0u, 0u,
+                draw.flipNormalY ? 1u : 0u, draw.twoSided ? 1u : 0u,
                 glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
                           std::clamp(draw.subsurface, 0.0f, 1.0f)),
                 glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
@@ -2167,6 +2167,12 @@ namespace PlutoGE::render
                 continue;
             if (draw.surfaceType == 1 || draw.alphaMode == 2)
             {
+                // BLEND textures can contain solid interior surfaces as well as
+                // cutouts. Resolve their near-opaque fragments with depth writes;
+                // the transparent shader draws only the remaining coverage.
+                // Refractive glass must stay entirely in the transparent pass.
+                if (draw.surfaceType == 0)
+                    recordDraw(draw, false, historyIndex);
                 // Expand instances so each pane is sorted individually.
                 if (draw.instanceModels && !draw.instanceModels->empty())
                 {

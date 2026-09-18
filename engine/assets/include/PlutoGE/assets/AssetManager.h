@@ -78,6 +78,8 @@ namespace PlutoGE::assets
                                     const render::AnimationClip &clip,
                                     std::string *errorMessage = nullptr);
         render::Material *LoadMaterialAsset(const std::string &assetReference);
+        // Reread saved assets while preserving Material pointers held by scenes.
+        void ReloadMaterialAssets();
         bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::ShaderGraph LoadShaderGraphAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage = nullptr);
@@ -104,6 +106,7 @@ namespace PlutoGE::assets
         void ClearProjectContext();
 
     private:
+        render::Material *LoadMaterialAsset(const std::string &assetReference, bool reload);
         struct ModelResolutionCache
         {
             std::filesystem::file_time_type modified;

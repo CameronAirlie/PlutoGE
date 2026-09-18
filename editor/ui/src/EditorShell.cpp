@@ -2204,6 +2204,9 @@ namespace PlutoGE::ui
             return false;
         }
 
+        // Refresh before deserialization so saved scene-specific overrides still
+        // take precedence over the asset's configuration.
+        m_engine.GetAssetManager().ReloadMaterialAssets();
         std::string errorMessage;
         auto loadedScene = scene::SceneSerializer::Load(scenePath.string(), &errorMessage);
         if (!loadedScene)

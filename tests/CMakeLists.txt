@@ -81,6 +81,8 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
+add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)
 add_test(NAME PlutoGEVulkanGeometryDiagnosticTests COMMAND PlutoGEVulkanRhiTests --geometry-diagnostics)
 add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
@@ -130,6 +132,9 @@ add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimiza
 add_test(NAME PlutoGEMeshLodGenerationTests COMMAND PlutoGELargeMeshOptimizationTests --lod-only)
 
 add_executable(PlutoGEInspectMeshImport EXCLUDE_FROM_ALL ../tools/InspectMeshImport.cpp)
+add_executable(PlutoGEMaterialReloadTests MaterialReloadTests.cpp)
+target_link_libraries(PlutoGEMaterialReloadTests PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+add_test(NAME PlutoGEMaterialReloadTests COMMAND PlutoGEMaterialReloadTests)
 target_link_libraries(PlutoGEInspectMeshImport PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
 add_executable(PlutoGERecookMesh EXCLUDE_FROM_ALL ../tools/RecookMesh.cpp)
 target_link_libraries(PlutoGERecookMesh PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
@@ -143,7 +148,7 @@ add_test(NAME PlutoGEFbxImportTests COMMAND PlutoGEFbxImportTests)
 set_tests_properties(PlutoGEFbxImportTests PROPERTIES ENVIRONMENT "PLUTOGE_DISABLE_MESH_DISK_CACHE=1")
 
 if (TARGET OpenAL)
-    foreach(import_target PlutoGEInspectMeshImport PlutoGERecookMesh PlutoGEFbxImportTests)
+    foreach(import_target PlutoGEInspectMeshImport PlutoGERecookMesh PlutoGEFbxImportTests PlutoGEMaterialReloadTests)
         add_custom_command(TARGET ${import_target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${import_target}>/$<TARGET_FILE_NAME:OpenAL>)
@@ -323,6 +328,11 @@ add_executable(PlutoGEViewportBookmarksTests
 target_include_directories(PlutoGEViewportBookmarksTests PRIVATE ../editor/ui/include)
 target_link_libraries(PlutoGEViewportBookmarksTests PRIVATE glm::glm)
 add_test(NAME PlutoGEViewportBookmarksTests COMMAND PlutoGEViewportBookmarksTests)
+
+add_executable(PlutoGEViewportPickingTests ViewportPickingTests.cpp)
+target_include_directories(PlutoGEViewportPickingTests PRIVATE ../editor/ui/include)
+target_link_libraries(PlutoGEViewportPickingTests PRIVATE glm::glm)
+add_test(NAME PlutoGEViewportPickingTests COMMAND PlutoGEViewportPickingTests)
 
 add_executable(PlutoGEPlayModeChangesTests
     PlayModeChangesTests.cpp

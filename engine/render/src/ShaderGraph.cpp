@@ -650,6 +650,13 @@ ShaderGraphData runtimeShaderGraph() {
         case ShaderGraphNodeKind::ScreenUV:return "ScreenUV";
         case ShaderGraphNodeKind::SceneColor:return "SceneColor";
         case ShaderGraphNodeKind::SceneDepth:return "SceneDepth";
+        case ShaderGraphNodeKind::Step:return "Step";
+        case ShaderGraphNodeKind::Floor:return "Floor";
+        case ShaderGraphNodeKind::Smoothstep:return "Smoothstep";
+        case ShaderGraphNodeKind::LightDirection:return "LightDirection";
+        case ShaderGraphNodeKind::LightColor:return "LightColor";
+        case ShaderGraphNodeKind::LightAttenuation:return "LightAttenuation";
+        case ShaderGraphNodeKind::ShadowAttenuation:return "ShadowAttenuation";
         case ShaderGraphNodeKind::Expression:return "Expression";
         case ShaderGraphNodeKind::Output:
             return "Output";
@@ -722,6 +729,13 @@ ShaderGraphData runtimeShaderGraph() {
         if(value=="ScreenUV")return ShaderGraphNodeKind::ScreenUV;
         if(value=="SceneColor")return ShaderGraphNodeKind::SceneColor;
         if(value=="SceneDepth")return ShaderGraphNodeKind::SceneDepth;
+        if(value=="Step")return ShaderGraphNodeKind::Step;
+        if(value=="Floor")return ShaderGraphNodeKind::Floor;
+        if(value=="Smoothstep")return ShaderGraphNodeKind::Smoothstep;
+        if(value=="LightDirection")return ShaderGraphNodeKind::LightDirection;
+        if(value=="LightColor")return ShaderGraphNodeKind::LightColor;
+        if(value=="LightAttenuation")return ShaderGraphNodeKind::LightAttenuation;
+        if(value=="ShadowAttenuation")return ShaderGraphNodeKind::ShadowAttenuation;
         if(value=="Expression")return ShaderGraphNodeKind::Expression;
         if (value == "Output")
             return ShaderGraphNodeKind::Output;

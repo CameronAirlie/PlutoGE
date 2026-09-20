@@ -691,7 +691,7 @@ namespace PlutoGE::ui
 
             const auto buildFrustumCorners = [&](float distance)
             {
-                const float halfHeight = tanHalfFov * distance;
+                const float halfHeight = camera->IsOrthographic() ? camera->GetOrthographicHeight() * 0.5f : tanHalfFov * distance;
                 const float halfWidth = halfHeight * kPreviewAspect;
                 const glm::vec3 center = origin + forward * distance;
                 return std::array<glm::vec3, 4>{

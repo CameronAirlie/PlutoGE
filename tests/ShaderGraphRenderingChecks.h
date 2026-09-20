@@ -25,6 +25,66 @@ inline PlutoGE::render::ShaderGraph ParameterTestGraph()
     g.links={{1,1,"Out",3,"A"},{2,2,"Out",3,"B"},{3,3,"Out",100,"Albedo"}};
     return g;
 }
+// A graph-built three-band response, evaluated separately for every light.
+inline PlutoGE::render::ShaderGraph ToonTestGraph()
+{
+    using namespace PlutoGE::render;
+    ShaderGraph g;
+    g.nodes={{.id=1,.kind=ShaderGraphNodeKind::WorldNormal},
+        {.id=2,.kind=ShaderGraphNodeKind::LightDirection},
+        {.id=3,.kind=ShaderGraphNodeKind::Dot},
+        {.id=4,.kind=ShaderGraphNodeKind::Expression,.parameter="floor(saturate(A)*2.0+0.5)/2.0"},
+        {.id=5,.kind=ShaderGraphNodeKind::LightColor},
+        {.id=6,.kind=ShaderGraphNodeKind::LightAttenuation},
+        {.id=7,.kind=ShaderGraphNodeKind::ShadowAttenuation},
+        {.id=8,.kind=ShaderGraphNodeKind::Expression,.parameter="A*B*C*D"},
+        {.id=100,.kind=ShaderGraphNodeKind::Output}};
+    g.links={{1,1,"Out",3,"A"},{2,2,"Out",3,"B"},{3,3,"Out",4,"A"},
+        {4,4,"Out",8,"A"},{5,5,"Out",8,"B"},{6,6,"Out",8,"C"},{7,7,"Out",8,"D"},
+        {8,8,"Out",100,"Direct Lighting"}};
+    return g;
+}
+inline void CheckToonGraphCompiler()
+{
+    using namespace PlutoGE::render;
+    auto require=[](bool v,const char *message){if(!v)throw std::runtime_error(message);};
+    std::string error;
+    auto graph=ToonTestGraph();
+    auto program=BuildShaderGraphProgram(graph,{},&error);
+    require(bool(program),error.c_str());
+    require(program->data.outputs1.w!=0,"Custom lighting output lost");
+    ShaderGraphSample sample;sample.color={.2f,.3f,.4f,1};sample.lightColor={.4f,.8f,.2f};
+    sample.lightAttenuation=.5f;sample.shadowAttenuation=.25f;
+    for(float facing:{0.0f,.2f,.3f,.6f,.8f,1.0f}) {
+        sample.lightDirection={std::sqrt(1-facing*facing),0,facing};
+        auto result=EvaluateShaderGraph(*program,sample);
+        const float band=facing<.25f?0.0f:facing<.75f?.5f:1.0f;
+        require(glm::length(result.directLighting-sample.lightColor*(band*.5f*.25f))<.00001f,"Per-light CPU result differs");
+        require(result.color==sample.color,"Custom lighting changed surface albedo");
+    }
+    auto invalid=graph;invalid.links.back().toPin="Albedo";
+    require(!ValidateShaderGraph(invalid),"Light input accepted in surface stage");
+    invalid=graph;invalid.links.back().toPin="Vertex Offset";
+    require(!ValidateShaderGraph(invalid),"Light input accepted in vertex stage");
+    invalid=graph;invalid.unlit=true;
+    require(!ValidateShaderGraph(invalid),"Unlit custom lighting silently accepted");
+    // Shared subgraphs preserve lighting stage validation after flattening.
+    ShaderGraph parent;parent.nodes={{.id=1,.kind=ShaderGraphNodeKind::Subgraph,.subgraph=std::make_shared<const ShaderGraph>(graph)},
+        {.id=100,.kind=ShaderGraphNodeKind::Output}};
+    parent.links={{1,1,"Direct Lighting",100,"Direct Lighting"}};
+    require(ValidateShaderGraph(parent,&error),error.c_str());
+    parent.links[0].toPin="Emission";
+    require(!ValidateShaderGraph(parent),"Nested light input escaped stage validation");
+    for(const char *expression:{"step(0.5,A)","smoothstep(0.5,0.5,A)","smoothstep(1.0,0.0,A)"}) {
+        ShaderGraph math;math.unlit=true;
+        math.nodes={{.id=1,.kind=ShaderGraphNodeKind::Float,.value=glm::vec4(.5f)},
+            {.id=2,.kind=ShaderGraphNodeKind::Expression,.parameter=expression},{.id=100,.kind=ShaderGraphNodeKind::Output}};
+        math.links={{1,1,"Out",2,"A"},{2,2,"Out",100,"Albedo"}};
+        auto code=BuildShaderGraphProgram(math,{},&error);require(bool(code),error.c_str());
+        const float expected=std::string_view(expression)=="smoothstep(1.0,0.0,A)"?.5f:1.0f;
+        require(std::abs(EvaluateShaderGraph(*code,{}).color.x-expected)<.00001f,"Threshold edge semantics differ");
+    }
+}
 inline void CheckShaderGraphCompiler()
 {
     using namespace PlutoGE::render;
@@ -158,9 +218,10 @@ inline void CheckShaderGraphAssets()
     const auto sampleRoot=std::filesystem::path(__FILE__).parent_path().parent_path()/"samples"/"RocketLeg";
     if(std::filesystem::exists(sampleRoot)) {
         examples.SetProjectContext(sampleRoot.string());
-        for(const char *name:{"DynamicWaves","SceneTint","LayeredRim","ScrollingTexture"}) {
+        for(const char *name:{"DynamicWaves","SceneTint","LayeredRim","ScrollingTexture","Toon"}) {
             bool valid=false;auto example=examples.LoadShaderGraphAsset(std::string("project://Shaders/")+name+".plutoshadergraph",&valid);
-            require(valid&&render::ValidateShaderGraph(example,&error),std::string(name)+": "+error);
+            const bool compiled=valid&&render::ValidateShaderGraph(example,&error);
+            require(compiled,std::string(name)+": "+error);
             auto *material=examples.LoadMaterialAsset(std::string("project://Materials/")+name+".plutomaterial");
             require(material && material->GetConfig().shaderGraphProgram,std::string(name)+" material did not resolve");
             if(std::string_view(name)=="LayeredRim")require(material->GetConfig().additionalPasses.size()==1,"Additional pass not resolved");
@@ -173,6 +234,7 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
 {
     using namespace PlutoGE::render;
     CheckShaderGraphCompiler();
+    CheckToonGraphCompiler();
     CheckShaderGraphAssets();
     auto require=[](bool v,const char *message){if(!v) throw std::runtime_error(message);};
     const std::array<BasicVertex,4> vertices{{
@@ -191,12 +253,53 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
         require(pixels.size()>at+3,"Shader graph readback is empty");
         return glm::ivec3(int(pixels[at]),int(pixels[at+1]),int(pixels[at+2]));
     };
+    int pixelCheck=0;
     auto expect=[&](glm::ivec3 actual,glm::ivec3 expected)
     {
+        ++pixelCheck;
         if(glm::any(glm::greaterThan(glm::abs(actual-expected),glm::ivec3(3))))
-            throw std::runtime_error("Shader graph pixel mismatch: expected " + std::to_string(expected.x) + "," + std::to_string(expected.y) + "," + std::to_string(expected.z) +
+            throw std::runtime_error("Shader graph pixel check " + std::to_string(pixelCheck) + " mismatch: expected " + std::to_string(expected.x) + "," + std::to_string(expected.y) + "," + std::to_string(expected.z) +
                                      " got " + std::to_string(actual.x) + "," + std::to_string(actual.y) + "," + std::to_string(actual.z));
     };
+    // Scene lights drive the graph, with no second PBR/N.L multiplication.
+    draw.shaderGraphProgram=BuildShaderGraphProgram(ToonTestGraph());
+    require(bool(draw.shaderGraphProgram),"Toon graph compilation failed");
+    lighting.directionalIntensity=.5f;lighting.directionalColor={.4f,.8f,.2f};
+    for(float facing:{.1f,.5f,.9f}) {
+        lighting.directionalDirection={-std::sqrt(1-facing*facing),0,-facing};
+        const float band=facing<.25f?0.0f:facing<.75f?.5f:1.0f;
+        expect(sample(std::span(&draw,1)),glm::ivec3(glm::round(glm::vec3(.4f,.8f,.2f)*(.5f*band*255))));
+    }
+    lighting.directionalIntensity=0;
+    expect(sample(std::span(&draw,1)),{0,0,0});
+    lighting.pointLights.push_back({.position={0,0,2.5f},.range=10,.color={.4f,.8f,.2f},.intensity=1});
+    expect(sample(std::span(&draw,1)),{26,51,13});
+    lighting.pointLights.push_back(lighting.pointLights.front());
+    expect(sample(std::span(&draw,1)),{51,102,26});
+    lighting.pointLights.clear();
+    draw.shaderGraphProgram.reset();
+    // A branch shared by Albedo and Direct Lighting reads the original input.
+    // Replaying it with the already tinted surface would square the tint.
+    ShaderGraph shared;
+    shared.nodes={{.id=1,.kind=ShaderGraphNodeKind::MaterialInput},
+        {.id=2,.kind=ShaderGraphNodeKind::Float,.value=glm::vec4(.5f)},
+        {.id=3,.kind=ShaderGraphNodeKind::Multiply},{.id=100,.kind=ShaderGraphNodeKind::Output}};
+    shared.links={{1,1,"Out",3,"A"},{2,2,"Out",3,"B"},{3,3,"Out",100,"Albedo"},{4,3,"Out",100,"Direct Lighting"}};
+    draw.shaderGraphProgram=BuildShaderGraphProgram(shared);
+    lighting.directionalIntensity=1;
+    expect(sample(std::span(&draw,1)),{115,0,0});
+    lighting.directionalIntensity=0;draw.shaderGraphProgram.reset();
+    // GPU threshold semantics, including coincident/reversed smoothstep edges.
+    for(const char *expression:{"step(0.5,0.5)","smoothstep(0.5,0.5,0.5)","smoothstep(1.0,0.0,0.5)","floor(-0.2)+1.25"}) {
+        ShaderGraph math;math.unlit=true;
+        math.nodes={{.id=1,.kind=ShaderGraphNodeKind::Expression,.parameter=expression},{.id=100,.kind=ShaderGraphNodeKind::Output}};
+        math.links={{1,1,"Out",100,"Albedo"}};
+        draw.shaderGraphProgram=BuildShaderGraphProgram(math);
+        require(bool(draw.shaderGraphProgram),"Threshold expression failed");
+        auto expected=EvaluateShaderGraph(*draw.shaderGraphProgram,{}).color;
+        expect(sample(std::span(&draw,1)),glm::ivec3(glm::round(glm::vec3(expected)*255.0f)));
+    }
+    draw.shaderGraphProgram.reset();
     // White emission preserves texture detail even with no external lighting.
     const std::array<std::byte,8> emissiveTexels{std::byte{64},std::byte{128},std::byte{32},std::byte{255},
                                                std::byte{0},std::byte{32},std::byte{192},std::byte{255}};
@@ -217,6 +320,31 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
     draw.shaderGraphProgram=BuildShaderGraphProgram(CreateDefaultShaderGraph());
     draw.baseColorTexture={}; draw.emission={.2f,.4f,.1f};
     expect(sample(std::span(&draw,1)),{51,102,26});
+    // Exercise the shipped toon asset, including its shared textured RGB branch.
+    PlutoGE::assets::AssetManager toonAssets;
+    toonAssets.SetProjectContext((std::filesystem::path(__FILE__).parent_path().parent_path()/"samples"/"RocketLeg").string());
+    bool toonLoaded=false;
+    const auto texturedToon=toonAssets.LoadShaderGraphAsset("project://Shaders/Toon.plutoshadergraph",&toonLoaded);
+    require(toonLoaded,"Toon example asset did not load");
+    std::string toonError;
+    draw.shaderGraphProgram=BuildShaderGraphProgram(texturedToon,{},&toonError);
+    require(bool(draw.shaderGraphProgram),toonError.c_str());
+    draw.baseColor={.5f,.25f,1,1};draw.emission={0,0,0};draw.baseColorTexture=emissiveTexture.Get();
+    lighting.directionalDirection={0,0,-1};lighting.directionalIntensity=1;
+    lighting.directionalColor={1,1,1};
+    expect(sample(std::span(&draw,1),.3f),{32,32,32});
+    expect(sample(std::span(&draw,1),.7f),{0,8,192});
+    // Ambient and direct illumination must share the same textured albedo.
+    lighting.ambientIntensity=.25f;lighting.directionalIntensity=.5f;
+    expect(sample(std::span(&draw,1),.3f),{24,24,24});
+    lighting.ambientIntensity=0;lighting.directionalIntensity=1;
+    draw.baseColorTexture={};
+    expect(sample(std::span(&draw,1)),{128,64,255});
+    const std::array tintOverride{ShaderGraphVariable{"Tint",ShaderGraphValueType::Vec3,{.5f,1,.25f,1}}};
+    draw.shaderGraphProgram=BuildShaderGraphProgram(texturedToon,tintOverride);
+    require(bool(draw.shaderGraphProgram),"Toon tint override failed");
+    expect(sample(std::span(&draw,1)),{64,64,64});
+    lighting.directionalIntensity=0;draw.baseColor={.9f,0,0,1};
     draw.emission={0,0,0};
     draw.shaderGraphProgram=BuildShaderGraphProgram(graph);
     expect(sample(std::span(&draw,1)),{51,102,26});
@@ -334,4 +462,18 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
     mask.nodes.push_back({.id=2,.kind=ShaderGraphNodeKind::Vec3,.value={2,0,0,1}});
     mask.links.push_back({2,2,"Vec3",100,"Vertex Offset"});caster.shaderGraphProgram=BuildShaderGraphProgram(mask);
     require(shadowPixel()>240,"Shadow ignored vertex displacement");
+    // The same shadow visibility must reach the graph's per-light input.
+    receiver.shaderGraphProgram=BuildShaderGraphProgram(ToonTestGraph());
+    shadows.ambientIntensity=0;shadows.directionalIntensity=.5f;
+    auto toonShadowPixel=[&](){
+        renderer.Render(glm::mat4(1),shadows,std::span(&receiver,1),{},std::span(&caster,1));
+        auto pixels=readPixels(renderer.GetColorTexture());
+        return int(pixels[(renderer.GetHeight()/2*renderer.GetWidth()+renderer.GetWidth()/2)*4]);
+    };
+    require(std::abs(toonShadowPixel()-128)<=3,"Unshadowed toon light is not applied exactly once");
+    mask.links.pop_back();caster.shaderGraphProgram=BuildShaderGraphProgram(mask);
+    require(toonShadowPixel()<15,"Scene shadow visibility did not reach custom lighting");
+    mask.nodes[0].value=glm::vec4(0);caster.shaderGraphProgram=BuildShaderGraphProgram(mask);
+    require(std::abs(toonShadowPixel()-128)<=3,"Alpha-masked caster incorrectly darkened custom lighting");
+
 }

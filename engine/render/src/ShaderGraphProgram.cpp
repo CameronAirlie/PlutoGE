@@ -17,6 +17,9 @@ namespace PlutoGE::render
         using K = ShaderGraphNodeKind;
         switch (n.kind)
         {
+        case K::Step: return {"Edge","Value"};
+        case K::Smoothstep: return {"Min","Max","Value"};
+        case K::Floor: return {"Value"};
         case K::Expression: case K::Subgraph: return {"A","B","C","D"};
         case K::Vec2: return n.componentPins ? std::vector<std::string_view>{"X","Y"} : std::vector<std::string_view>{"Vec2"};
         case K::Vec3: return n.componentPins ? std::vector<std::string_view>{"X","Y","Z"} : std::vector<std::string_view>{"Vec3"};
@@ -27,7 +30,7 @@ namespace PlutoGE::render
         case K::Normalize: case K::Sine: case K::OneMinus: return {"Value"};
         case K::NoiseTexture: return {"UV","Scale","Strength"};
         case K::TextureSample: case K::SceneColor: case K::SceneDepth: return {"UV"};
-        case K::Output: return {"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset"};
+        case K::Output: return {"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset","Direct Lighting"};
         default: return {};
         }
     }
@@ -36,7 +39,7 @@ namespace PlutoGE::render
         using K = ShaderGraphNodeKind;
         switch(n.kind)
         {
-        case K::Subgraph: return {"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset"};
+        case K::Subgraph: return {"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset","Direct Lighting"};
         case K::Vec2: return {"Vec2","X","Y"};
         case K::Vec3: return {"Vec3","X","Y","Z"};
         case K::Color: return {"Color","R","G","B","A"};
@@ -142,11 +145,11 @@ namespace PlutoGE::render
                             const auto from=endpoint(wire->fromNodeId,wire->fromPin);l.fromNodeId=from.first;l.fromPin=from.second;
                         }else{
                             ShaderGraphNode fallback;fallback.id=next++;fallback.kind=ShaderGraphNodeKind::MaterialInput;
-                            constexpr const char *pins[]{"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset"};
-                            int kind=0;while(kind<7&&l.fromPin!=pins[kind])++kind;
-                            if(kind==7)throw std::runtime_error("Invalid subgraph output pin.");
+                            constexpr const char *pins[]{"Albedo","Normal","Metallic","Roughness","Opacity","Emission","Vertex Offset","Direct Lighting"};
+                            int kind=0;while(kind<8&&l.fromPin!=pins[kind])++kind;
+                            if(kind==8)throw std::runtime_error("Invalid subgraph output pin.");
                             constexpr int inputs[]{0,1,2,3,4,6};
-                            if(kind==6){fallback.kind=ShaderGraphNodeKind::Vec3;fallback.value=glm::vec4(0);l.fromPin="Vec3";}
+                            if(kind>=6){fallback.kind=ShaderGraphNodeKind::Vec3;fallback.value=glm::vec4(0);l.fromPin="Vec3";}
                             else {fallback.materialInput=ShaderGraphMaterialInput(inputs[kind]);l.fromPin="Out";}
                             l.fromNodeId=fallback.id;copied.push_back(fallback);
                         }
@@ -167,6 +170,7 @@ namespace PlutoGE::render
             const ShaderGraph &graph;
             std::span<const ShaderGraphVariable> overrides;
             ShaderGraphProgram program;
+            bool lightingStage = false;
             std::unordered_map<int, const ShaderGraphNode *> nodes;
             std::unordered_map<std::string, const ShaderGraphLink *> links;
             std::unordered_map<std::string, Value> compiled;
@@ -220,7 +224,7 @@ namespace PlutoGE::render
                 for (const auto &n : graph.nodes)
                 {
                     Require(n.id > 0 && nodes.emplace(n.id, &n).second, "Node IDs must be positive and unique.");
-                    Require(int(n.kind) >= 0 && int(n.kind) <= int(ShaderGraphNodeKind::SceneDepth), "Unknown node kind at node " + std::to_string(n.id));
+                    Require(int(n.kind) >= 0 && int(n.kind) <= int(ShaderGraphNodeKind::ShadowAttenuation), "Unknown node kind at node " + std::to_string(n.id));
                     Require(Finite(n.value), "Non-finite value at node " + std::to_string(n.id));
                     Require(n.name.find_first_of("|\r\n") == std::string::npos, "Node names cannot contain | or newlines.");
                     if (n.kind == ShaderGraphNodeKind::Output) { Require(output == 0, "Graph must have exactly one Output node."); output = n.id; }
@@ -263,7 +267,7 @@ namespace PlutoGE::render
             Value Input(int kind)
             {
                 if (inputs.contains(kind)) return inputs.at(kind);
-                constexpr int dims[]{4,3,1,1,1,2,3,1,3,3,3,2};
+                constexpr int dims[]{4,3,1,1,1,2,3,1,3,3,3,2,3,3,1,1};
                 return inputs[kind] = Emit(1,kind,0,0,dims[kind]);
             }
             Value In(const ShaderGraphNode &n, std::string_view pin, Value fallback)
@@ -291,6 +295,25 @@ namespace PlutoGE::render
                 case K::WorldPosition: result = Input(8); break;
                 case K::WorldNormal: result = Input(9); break;
                 case K::ViewDirection: result = Input(10); break;
+                case K::LightDirection: case K::LightColor: case K::LightAttenuation: case K::ShadowAttenuation:
+                    Require(lightingStage,"Light inputs can only connect to Direct Lighting, not surface or vertex outputs.");
+                    result=Input(12+int(n.kind)-int(K::LightDirection)); break;
+                case K::Step:
+                {
+                    auto edge=In(n,"Edge",scalar(.5f)), value=In(n,"Value",scalar(0));
+                    result=Emit(19,edge.reg,value.reg,0,Promote(edge,value));break;
+                }
+                case K::Floor:
+                {
+                    auto value=In(n,"Value",scalar(0));
+                    result=Emit(20,value.reg,0,0,value.dimensions);break;
+                }
+                case K::Smoothstep:
+                {
+                    auto low=In(n,"Min",scalar(0)), high=In(n,"Max",scalar(1)), value=In(n,"Value",scalar(0));
+                    int dim=Promote(low,high);dim=Promote({low.reg,dim},value);
+                    result=Emit(21,low.reg,high.reg,value.reg,dim);break;
+                }
                 case K::Parameter:
                 {
                     const auto &v = Variable(n);
@@ -405,6 +428,15 @@ namespace PlutoGE::render
                 {
                     auto value=In(out,pins[i],Input(kinds[i]));
                     (i<4?program.data.outputs0[i]:program.data.outputs1[i-4])=value.reg;
+                }
+                if(links.contains(Key(out.id,"Direct Lighting")))
+                {
+                    Require(!graph.unlit,"Direct Lighting requires a lit surface; disable Unlit surface.");
+                    const int surfaceCount=program.data.header.x;
+                    lightingStage=true;
+                    auto value=In(out,"Direct Lighting",Constant(glm::vec4(0),3));
+                    Require(value.dimensions==1 || value.dimensions==3 || value.dimensions==4,"Direct Lighting requires a scalar or RGB colour.");
+                    program.data.outputs1.w=(surfaceCount<<8)|(value.reg+1);
                 }
                 for(int i=0;i<program.data.header.x;++i)if(program.data.instructions[i].x==14 && program.data.instructions[i].z>=8)program.requiresSceneTextures=true;
                 for(int i=0;i<program.data.header.x;++i)if(program.data.instructions[i].x==1){

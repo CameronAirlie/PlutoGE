@@ -31,6 +31,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Reusable entity variations | [Prefab variants](PREFAB_VARIANTS.md) |
 | Managed API and serialization | [C# scripting](CSHARP_SCRIPTING.md) |
 | Character and vehicle cameras | [Camera rigs](CAMERA_RIGS.md) |
+| Orthographic game cameras | [Projection, framing and zoom](ORTHOGRAPHIC_CAMERAS.md) |
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |

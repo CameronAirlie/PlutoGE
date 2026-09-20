@@ -264,6 +264,8 @@ namespace PlutoGE::scene
         if (m_camera)
         {
             properties.push_back({"FOV", scene::PropertyType::Float, std::to_string(m_camera->GetFOV())});
+            properties.push_back({"Projection", scene::PropertyType::Enum, m_camera->IsOrthographic() ? "1" : "0", {"Perspective", "Orthographic"}});
+            properties.push_back({"OrthographicHeight", scene::PropertyType::Float, std::to_string(m_camera->GetOrthographicHeight())});
             properties.push_back({"NearPlane", scene::PropertyType::Float, std::to_string(m_camera->GetNearPlane())});
             properties.push_back({"FarPlane", scene::PropertyType::Float, std::to_string(m_camera->GetFarPlane())});
         }
@@ -320,6 +322,14 @@ namespace PlutoGE::scene
             if (property.name == "FOV")
             {
                 m_camera->SetFOV(std::stof(property.value));
+            }
+            else if (property.name == "Projection")
+            {
+                m_camera->SetProjection(property.value == "1" ? render::CameraProjection::Orthographic : render::CameraProjection::Perspective);
+            }
+            else if (property.name == "OrthographicHeight")
+            {
+                m_camera->SetOrthographicHeight(std::stof(property.value));
             }
             else if (property.name == "NearPlane")
             {

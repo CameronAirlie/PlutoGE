@@ -2,6 +2,8 @@ using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
 
+public enum CameraProjection { Perspective, Orthographic }
+
 public sealed class CameraComponent : ComponentReference
 {
     internal CameraComponent(uint entityId)
@@ -15,6 +17,19 @@ public sealed class CameraComponent : ComponentReference
     {
         get => ScriptBridge.GetCameraMain(EntityId);
         set => ScriptBridge.SetCameraMain(EntityId, value);
+    }
+
+    public CameraProjection Projection
+    {
+        get => ScriptBridge.GetCameraProjection(EntityId);
+        set => ScriptBridge.SetCameraProjection(EntityId, value);
+    }
+
+    /// <summary>Full vertical span in world units. Width follows the viewport aspect ratio.</summary>
+    public float OrthographicHeight
+    {
+        get => ScriptBridge.GetCameraOrthographicHeight(EntityId);
+        set => ScriptBridge.SetCameraOrthographicHeight(EntityId, value);
     }
 
     public float Fov

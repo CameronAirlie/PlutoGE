@@ -2059,6 +2059,7 @@ namespace PlutoGE::render
                 materialParameters.shaderGraph = draw.shaderGraphProgram->data;
                 materialParameters.shaderGraphFrame.x = graphTime;
                 materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
+                materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
             }
             if (transparent)
                 for (const auto &effect : postProcessEffects)
@@ -2187,7 +2188,7 @@ namespace PlutoGE::render
                 // cutouts. Resolve their near-opaque fragments with depth writes;
                 // the transparent shader draws only the remaining coverage.
                 // Refractive glass must stay entirely in the transparent pass.
-                if (draw.surfaceType == 0)
+                if (draw.surfaceType == 0 && !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
                     recordDraw(draw, false, historyIndex);
                 // Expand instances so each pane is sorted individually.
                 if (draw.instanceModels && !draw.instanceModels->empty())
@@ -2266,6 +2267,31 @@ namespace PlutoGE::render
             if (!m_transparentPipeline || !m_glassSceneCopyPipeline)
                 throw std::runtime_error("Transparent RHI materials require the Glass shader artifacts");
             rhi::TextureHandle snapshot;
+            rhi::TextureHandle graphSnapshot;
+            const bool graphReadsScene = std::any_of(transparentDraws.begin(), transparentDraws.end(), [](const auto &draw) {
+                return draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures;
+            });
+            if (graphReadsScene)
+            {
+                // Graph UVs are arbitrary. Capture the full opaque image once,
+                // before any overlays, independently of per-pane glass copies.
+                graphSnapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
+                if (!m_glassDepthCopy)
+                    m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                         "Opaque scene depth snapshot", true}));
+                rhi::RenderingInfo copyInfo;
+                copyInfo.colorAttachments = {graphSnapshot, m_glassDepthCopy.Get()};
+                copyInfo.width = m_width;
+                copyInfo.height = m_height;
+                commands.BeginRendering(copyInfo);
+                commands.SetScissor({0, 0, m_width, m_height});
+                commands.BindPipeline(m_glassSceneCopyPipeline.Get());
+                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+            }
             bool rendering = false;
             for (const auto &pane : transparentDraws)
             {
@@ -2310,11 +2336,10 @@ namespace PlutoGE::render
                     commands.BeginRendering(transparentInfo);
                     rendering = true;
                 }
-                // Ordinary alpha blending never samples scene colour/depth.
-                // Bind valid fallback descriptors and keep consecutive blends
-                // in the same rendering scope, preserving their sorted order.
-                commands.BindTexture(17, snapshot ? snapshot : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                commands.BindTexture(18, snapshot ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                const bool graphScene = pane.shaderGraphProgram && pane.shaderGraphProgram->requiresSceneTextures;
+                const auto sceneColor = graphScene ? graphSnapshot : snapshot;
+                commands.BindTexture(17, sceneColor ? sceneColor : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+                commands.BindTexture(18, sceneColor ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 recordDraw(pane, true, m_previousModels.size());
             }
             if (rendering)

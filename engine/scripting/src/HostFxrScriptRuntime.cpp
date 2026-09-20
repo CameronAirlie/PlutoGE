@@ -1415,6 +1415,35 @@ namespace PlutoGE::scripting
             }
         }
 
+        int32_t GetCameraProjection(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *component = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
+            return component && component->GetCamera() && component->GetCamera()->IsOrthographic() ? 1 : 0;
+        }
+
+        void SetCameraProjection(uint32_t entityId, int32_t projection)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *component = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
+            if (component && component->GetCamera() && (projection == 0 || projection == 1))
+                component->GetCamera()->SetProjection(static_cast<render::CameraProjection>(projection));
+        }
+
+        float GetCameraOrthographicHeight(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *component = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
+            return component && component->GetCamera() ? component->GetCamera()->GetOrthographicHeight() : 10.0f;
+        }
+
+        void SetCameraOrthographicHeight(uint32_t entityId, float height)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *component = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
+            if (component && component->GetCamera()) component->GetCamera()->SetOrthographicHeight(height);
+        }
+
         float GetLightIntensity(uint32_t entityId)
         {
             auto *entity = FindEntity(entityId);
@@ -3275,6 +3304,7 @@ namespace PlutoGE::scripting
         register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
         register_component_api_fn registerComponentApi = nullptr;
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
+        register_camera_component_api_fn registerCameraProjectionApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
@@ -3383,6 +3413,7 @@ namespace PlutoGE::scripting
             impl.registerScriptableObjectApi = nullptr;
             impl.registerComponentApi = nullptr;
             impl.registerCameraComponentApi = nullptr;
+            impl.registerCameraProjectionApi = nullptr;
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
@@ -3730,6 +3761,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraComponentApi"), impl.registerCameraComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterCameraProjectionApi"), impl.registerCameraProjectionApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterLightComponentApi"), impl.registerLightComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterMeshComponentApi"), impl.registerMeshComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAnimationComponentApi"), impl.registerAnimationComponentApi) &&
@@ -4063,6 +4095,17 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_camera_fov_fn>(&SetCameraFov))) == 0)
         {
             setManagedBridgeFailure("RegisterCameraComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerCameraProjectionApi ||
+            m_impl->registerCameraProjectionApi(
+                reinterpret_cast<void *>(static_cast<get_camera_main_fn>(&GetCameraProjection)),
+                reinterpret_cast<void *>(static_cast<set_camera_main_fn>(&SetCameraProjection)),
+                reinterpret_cast<void *>(static_cast<get_camera_fov_fn>(&GetCameraOrthographicHeight)),
+                reinterpret_cast<void *>(static_cast<set_camera_fov_fn>(&SetCameraOrthographicHeight))) == 0)
+        {
+            setManagedBridgeFailure("RegisterCameraProjectionApi");
             return false;
         }
 

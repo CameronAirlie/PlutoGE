@@ -91,8 +91,9 @@ namespace PlutoGE::render
             for (const float distance : {nearDistance, farDistance})
             {
                 const glm::vec3 center = cameraPosition + forward * distance;
-                const glm::vec3 horizontal = right * (distance * inverseProjectionX);
-                const glm::vec3 vertical = up * (distance * inverseProjectionY);
+                const float coverageDepth = std::abs(camera.projection[3][3]) > 0.5f ? 1.0f : distance;
+                const glm::vec3 horizontal = right * (coverageDepth * inverseProjectionX);
+                const glm::vec3 vertical = up * (coverageDepth * inverseProjectionY);
                 corners[cornerIndex++] = center - horizontal - vertical;
                 corners[cornerIndex++] = center + horizontal - vertical;
                 corners[cornerIndex++] = center - horizontal + vertical;
@@ -242,7 +243,8 @@ namespace PlutoGE::render
         const auto upscalerSupport = temporalUpscalerRequested
                                          ? m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology)
                                          : rhi::TemporalUpscalerSupport{};
-        const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported;
+        const bool orthographic = std::abs(cameraData.projection[3][3]) > 0.5f;
+        const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported && !orthographic;
         const rhi::Extent2D renderSize = useTemporalUpscaler
             ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
             : outputSize;
@@ -254,7 +256,8 @@ namespace PlutoGE::render
             .outputSize = outputSize,
             .requested = temporalUpscalerRequested,
             .active = false,
-            .reason = useTemporalUpscaler ? std::string{} : upscalerSupport.reason,
+            .reason = temporalUpscalerRequested && orthographic ? "Temporal upscalers require a perspective camera." :
+                (useTemporalUpscaler ? std::string{} : upscalerSupport.reason),
         };
         const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize;
         if (resolutionChanged)

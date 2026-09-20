@@ -21,6 +21,8 @@ The previous graph only generated legacy geometry GLSL. The OpenGL/Vulkan RHI sc
 
 ## Expanded graph features
 
+- **Custom direct lighting** exposes Light Direction, Light Color, Light Attenuation and Shadow Attenuation to an optional Direct Lighting output in the OpenGL/Vulkan RHI renderer. Step, Floor and Smoothstep nodes and expressions support graph-built ramps. See [ToonShaders.md](ToonShaders.md) for the reusable example, stage rules and renderer limitations.
+
 - **Vertex Offset** accepts a world-space Vec3 displacement. The same vertex program runs in geometry, transparency, conventional shadows, voxelization and CPU baking. Instanced geometry is supported. Original mesh bounds cannot predict arbitrary displacement, so affected objects bypass bounds rejection. Displacement does not automatically rebuild normals; connect a world-space Normal when the effect needs it.
 - **Tessellation** selects zero to three levels of cached, uniform CPU triangle subdivision before vertex evaluation. Each level produces four times as many triangles, retaining UV seams, submesh ranges and interpolated skin weights. Subdivision stops before exceeding one million triangles. This is not adaptive hardware tessellation.
 - **Reusable Subgraph** references another shader asset. Inputs A–D correspond to its first four named variables; disconnected inputs use defaults. Outputs expose the child graph's material outputs and Vertex Offset. Subgraphs are flattened and validated, including recursive dependency checks.

@@ -39,9 +39,12 @@ float4 shaderGraphSafeDivisor(float4 v)
 float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
                          float3 viewDirection, float time, float2 uv,
                          inout float4 color, inout float3 normal, inout float metallicValue,
-                         inout float roughnessValue, inout float3 emissionValue, bool vertexOnly)
+                         inout float roughnessValue, inout float3 emissionValue, bool vertexOnly,
+                         bool lightingOnly, float3 lightDirection, float3 lightColor,
+                         float lightAttenuation, float shadowAttenuation)
 {
     int count = vertexOnly ? graph.header.z : graph.header.x;
+    if(!vertexOnly && !lightingOnly && graph.outputs1.w!=0) count=graph.outputs1.w>>8;
     if(count==0) return float3(0.0);
     float4 r[64];
     for(int i=0;i<count;++i)
@@ -50,9 +53,9 @@ float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, f
         // Input/constant instructions do not read registers. Every other operand
         // was checked and topologically ordered by the CPU compiler.
         float4 a=float4(0.0), b=float4(0.0), c=float4(0.0), v=float4(0.0);
-        if((op.x>=2 && op.x<=16) || op.x==18) a=r[op.y];
-        if((op.x>=2 && op.x<=7) || op.x==9 || op.x==10 || op.x==12 || op.x==18) b=r[op.z];
-        if(op.x==6 || op.x==7 || op.x==9 || op.x==18) c=r[op.w];
+        if((op.x>=2 && op.x<=16) || op.x==18 || op.x==19 || op.x==20 || op.x==21) a=r[op.y];
+        if((op.x>=2 && op.x<=7) || op.x==9 || op.x==10 || op.x==12 || op.x==18 || op.x==19 || op.x==21) b=r[op.z];
+        if(op.x==6 || op.x==7 || op.x==9 || op.x==18 || op.x==21) c=r[op.w];
         if(op.x==0 || op.x==17) v=graph.values[i];
         else if(op.x==1)
         {
@@ -67,6 +70,10 @@ float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, f
             else if(op.y==8) v=float4(worldPosition,1.0);
             else if(op.y==9) v=float4(worldNormal,1.0);
             else if(op.y==10) v=float4(viewDirection,1.0);
+            else if(op.y==12)v=float4(lightDirection,1.0);
+            else if(op.y==13)v=float4(lightColor,1.0);
+            else if(op.y==14)v=float4(lightAttenuation);
+            else if(op.y==15)v=float4(shadowAttenuation);
             else if(op.y==11)v=float4(shaderGraphScreenUV(worldPosition),0.0,1.0);
         }
         else if(op.x==2) v=a+b;
@@ -93,8 +100,19 @@ float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, f
         else if(op.x==15) v=float4(a[op.z]);
         else if(op.x==16) v=float4(a.xyz,1.0);
         else if(op.x==18) v=float4(a.x,b.x,c.x,r[int(graph.values[i].x)].x);
+        else if(op.x==19) v=step(a,b);
+        else if(op.x==20) v=floor(a);
+        else if(op.x==21)
+        {
+            // Ordered edges; coincident edges behave like Step on every backend.
+            float4 low=min(a,b), high=max(a,b);
+            float4 t=clamp((c-low)/max(high-low,float4(0.000001)),float4(0.0),float4(1.0));
+            v=t*t*(3.0-2.0*t);
+            for(int j=0;j<4;++j) if(high[j]==low[j]) v[j]=step(low[j],c[j]);
+        }
         r[i]=v;
     }
+    if(lightingOnly) return max(r[(graph.outputs1.w & 255)-1].xyz,float3(0.0));
     if(vertexOnly) return r[graph.outputs1.z].xyz;
     color=float4(r[graph.outputs0.x].xyz,clamp(r[graph.outputs1.x].x,0.0,1.0));
     float3 finalNormal=r[graph.outputs0.y].xyz;
@@ -111,7 +129,7 @@ void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 wor
                          inout float roughnessValue, inout float3 emissionValue)
 {
     evaluateShaderGraphProgram(graph,worldPosition,worldNormal,viewDirection,time,uv,
-        color,normal,metallicValue,roughnessValue,emissionValue,false);
+        color,normal,metallicValue,roughnessValue,emissionValue,false,false,float3(0.0),float3(0.0),0.0,1.0);
 }
 
 float3 shaderGraphVertexOffset(ShaderGraphData graph, float3 position, float3 normal,
@@ -119,5 +137,18 @@ float3 shaderGraphVertexOffset(ShaderGraphData graph, float3 position, float3 no
     float roughnessValue, float3 emissionValue)
 {
     return evaluateShaderGraphProgram(graph,position,normal,viewDirection,time,uv,
-        color,normal,metallicValue,roughnessValue,emissionValue,true);
+        color,normal,metallicValue,roughnessValue,emissionValue,true,false,float3(0.0),float3(0.0),0.0,1.0);
+}
+
+// Returns the graph's complete RGB contribution for one light. The graph owns
+// N.L, radiance, distance attenuation and shadow response; none are applied twice.
+float3 evaluateShaderGraphLighting(ShaderGraphData graph, float3 position, float3 worldNormal,
+    float3 viewDirection, float time, float2 uv, float4 color, float3 normal,
+    float metallicValue, float roughnessValue, float3 emissionValue,
+    float3 lightDirection, float3 lightColor, float lightAttenuation, float shadowAttenuation)
+{
+    if(graph.outputs1.w==0) return float3(0.0);
+    return evaluateShaderGraphProgram(graph,position,worldNormal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue,false,true,
+        lightDirection,lightColor,lightAttenuation,shadowAttenuation);
 }

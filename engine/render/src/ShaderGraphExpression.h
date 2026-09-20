@@ -44,6 +44,9 @@ namespace PlutoGE::render::detail
             if(!Take('('))Fail();
             std::vector<Value> args;
             if(!Take(')')){do{args.push_back(Expression());}while(Take(','));if(!Take(')'))Fail();}
+            if(name=="step"&&args.size()==2)return Node(K::Step,{{"Edge",args[0]},{"Value",args[1]}});
+            if(name=="floor"&&args.size()==1)return Node(K::Floor,{{"Value",args[0]}});
+            if(name=="smoothstep"&&args.size()==3)return Node(K::Smoothstep,{{"Min",args[0]},{"Max",args[1]},{"Value",args[2]}});
             if(name=="sin"&&args.size()==1)return Node(K::Sine,{{"Value",args[0]}});
             if(name=="normalize"&&args.size()==1)return Node(K::Normalize,{{"Value",args[0]}});
             if(name=="pow"&&args.size()==2)return Node(K::Power,{{"A",args[0]},{"B",args[1]}});

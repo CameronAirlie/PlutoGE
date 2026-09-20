@@ -53,6 +53,8 @@ namespace PlutoGE::ui
         constexpr const char *kPinsVec2Components[] = {"X", "Y"};
         constexpr const char *kPinsVec3Components[] = {"X", "Y", "Z"};
         constexpr const char *kPinsColorComponents[] = {"R", "G", "B", "A"};
+        constexpr const char *kPinsStep[] = {"Edge", "Value"};
+        constexpr const char *kPinsSmoothstep[] = {"Min", "Max", "Value"};
         constexpr const char *kPinsBinary[] = {"A", "B"};
         constexpr const char *kPinsLerp[] = {"A", "B", "T"};
         constexpr const char *kPinsClamp[] = {"Value", "Min", "Max"};
@@ -62,7 +64,7 @@ namespace PlutoGE::ui
         constexpr const char *kPinsNoise[] = {"UV", "Scale", "Strength"};
         constexpr const char *kPinsNoiseOutput[] = {"Value", "Color"};
         constexpr const char *kPinsSubgraph[] = {"A","B","C","D"};
-        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity", "Emission", "Vertex Offset"};
+        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity", "Emission", "Vertex Offset", "Direct Lighting"};
 
         constexpr ImU32 kPinAnyColor = IM_COL32(170, 176, 188, 255);
         constexpr ImU32 kPinFloatColor = IM_COL32(230, 190, 92, 255);
@@ -89,7 +91,7 @@ namespace PlutoGE::ui
         ImU32 kPinColorComponentColors[] = {kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseInputColors[] = {kPinVec2Color, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseOutputColors[] = {kPinFloatColor, kPinColorColor};
-        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinVec3Color, kPinVec3Color};
+        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinVec3Color, kPinVec3Color, kPinVec3Color};
 
         bool SupportsComponentPins(render::ShaderGraphNodeKind kind)
         {
@@ -111,6 +113,12 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::Color:
                 count = componentPins ? 4 : 1;
                 return componentPins ? const_cast<const char **>(kPinsColorComponents) : const_cast<const char **>(kPinsColorPacked);
+            case render::ShaderGraphNodeKind::Step:
+                count=2; return const_cast<const char **>(kPinsStep);
+            case render::ShaderGraphNodeKind::Smoothstep:
+                count=3; return const_cast<const char **>(kPinsSmoothstep);
+            case render::ShaderGraphNodeKind::Floor:
+                count=1; return const_cast<const char **>(kPinsValue);
             case render::ShaderGraphNodeKind::Add:
             case render::ShaderGraphNodeKind::Subtract:
             case render::ShaderGraphNodeKind::Multiply:
@@ -141,7 +149,7 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::Subgraph:
                 count=4; return const_cast<const char **>(kPinsSubgraph);
             case render::ShaderGraphNodeKind::Output:
-                count = 7;
+                count = 8;
                 return const_cast<const char **>(kPinsOutput);
             default:
                 count = 0;
@@ -156,7 +164,7 @@ namespace PlutoGE::ui
 
         const char **OutputPins(render::ShaderGraphNodeKind kind, bool componentPins, ImU8 &count)
         {
-            if(kind==render::ShaderGraphNodeKind::Subgraph){count=7;return const_cast<const char **>(kPinsOutput);}
+            if(kind==render::ShaderGraphNodeKind::Subgraph){count=8;return const_cast<const char **>(kPinsOutput);}
             if (kind == render::ShaderGraphNodeKind::TextureSample || kind==render::ShaderGraphNodeKind::SceneColor)
             {
                 count = 5;
@@ -225,6 +233,9 @@ namespace PlutoGE::ui
                 return componentPins ? kPinVec3ComponentColors : kPinOutVec3Colors;
             case render::ShaderGraphNodeKind::Color:
                 return componentPins ? kPinColorComponentColors : kPinOutColorColors;
+            case render::ShaderGraphNodeKind::Step: return kPinBinaryColors;
+            case render::ShaderGraphNodeKind::Smoothstep: return kPinClampColors;
+            case render::ShaderGraphNodeKind::Floor: return kPinOutAnyColors;
             case render::ShaderGraphNodeKind::Add:
             case render::ShaderGraphNodeKind::Subtract:
             case render::ShaderGraphNodeKind::Multiply:
@@ -260,6 +271,10 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::Subgraph: return kPinOutputColors;
             case render::ShaderGraphNodeKind::SceneColor:
             case render::ShaderGraphNodeKind::TextureSample: return kPinTextureOutputColors;
+            case render::ShaderGraphNodeKind::LightDirection:
+            case render::ShaderGraphNodeKind::LightColor: return kPinOutVec3Colors;
+            case render::ShaderGraphNodeKind::LightAttenuation:
+            case render::ShaderGraphNodeKind::ShadowAttenuation:
             case render::ShaderGraphNodeKind::Time:
             case render::ShaderGraphNodeKind::Dot:
             case render::ShaderGraphNodeKind::Float:
@@ -599,6 +614,31 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case render::ShaderGraphNodeKind::Floor:
+            {
+                auto value=EvaluatePreviewInput(graph,nodeId,"Value",uv,{glm::vec4(0),1},visiting);
+                result={glm::floor(value.value),value.components};break;
+            }
+            case render::ShaderGraphNodeKind::Step:
+            {
+                auto edge=EvaluatePreviewInput(graph,nodeId,"Edge",uv,{glm::vec4(.5f),1},visiting);
+                auto value=EvaluatePreviewInput(graph,nodeId,"Value",uv,{glm::vec4(0),1},visiting);
+                result={glm::step(edge.value,value.value),std::max(edge.components,value.components)};break;
+            }
+            case render::ShaderGraphNodeKind::Smoothstep:
+            {
+                auto a=EvaluatePreviewInput(graph,nodeId,"Min",uv,{glm::vec4(0),1},visiting);
+                auto b=EvaluatePreviewInput(graph,nodeId,"Max",uv,{glm::vec4(1),1},visiting);
+                auto c=EvaluatePreviewInput(graph,nodeId,"Value",uv,{glm::vec4(0),1},visiting);
+                auto low=glm::min(a.value,b.value),high=glm::max(a.value,b.value);
+                auto t=glm::clamp((c.value-low)/glm::max(high-low,glm::vec4(.000001f)),glm::vec4(0),glm::vec4(1));
+                auto v=t*t*(3.0f-2.0f*t);for(int j=0;j<4;++j)if(high[j]==low[j])v[j]=c.value[j]<low[j]?0.0f:1.0f;
+                result={v,std::max({a.components,b.components,c.components})};break;
+            }
+            case render::ShaderGraphNodeKind::LightDirection: result={glm::vec4(glm::normalize(glm::vec3(.4f,.8f,.3f)),1),3};break;
+            case render::ShaderGraphNodeKind::LightColor: result={glm::vec4(1),3};break;
+            case render::ShaderGraphNodeKind::LightAttenuation:
+            case render::ShaderGraphNodeKind::ShadowAttenuation: result={glm::vec4(1),1};break;
             case render::ShaderGraphNodeKind::Lerp:
             {
                 const PreviewSample a = EvaluatePreviewInput(graph, nodeId, "A", uv, PreviewSample{glm::vec4(0.0f), 1}, visiting);
@@ -1266,21 +1306,21 @@ namespace PlutoGE::ui
                 {
                     if (node.kind == render::ShaderGraphNodeKind::Vec2)
                     {
-                        return 30;
+                        return 37;
                     }
                     if (node.kind == render::ShaderGraphNodeKind::Vec3)
                     {
-                        return 31;
+                        return 38;
                     }
                     if (node.kind == render::ShaderGraphNodeKind::Color)
                     {
-                        return 32;
+                        return 39;
                     }
                 }
                 return static_cast<GraphEditor::TemplateIndex>(std::clamp(static_cast<int>(node.kind), 0, static_cast<int>(m_templates.size() - 1)));
             }
 
-            static const std::array<GraphEditor::Template, 33> m_templates;
+            static const std::array<GraphEditor::Template, 40> m_templates;
 
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
@@ -1295,7 +1335,7 @@ namespace PlutoGE::ui
             bool &m_dirty;
         };
 
-        const std::array<GraphEditor::Template, 33> ShaderGraphDelegate::m_templates = {
+        const std::array<GraphEditor::Template, 40> ShaderGraphDelegate::m_templates = {
             BuildTemplate(render::ShaderGraphNodeKind::MaterialInput),
             BuildTemplate(render::ShaderGraphNodeKind::Float),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2),
@@ -1326,6 +1366,14 @@ namespace PlutoGE::ui
             BuildTemplate(render::ShaderGraphNodeKind::SceneColor),
             BuildTemplate(render::ShaderGraphNodeKind::SceneDepth),
             BuildTemplate(render::ShaderGraphNodeKind::Expression),
+            BuildTemplate(render::ShaderGraphNodeKind::Step),
+            BuildTemplate(render::ShaderGraphNodeKind::Floor),
+            BuildTemplate(render::ShaderGraphNodeKind::Smoothstep),
+            BuildTemplate(render::ShaderGraphNodeKind::LightDirection),
+            BuildTemplate(render::ShaderGraphNodeKind::LightColor),
+            BuildTemplate(render::ShaderGraphNodeKind::LightAttenuation),
+            BuildTemplate(render::ShaderGraphNodeKind::ShadowAttenuation),
+
             BuildTemplate(render::ShaderGraphNodeKind::Vec2, true),
             BuildTemplate(render::ShaderGraphNodeKind::Vec3, true),
             BuildTemplate(render::ShaderGraphNodeKind::Color, true),
@@ -1461,6 +1509,9 @@ namespace PlutoGE::ui
         }
         ImGui::SameLine();
         ImGui::Checkbox("Previews", &m_showNodePreviews);
+        const bool customLighting=std::any_of(m_graph.links.begin(),m_graph.links.end(),[&](const auto &link){
+            return link.toPin=="Direct Lighting" && std::any_of(m_graph.nodes.begin(),m_graph.nodes.end(),[&](const auto &node){return node.id==link.toNodeId && node.kind==render::ShaderGraphNodeKind::Output;});});
+        if(customLighting) ImGui::TextDisabled("Custom direct lighting: OpenGL/Vulkan RHI; legacy renderer uses PBR.");
         if (ImGui::Checkbox("Unlit surface", &m_graph.unlit)) m_dirty = true;
         if(ImGui::SliderInt("Tessellation subdivisions",&m_graph.tessellation,0,3))m_dirty=true;
         if (ImGui::Checkbox("Outline pass", &m_graph.outline.enabled)) m_dirty = true;
@@ -1607,7 +1658,18 @@ namespace PlutoGE::ui
                     AddNodeMenuItem("Divide", m_graph, render::ShaderGraphNodeKind::Divide, "Divide", m_addNodePosition, m_dirty);
                     AddNodeMenuItem("Lerp", m_graph, render::ShaderGraphNodeKind::Lerp, "Lerp", m_addNodePosition, m_dirty);
                     AddNodeMenuItem("Clamp", m_graph, render::ShaderGraphNodeKind::Clamp, "Clamp", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Step", m_graph, render::ShaderGraphNodeKind::Step, "Step", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Floor", m_graph, render::ShaderGraphNodeKind::Floor, "Floor", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Smoothstep", m_graph, render::ShaderGraphNodeKind::Smoothstep, "Smoothstep", m_addNodePosition, m_dirty);
                     AddNodeMenuItem("Normalize", m_graph, render::ShaderGraphNodeKind::Normalize, "Normalize", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Lighting"))
+                {
+                    AddNodeMenuItem("Light Direction", m_graph, render::ShaderGraphNodeKind::LightDirection, "Light Direction", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Light Color", m_graph, render::ShaderGraphNodeKind::LightColor, "Light Color", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Light Attenuation", m_graph, render::ShaderGraphNodeKind::LightAttenuation, "Light Attenuation", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Shadow Attenuation", m_graph, render::ShaderGraphNodeKind::ShadowAttenuation, "Shadow Attenuation", m_addNodePosition, m_dirty);
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Output"))
@@ -1692,10 +1754,19 @@ namespace PlutoGE::ui
                     }
                     ImGui::TextDisabled("Create defaults in Parameters below.");
                 }
+                else if(selectedNode->kind>=render::ShaderGraphNodeKind::LightDirection && selectedNode->kind<=render::ShaderGraphNodeKind::ShadowAttenuation) {
+                    ImGui::TextWrapped("Evaluated for each scene light. Connect this branch to Direct Lighting. Your graph supplies the complete RGB contribution, including light colour, distance falloff and shadow response.");
+                }
+                else if(selectedNode->kind==render::ShaderGraphNodeKind::Step) {
+                    ImGui::TextWrapped("Returns 0 below Edge and 1 at or above Edge. Connect a Float or Parameter to set the threshold.");
+                }
+                else if(selectedNode->kind==render::ShaderGraphNodeKind::Smoothstep) {
+                    ImGui::TextWrapped("Smooth transition from 0 at Min to 1 at Max. Equal edges produce a hard step; reversed edges are sorted.");
+                }
                 else if(selectedNode->kind==render::ShaderGraphNodeKind::Expression) {
                     char code[4096]{};std::strncpy(code,selectedNode->parameter.c_str(),sizeof(code)-1);
                     if(ImGui::InputText("Expression",code,sizeof(code))){selectedNode->parameter=code;m_dirty=true;}
-                    ImGui::TextWrapped("Inputs A-D. Arithmetic, sin, pow, dot, normalize, clamp, saturate, mix/lerp and vec2/3/4 or float2/3/4 constructors.");
+                    ImGui::TextWrapped("Inputs A-D. Arithmetic, sin, pow, dot, normalize, clamp, saturate, step, floor, smoothstep, mix/lerp and vec2/3/4 or float2/3/4 constructors.");
                 }
                 else if(selectedNode->kind==render::ShaderGraphNodeKind::Subgraph)
                 {

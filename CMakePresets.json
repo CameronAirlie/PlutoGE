@@ -56,7 +56,7 @@
             "name": "msvc",
             "displayName": "Visual Studio Community 2022 Release - amd64",
             "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
-            "generator": "Visual Studio 18 2026",
+            "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
             "architecture": "x64",
             "binaryDir": "${sourceDir}/out/build/${presetName}",

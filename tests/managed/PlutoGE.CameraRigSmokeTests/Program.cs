@@ -17,6 +17,17 @@ unsafe class Program
     }
     static Packet last;
     static int result = 1;
+    static uint projectionEntity;
+    static int projectionMode;
+    static float orthographicHeight = 10;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int GetProjection(uint id) { projectionEntity = id; return projectionMode; }
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void SetProjection(uint id, int mode) { projectionEntity = id; projectionMode = mode; }
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static float GetHeight(uint id) { projectionEntity = id; return orthographicHeight; }
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void SetHeight(uint id, float height) { projectionEntity = id; orthographicHeight = height; }
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int Control(Packet* request) { last = *request; return result; }
     static void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
@@ -28,6 +39,21 @@ unsafe class Program
         var target = Object(24);
         Require(!CameraRig.Snap(camera), "Unregistered API should fail safely");
         var bridge = typeof(CameraRig).Assembly.GetType("PlutoGE.ScriptCore.Native.ScriptBridge")!;
+        var lens = (CameraComponent)Activator.CreateInstance(typeof(CameraComponent),
+            BindingFlags.Instance | BindingFlags.NonPublic, null, [12u], null)!;
+        Require(lens.Projection == CameraProjection.Perspective && lens.OrthographicHeight == 10,
+            "Unregistered projection API must use safe defaults");
+        var projectionMethod = bridge.GetMethod("RegisterCameraProjectionApi", BindingFlags.Public | BindingFlags.Static)!;
+        var registerProjection = (delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int>)projectionMethod.MethodHandle.GetFunctionPointer();
+        Require(registerProjection(0, 0, 0, 0) == 0, "Projection registration accepted null pointers");
+        Require(registerProjection((nint)(delegate* unmanaged[Cdecl]<uint, int>)&GetProjection,
+            (nint)(delegate* unmanaged[Cdecl]<uint, int, void>)&SetProjection,
+            (nint)(delegate* unmanaged[Cdecl]<uint, float>)&GetHeight,
+            (nint)(delegate* unmanaged[Cdecl]<uint, float, void>)&SetHeight) == 1, "Projection registration failed");
+        lens.Projection = CameraProjection.Orthographic;
+        lens.OrthographicHeight = 18.5f;
+        Require(lens.Projection == CameraProjection.Orthographic && lens.OrthographicHeight == 18.5f && projectionEntity == 12,
+            "Camera projection ABI lost entity, enum or zoom");
         var method = bridge.GetMethod("RegisterCameraRigApi", BindingFlags.Public | BindingFlags.Static)!;
         var register = (delegate* unmanaged[Cdecl]<nint, int>)method.MethodHandle.GetFunctionPointer();
         Require(register(0) == 0 && sizeof(Packet) == 80, "Invalid registration or packet layout");

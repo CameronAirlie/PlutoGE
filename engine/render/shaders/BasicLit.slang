@@ -711,11 +711,18 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                        + emissionSample.g * emissionChannels[1].rgb * emissionChannels[1].a
                        + emissionSample.b * emissionChannels[2].rgb * emissionChannels[2].a;
     float3 surfaceEmission = emission * emissionSample;
+    // Preserve material inputs so the per-light graph sees the same values as
+    // the surface graph (tints/textures must not be multiplied a second time).
+    const float4 graphInputColor=sampledColor;
+    const float3 graphInputNormal=normal;
+    const float graphInputMetallic=materialMetallic, graphInputRoughness=materialRoughness;
+    const float3 graphInputEmission=surfaceEmission;
+    const bool customLighting=shaderGraph.outputs1.w!=0 && !glass;
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
     if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
-    if (alphaMode == 2 && glassParameters.x < 0.5)
+    if (alphaMode == 2 && glassParameters.x < 0.5 && shaderGraphFrame.z < 0.5)
     {
         // Complementary coverage tests keep solid BLEND texels depth-correct,
         // including overlapping triangles inside one draw. Evaluate after the
@@ -796,7 +803,12 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
         const float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
-        pointLighting += brdf * pointRadiance;
+        if(customLighting)
+            pointLighting += evaluateShaderGraphLighting(shaderGraph,input.worldPosition,normalize(input.worldNormal),
+                viewDirection,shaderGraphFrame.x,input.uv*uvScale,graphInputColor,graphInputNormal,
+                graphInputMetallic,graphInputRoughness,graphInputEmission,l,
+                pointColorIntensity[light].rgb*pointColorIntensity[light].w,attenuation,visibility);
+        else pointLighting += brdf * pointRadiance;
         pointSpecularLighting += distributionPoint * geometryView * geometryPoint * f /
             max(4.0 * ndotv * nl, 0.0001) * pointRadiance;
     }
@@ -924,8 +936,18 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                            (1.0 - materialRoughness * 0.45);
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
     }
+    float3 directionalLighting=(direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility;
+    if(customLighting)
+    {
+        directionalLighting=float3(0.0);
+        if(directionalDirectionIntensity.w>0.0)
+            directionalLighting=evaluateShaderGraphLighting(shaderGraph,input.worldPosition,normalize(input.worldNormal),
+                viewDirection,shaderGraphFrame.x,input.uv*uvScale,graphInputColor,graphInputNormal,
+                graphInputMetallic,graphInputRoughness,graphInputEmission,lightDirection,
+                directionalColor.rgb*directionalDirectionIntensity.w,1.0,shadowVisibility);
+    }
     FragmentOutput output;
-    output.color = float4(ambient + pointLighting + (direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility + surfaceEmission,
+    output.color = float4(ambient + pointLighting + directionalLighting + surfaceEmission,
                           sampledColor.a);
 #ifdef PLUTO_GLASS
     if (glass)

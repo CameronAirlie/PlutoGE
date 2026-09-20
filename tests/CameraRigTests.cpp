@@ -168,8 +168,38 @@ namespace
         Require(copyRig && copyRig->GetSettings().target == copy->GetID(), "Cloned camera still follows original target");
     }
 }
+void OrthographicProjection()
+{
+    using namespace PlutoGE;
+    render::Camera camera({});
+    Require(!camera.IsOrthographic(), "Legacy cameras must remain perspective");
+    camera.SetProjection(render::CameraProjection::Orthographic);
+    camera.SetOrthographicHeight(12);
+    const auto data = camera.GetCameraDataForTransform(glm::mat4(1), 1600, 900);
+    const auto project = [&](glm::vec3 point) {
+        auto clip = data.projection * glm::vec4(point, 1);
+        return glm::vec3(clip) / clip.w;
+    };
+    Near(project({0, 6, -1}), {0, 1, project({0, 0, -1}).z});
+    Require(std::abs(project({2, 0, -2}).x - project({2, 0, -20}).x) < 0.0001f,
+            "Orthographic scale must not depend on distance");
+    Require(std::abs(project({0, 0, -data.nearPlane}).z - 1) < 0.0001f &&
+            std::abs(project({0, 0, -data.farPlane}).z + 1) < 0.0001f, "Reversed depth failed");
+    Require(std::abs(data.projection[0][0] * (12.0f * 1600 / 900 / 2) - 1) < 0.0001f, "Aspect ratio failed");
+    camera.SetOrthographicHeight(-1);
+    Require(camera.GetOrthographicHeight() > 0, "Invalid zoom must be clamped");
+    camera.SetOrthographicHeight(std::numeric_limits<float>::quiet_NaN());
+    Require(std::isfinite(camera.GetCameraDataForTransform(glm::mat4(1), 0, 0).projection[0][0]), "Empty viewport must stay finite");
+    scene::CameraComponent original(new render::Camera({}), false), restored(nullptr, false);
+    original.GetCamera()->SetProjection(render::CameraProjection::Orthographic);
+    original.GetCamera()->SetOrthographicHeight(18);
+    restored.Deserialize(original.Serialize());
+    Require(restored.GetCamera()->IsOrthographic() && restored.GetCamera()->GetOrthographicHeight() == 18,
+            "Camera projection must survive serialization");
+}
+
 int main()
 {
-    try { MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera rigs, collision, lifecycle, serialization and history\n"; }
+    try { OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

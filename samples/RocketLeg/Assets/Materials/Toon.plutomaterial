@@ -1,0 +1,5 @@
+Color=0.8,0.45,0.2,1
+AlphaMode=Opaque
+Roughness=1
+Metallic=0
+ShaderGraph=project://Shaders/Toon.plutoshadergraph

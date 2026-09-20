@@ -23,9 +23,9 @@ namespace PlutoGE::render
         for(int i=0;i<count;++i)
         {
             const auto op=g.instructions[i];
-            const auto a=(op.x>=2 && op.x<=16)||op.x==18?r[op.y]:glm::vec4(0);
-            const auto b=((op.x>=2&&op.x<=7)||op.x==9||op.x==10||op.x==12||op.x==18)?r[op.z]:glm::vec4(0);
-            const auto c=(op.x==6||op.x==7||op.x==9||op.x==18)?r[op.w]:glm::vec4(0);
+            const auto a=(op.x>=2 && op.x<=16)||op.x==18||op.x==19||op.x==20||op.x==21?r[op.y]:glm::vec4(0);
+            const auto b=((op.x>=2&&op.x<=7)||op.x==9||op.x==10||op.x==12||op.x==18||op.x==19||op.x==21)?r[op.z]:glm::vec4(0);
+            const auto c=(op.x==6||op.x==7||op.x==9||op.x==18||op.x==21)?r[op.w]:glm::vec4(0);
             glm::vec4 v(0);
             switch(op.x)
             {
@@ -37,6 +37,8 @@ namespace PlutoGE::render
                 case 4:v=glm::vec4(s.color.a);break;case 5:v={s.uv,0,1};break;
                 case 6:v={s.emission,1};break;case 7:v=glm::vec4(s.time);break;
                 case 8:v={s.worldPosition,1};break;case 9:v={s.worldNormal,1};break;case 10:v={s.viewDirection,1};break;case 11:v={s.screenUV,0,1};break;
+                case 12:v={s.lightDirection,1};break;case 13:v={s.lightColor,1};break;
+                case 14:v=glm::vec4(s.lightAttenuation);break;case 15:v=glm::vec4(s.shadowAttenuation);break;
                 } break;
             case 2:v=a+b;break;case 3:v=a-b;break;case 4:v=a*b;break;
             case 5: for(int j=0;j<4;++j)v[j]=a[j]/std::copysign(std::max(std::abs(b[j]),.0001f),b[j]);break;
@@ -47,11 +49,17 @@ namespace PlutoGE::render
             case 11:v=glm::sin(a);break;case 12:v=glm::pow(glm::max(a,glm::vec4(.000001f)),b);break;
             case 13:v=1.0f-a;break;case 14:v=textures?textures(op.z,glm::vec2(a)):glm::vec4(1);break;
             case 15:v=glm::vec4(a[op.z]);break;case 16:v={glm::vec3(a),1};break;
+            case 19:v=glm::step(a,b);break;
+            case 20:v=glm::floor(a);break;
+            case 21:{auto low=glm::min(a,b), high=glm::max(a,b);
+                auto t=glm::clamp((c-low)/glm::max(high-low,glm::vec4(.000001f)),glm::vec4(0),glm::vec4(1));
+                v=t*t*(3.0f-2.0f*t);for(int j=0;j<4;++j)if(high[j]==low[j])v[j]=c[j]<low[j]?0.0f:1.0f;break;}
             case 18:v={a.x,b.x,c.x,r[int(g.values[i].x)].x};break;
             }
             r[i]=v;
         }
         if(vertexOnly) {s.vertexOffset=glm::vec3(r[g.outputs1.z]);return s;}
+        if(g.outputs1.w!=0)s.directLighting=glm::max(glm::vec3(r[(g.outputs1.w&255)-1]),glm::vec3(0));
         s.color={glm::vec3(r[g.outputs0.x]),glm::clamp(r[g.outputs1.x].x,0.0f,1.0f)};
         const auto normal=glm::vec3(r[g.outputs0.y]);
         if(glm::dot(normal,normal)>.000001f)s.normal=glm::normalize(normal);

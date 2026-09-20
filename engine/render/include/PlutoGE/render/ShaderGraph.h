@@ -54,6 +54,13 @@ namespace PlutoGE::render
         SceneColor = 27,
         SceneDepth = 28,
         Expression = 29,
+        Step = 30,
+        Floor = 31,
+        Smoothstep = 32,
+        LightDirection = 33,
+        LightColor = 34,
+        LightAttenuation = 35,
+        ShadowAttenuation = 36,
     };
 
     enum class ShaderGraphMaterialInput
@@ -131,7 +138,7 @@ namespace PlutoGE::render
     {
         glm::ivec4 header{0}; // instruction count, unlit, vertex instruction count, reserved
         glm::ivec4 outputs0{0}; // albedo, normal, metallic, roughness
-        glm::ivec4 outputs1{0}; // opacity, emission, world-space vertex offset, reserved
+        glm::ivec4 outputs1{0}; // opacity, emission, world-space vertex offset, packed surface count << 8 | direct lighting register + 1 (0 = PBR)
         std::array<glm::ivec4, kMaxShaderGraphInstructions> instructions{};
         std::array<glm::vec4, kMaxShaderGraphInstructions> values{};
     };
@@ -159,6 +166,9 @@ namespace PlutoGE::render
         float time=0;
         glm::vec4 color{1};
         glm::vec3 normal{0,0,1}, emission{0}, vertexOffset{0};
+        // Per-light inputs are only valid in the Direct Lighting branch.
+        glm::vec3 lightDirection{0,0,1}, lightColor{1}, directLighting{0};
+        float lightAttenuation=1, shadowAttenuation=1;
         float metallic=0, roughness=1;
     };
     using ShaderGraphTextureSampler = std::function<glm::vec4(int,glm::vec2)>;

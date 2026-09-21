@@ -136,6 +136,31 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     commands[0].castsShadow = true;
     renderGi();
     require(renderer.GetTimingStats().shadowCandidateCount == 1, "Re-enabled caster stayed excluded");
+    std::vector<RenderCommand> reordered(3, commands[0]);
+    for (std::size_t i = 0; i < reordered.size(); ++i)
+    {
+        reordered[i].model[3].x = float(i) * .3f - .3f;
+        reordered[i].previousModel = reordered[i].model;
+    }
+    const auto renderReordered = [&] {
+        require(renderer.Render(64, 64, camera, lighting, reordered, reordered), "Reordered preparation failed");
+        return device.ReadTextureRgba8(renderer.GetColorTexture());
+    };
+    const auto originalOrder = renderReordered();
+    std::reverse(reordered.begin(), reordered.end());
+    require(renderReordered() == originalOrder && renderer.GetTimingStats().rebuiltDrawPackets == 0 &&
+                renderer.GetTimingStats().reusedDrawPackets == 6,
+            "Reordering rigid commands rebuilt packets or changed pixels");
+    reordered.erase(reordered.begin() + 1);
+    renderReordered();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 0 && renderer.GetTimingStats().reusedDrawPackets == 4,
+            "Visibility removal invalidated surviving packets");
+    reordered[0].previousModel[3].y += .1f;
+    renderReordered();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 2, "Reordered cache missed history mutation");
+    const auto cachedOrder = renderReordered();
+    renderer.InvalidateAssetCache();
+    require(renderReordered() == cachedOrder, "Reordered cache differs from freshly prepared rendering");
     require(renderer.Render(64, 64, camera, lighting, {}, {}), "Empty list render failed");
     require(renderer.GetDrawCount() == 0, "Removed commands survived in the cache");
 }

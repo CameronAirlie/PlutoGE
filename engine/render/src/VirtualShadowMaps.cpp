@@ -195,6 +195,7 @@ namespace PlutoGE::render
             m_width = width; m_height = height;
         }
         std::vector<Caster> inputs;
+        inputs.reserve(m_casterCount);
         const auto prepare = [&](std::span<const BasicDraw> draws, std::vector<Chunk> &chunks, bool shadow)
         {
             std::size_t cursor = 0;
@@ -364,6 +365,32 @@ namespace PlutoGE::render
     void VirtualShadowMaps::Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
     {
         if (m_reuseFrame) return;
+        // Submission callbacks only bind mesh buffers and issue the draw.
+        // Retain pass-local state rather than repeating backend handle lookups
+        // for every submesh of an imported architectural model.
+        const auto recordChunks = [&](const std::vector<Chunk> &chunks, std::size_t count,
+                                      std::size_t instancedPipeline, std::size_t rigidPipeline)
+        {
+            std::size_t boundPipeline = m_raster.size();
+            rhi::TextureHandle boundTexture;
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto &chunk = chunks[index];
+                const auto pipeline = chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
+                if (pipeline != boundPipeline)
+                {
+                    commands.BindPipeline(m_raster[pipeline].Get());
+                    boundPipeline = pipeline;
+                }
+                commands.BindUniformBuffer(1, chunk.uniform.Get());
+                if (chunk.texture != boundTexture)
+                {
+                    commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
+                    boundTexture = chunk.texture;
+                }
+                submit(chunk.submission);
+            }
+        };
         commands.BeginGpuScope("RHI VSM Receiver Depth");
         rhi::RenderingInfo depth;
         depth.colorAttachments = {m_receiverColor.Get()}; depth.depthAttachment = m_receiverDepth.Get();
@@ -371,14 +398,7 @@ namespace PlutoGE::render
         commands.BeginRendering(depth);
         commands.BindPipeline(m_raster[0].Get());
         commands.BindUniformBuffer(0, m_parameters.Get());
-        for (std::size_t index = 0; index < m_receiverCount; ++index)
-        {
-            const auto &chunk = m_receiverChunks[index];
-            commands.BindPipeline(m_raster[chunk.submission.instances == 1 ? 3 : 0].Get());
-            commands.BindUniformBuffer(1, chunk.uniform.Get());
-            commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
-            submit(chunk.submission);
-        }
+        recordChunks(m_receiverChunks, m_receiverCount, 0, 3);
         commands.EndRendering(); commands.EndGpuScope();
         commands.BeginGpuScope("RHI VSM GPU Planning");
         commands.ShaderMemoryBarrier();
@@ -405,14 +425,7 @@ namespace PlutoGE::render
         commands.BindPipeline(m_raster[1].Get());
         commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
         commands.BindStorageBuffer(4, m_lists.Get());
-        for (std::size_t index = 0; index < m_casterCount; ++index)
-        {
-            const auto &chunk = m_casterChunks[index];
-            commands.BindPipeline(m_raster[chunk.submission.instances == 1 ? 4 : 1].Get());
-            commands.BindUniformBuffer(1, chunk.uniform.Get());
-            commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
-            submit(chunk.submission);
-        }
+        recordChunks(m_casterChunks, m_casterCount, 1, 4);
         commands.EndRendering(); commands.EndGpuScope();
         commands.ShaderMemoryBarrier();
         BindCompute(commands, 6);

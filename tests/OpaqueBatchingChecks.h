@@ -90,6 +90,18 @@ void CheckOpaqueBatching(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     auto merged = separate;
     MergeAdjacentOpaqueDraws(merged);
     require(merged.size() == 1 && merged[0].indexCount == 12, "Adjacent compatible geometry did not merge");
+    std::uint64_t revision = 100;
+    auto versioned = separate;
+    versioned[0].preparationRevision = 1;
+    versioned[1].preparationRevision = 2;
+    MergeAdjacentOpaqueDraws(versioned, [&] { return ++revision; });
+    require(versioned[0].preparationRevision == 101, "Merged draw retained a source packet's identity");
+    versioned = separate;
+    versioned.resize(1);
+    versioned[0].preparationRevision = 1;
+    BatchOpaqueDraws(versioned, [&] { return ++revision; });
+    MergeAdjacentOpaqueDraws(versioned, [&] { return ++revision; });
+    require(versioned[0].preparationRevision == 1, "Unchanged draw lost its source packet identity");
     renderer.Render(glm::mat4(1), duplicateLighting, merged);
     require(readPixels(renderer.GetColorTexture()) == separatePixels, "Range merging changed rendered pixels");
     for (int variant = 0; variant < 6; ++variant)

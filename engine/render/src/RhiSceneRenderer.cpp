@@ -441,7 +441,7 @@ namespace PlutoGE::render
                 m_timingStats.reusedDrawPackets += sourceCommands.size();
                 return false;
             }
-            cache.entries.resize(sourceCommands.size());
+            cache.Reconcile(sourceCommands, materialRevision);
             auto &destination = cache.draws;
             destination.clear();
             destination.reserve(sourceCommands.size());
@@ -646,11 +646,9 @@ namespace PlutoGE::render
         if (visibleChanged)
         {
             preparation.batched = preparation.visible.draws;
-            BatchOpaqueDraws(preparation.batched);
-            MergeAdjacentOpaqueDraws(preparation.batched);
-            for (auto &draw : preparation.batched)
-                if (draw.preparationRevision)
-                    draw.preparationRevision = preparation.NextRevision();
+            const auto nextRevision = [&] { return preparation.NextRevision(); };
+            BatchOpaqueDraws(preparation.batched, nextRevision);
+            MergeAdjacentOpaqueDraws(preparation.batched, nextRevision);
         }
         auto &draws = preparation.batched;
         batchingScope.End();
@@ -1183,6 +1181,10 @@ namespace PlutoGE::render
         m_timingStats.submitMs = rendererTiming.submitMs;
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
+        m_timingStats.glassPanes = frameStats.glassPanes;
+        m_timingStats.glassSnapshots = frameStats.glassSnapshots;
+        m_timingStats.materialPreparations = frameStats.materialPreparations;
+        m_timingStats.materialPreparationHits = frameStats.materialPreparationHits;
         m_timingStats.geometryTriangles = frameStats.geometryTriangles;
         m_timingStats.renderSize = renderSize;
         m_timingStats.outputSize = outputSize;

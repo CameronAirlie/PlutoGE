@@ -9,6 +9,10 @@
 
 namespace PlutoGE::render
 {
+    struct UncachedDrawRevision
+    {
+        std::uint64_t operator()() const { return 0; }
+    };
     // Batch only after per-object visibility/LOD selection. Shadow and GI source
     // lists retain their original bounds and identities for cache validation.
     inline bool SameBasicDrawSurface(const BasicDraw &a, const BasicDraw &b)
@@ -62,7 +66,8 @@ namespace PlutoGE::render
     // Packing at mesh upload arranges same-material ranges next to one another.
     // Merge only consecutive visible ranges with identical transforms/history.
     // Gaps left by culling, different LODs and moving objects stay separate.
-    inline void MergeAdjacentOpaqueDraws(std::vector<BasicDraw> &draws)
+    template<class AllocateRevision = UncachedDrawRevision>
+    inline void MergeAdjacentOpaqueDraws(std::vector<BasicDraw> &draws, AllocateRevision allocateRevision = {})
     {
         std::size_t output = 0;
         for (std::size_t input = 0; input < draws.size(); ++input)
@@ -80,6 +85,9 @@ namespace PlutoGE::render
                     SameBasicDrawSurface(previous, draw))
                 {
                     previous.indexCount += draw.indexCount;
+                    // Aggregates no longer describe an immutable source packet.
+                    previous.preparationRevision = previous.preparationRevision && draw.preparationRevision
+                        ? allocateRevision() : 0;
                     if (previous.shadowBoundsRadius >= 0 && draw.shadowBoundsRadius >= 0)
                         previous.shadowBoundsRadius = std::max(previous.shadowBoundsRadius,
                             glm::length(draw.shadowBoundsCenter - previous.shadowBoundsCenter) + draw.shadowBoundsRadius);
@@ -161,14 +169,20 @@ namespace PlutoGE::render
         return hash;
     }
 
-    inline void BatchOpaqueDraws(std::vector<BasicDraw> &draws)
+    template<class AllocateRevision = UncachedDrawRevision>
+    inline void BatchOpaqueDraws(std::vector<BasicDraw> &draws, AllocateRevision allocateRevision = {})
     {
         struct Group
         {
-            std::size_t index;
+            std::size_t index, next;
             std::shared_ptr<std::vector<glm::mat4>> models, previous;
         };
-        std::unordered_map<std::size_t, std::vector<Group>> groups;
+        // Most architectural submeshes never instance. Avoid allocating a map
+        // node and a candidate vector for each of those singleton groups.
+        constexpr auto end = std::numeric_limits<std::size_t>::max();
+        std::vector<std::size_t> heads(std::bit_ceil(std::max(std::size_t{1}, draws.size() * 2)), end);
+        std::vector<Group> groups;
+        groups.reserve(draws.size());
         std::size_t output = 0;
         for (std::size_t input = 0; input < draws.size(); ++input)
         {
@@ -189,12 +203,19 @@ namespace PlutoGE::render
                 HashBatchValue(hash, draw.outlinePass);
                 HashBatchValue(hash, draw.castsShadow);
                 HashBatchValue(hash, draw.contributesToGi);
-                auto &candidates = groups[hash];
-                auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Group &g)
-                    { return SameBasicDrawMaterial(draws[g.index], draw); });
-                if (found != candidates.end())
+                auto &head = heads[hash & (heads.size() - 1)];
+                Group *found = nullptr;
+                for (auto candidate = head; candidate != end; candidate = groups[candidate].next)
+                    if (SameBasicDrawMaterial(draws[groups[candidate].index], draw))
+                    {
+                        found = &groups[candidate];
+                        break;
+                    }
+                if (found)
                 {
                     auto &first = draws[found->index];
+                    first.preparationRevision = first.preparationRevision && draw.preparationRevision
+                        ? allocateRevision() : 0;
                     if (!found->models)
                     {
                         found->models = std::make_shared<std::vector<glm::mat4>>();
@@ -215,7 +236,8 @@ namespace PlutoGE::render
                         first.shadowBoundsRadius = -1;
                     continue;
                 }
-                candidates.push_back({output, {}, {}});
+                groups.push_back({output, head, {}, {}});
+                head = groups.size() - 1;
             }
             if (input != output) draws[output] = std::move(draw);
             ++output;

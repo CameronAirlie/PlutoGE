@@ -42,6 +42,7 @@
 #include <limits>
 #include <numeric>
 #include <string_view>
+#include <tuple>
 
 namespace PlutoGE::render
 {
@@ -290,43 +291,42 @@ namespace PlutoGE::render
             return command.material ? command.material->GetShader() : command.shader;
         }
 
+        auto RenderCommandKey(const RenderCommand &command)
+        {
+            const auto range = command.mesh
+                ? command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex) : Submesh::LodRange{};
+            return std::tuple{reinterpret_cast<std::uintptr_t>(GetRenderCommandShaderKey(command)),
+                reinterpret_cast<std::uintptr_t>(command.material), reinterpret_cast<std::uintptr_t>(command.mesh),
+                range.indexOffset, range.indexCount, command.submeshIndex};
+        }
+
         bool CompareRenderCommandKeysImpl(const RenderCommand &a, const RenderCommand &b)
         {
-            const auto *aShader = GetRenderCommandShaderKey(a);
-            const auto *bShader = GetRenderCommandShaderKey(b);
-            if (aShader != bShader)
-            {
-                return aShader < bShader;
-            }
+            return RenderCommandKey(a) < RenderCommandKey(b);
+        }
 
-            if (a.material != b.material)
-            {
-                return a.material < b.material;
-            }
+        auto RenderCommandPermutation(std::span<const RenderCommand> commands)
+        {
+            // Resolve material and mesh metadata once, not at every comparison.
+            using Key = decltype(RenderCommandKey(RenderCommand{}));
+            std::vector<Key> keys;
+            keys.reserve(commands.size());
+            for (const auto &command : commands) keys.push_back(RenderCommandKey(command));
+            std::vector<std::size_t> permutation(commands.size());
+            std::iota(permutation.begin(), permutation.end(), std::size_t{0});
+            std::sort(permutation.begin(), permutation.end(), [&](std::size_t a, std::size_t b) {
+                return keys[a] < keys[b];
+            });
+            return permutation;
+        }
 
-            if (a.mesh != b.mesh)
-            {
-                return a.mesh < b.mesh;
-            }
-
-            const auto aRange = a.mesh ? a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex) : Submesh::LodRange{};
-            const auto bRange = b.mesh ? b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex) : Submesh::LodRange{};
-            if (aRange.indexOffset != bRange.indexOffset)
-            {
-                return aRange.indexOffset < bRange.indexOffset;
-            }
-
-            if (aRange.indexCount != bRange.indexCount)
-            {
-                return aRange.indexCount < bRange.indexCount;
-            }
-
-            if (a.submeshIndex != b.submeshIndex)
-            {
-                return a.submeshIndex < b.submeshIndex;
-            }
-
-            return false;
+        void SortRenderCommands(std::vector<RenderCommand> &commands)
+        {
+            const auto permutation = RenderCommandPermutation(commands);
+            std::vector<RenderCommand> reordered;
+            reordered.reserve(commands.size());
+            for (const auto index : permutation) reordered.push_back(std::move(commands[index]));
+            commands.swap(reordered);
         }
 
         std::uint64_t RenderCommandSortIdentity(const RenderCommand &command)
@@ -883,7 +883,7 @@ namespace PlutoGE::render
         for (auto &detailTiming : m_gpuDetailTimings)
             detailTiming.hasResult = false;
         if (m_renderCommandsDirty)
-            std::sort(m_visibleRenderCommands.begin(), m_visibleRenderCommands.end(), CompareRenderCommandKeysImpl);
+            SortRenderCommands(m_visibleRenderCommands);
         const auto visibilityEnd = profileNow();
         if (m_config.enableProfiling)
         {
@@ -1160,12 +1160,7 @@ namespace PlutoGE::render
         }
         else
         {
-            std::vector<std::size_t> permutation(m_renderCommands.size());
-            std::iota(permutation.begin(), permutation.end(), std::size_t{0});
-            std::sort(permutation.begin(), permutation.end(), [&](std::size_t a, std::size_t b)
-            {
-                return CompareRenderCommandKeysImpl(m_renderCommands[a], m_renderCommands[b]);
-            });
+            auto permutation = RenderCommandPermutation(m_renderCommands);
 
             std::vector<RenderCommand> reordered;
             std::vector<std::uint8_t> reorderedShadowFlags;
@@ -1663,7 +1658,7 @@ namespace PlutoGE::render
             m_visibleRenderCommands.push_back(std::move(visibleCommand));
         }
         if (m_renderCommandsDirty)
-            std::sort(m_visibleRenderCommands.begin(), m_visibleRenderCommands.end(), CompareRenderCommandKeysImpl);
+            SortRenderCommands(m_visibleRenderCommands);
         if (m_config.enableProfiling)
         {
             const auto preparationEnd = std::chrono::high_resolution_clock::now();

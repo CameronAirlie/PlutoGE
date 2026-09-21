@@ -53,6 +53,8 @@ namespace PlutoGE::render
         std::size_t shadowCandidateCount = 0;
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
+        std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t materialPreparations = 0, materialPreparationHits = 0;
         std::array<std::uint64_t, 4> geometryTriangles{};
         rhi::Extent2D renderSize{}, outputSize{};
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;

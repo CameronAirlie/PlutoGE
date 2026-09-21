@@ -52,6 +52,60 @@ namespace PlutoGE::render
         {
             std::vector<Entry> entries;
             std::vector<BasicDraw> draws;
+
+            // Keep only the preceding list, with a reusable second buffer. Full
+            // value validation remains authoritative; hashes only find candidates.
+            std::vector<Entry> previous;
+            std::vector<std::size_t> candidateHeads, candidateNext;
+
+            static std::size_t Identity(const RenderCommand &command)
+            {
+                std::size_t hash = 0;
+                HashBatchValue(hash, command.mesh);
+                HashBatchValue(hash, command.material);
+                HashBatchValue(hash, command.submeshIndex);
+                // Translation separates repeated mesh instances cheaply. Full
+                // transform/history/LOD validation handles hash collisions.
+                HashBatchValue(hash, command.model[3]);
+                return hash;
+            }
+
+            template<class Revision> void Reconcile(std::span<const RenderCommand> commands, Revision revision)
+            {
+                previous.swap(entries);
+                entries.clear();
+                entries.resize(commands.size());
+                constexpr auto end = std::numeric_limits<std::size_t>::max();
+                // Flat chained buckets avoid one allocation per packet on
+                // every moving-camera frame. Storage is reused on the next miss.
+                candidateHeads.assign(std::bit_ceil(std::max(std::size_t{1}, previous.size() * 2)), end);
+                candidateNext.resize(previous.size());
+                const auto mask = candidateHeads.size() - 1;
+                for (std::size_t i = 0; i < previous.size(); ++i)
+                    if (previous[i].valid)
+                    {
+                        auto &head = candidateHeads[Identity(previous[i].input) & mask];
+                        candidateNext[i] = head;
+                        head = i;
+                    }
+                for (std::size_t i = 0; i < commands.size(); ++i)
+                {
+                    const auto materialRevision = revision(commands[i]);
+                    auto *link = &candidateHeads[Identity(commands[i]) & mask];
+                    while (*link != end)
+                    {
+                        const auto candidate = *link;
+                        if (previous[candidate].Matches(commands[i], materialRevision))
+                        {
+                            entries[i] = std::move(previous[candidate]);
+                            *link = candidateNext[candidate];
+                            break;
+                        }
+                        link = &candidateNext[candidate];
+                    }
+                }
+                previous.clear();
+            }
         };
 
         std::uint64_t NextRevision()

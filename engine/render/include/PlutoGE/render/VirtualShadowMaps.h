@@ -41,6 +41,8 @@ namespace PlutoGE::render
             rhi::BufferHandle indirect;
             std::size_t indirectOffset = 0;
         };
+        // Bind vertex/index buffers and issue the draw only. Pipeline and
+        // resource bindings are owned by Record's pass-local state cache.
         using SubmitMesh = std::function<void(const Submission &)>;
         void Initialize(rhi::IRenderDevice &device, const VirtualShadowShaders &shaders);
         bool Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,

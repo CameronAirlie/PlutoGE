@@ -49,4 +49,35 @@ namespace PlutoGE::render
         return {static_cast<std::int32_t>(low.x), static_cast<std::int32_t>(low.y),
                 static_cast<std::uint32_t>(high.x - low.x), static_cast<std::uint32_t>(high.y - low.y)};
     }
+
+    struct GlassSnapshotGroup
+    {
+        std::size_t end;
+        rhi::Scissor bounds;
+    };
+
+    // A sample footprint also contains the pane's raster footprint. Disjoint
+    // footprints therefore cannot read one another's writes. Comparing with
+    // the growing union is conservative and keeps planning linear in panes.
+    inline GlassSnapshotGroup PlanGlassSnapshotGroup(std::span<const BasicDraw> draws, std::size_t first,
+        const glm::mat4 &viewProjection, glm::vec2 clipOffset, std::uint32_t width, std::uint32_t height, bool flipY)
+    {
+        GlassSnapshotGroup group{first + 1,
+            GlassSnapshotBounds(draws[first], viewProjection, clipOffset, width, height, flipY)};
+        while (group.end < draws.size() && draws[group.end].surfaceType == 1u)
+        {
+            const auto next = GlassSnapshotBounds(draws[group.end], viewProjection, clipOffset, width, height, flipY);
+            const auto right = group.bounds.x + static_cast<std::int32_t>(group.bounds.width);
+            const auto bottom = group.bounds.y + static_cast<std::int32_t>(group.bounds.height);
+            const auto nextRight = next.x + static_cast<std::int32_t>(next.width);
+            const auto nextBottom = next.y + static_cast<std::int32_t>(next.height);
+            if (next.x < right && group.bounds.x < nextRight && next.y < bottom && group.bounds.y < nextBottom)
+                break;
+            const auto x = std::min(group.bounds.x, next.x), y = std::min(group.bounds.y, next.y);
+            group.bounds = {x, y, static_cast<std::uint32_t>(std::max(right, nextRight) - x),
+                static_cast<std::uint32_t>(std::max(bottom, nextBottom) - y)};
+            ++group.end;
+        }
+        return group;
+    }
 } // namespace PlutoGE::render

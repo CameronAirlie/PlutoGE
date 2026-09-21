@@ -428,6 +428,10 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "RHI glass snapshots: " << rhiScene.glassSnapshots << " copies / "
+               << rhiScene.glassPanes << " panes\n";
+        report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
+               << rhiScene.materialPreparationHits << " reused\n";
         report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)
                << " (0 off, 1 measure, 2 cull), active: " << rhiScene.occlusionActive << "\n";
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)

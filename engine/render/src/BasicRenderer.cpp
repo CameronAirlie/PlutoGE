@@ -5,6 +5,7 @@
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 #include "PlutoGE/render/PostProcessResourcePool.h"
 #include "GlassSnapshotBounds.h"
+#include "BasicDrawBatching.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -1766,11 +1767,18 @@ namespace PlutoGE::render
         }
         if (virtualShadowsActive)
         {
+            const BasicMesh *boundShadowMesh = nullptr;
             m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
             {
                 const auto &mesh = *submission.draw->mesh;
-                commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
-                commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
+                // OpenGL pipelines own VAOs, so a pipeline switch requires
+                // rebinding even when the mesh itself has not changed.
+                if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
+                {
+                    commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
+                    boundShadowMesh = &mesh;
+                }
                 if (submission.indirect)
                     commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
                 else
@@ -2105,17 +2113,38 @@ namespace PlutoGE::render
         std::size_t instanceBufferCursor = 0;
         std::size_t materialBufferCursor = 0;
         BasicMaterialParameters previousMaterialParameters{};
+        struct FrameMaterial
+        {
+            BasicDraw surface;
+            bool transparent;
+            std::size_t bufferIndex;
+        };
+        // Own surface snapshots: outline packets are temporary stack objects.
+        // Entries live for one frame, so shader time, fog and edits cannot stale.
+        std::unordered_map<std::size_t, std::vector<FrameMaterial>> frameMaterials;
         bool geometryResourcesBound = false;
+        bool skyTextureBound = false;
         std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
+        std::array<rhi::TextureHandle, 4> previousGraphTextures{};
+        std::array<rhi::SamplerHandle, 4> previousGraphSamplers{};
+        rhi::TextureHandle previousEmissionTexture;
+        rhi::PipelineHandle boundDrawPipeline;
+        const BasicMesh *boundDrawMesh = nullptr;
+        std::size_t boundMaterialIndex = std::numeric_limits<std::size_t>::max();
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
-            commands.BindPipeline(transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
+            const auto pipeline = transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
                                   (draw.outlinePass ? (instanced ? outlineInstancedPipeline : outlinePipeline) :
-                                   (instanced ? instancedPipeline : opaquePipeline)));
-            if (transparent || !geometryResourcesBound)
+                                   (instanced ? instancedPipeline : opaquePipeline));
+            if (boundDrawPipeline != pipeline)
+            {
+                commands.BindPipeline(pipeline);
+                boundDrawPipeline = pipeline;
+            }
+            if (!geometryResourcesBound)
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
             if (!instanced)
             {
@@ -2143,84 +2172,123 @@ namespace PlutoGE::render
                     previousObjectParameters = objectParameters;
                 }
             }
-            BasicMaterialParameters materialParameters{
-                draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
-                draw.emission, draw.alphaCutoff, draw.alphaMode,
-                draw.normalTexture ? 1u : 0u,
-                draw.metallicTexture ? 1u : 0u,
-                draw.roughnessTexture ? 1u : 0u,
-                draw.metallicChannel, draw.roughnessChannel,
-                draw.flipNormalY ? 1u : 0u, draw.twoSided ? 1u : 0u,
-                glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
-                          std::clamp(draw.subsurface, 0.0f, 1.0f)),
-                glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
-                glm::vec4(float(draw.surfaceType), std::clamp(draw.transmission, 0.0f, 1.0f),
-                          std::clamp(draw.ior, 1.0f, 3.0f), std::max(draw.thickness, 0.0f)),
-                glm::vec4(glm::clamp(draw.attenuationColor, glm::vec3(0.0001f), glm::vec3(1.0f)),
-                          std::max(draw.attenuationDistance, 0.0001f)),
-                glm::vec4(1.0f / m_width, 1.0f / m_height,
-                          m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
-            materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
-            materialParameters.emissionChannels = draw.emissionChannels;
-            if (draw.shaderGraphProgram)
+            const auto materialIndex = [&]() -> std::size_t
             {
-                materialParameters.shaderGraph = draw.shaderGraphProgram->data;
-                materialParameters.shaderGraphFrame.x = graphTime;
-                materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
-                materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
-            }
-            if (transparent)
-                for (const auto &effect : postProcessEffects)
-                    if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                std::size_t key = draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw);
+                HashBatchValue(key, transparent);
+                auto &candidates = frameMaterials[key];
+                for (const auto &candidate : candidates)
+                    if (candidate.transparent == transparent && SameBasicDrawSurface(candidate.surface, draw) &&
+                        bool(candidate.surface.shaderGraphProgram && candidate.surface.shaderGraphProgram->requiresSceneTextures) ==
+                            bool(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
                     {
-                        std::copy_n(effect.parameters.begin(), 4, materialParameters.glassFog.begin());
-                        materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
-                        break;
+                        ++m_frameStats.materialPreparationHits;
+                        return candidate.bufferIndex;
                     }
-            // Sorted submeshes commonly share a material. Keep its uniform
-            // allocation and dynamic offset stable until the values change.
-            // The cache is frame-local, so edits and viewport changes take
-            // effect immediately and in-flight buffers remain immutable.
-            if (materialBufferCursor == 0 ||
-                std::memcmp(&previousMaterialParameters, &materialParameters, sizeof(materialParameters)) != 0)
-            {
-                if (materialBufferCursor == m_materialBuffers.size())
-                    m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                        {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
-                m_device->UpdateBuffer(m_materialBuffers[materialBufferCursor++].Get(), 0, Bytes(materialParameters));
-                previousMaterialParameters = materialParameters;
-            }
-            auto &materialBuffer = m_materialBuffers[materialBufferCursor - 1];
-            commands.BindUniformBuffer(8, materialBuffer.Get());
+                BasicMaterialParameters materialParameters{
+                    draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
+                    draw.emission, draw.alphaCutoff, draw.alphaMode,
+                    draw.normalTexture ? 1u : 0u,
+                    draw.metallicTexture ? 1u : 0u,
+                    draw.roughnessTexture ? 1u : 0u,
+                    draw.metallicChannel, draw.roughnessChannel,
+                    draw.flipNormalY ? 1u : 0u, draw.twoSided ? 1u : 0u,
+                    glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
+                              std::clamp(draw.subsurface, 0.0f, 1.0f)),
+                    glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
+                    glm::vec4(float(draw.surfaceType), std::clamp(draw.transmission, 0.0f, 1.0f),
+                              std::clamp(draw.ior, 1.0f, 3.0f), std::max(draw.thickness, 0.0f)),
+                    glm::vec4(glm::clamp(draw.attenuationColor, glm::vec3(0.0001f), glm::vec3(1.0f)),
+                              std::max(draw.attenuationDistance, 0.0001f)),
+                    glm::vec4(1.0f / m_width, 1.0f / m_height,
+                              m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
+                materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
+                materialParameters.emissionChannels = draw.emissionChannels;
+                if (draw.shaderGraphProgram)
+                {
+                    materialParameters.shaderGraph = draw.shaderGraphProgram->data;
+                    materialParameters.shaderGraphFrame.x = graphTime;
+                    materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
+                    materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
+                }
+                if (transparent)
+                    for (const auto &effect : postProcessEffects)
+                        if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                        {
+                            std::copy_n(effect.parameters.begin(), 4, materialParameters.glassFog.begin());
+                            materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
+                            break;
+                        }
+                // Sorted submeshes commonly share a material. Keep its uniform
+                // allocation and dynamic offset stable until the values change.
+                // The cache is frame-local, so edits and viewport changes take
+                // effect immediately and in-flight buffers remain immutable.
+                if (materialBufferCursor == 0 ||
+                    std::memcmp(&previousMaterialParameters, &materialParameters, sizeof(materialParameters)) != 0)
+                {
+                    if (materialBufferCursor == m_materialBuffers.size())
+                        m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                            {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
+                    m_device->UpdateBuffer(m_materialBuffers[materialBufferCursor++].Get(), 0, Bytes(materialParameters));
+                    previousMaterialParameters = materialParameters;
+                }
+                const auto index = materialBufferCursor - 1;
+                candidates.push_back({draw, transparent, index});
+                ++m_frameStats.materialPreparations;
+                return index;
+            }();
+            auto &materialBuffer = m_materialBuffers[materialIndex];
+            if (!geometryResourcesBound || boundMaterialIndex != materialIndex)
+                commands.BindUniformBuffer(8, materialBuffer.Get());
+            boundMaterialIndex = materialIndex;
             const std::array materialTextures{
                 draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
                 draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),
                 draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),
                 draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get()};
             for (std::uint32_t index = 0; index < materialTextures.size(); ++index)
-                if (transparent || !geometryResourcesBound || previousMaterialTextures[index] != materialTextures[index])
+                if (!geometryResourcesBound || previousMaterialTextures[index] != materialTextures[index])
                     commands.BindTexture(9 + index, materialTextures[index], m_fallbackSampler.Get());
-            // Transparency is interleaved with post-processing, which changes
-            // bindings. Only opaque geometry has uninterrupted resource state.
-            if (transparent || !geometryResourcesBound)
+            // Pass boundaries explicitly invalidate bindings; consecutive draws
+            // within either geometry or transparency can retain shared resources.
+            if (!geometryResourcesBound)
                 for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
                     commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
                         ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-            if (transparent || !geometryResourcesBound)
+            if (!geometryResourcesBound)
             {
                 commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
                 commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
                                      m_shadowSampler.Get());
-                commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
             }
-            for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
-            commands.BindTexture(26, draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+            if (!geometryResourcesBound || !skyTextureBound)
+            {
+                commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                skyTextureBound = true;
+            }
+            for (unsigned i = 0; i < 4; ++i)
+            {
+                const auto texture = draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get();
+                const auto sampler = m_graphSamplers[draw.graphSamplers[i] & 3].Get();
+                if (!geometryResourcesBound || previousGraphTextures[i] != texture || previousGraphSamplers[i] != sampler)
+                    commands.BindTexture(22 + i, texture, sampler);
+                previousGraphTextures[i] = texture;
+                previousGraphSamplers[i] = sampler;
+            }
+            const auto emissionTexture = draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get();
+            if (!geometryResourcesBound || previousEmissionTexture != emissionTexture)
+                commands.BindTexture(26, emissionTexture, m_fallbackSampler.Get());
+            previousEmissionTexture = emissionTexture;
             previousMaterialTextures = materialTextures;
             geometryResourcesBound = true;
-            commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-            commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+            if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundDrawMesh != draw.mesh)
+            {
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                boundDrawMesh = draw.mesh;
+            }
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount
                                                      ? draw.mesh->m_indexCount - draw.firstIndex
                                                      : 0;
@@ -2400,11 +2468,21 @@ namespace PlutoGE::render
                 commands.Draw(3);
                 commands.EndRendering();
             }
+            geometryResourcesBound = false;
+            boundDrawPipeline = {};
+            boundDrawMesh = nullptr;
             bool rendering = false;
-            for (const auto &pane : transparentDraws)
+            std::size_t snapshotGroupEnd = 0;
+            for (std::size_t paneIndex = 0; paneIndex < transparentDraws.size(); ++paneIndex)
             {
-                if (pane.surfaceType == 1u) // Glass; ordinary alpha blend uses no scene snapshot.
+                const auto &pane = transparentDraws[paneIndex];
+                if (pane.surfaceType == 1u) ++m_frameStats.glassPanes;
+                if (pane.surfaceType == 1u && paneIndex >= snapshotGroupEnd)
                 {
+                    const auto group = PlanGlassSnapshotGroup(transparentDraws, paneIndex, viewProjection,
+                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
+                    snapshotGroupEnd = group.end;
+                    ++m_frameStats.glassSnapshots;
                     if (rendering)
                     {
                         commands.EndRendering();
@@ -2425,8 +2503,11 @@ namespace PlutoGE::render
                     copyInfo.height = m_height;
                     copyInfo.clearColor = false;
                     commands.BeginRendering(copyInfo);
-                    commands.SetScissor(GlassSnapshotBounds(pane, viewProjection, glm::vec2(temporalClipOffset),
-                        m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan));
+                    // The snapshot overwrites texture slots 1 and 2 only;
+                    // draw materials, camera uniforms and shadow bindings survive.
+                    skyTextureBound = false;
+                    boundDrawPipeline = {};
+                    commands.SetScissor(group.bounds);
                     commands.BindPipeline(m_glassSceneCopyPipeline.Get());
                     commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
                     commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());

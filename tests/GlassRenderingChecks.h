@@ -222,6 +222,71 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     eyePlane[3][3] = 0;
     require(GlassSnapshotBounds(boundary[0], eyePlane, {}, 320, 180, false).width == 320,
             "Glass crossing the eye plane did not fall back to a full snapshot");
+    // Disjoint panes share a snapshot; unknown bounds force the original
+    // per-pane path, providing an independent full-image reference.
+    auto groupedPane = boundary[0];
+    groupedPane.model[3].x = -.55f;
+    groupedPane.shadowBoundsCenter.x = groupedPane.occlusionBoundsCenter.x = -.55f;
+    auto otherPane = groupedPane;
+    otherPane.model[3].x = .55f;
+    otherPane.shadowBoundsCenter.x = otherPane.occlusionBoundsCenter.x = .55f;
+    std::array disjoint{groupedPane, otherPane};
+    require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 2,
+            "Disjoint glass did not share a snapshot");
+    std::array groupedScene{disjoint[0], disjoint[1], left, right};
+    render(groupedScene);
+    require(renderer.GetFrameStats().glassSnapshots == 1 && renderer.GetFrameStats().glassPanes == 2,
+            "Disjoint glass did not reduce recorded snapshot copies");
+    const auto groupedPixels = readPixels(renderer.GetColorTexture());
+    require(renderer.GetFrameStats().materialPreparations == 3 &&
+            renderer.GetFrameStats().materialPreparationHits == 1,
+            "Repeated glass material was prepared more than once");
+    // Force hash collisions: surface equality, not the hash, must decide reuse.
+    for (auto &draw : groupedScene)
+    {
+        draw.preparationRevision = 1;
+        draw.preparedMaterialHash = 0;
+    }
+    render(groupedScene);
+    require(readPixels(renderer.GetColorTexture()) == groupedPixels,
+            "Material hash collision reused different surface parameters");
+    groupedScene[0].emission += glm::vec3(1, 0, 0);
+    render(groupedScene);
+    require(renderer.GetFrameStats().materialPreparations == 4 &&
+            readPixels(renderer.GetColorTexture()) != groupedPixels,
+            "Frame-local material cache missed an edited glass surface");
+    for (auto &draw : disjoint) draw.shadowBoundsRadius = -1;
+    require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 1,
+            "Unknown glass bounds incorrectly shared a snapshot");
+    groupedScene[0] = disjoint[0];
+    groupedScene[1] = disjoint[1];
+    render(groupedScene);
+    require(renderer.GetFrameStats().glassSnapshots == 2, "Full snapshot reference unexpectedly grouped panes");
+    const auto referencePixels = readPixels(renderer.GetColorTexture());
+    require(referencePixels == groupedPixels, "Shared glass snapshot changed rendered pixels");
+    disjoint = {groupedPane, groupedPane};
+    require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 1,
+            "Overlapping glass lost its ordered snapshot");
+    disjoint[1] = otherPane;
+    disjoint[1].surfaceType = 0;
+    require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 1,
+            "Glass grouping crossed an ordinary transparency draw");
+    std::array revisited{groupedPane, groupedPane, otherPane};
+    revisited[1].model[3].x = 0;
+    revisited[1].shadowBoundsCenter.x = revisited[1].occlusionBoundsCenter.x = 0;
+    revisited[1].emission = {0, 1, 0};
+    render(revisited);
+    require(renderer.GetFrameStats().materialPreparations == 2 &&
+            renderer.GetFrameStats().materialPreparationHits == 1,
+            "Non-consecutive glass material was not reused");
+    const auto reusedMaterials = readPixels(renderer.GetColorTexture());
+    // Glass emits no outline pass, but differing outline widths conservatively
+    // split surface-cache keys. This forces independent material preparation.
+    for (std::size_t i = 0; i < revisited.size(); ++i) revisited[i].outlineWidth = float(i + 1);
+    render(revisited);
+    require(renderer.GetFrameStats().materialPreparations == 3 &&
+            readPixels(renderer.GetColorTexture()) == reusedMaterials,
+            "Non-consecutive material reuse changed rendered glass");
     require(renderer.Resize(48,32), "Glass resize failed");
     require(render(layers)[0] > 0, "Glass failed after resize");
     require(renderer.Resize(96,64), "Glass test restore resize failed");

@@ -439,6 +439,8 @@ namespace PlutoGE::render
         std::uint32_t vctSecondarySlices = 0, vctSecondaryPublications = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
+        std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t materialPreparations = 0, materialPreparationHits = 0;
         // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
         std::array<std::uint64_t, 4> geometryTriangles{};
         std::size_t shadowCandidates = 0;

@@ -170,6 +170,8 @@ namespace PlutoGE::render::rhi
         std::uint64_t contextId = 0;
         std::uint64_t frameIndex = 0;
         bool resetHistory = false;
+        bool orthographicProjection = false;
+        float orthographicViewWidth = 0.0f, orthographicViewHeight = 0.0f;
         bool depthInverted = true;
         bool motionVectorsIncludeCamera = true;
         bool motionVectorsJittered = false;

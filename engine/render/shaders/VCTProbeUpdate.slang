@@ -85,7 +85,8 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         uint3 at = cell + uint3(0, 0, face * 16);
         float4 old = probeRadiance[at];
         // Never retain stale radiance or visibility for a newly embedded probe.
-        float history = old.a > 0.0 && !embedded ? 0.75 : 0.0;
+        float baseHistory = pass.update.w != 0 ? asfloat(pass.update.w) : 0.75;
+        float history = old.a > 0.0 && !embedded ? baseHistory : 0.0;
         probeRadiance[at] = float4(lerp(radiance, old.rgb, history), embedded ? 0.0 : 1.0);
         probeVisibility[at] = lerp(float4(first, second, 0, 0), probeVisibility[at], history);
     }

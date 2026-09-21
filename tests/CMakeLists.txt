@@ -92,6 +92,7 @@ add_test(NAME PlutoGEOpenGLSkyQuadratureTests COMMAND PlutoGEOpenGLRhiTests --sk
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)
 add_test(NAME PlutoGEVulkanSkinningTests COMMAND PlutoGEVulkanRhiTests --skinning)
 if (PLUTO_ENABLE_FSR2)
+    add_test(NAME PlutoGEOrthographicUpscalerTests COMMAND PlutoGEVulkanRhiTests --orthographic-upscalers)
     add_test(NAME PlutoGEVulkanFsr2Tests COMMAND PlutoGEVulkanRhiTests --fsr2-only)
 endif()
 add_test(NAME PlutoGEVulkanSsrTests COMMAND PlutoGEVulkanRhiTests --ssr-only)

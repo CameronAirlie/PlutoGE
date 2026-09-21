@@ -244,7 +244,7 @@ namespace PlutoGE::render
                                          ? m_device->GetTemporalUpscalerSupport(m_upscalerOptions.technology)
                                          : rhi::TemporalUpscalerSupport{};
         const bool orthographic = std::abs(cameraData.projection[3][3]) > 0.5f;
-        const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported && !orthographic;
+        const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported;
         const rhi::Extent2D renderSize = useTemporalUpscaler
             ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
             : outputSize;
@@ -256,10 +256,11 @@ namespace PlutoGE::render
             .outputSize = outputSize,
             .requested = temporalUpscalerRequested,
             .active = false,
-            .reason = temporalUpscalerRequested && orthographic ? "Temporal upscalers require a perspective camera." :
-                (useTemporalUpscaler ? std::string{} : upscalerSupport.reason),
+            .reason = useTemporalUpscaler ? std::string{} : upscalerSupport.reason,
         };
-        const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize;
+        const bool projectionChanged = orthographic != m_previousUpscalerOrthographic;
+        m_previousUpscalerOrthographic = orthographic;
+        const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize || projectionChanged;
         if (resolutionChanged)
             ResetTemporalHistory();
         auto effectiveUpscaler = m_upscalerOptions;
@@ -938,6 +939,9 @@ namespace PlutoGE::render
             upscalerFrame.cameraRight = {cameraRight.x, cameraRight.y, cameraRight.z};
             upscalerFrame.cameraUp = {cameraUp.x, cameraUp.y, cameraUp.z};
             upscalerFrame.cameraForward = {cameraForward.x, cameraForward.y, cameraForward.z};
+            upscalerFrame.orthographicProjection = orthographic;
+            upscalerFrame.orthographicViewWidth = orthographic ? 2.0f / std::abs(unjitteredProjection[0][0]) : 0.0f;
+            upscalerFrame.orthographicViewHeight = orthographic ? 2.0f / std::abs(unjitteredProjection[1][1]) : 0.0f;
             upscalerFrame.cameraNear = cameraData.nearPlane;
             upscalerFrame.cameraFar = cameraData.farPlane;
             upscalerFrame.cameraVerticalFovRadians =

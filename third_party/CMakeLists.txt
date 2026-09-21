@@ -63,6 +63,7 @@ if (PLUTO_ENABLE_FSR2)
     FetchContent_MakeAvailable(fidelityfx_fsr2)
 
     set(_pluto_fsr2_api_dir "${fidelityfx_fsr2_SOURCE_DIR}/src/ffx-fsr2-api")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/fsr2/Orthographic.cmake")
     set(_pluto_fsr2_shader_dir "${_pluto_fsr2_api_dir}/shaders")
     set(_pluto_fsr2_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/fsr2-shaders")
     set(_pluto_fsr2_shader_compiler "${fidelityfx_fsr2_SOURCE_DIR}/tools/sc/FidelityFX_SC.exe")
@@ -96,7 +97,7 @@ if (PLUTO_ENABLE_FSR2)
                 -compiler=glslang -e main --target-env vulkan1.1 -S comp -Os -DFFX_GLSL=1
                 "-name=${shader_name}" "-I${_pluto_fsr2_shader_dir}"
                 "-output=${_pluto_fsr2_generated_dir}" "${shader_source}"
-            DEPENDS "${shader_source}"
+            DEPENDS "${shader_source}" "${_pluto_fsr2_shader_dir}/ffx_fsr2_common.h"
             COMMENT "Compiling AMD FSR2 shader permutations: ${shader_name}"
             VERBATIM)
         list(APPEND _pluto_fsr2_shader_headers "${shader_output}")

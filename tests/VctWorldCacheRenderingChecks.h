@@ -303,6 +303,24 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
             throw std::runtime_error("VCT trace resolution change lost indirect lighting");
     }
 
+    // Measure live lighting response with the cache and temporal smoothing
+    // enabled, rather than only measuring a cold mesh upload.
+    const auto decayFrames = [&](float speed) {
+        effect.parameters[1].y = .92f;
+        effect.parameters[5].z = 3; // Warm both cases at the same rate.
+        effect.parameters[2].w = 1;
+        lighting.pointLights[0].intensity = 16;
+        const double warmEnergy = channelEnergy(renderFrames(180),0);
+        if(warmEnergy < 100) throw std::runtime_error("VCT live-response fixture did not warm up");
+        effect.parameters[5].z = speed-1;
+        lighting.pointLights[0].intensity = 0;
+        for(int frame=1;frame<=240;++frame)
+            if(channelEnergy(renderFrames(1),0)<warmEnergy*.05) return frame;
+        throw std::runtime_error("VCT retained stale lighting after live change");
+    };
+    const int normalDecay=decayFrames(1), fastDecay=decayFrames(4);
+    std::cout << "VCT live lighting decay: normal=" << normalDecay << ", fast=" << fastDecay << " frames" << std::endl;
+    if(fastDecay>=normalDecay) throw std::runtime_error("VCT Update Speed did not accelerate visible lighting changes");
 }
 
 // A tiny emissive submesh of a larger mesh must deposit radiance regardless of

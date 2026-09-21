@@ -250,7 +250,7 @@ namespace PlutoGE::render
             {"Cone Aperture", PostProcessParameterType::Float, std::to_string(m_aperture)},
             {"Max Distance", PostProcessParameterType::Float, std::to_string(m_maxDistance)},
             {"Normal Bias", PostProcessParameterType::Float, std::to_string(m_normalBias)},
-            {"Update Interval", PostProcessParameterType::Int, std::to_string(m_updateInterval)},
+            {"Refresh Interval (frames)", PostProcessParameterType::Int, std::to_string(m_updateInterval)},
             {"Temporal Blend", PostProcessParameterType::Float, std::to_string(m_temporalBlend)},
             {"History Depth Threshold", PostProcessParameterType::Float, std::to_string(m_historyDepthThreshold)},
             {"History Normal Threshold", PostProcessParameterType::Float, std::to_string(m_historyNormalThreshold)},
@@ -426,7 +426,7 @@ namespace PlutoGE::render
                 // can skip narrow gaps entirely. Migrate them to the new default.
                 m_normalBias = storedBias > 1.0f ? 0.35f : std::clamp(storedBias, 0.0f, 1.0f);
             }
-            else if (p.name == "Update Interval")
+            else if (p.name == "Update Interval" || p.name == "Refresh Interval (frames)")
                 m_updateInterval = std::clamp(std::stoi(p.value), 1, 16);
             else if (p.name == "Temporal Blend")
                 m_temporalBlend = std::clamp(std::stof(p.value), 0.0f, 0.98f);
@@ -1524,8 +1524,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             shader->SetUniform("uWorldCache", useCache ? 1 : 0);
         };
         if (useCache && availableCascadeCount == static_cast<int>(m_activeCascadeCount) &&
-            (m_probeSchedule.clear || m_probeSchedule.remaining > 0) &&
-            !m_cascades[m_activeCascadeCount - 1].rebuildInProgress)
+            (m_probeSchedule.clear || m_probeSchedule.remaining > 0))
         {
             m_probeUpdateShader->Bind();
             for (std::size_t direction = 0; direction < 6; ++direction)
@@ -1539,7 +1538,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             {
                 VctProbeParameters params{m_cacheOriginSize,
                     glm::uvec4(unsigned(m_activeCascadeCount - 1), unsigned(m_activeCascadeCount), unsigned(m_resolution), unsigned(std::log2(m_resolution))),
-                    glm::uvec4(first, count, clear ? 1u : 0u, 0u)};
+                    glm::uvec4(first, count, clear ? 1u : 0u, glm::floatBitsToUint(VctHistoryWeight(.75f, m_updateSpeed)))};
                 glBindBuffer(GL_UNIFORM_BUFFER, m_probeParameters);
                 glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(params), &params);
                 glBindBufferBase(GL_UNIFORM_BUFFER, 0, m_probeParameters);
@@ -1596,7 +1595,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
         m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
-        m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
+        m_temporalResolveShader->SetUniform("uTemporalBlend", VctHistoryWeight(m_temporalBlend, m_updateSpeed));
         m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
         m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
         m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
@@ -1639,7 +1638,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
             m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
             m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
-            m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
+            m_temporalResolveShader->SetUniform("uTemporalBlend", VctHistoryWeight(m_temporalBlend, m_updateSpeed));
             m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
             m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
             m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);

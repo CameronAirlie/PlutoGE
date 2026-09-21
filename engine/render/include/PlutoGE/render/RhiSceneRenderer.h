@@ -204,6 +204,7 @@ namespace PlutoGE::render
       std::uint64_t m_temporalFrameIndex = 0;
       glm::vec2 m_previousTemporalJitterNdc{0.0f};
       rhi::TemporalUpscalerOptions m_upscalerOptions;
+      bool m_previousUpscalerOrthographic = false;
       glm::mat4 m_previousUpscalerViewProjection{1.0f};
       rhi::Extent2D m_previousRenderSize;
       rhi::Extent2D m_previousOutputSize;

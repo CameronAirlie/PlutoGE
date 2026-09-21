@@ -76,3 +76,12 @@ other rapidly changing materials.
 The scene adapter supplies each draw's authoritative previous model transform. Visibility changes, draw sorting, and LOD selection must not substitute a different draw's prior transform. A culled batch with one surviving instance uses that instance's current and previous transforms. Low-level BasicRenderer callers with changing draw order should populate BasicDraw::previousModel; the older positional fallback remains for fixed-order callers.
 
 Native RHI TAA validates stored history depth across the contributing texels rather than comparing current-frame normals/depth at an old location or interpolating artificial silhouette depths. Lighting rejection uses the current color neighborhood, so changing subpixel coverage during motion is not mistaken for a lighting change. High-quality cubic history taps use texel centers. Motion GPU tests cover native TAA on OpenGL/Vulkan, FSR2 on supported Vulkan devices, reordered draws, singleton instance batches, stationary edges, and removal of a TAA surface.
+
+## Orthographic cameras
+
+Vulkan FSR2 supports orthographic and perspective cameras. Orthographic views
+provide their full view width/height and linear reversed-Z depth mapping. The
+pinned SDK is built through `third_party/fsr2/Orthographic.cmake`, which creates
+a build-directory overlay implementing linear depth and a depth-independent XY
+footprint; the downloaded AMD sources are unchanged. Perspective reconstruction
+keeps its original formula. Switching projection type resets temporal history.

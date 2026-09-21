@@ -319,13 +319,24 @@ float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 r
     return visibility;
 }
 
-float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal)
+float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal, float3 lightDirection,
+                               float3 worldDx, float3 worldDy)
 {
     // Bias in world space before projection; perspective depth is nonlinear.
+    if (dot(normal, lightDirection) < 0) normal = -normal;
     float4 clip = mul(vsm.matrices[level], float4(world, 1));
-    float3 receiver = world + normal * max(0.0001, clip.w * 0.001);
+    float3 receiver = world + normal * max(0.00001, clip.w * 0.0001);
     float3 coordinate = virtualCoordinate(vsm, level, receiver);
     if (clip.w <= 0 || any(coordinate.xy <= 0) || any(coordinate.xy >= 1) || coordinate.z < 0 || coordinate.z > 1) return 1;
+    // A planar receiver has linear projected depth, including perspective
+    // spot projections. Apply the quotient rule before solving its UV slope.
+    float4 receiverClip = mul(vsm.matrices[level], float4(receiver, 1));
+    float4 clipDx = mul(vsm.matrices[level], float4(worldDx, 0));
+    float4 clipDy = mul(vsm.matrices[level], float4(worldDy, 0));
+    float3 ndc = receiverClip.xyz / receiverClip.w;
+    float2 gradient = computeReceiverPlaneDepthGradient(
+        (clipDx.xyz - ndc * clipDx.w) / receiverClip.w,
+        (clipDy.xyz - ndc * clipDy.w) / receiverClip.w);
     int resolution = int(virtualResolution(level));
     int2 center = int2(coordinate.xy * resolution);
     float visibility = 0;
@@ -341,7 +352,9 @@ float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal)
             uint slot = mapping - 1;
             float2 atlasUv = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
                 float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
-            visibility += coordinate.z - 0.000005 <= virtualShadowAtlas.SampleLevel(atlasUv, 0).r ? 1.0 : 0.0;
+            float2 tapUv = (float2(texel) + 0.5) / resolution;
+            float depth = coordinate.z + dot(gradient, tapUv - coordinate.xy) - 0.000001;
+            visibility += depth <= virtualShadowAtlas.SampleLevel(atlasUv, 0).r ? 1.0 : 0.0;
         }
     return visibility / 9.0;
 }
@@ -802,7 +815,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
     // Evaluate geometry derivatives before divergent per-light/face selection.
-    float3 pointReceiverNormal = cross(ddx(input.worldPosition), ddy(input.worldPosition));
+    float3 pointWorldDx = ddx(input.worldPosition), pointWorldDy = ddy(input.worldPosition);
+    float3 pointReceiverNormal = cross(pointWorldDx, pointWorldDy);
     float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
     for (uint light = 0; light < uint(pointParameters.x) && (transparentPass || pointParameters.w != 6.0); ++light)
@@ -833,7 +847,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         {
             attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
             if (attenuation > 0 && pointSettings[light].y >= 0)
-                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition, pointReceiverNormal);
+                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition,
+                    pointReceiverNormal, l, pointWorldDx, pointWorldDy);
         }
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
         if(customLighting)

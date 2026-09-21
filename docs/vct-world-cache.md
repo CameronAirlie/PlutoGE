@@ -70,5 +70,14 @@ values spend more CPU/GPU time per frame; speed is bounded by dispatch granulari
 and cascade publication, so it is not a guaranteed frame-rate or latency ratio.
 Changes take effect on in-progress work without clearing valid GI or resetting
 its cache. Old scenes retain speed 1. The existing Cache Updates, Voxelization
-Command Budget and Update Interval remain the base settings. Temporal Blend is
-still an independent control over smoothing after new lighting is available.
+Command Budget and Update Interval remain the base settings. Temporal Blend is the base smoothing weight; Update Speed now scales its decay
+as well, so new lighting becomes visible sooner at higher speeds.
+
+The former **Update Interval** setting is now labelled **Refresh Interval
+(frames)**. It limits when a new rebuild may start; a rebuild already in progress
+continues every frame. The effective wait is `max(1, ceil(interval / speed))`.
+Leave it at 1 for the fastest response. Old saved Update Interval values load
+unchanged. Speed also advances multiple publication stages per frame under a
+shared draw/triangle/bounce budget, so it affects small scenes as well as large
+meshes. Probe updates can continue sampling the last published volume while a
+replacement is built, and their history decay also follows Update Speed.

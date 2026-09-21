@@ -3180,317 +3180,329 @@ namespace PlutoGE::render
             }
             cascade.pendingSecondaryBounce = secondaryBounce;
         }
-        // Round-robin publication prevents a moving near field starving the cache source.
-        for (std::uint32_t offset = 0; offset < cascadeCount; ++offset)
-        {
-            const auto index = (m_vctNextCascade + offset) % cascadeCount;
-            if (m_vctCascades[index].rebuilding) { rebuildIndex = index; break; }
-        }
-        // The injection shadow is fitted to the voxel volume, never the view
-        // frustum. One staging map is retained until this cascade is published.
-        constexpr std::uint32_t giShadowResolution = 1024;
-        // A draw-count budget cannot bound a large imported mesh. Share a
-        // triangle budget between shadow injection and voxelization, and retain
-        // an index cursor so every triangle is eventually submitted exactly once.
-        constexpr std::uint32_t maxIndicesPerDraw = 32768 * 3;
+        // Speed must also advance small scenes through publication stages;
+        // larger draw budgets alone do nothing when there are only a few draws.
+        // Share bounded work across all stages/cascades serviced this frame.
         std::uint32_t remainingIndices = VctUpdateBudget(65536, updateSpeed) * 3;
-        if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
+        std::uint32_t remainingCommands = 2 * VctUpdateBudget(
+            static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
+        std::uint32_t remainingBounceSlices = VctBounceSlices(resolution, updateSpeed);
+        const auto workSteps = static_cast<std::uint32_t>(std::ceil(std::max(1.0f, updateSpeed)));
+        for (std::uint32_t step = 0; step < workSteps; ++step)
         {
-            auto &cascade = m_vctCascades[rebuildIndex];
-            if (!m_vctShadowDepth)
+            rebuildIndex = cascadeCount;
+            // Round-robin publication prevents a moving near field starving the cache source.
+            for (std::uint32_t offset = 0; offset < cascadeCount; ++offset)
             {
-                m_vctShadowDepth = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {giShadowResolution, giShadowResolution, rhi::Format::D32Float,
-                     rhi::TextureUsage::DepthStencilAttachment, "VCT world shadow depth", true}));
-                m_vctShadowColor = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {giShadowResolution, giShadowResolution, rhi::Format::R32Float,
-                     rhi::TextureUsage::ColorAttachment, "VCT world shadow color", true}));
+                const auto index = (m_vctNextCascade + offset) % cascadeCount;
+                if (m_vctCascades[index].rebuilding) { rebuildIndex = index; break; }
             }
-            if (cascade.nextShadowDraw == 0 && cascade.nextShadowIndex == 0)
+            // The injection shadow is fitted to the voxel volume, never the view
+            // frustum. One staging map is retained until this cascade is published.
+            constexpr std::uint32_t giShadowResolution = 1024;
+            // A draw-count budget cannot bound a large imported mesh. Share a
+            // triangle budget between shadow injection and voxelization, and retain
+            // an index cursor so every triangle is eventually submitted exactly once.
+            constexpr std::uint32_t maxIndicesPerDraw = 32768 * 3;
+            if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
             {
-                const float radius = cascade.pendingSize * 0.8660254f;
-                const float casterReach = std::max(cascade.pendingLighting.shadowCasterDistance, radius * 2.0f);
-                const glm::vec3 center = cascade.pendingOrigin + glm::vec3(cascade.pendingSize * 0.5f);
-                const glm::vec3 direction = glm::normalize(cascade.pendingLighting.directionalDirection);
-                const glm::vec3 up = std::abs(direction.y) < 0.99f ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
-                cascade.pendingShadowMatrix = glm::orthoRH_ZO(-radius, radius, -radius, radius,
-                    0.01f, radius * 2.0f + casterReach) *
-                    glm::lookAtRH(center - direction * (radius + casterReach), center, up);
-            }
-            auto &cameraBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-            m_device->UpdateBuffer(cameraBuffer.Get(), 0, Bytes(cascade.pendingShadowMatrix));
-            rhi::RenderingInfo shadow;
-            shadow.colorAttachments = {m_vctShadowColor.Get()}; shadow.depthAttachment = m_vctShadowDepth.Get();
-            shadow.width = shadow.height = giShadowResolution;
-            shadow.clearColor = shadow.clearDepth = cascade.nextShadowDraw == 0 && cascade.nextShadowIndex == 0;
-            shadow.clearColorValue[0] = shadow.clearDepthValue = 1.0f;
-            commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
-            commands.BindUniformBuffer(0, cameraBuffer.Get());
-            const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
-            const std::size_t budget = VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
-            std::size_t submitted = 0;
-            while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
-            {
-                const auto &draw = cascade.pendingDraws[cascade.nextShadowDraw];
-                if (!draw.castsShadow || !draw.mesh || !draw.mesh->IsValid() || draw.surfaceType == 1 || draw.alphaMode == 2 ||
-                    !shadowFrustum.Intersects(draw))
+                auto &cascade = m_vctCascades[rebuildIndex];
+                if (!m_vctShadowDepth)
                 {
-                    ++cascade.nextShadowDraw;
-                    cascade.nextShadowIndex = 0;
-                    continue;
+                    m_vctShadowDepth = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {giShadowResolution, giShadowResolution, rhi::Format::D32Float,
+                         rhi::TextureUsage::DepthStencilAttachment, "VCT world shadow depth", true}));
+                    m_vctShadowColor = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {giShadowResolution, giShadowResolution, rhi::Format::R32Float,
+                         rhi::TextureUsage::ColorAttachment, "VCT world shadow color", true}));
                 }
-                auto &objectBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-                m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
-                commands.BindUniformBuffer(16, objectBuffer.Get());
-                auto &graphBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-                m_device->UpdateBuffer(graphBuffer.Get(),0,Bytes(ShadowMaterial(draw,cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime)));
-                commands.BindPipeline(draw.alphaMode==1 ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
-                commands.BindUniformBuffer(8,graphBuffer.Get());
-                commands.BindTexture(9,draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
-                commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
-                commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get()); commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
-                const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
-                const auto triangleIndices = count - count % 3;
-                const auto chunk = std::min({triangleIndices - cascade.nextShadowIndex, maxIndicesPerDraw, remainingIndices});
-                if (chunk)
+                if (cascade.nextShadowDraw == 0 && cascade.nextShadowIndex == 0)
                 {
-                    commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextShadowIndex);
-                    cascade.nextShadowIndex += chunk;
-                    remainingIndices -= chunk;
-                    ++submitted;
+                    const float radius = cascade.pendingSize * 0.8660254f;
+                    const float casterReach = std::max(cascade.pendingLighting.shadowCasterDistance, radius * 2.0f);
+                    const glm::vec3 center = cascade.pendingOrigin + glm::vec3(cascade.pendingSize * 0.5f);
+                    const glm::vec3 direction = glm::normalize(cascade.pendingLighting.directionalDirection);
+                    const glm::vec3 up = std::abs(direction.y) < 0.99f ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
+                    cascade.pendingShadowMatrix = glm::orthoRH_ZO(-radius, radius, -radius, radius,
+                        0.01f, radius * 2.0f + casterReach) *
+                        glm::lookAtRH(center - direction * (radius + casterReach), center, up);
                 }
-                if (cascade.nextShadowIndex == triangleIndices)
-                {
-                    ++cascade.nextShadowDraw;
-                    cascade.nextShadowIndex = 0;
-                }
-            }
-            commands.EndRendering();
-            cascade.shadowReady = cascade.nextShadowDraw == cascade.pendingDraws.size();
-        }
-        if (rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].shadowReady)
-        {
-            auto &cascade = m_vctCascades[rebuildIndex];
-            if (!cascade.secondaryPass)
-            {
-                VctVoxelParameters voxel;
-                voxel.secondaryBounce = 0.0f;
-                voxel.bounceCascade = static_cast<std::uint32_t>(rebuildIndex);
-                voxel.localLightCount.y = cascadeCount;
-                voxel.volumeOrigin = cascade.pendingOrigin;
-                voxel.volumeSize = cascade.pendingSize;
-                voxel.resolution = resolution;
-                const auto &injectionLight = cascade.pendingLighting;
-                voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
-                voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
-                voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
-                if (cascade.pendingInjectLocalLights)
-                {
-                    const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot, glm::vec2 cone = {}) {
-                        const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
-                            cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
-                        if (light.intensity <= 0 || light.range <= 0 ||
-                            glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
-                        voxel.localLights[voxel.localLightCount.x++] = {
-                            glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot, glm::vec4(cone, 0, 0)};
-                    };
-                    for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
-                    for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1), spot.cone.Cosines());
-                }
-                voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
-                voxel.view = glm::mat4(1.0f);
-                voxel.shadowCascadeSplits = glm::vec4(1e10f);
-                voxel.shadowsEnabled = injectionLight.shadowsEnabled ? 1u : 0u;
-                voxel.shadowFlipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
-                voxel.shadowDepthScale = m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f;
-                voxel.shadowDepthBias = m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f;
-                voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / giShadowResolution));
-                voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
-                auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-                m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
-                rhi::RenderingInfo raster;
-                raster.width = raster.height = resolution; raster.clearColor = raster.clearDepth = false;
-                raster.attachmentless = true;
-                commands.BeginRendering(raster);
-                commands.BindPipeline(m_vctVoxelizationPipeline.Get());
-                commands.BindUniformBuffer(0, voxelBuffer.Get());
-                commands.BindStorageImage(0, cascade.surfaceRecord.Get());
-                for (std::size_t channel = 0; channel < 4; ++channel)
-                    commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
-                const std::size_t budget = VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
+                auto &cameraBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                m_device->UpdateBuffer(cameraBuffer.Get(), 0, Bytes(cascade.pendingShadowMatrix));
+                rhi::RenderingInfo shadow;
+                shadow.colorAttachments = {m_vctShadowColor.Get()}; shadow.depthAttachment = m_vctShadowDepth.Get();
+                shadow.width = shadow.height = giShadowResolution;
+                shadow.clearColor = shadow.clearDepth = cascade.nextShadowDraw == 0 && cascade.nextShadowIndex == 0;
+                shadow.clearColorValue[0] = shadow.clearDepthValue = 1.0f;
+                commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
+                commands.BindUniformBuffer(0, cameraBuffer.Get());
+                const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
+                const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed));
                 std::size_t submitted = 0;
-                while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
+                while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
                 {
-                    const auto &draw = cascade.pendingDraws[cascade.nextDraw];
-                    const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
-                                                         cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
-                    if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
-                        (draw.shadowBoundsRadius >= 0.0f &&
-                         glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
-                            draw.shadowBoundsRadius * draw.shadowBoundsRadius))
+                    const auto &draw = cascade.pendingDraws[cascade.nextShadowDraw];
+                    if (!draw.castsShadow || !draw.mesh || !draw.mesh->IsValid() || draw.surfaceType == 1 || draw.alphaMode == 2 ||
+                        !shadowFrustum.Intersects(draw))
                     {
-                        ++cascade.nextDraw;
-                        cascade.nextVoxelIndex = 0;
+                        ++cascade.nextShadowDraw;
+                        cascade.nextShadowIndex = 0;
                         continue;
                     }
-                    const auto objectBufferIndex = m_vctBufferCursor++;
-                    auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
-                    m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
-                    const auto materialBufferIndex = m_vctBufferCursor++;
-                    auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
-                    VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
-                        draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
-                        draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
-                        draw.metallicChannel, 1u};
-                    if(draw.shaderGraphProgram) material.graph=draw.shaderGraphProgram->data;
-                    material.graphCameraTime={cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime};
-                    material.graphFactors.x=draw.roughness;
-                    material.emissionParameters={draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
-                    material.emissionChannels = draw.emissionChannels;
-                    commands.BindTexture(20,draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
-                    m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
-                    commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
-                    commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
-                    commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
-                                         m_fallbackSampler.Get());
-                    commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
-                                         m_fallbackSampler.Get());
-                    commands.BindTexture(14,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
-                    commands.BindTexture(15,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    for(unsigned i=0;i<4;++i)commands.BindTexture(16+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
-                    const auto fallbackShadow = m_fallbackDataTexture.Get();
-                    for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
-                        commands.BindTexture(10 + shadowCascade,
-                            m_vctShadowDepth ? m_vctShadowDepth.Get() : fallbackShadow,
-                            m_shadowSampler.Get());
-                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                    const auto available = draw.firstIndex < draw.mesh->m_indexCount
-                                               ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
+                    auto &objectBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                    m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
+                    commands.BindUniformBuffer(16, objectBuffer.Get());
+                    auto &graphBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                    m_device->UpdateBuffer(graphBuffer.Get(),0,Bytes(ShadowMaterial(draw,cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime)));
+                    commands.BindPipeline(draw.alphaMode==1 ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
+                    commands.BindUniformBuffer(8,graphBuffer.Get());
+                    commands.BindTexture(9,draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                    commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                        for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get()); commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
                     const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
                     const auto triangleIndices = count - count % 3;
-                    const auto chunk = std::min({triangleIndices - cascade.nextVoxelIndex, maxIndicesPerDraw, remainingIndices});
+                    const auto chunk = std::min({triangleIndices - cascade.nextShadowIndex, maxIndicesPerDraw, remainingIndices});
                     if (chunk)
                     {
-                        commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextVoxelIndex);
-                        cascade.nextVoxelIndex += chunk;
+                        commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextShadowIndex);
+                        cascade.nextShadowIndex += chunk;
                         remainingIndices -= chunk;
-                        ++submitted;
+                        ++submitted; --remainingCommands;
                     }
-                    if (cascade.nextVoxelIndex == triangleIndices)
+                    if (cascade.nextShadowIndex == triangleIndices)
                     {
-                        ++cascade.nextDraw;
-                        cascade.nextVoxelIndex = 0;
+                        ++cascade.nextShadowDraw;
+                        cascade.nextShadowIndex = 0;
                     }
                 }
                 commands.EndRendering();
-                commands.ShaderMemoryBarrier();
+                cascade.shadowReady = cascade.nextShadowDraw == cascade.pendingDraws.size();
             }
-            if (cascade.secondaryPass && !cascade.secondaryReady && cascade.pendingSecondaryBounce > 0.0f)
+            if (rebuildIndex < cascadeCount && m_vctCascades[rebuildIndex].shadowReady)
             {
-                const ScopedGpuTiming bounceTiming(commands, "RHI VCT Secondary Gather");
-                // Fixed voxel work, independent of scene triangles/draws. Skip empty cells in the shader.
-                const auto slices = VctBounceSlices(resolution, updateSpeed);
-                const glm::uvec4 params(resolution, cascade.stagedBounceSource ? 0u : static_cast<std::uint32_t>(rebuildIndex),
-                                        cascade.stagedBounceSource ? 1u : cascadeCount, cascade.nextBounceSlice);
-                const auto &bounceSource = cascade.stagedBounceSource ? m_vctInjectionAtlases : m_vctRadianceAtlases;
-                auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
-                m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
-                commands.BindPipeline(m_vctBouncePipeline.Get());
-                commands.BindUniformBuffer(0, buffer.Get());
-                commands.BindStorageImage(1, cascade.surfaceRecord.Get());
-                commands.BindStorageImage(2, cascade.accumulation[3].Get());
-                commands.BindStorageImage(3, cascade.secondaryVolume.Get());
-                for (std::uint32_t direction = 0; direction < 6; ++direction)
-                    commands.BindTexture(7 + direction, bounceSource[direction].Get(), m_vctVolumeSampler.Get());
-                commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, slices / 4);
-                commands.ShaderMemoryBarrier();
-                cascade.nextBounceSlice += slices;
-                cascade.secondaryReady = cascade.nextBounceSlice >= resolution;
-            }
-            const bool publish = cascade.secondaryPass
-                ? (cascade.secondaryReady || cascade.pendingSecondaryBounce == 0.0f)
-                : cascade.nextDraw >= cascade.pendingDraws.size();
-            if (publish)
-            {
-                const ScopedGpuTiming publishTiming(commands, "RHI VCT Volume Publish");
-                const bool stageDirect = !cascade.secondaryPass && cascade.pendingSecondaryBounce > 0.0f;
-                auto &destination = stageDirect ? m_vctInjectionAtlases : m_vctRadianceAtlases;
-                const auto destinationCascade = stageDirect ? 0u : static_cast<std::uint32_t>(rebuildIndex);
-                const float gain = cascade.secondaryReady ? cascade.pendingSecondaryBounce : 0.0f;
-                const VctResolveParameters resolve{
-                    resolution, destinationCascade * resolution, gain, 0};
-                auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-                m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
-                for (auto &atlas : destination)
+                auto &cascade = m_vctCascades[rebuildIndex];
+                if (!cascade.secondaryPass)
                 {
-                    commands.BindPipeline(m_vctResolvePipeline.Get());
-                    commands.BindUniformBuffer(0, resolveBuffer.Get());
+                    VctVoxelParameters voxel;
+                    voxel.secondaryBounce = 0.0f;
+                    voxel.bounceCascade = static_cast<std::uint32_t>(rebuildIndex);
+                    voxel.localLightCount.y = cascadeCount;
+                    voxel.volumeOrigin = cascade.pendingOrigin;
+                    voxel.volumeSize = cascade.pendingSize;
+                    voxel.resolution = resolution;
+                    const auto &injectionLight = cascade.pendingLighting;
+                    voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
+                    voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
+                    voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
+                    if (cascade.pendingInjectLocalLights)
+                    {
+                        const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot, glm::vec2 cone = {}) {
+                            const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
+                                cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                            if (light.intensity <= 0 || light.range <= 0 ||
+                                glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
+                            voxel.localLights[voxel.localLightCount.x++] = {
+                                glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot, glm::vec4(cone, 0, 0)};
+                        };
+                        for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
+                        for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1), spot.cone.Cosines());
+                    }
+                    voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
+                    voxel.view = glm::mat4(1.0f);
+                    voxel.shadowCascadeSplits = glm::vec4(1e10f);
+                    voxel.shadowsEnabled = injectionLight.shadowsEnabled ? 1u : 0u;
+                    voxel.shadowFlipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u;
+                    voxel.shadowDepthScale = m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f;
+                    voxel.shadowDepthBias = m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f;
+                    voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / giShadowResolution));
+                    voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
+                    auto &voxelBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                    m_device->UpdateBuffer(voxelBuffer.Get(), 0, Bytes(voxel));
+                    rhi::RenderingInfo raster;
+                    raster.width = raster.height = resolution; raster.clearColor = raster.clearDepth = false;
+                    raster.attachmentless = true;
+                    commands.BeginRendering(raster);
+                    commands.BindPipeline(m_vctVoxelizationPipeline.Get());
+                    commands.BindUniformBuffer(0, voxelBuffer.Get());
+                    commands.BindStorageImage(0, cascade.surfaceRecord.Get());
                     for (std::size_t channel = 0; channel < 4; ++channel)
-                        commands.BindStorageImage(static_cast<std::uint32_t>(1 + channel), cascade.accumulation[channel].Get());
-                    commands.BindStorageImage(5, atlas.Get());
-                    commands.BindStorageImage(6, cascade.secondaryVolume.Get());
-                    commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, (resolution + 3) / 4);
+                        commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
+                    const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed));
+                    std::size_t submitted = 0;
+                    while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
+                    {
+                        const auto &draw = cascade.pendingDraws[cascade.nextDraw];
+                        const glm::vec3 closest = glm::clamp(draw.shadowBoundsCenter, cascade.pendingOrigin,
+                                                             cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
+                        if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 || !draw.mesh || !draw.mesh->IsValid() ||
+                            (draw.shadowBoundsRadius >= 0.0f &&
+                             glm::dot(draw.shadowBoundsCenter - closest, draw.shadowBoundsCenter - closest) >
+                                draw.shadowBoundsRadius * draw.shadowBoundsRadius))
+                        {
+                            ++cascade.nextDraw;
+                            cascade.nextVoxelIndex = 0;
+                            continue;
+                        }
+                        const auto objectBufferIndex = m_vctBufferCursor++;
+                        auto &objectBuffer = AcquireVctBuffer(objectBufferIndex);
+                        m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(VctObjectParameters{draw.model}));
+                        const auto materialBufferIndex = m_vctBufferCursor++;
+                        auto &materialBuffer = AcquireVctBuffer(materialBufferIndex);
+                        VctMaterialParameters material{draw.baseColor, draw.uvScale, draw.metallic,
+                            draw.alphaCutoff, glm::max(draw.emission, glm::vec3(0.0f)), draw.alphaMode,
+                            draw.baseColorTexture ? 1u : 0u, draw.metallicTexture ? 1u : 0u,
+                            draw.metallicChannel, 1u};
+                        if(draw.shaderGraphProgram) material.graph=draw.shaderGraphProgram->data;
+                        material.graphCameraTime={cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime};
+                        material.graphFactors.x=draw.roughness;
+                        material.emissionParameters={draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
+                        material.emissionChannels = draw.emissionChannels;
+                        commands.BindTexture(20,draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());
+                        m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(material));
+                        commands.BindUniformBuffer(1, m_vctBuffers[objectBufferIndex].Get());
+                        commands.BindUniformBuffer(2, m_vctBuffers[materialBufferIndex].Get());
+                        commands.BindTexture(3, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                                             m_fallbackSampler.Get());
+                        commands.BindTexture(9, draw.metallicTexture ? draw.metallicTexture : m_fallbackTexture.Get(),
+                                             m_fallbackSampler.Get());
+                        commands.BindTexture(14,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                        commands.BindTexture(15,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                        for(unsigned i=0;i<4;++i)commands.BindTexture(16+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
+                        const auto fallbackShadow = m_fallbackDataTexture.Get();
+                        for (std::uint32_t shadowCascade = 0; shadowCascade < 4; ++shadowCascade)
+                            commands.BindTexture(10 + shadowCascade,
+                                m_vctShadowDepth ? m_vctShadowDepth.Get() : fallbackShadow,
+                                m_shadowSampler.Get());
+                        commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                        commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                        const auto available = draw.firstIndex < draw.mesh->m_indexCount
+                                                   ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
+                        const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
+                        const auto triangleIndices = count - count % 3;
+                        const auto chunk = std::min({triangleIndices - cascade.nextVoxelIndex, maxIndicesPerDraw, remainingIndices});
+                        if (chunk)
+                        {
+                            commands.DrawIndexed(chunk, draw.firstIndex + cascade.nextVoxelIndex);
+                            cascade.nextVoxelIndex += chunk;
+                            remainingIndices -= chunk;
+                            ++submitted; --remainingCommands;
+                        }
+                        if (cascade.nextVoxelIndex == triangleIndices)
+                        {
+                            ++cascade.nextDraw;
+                            cascade.nextVoxelIndex = 0;
+                        }
+                    }
+                    commands.EndRendering();
                     commands.ShaderMemoryBarrier();
                 }
-                const auto maximumMip = static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
-                for (std::size_t direction = 0; direction < destination.size(); ++direction)
-                    for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
+                if (cascade.secondaryPass && !cascade.secondaryReady && cascade.pendingSecondaryBounce > 0.0f && remainingBounceSlices > 0)
+                {
+                    const ScopedGpuTiming bounceTiming(commands, "RHI VCT Secondary Gather");
+                    // Fixed voxel work, independent of scene triangles/draws. Skip empty cells in the shader.
+                    const auto slices = std::min(remainingBounceSlices, resolution - cascade.nextBounceSlice);
+                    const glm::uvec4 params(resolution, cascade.stagedBounceSource ? 0u : static_cast<std::uint32_t>(rebuildIndex),
+                                            cascade.stagedBounceSource ? 1u : cascadeCount, cascade.nextBounceSlice);
+                    const auto &bounceSource = cascade.stagedBounceSource ? m_vctInjectionAtlases : m_vctRadianceAtlases;
+                    auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
+                    m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
+                    commands.BindPipeline(m_vctBouncePipeline.Get());
+                    commands.BindUniformBuffer(0, buffer.Get());
+                    commands.BindStorageImage(1, cascade.surfaceRecord.Get());
+                    commands.BindStorageImage(2, cascade.accumulation[3].Get());
+                    commands.BindStorageImage(3, cascade.secondaryVolume.Get());
+                    for (std::uint32_t direction = 0; direction < 6; ++direction)
+                        commands.BindTexture(7 + direction, bounceSource[direction].Get(), m_vctVolumeSampler.Get());
+                    commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, slices / 4);
+                    commands.ShaderMemoryBarrier();
+                    cascade.nextBounceSlice += slices;
+                    remainingBounceSlices -= slices;
+                    cascade.secondaryReady = cascade.nextBounceSlice >= resolution;
+                }
+                const bool publish = cascade.secondaryPass
+                    ? (cascade.secondaryReady || cascade.pendingSecondaryBounce == 0.0f)
+                    : cascade.nextDraw >= cascade.pendingDraws.size();
+                if (publish)
+                {
+                    const ScopedGpuTiming publishTiming(commands, "RHI VCT Volume Publish");
+                    const bool stageDirect = !cascade.secondaryPass && cascade.pendingSecondaryBounce > 0.0f;
+                    auto &destination = stageDirect ? m_vctInjectionAtlases : m_vctRadianceAtlases;
+                    const auto destinationCascade = stageDirect ? 0u : static_cast<std::uint32_t>(rebuildIndex);
+                    const float gain = cascade.secondaryReady ? cascade.pendingSecondaryBounce : 0.0f;
+                    const VctResolveParameters resolve{
+                        resolution, destinationCascade * resolution, gain, 0};
+                    auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+                    m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
+                    for (auto &atlas : destination)
                     {
-                        const std::uint32_t mipSize = std::max(1u, resolution >> mip);
-                        const VctMipParameters params{static_cast<std::uint32_t>(direction / 2),
-                            direction % 2 == 0 ? 1 : -1,
-                            destinationCascade, mipSize, mip - 1, {}};
-                        auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
-                        m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
-                        commands.BindPipeline(m_vctDirectionalMipPipeline.Get());
-                        commands.BindUniformBuffer(0, buffer.Get());
-                        commands.BindTexture(1, destination[direction].Get(), m_vctVolumeSampler.Get());
-                        commands.BindStorageImage(2, destination[direction].Get(), mip);
-                        commands.Dispatch((mipSize + 3) / 4, (mipSize + 3) / 4, (mipSize + 3) / 4);
+                        commands.BindPipeline(m_vctResolvePipeline.Get());
+                        commands.BindUniformBuffer(0, resolveBuffer.Get());
+                        for (std::size_t channel = 0; channel < 4; ++channel)
+                            commands.BindStorageImage(static_cast<std::uint32_t>(1 + channel), cascade.accumulation[channel].Get());
+                        commands.BindStorageImage(5, atlas.Get());
+                        commands.BindStorageImage(6, cascade.secondaryVolume.Get());
+                        commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, (resolution + 3) / 4);
                         commands.ShaderMemoryBarrier();
                     }
-                cascade.pendingDraws.clear();
-                cascade.pendingMeshes.clear();
-                if (stageDirect)
-                {
-                    cascade.secondaryPass = true;
-                    cascade.stagedBounceSource = true;
-                    m_vctNextCascade = static_cast<std::uint32_t>(rebuildIndex);
-                }
-                else
-                {
-                    // Publish metadata and radiance together, after the whole
-                    // bounce is ready. Motion never exposes the direct-only field.
-                    if (cascade.appliedSecondaryBounce != gain) m_vctHistoryValid = false;
-                    cascade.contentSignature = cascade.pendingSignature;
-                    cascade.origin = cascade.pendingOrigin;
-                    cascade.size = cascade.pendingSize;
-                    cascade.lastUpdateFrame = m_frameIndex;
-                    cascade.valid = true;
-                    cascade.appliedSecondaryBounce = gain;
-                    cascade.rebuilding = false;
-                    cascade.stagedBounceSource = false;
-                    if (!cascade.secondaryReady) cascade.nextBounceSlice = 0;
-                    m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
-                    if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
+                    const auto maximumMip = static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
+                    for (std::size_t direction = 0; direction < destination.size(); ++direction)
+                        for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
+                        {
+                            const std::uint32_t mipSize = std::max(1u, resolution >> mip);
+                            const VctMipParameters params{static_cast<std::uint32_t>(direction / 2),
+                                direction % 2 == 0 ? 1 : -1,
+                                destinationCascade, mipSize, mip - 1, {}};
+                            auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
+                            m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
+                            commands.BindPipeline(m_vctDirectionalMipPipeline.Get());
+                            commands.BindUniformBuffer(0, buffer.Get());
+                            commands.BindTexture(1, destination[direction].Get(), m_vctVolumeSampler.Get());
+                            commands.BindStorageImage(2, destination[direction].Get(), mip);
+                            commands.Dispatch((mipSize + 3) / 4, (mipSize + 3) / 4, (mipSize + 3) / 4);
+                            commands.ShaderMemoryBarrier();
+                        }
+                    cascade.pendingDraws.clear();
+                    cascade.pendingMeshes.clear();
+                    if (stageDirect)
+                    {
+                        cascade.secondaryPass = true;
+                        cascade.stagedBounceSource = true;
+                        m_vctNextCascade = static_cast<std::uint32_t>(rebuildIndex);
+                    }
+                    else
+                    {
+                        // Publish metadata and radiance together, after the whole
+                        // bounce is ready. Motion never exposes the direct-only field.
+                        if (cascade.appliedSecondaryBounce != gain) m_vctHistoryValid = false;
+                        cascade.contentSignature = cascade.pendingSignature;
+                        cascade.origin = cascade.pendingOrigin;
+                        cascade.size = cascade.pendingSize;
+                        cascade.lastUpdateFrame = m_frameIndex;
+                        cascade.valid = true;
+                        cascade.appliedSecondaryBounce = gain;
+                        cascade.rebuilding = false;
+                        cascade.stagedBounceSource = false;
+                        if (!cascade.secondaryReady) cascade.nextBounceSlice = 0;
+                        m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;
+                        if (useCache && rebuildIndex + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
+                    }
                 }
             }
         }
         std::uint32_t availableCascades = 0;
         while (availableCascades < cascadeCount && m_vctCascades[availableCascades].valid) ++availableCascades;
         if (availableCascades == 0 || (useCache && availableCascades < cascadeCount)) return source;
-        if (useCache && availableCascades == cascadeCount && !m_vctCascades[cascadeCount - 1].rebuilding)
+        if (useCache && availableCascades == cascadeCount)
         {
             const auto dispatch = [&](std::uint32_t first, std::uint32_t count, bool clear)
             {
                 VctProbeParameters params{m_vctCacheOriginSize,
                     glm::uvec4(cascadeCount - 1, cascadeCount, resolution, std::uint32_t(std::log2(resolution))),
-                    glm::uvec4(first, count, clear ? 1u : 0u, 0u)};
+                    glm::uvec4(first, count, clear ? 1u : 0u, glm::floatBitsToUint(VctHistoryWeight(.75f, updateSpeed)))};
                 auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
                 commands.BindPipeline(m_vctProbePipeline.Get()); commands.BindUniformBuffer(0, buffer.Get());
@@ -3541,7 +3553,7 @@ namespace PlutoGE::render
         commands.Draw(3); commands.EndRendering();
         const auto next = static_cast<std::uint8_t>(1u - m_vctHistoryIndex);
         VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,
-            {1.0f / m_width, 1.0f / m_height}, effect.parameters[1].y, effect.parameters[1].z,
+            {1.0f / m_width, 1.0f / m_height}, VctHistoryWeight(effect.parameters[1].y, updateSpeed), effect.parameters[1].z,
             effect.parameters[1].w, trace.flipY, m_vctHistoryValid ? 1u : 0u,
             effect.parameters[3].x == 3.0f ? 1u : 0u, trace.zeroToOneDepth,
             effect.parameters[3].z > 0.5f || effect.parameters[3].x != 0.0f ? 1u : 0u,

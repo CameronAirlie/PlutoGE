@@ -1,3 +1,4 @@
+#include "OrthographicUpscalerChecks.h"
 #include "FogRenderingChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -191,6 +192,11 @@ int main(int argc, char **argv)
         {
             CheckTemporalMotionRendering(renderer, device, true,
                 [&](auto texture) { return device.ReadTextureRgba8(texture); }, 4800);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--orthographic-upscalers")
+        {
+            CheckOrthographicUpscalers(renderer, device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--fsr2-only")

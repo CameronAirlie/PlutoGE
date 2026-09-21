@@ -251,6 +251,51 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
             throw std::runtime_error("Four spotlight VSMs failed alongside directional shadows");
     }
     std::cout << "Spotlight lighting, cone, VSM shadows, caster motion and disabling passed\n";
+    // Compare tilted, self-casting receivers against their unshadowed image.
+    // Off-axis lights and wide cones expose PCF slope errors hidden by the
+    // perpendicular, single-pixel case above.
+    lighting.shadowsEnabled = false;
+    lighting.spotLights.resize(1);
+    lighting.spotLights[0].cone = {100, 120};
+    lighting.spotLights[0].light.intensity = 10;
+    const auto surfaceFrame = [&]() {
+        renderer.Render(glm::mat4(1), lighting, {&receiver,1}, {}, {&caster,1});
+        return readPixels(renderer.GetColorTexture());
+    };
+    for (float tilt : {-30.f, 0.f, 30.f})
+        for (float side : {-1.f, 1.f})
+        {
+            receiver.model = glm::translate(glm::mat4(1), glm::vec3(0,0,.2f)) *
+                glm::rotate(glm::mat4(1), glm::radians(tilt), glm::vec3(0,1,0));
+            caster = receiver;
+            auto &spot = lighting.spotLights[0];
+            spot.light.position = {side * 1.4f, 0, 1.4f};
+            spot.direction = glm::normalize(glm::vec3(0,0,.2f) - spot.light.position);
+            spot.light.castsShadows = false;
+            const auto reference = surfaceFrame();
+            spot.light.castsShadows = true;
+            for (int frame = 0; frame < 8; ++frame) surfaceFrame();
+            const auto shadowed = surfaceFrame();
+            int checked = 0, acne = 0;
+            for (int y = 80; y < 176; ++y) for (int x = 80; x < 176; ++x)
+            {
+                const auto index = (y * 256 + x) * 4;
+                const int expected = static_cast<unsigned char>(reference[index]);
+                if (expected < 12) continue;
+                ++checked;
+                if (static_cast<unsigned char>(shadowed[index]) < expected - 3) ++acne;
+            }
+            std::cout << "Spot receiver tilt=" << tilt << ", side=" << side << ", acne=" << acne << "/" << checked << '\n';
+            if (checked < 100 || acne > checked / 100)
+                throw std::runtime_error("Sloped spotlight receiver has self-shadow acne");
+            // A nearby parallel blocker must still cast a contact shadow.
+            caster.model[3] += glm::vec4(glm::mat3(receiver.model) * glm::vec3(0,0,.01f), 0);
+            for (int frame = 0; frame < 8; ++frame) surfaceFrame();
+            const auto blocked = surfaceFrame();
+            const auto center = (128 * 256 + 128) * 4;
+            if (static_cast<unsigned char>(blocked[center]) > static_cast<unsigned char>(reference[center]) / 2)
+                throw std::runtime_error("Spotlight bias detached a nearby blocker shadow");
+        }
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

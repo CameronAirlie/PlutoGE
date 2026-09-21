@@ -65,6 +65,12 @@ int main()
 
     VoxelConeTracingEffect vct;
     if (!Near(vct.GetSettings().updateSpeed, 1.0f)) return 112;
+    vct.ApplyParameters({{"Update Interval", PostProcessParameterType::Int, "8"}});
+    if(vct.GetSettings().updateInterval!=8 || VctUpdateInterval(8,4)!=2) return 118;
+    vct.ApplyParameters({{"Refresh Interval (frames)", PostProcessParameterType::Int, "1"}});
+    if(vct.GetSettings().updateInterval!=1 || VctUpdateInterval(1,4)!=1 ||
+       !Near(VctHistoryWeight(.92f,4),std::pow(.92f,4))) return 119;
+
     vct.ApplyParameters({{"Update Speed", PostProcessParameterType::Float, "4"}});
     VoxelConeTracingEffect savedSpeed;
     savedSpeed.ApplyParameters(vct.GetParameters());

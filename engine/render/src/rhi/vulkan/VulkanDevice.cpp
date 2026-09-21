@@ -482,6 +482,7 @@ namespace PlutoGE::render::rhi::vulkan
                 constants.cameraFar = frame.cameraFar;
                 constants.cameraFOV = frame.cameraVerticalFovRadians;
                 constants.cameraAspectRatio = frame.cameraAspectRatio;
+                constants.orthographicProjection = frame.orthographicProjection ? sl::Boolean::eTrue : sl::Boolean::eFalse;
                 constants.depthInverted = frame.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
                 constants.cameraMotionIncluded = frame.motionVectorsIncludeCamera ? sl::Boolean::eTrue : sl::Boolean::eFalse;
                 constants.motionVectors3D = sl::Boolean::eFalse;
@@ -734,6 +735,8 @@ namespace PlutoGE::render::rhi::vulkan
                 dispatch.cameraNear = frame.depthInverted ? frame.cameraFar : frame.cameraNear;
                 dispatch.cameraFar = frame.depthInverted ? frame.cameraNear : frame.cameraFar;
                 dispatch.cameraFovAngleVertical = frame.cameraVerticalFovRadians;
+                dispatch.orthographicViewWidth = frame.orthographicProjection ? frame.orthographicViewWidth : 0.0f;
+                dispatch.orthographicViewHeight = frame.orthographicProjection ? frame.orthographicViewHeight : 0.0f;
                 dispatch.viewSpaceToMetersFactor = 1.0f;
 
                 if (ffxFsr2ContextDispatch(&m_context, &dispatch) == FFX_OK)
@@ -910,6 +913,7 @@ namespace PlutoGE::render::rhi::vulkan
         // Each viewport needs independent reconstruction history. A shared
         // device may render the editor and game views at different sizes.
         std::unordered_map<std::uint64_t, std::unique_ptr<Fsr2Vulkan>> fsr2Contexts;
+        std::string fsr2FailureReason;
         std::vector<DeferredResource<std::unique_ptr<Fsr2Vulkan>>> deferredFsr2Contexts;
 #endif
 
@@ -3193,6 +3197,9 @@ namespace PlutoGE::render::rhi::vulkan
 
     std::string VulkanDevice::GetTemporalUpscalerFailureReason(TemporalUpscaler upscaler) const
     {
+#if PLUTO_HAS_FSR2
+        if (upscaler == TemporalUpscaler::Fsr2) return m_impl->fsr2FailureReason;
+#endif
 #if PLUTO_HAS_STREAMLINE
         if (upscaler == TemporalUpscaler::Dlss && m_impl->streamline)
             return m_impl->streamline->EvaluationFailureReason();
@@ -3258,6 +3265,7 @@ namespace PlutoGE::render::rhi::vulkan
                 context = std::make_unique<Fsr2Vulkan>(m_impl->physicalDevice, m_impl->device);
             result = context->Evaluate(options, frame, commandBuffer,
                                        {color, depth, motion, output});
+            m_impl->fsr2FailureReason = result ? std::string{} : context->Support().reason;
         }
 #endif
         m_impl->context->InvalidateAfterExternalCommands();

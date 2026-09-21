@@ -7,6 +7,8 @@ namespace PlutoGE::render
 {
     inline float VctUpdateSpeed(float speed)
     { return std::isfinite(speed) ? std::clamp(speed, 0.125f, 16.0f) : 1.0f; }
+    inline float VctHistoryWeight(float base, float speed)
+    { return std::pow(std::clamp(base, 0.0f, 0.98f), VctUpdateSpeed(speed)); }
     inline std::uint32_t VctUpdateBudget(std::uint32_t base, float speed)
     { return std::max(1u, static_cast<std::uint32_t>(std::ceil(base * VctUpdateSpeed(speed)))); }
     inline std::uint32_t VctUpdateInterval(std::uint32_t frames, float speed)

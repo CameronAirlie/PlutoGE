@@ -74,3 +74,11 @@ additional denoiser inputs for Ray Reconstruction, and swapchain/present plus
 optical-flow queue integration for Frame Generation. They should be added as
 new capability adapters rather than extending the DLSS Super Resolution call
 with feature-specific state.
+
+## Orthographic cameras
+
+Orthographic cameras now pass the true projection and inverse projection along
+with Streamline's `orthographicProjection` flag. Switching between orthographic
+and perspective resets temporal history. Runtime module verification and adapter
+support requirements still apply; unsupported DLSS installations report fallback
+independently of the projection type.

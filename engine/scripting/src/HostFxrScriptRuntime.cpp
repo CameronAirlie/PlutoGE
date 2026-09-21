@@ -1319,6 +1319,52 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetFullscreen(fullscreen != 0);
         }
 
+        NativeVector3 GetViewportPointer()
+        {
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured()) return {};
+            auto &window = core::Engine::GetInstance().GetWindow();
+            auto *scene = core::Engine::GetInstance().GetScene();
+            glm::vec2 size{}, pointer{};
+            bool inside = false;
+            if (scene && scene->GetRuntimeUIInputOverride(size, pointer, inside))
+            {
+                if (!inside || size.x <= 0 || size.y <= 0) return {};
+                return {pointer.x / size.x, 1.0f - pointer.y / size.y, 1};
+            }
+            int width = 0, height = 0;
+            auto *handle = static_cast<GLFWwindow *>(window.GetWindow());
+            if (!handle || !glfwGetWindowAttrib(handle, GLFW_FOCUSED)) return {};
+            glfwGetWindowSize(handle, &width, &height); // Cursor coordinates are logical pixels, not framebuffer pixels.
+            const auto &mouse = window.GetInputState().mouseState;
+            if (width <= 0 || height <= 0 || mouse.x < 0 || mouse.y < 0 || mouse.x >= width || mouse.y >= height) return {};
+            return {static_cast<float>(mouse.x / width), static_cast<float>(mouse.y / height), 1};
+        }
+        int32_t ViewportToWorldRay(uint32_t entityId, NativeVector3 point, NativeVector3 *origin, NativeVector3 *direction)
+        {
+            if (!origin || !direction || !std::isfinite(point.x) || !std::isfinite(point.y) || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) return 0;
+            auto *entity = FindEntity(entityId);
+            auto *camera = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
+            if (!camera) return 0;
+            auto &engine = core::Engine::GetInstance();
+            const auto extents = engine.GetWindow().GetExtents();
+            glm::vec2 size(extents.width, extents.height), pointer{};
+            bool inside = false;
+            if (auto *scene = engine.GetScene()) (void)scene->GetRuntimeUIInputOverride(size, pointer, inside);
+            if (size.x <= 0 || size.y <= 0) return 0;
+            const auto data = camera->GetCameraData(static_cast<int>(size.x), static_cast<int>(size.y));
+            const auto inverse = glm::inverse(data.projection * data.view);
+            auto nearPoint = inverse * glm::vec4(point.x * 2 - 1, 1 - point.y * 2, 1, 1);
+            auto farPoint = inverse * glm::vec4(point.x * 2 - 1, 1 - point.y * 2, -1, 1);
+            if (std::abs(nearPoint.w) < 0.000001f || std::abs(farPoint.w) < 0.000001f) return 0;
+            const glm::vec3 start = glm::vec3(nearPoint) / nearPoint.w;
+            const glm::vec3 delta = glm::vec3(farPoint) / farPoint.w - start;
+            const float length = glm::length(delta);
+            if (!std::isfinite(length) || length < 0.000001f) return 0;
+            const auto ray = delta / length;
+            *origin = {start.x, start.y, start.z}; *direction = {ray.x, ray.y, ray.z};
+            return 1;
+        }
+
         int32_t GetDisplayVSync() { return core::Engine::GetInstance().IsVSyncEnabled() ? 1 : 0; }
         int32_t SetDisplayVSync(int32_t enabled)
         {
@@ -3321,6 +3367,7 @@ namespace PlutoGE::scripting
         register_game_object_api_fn registerGameObjectApi = nullptr;
         register_prefab_api_fn registerPrefabApi = nullptr;
         register_window_api_fn registerWindowApi = nullptr;
+        register_window_api_fn registerPointerApi = nullptr;
         int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
@@ -3431,6 +3478,7 @@ namespace PlutoGE::scripting
             impl.registerGameObjectApi = nullptr;
             impl.registerPrefabApi = nullptr;
             impl.registerWindowApi = nullptr;
+            impl.registerPointerApi = nullptr;
             impl.registerDisplayApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerSceneStreamingApi = nullptr;
@@ -3781,6 +3829,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowApi"), impl.registerWindowApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterPointerApi"), impl.registerPointerApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
@@ -4081,6 +4130,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&SetWindowFullscreen)) == 0)
         {
             setManagedBridgeFailure("RegisterWindowApi");
+            return false;
+        }
+
+        if (!m_impl->registerPointerApi || m_impl->registerPointerApi(
+                reinterpret_cast<void *>(&GetViewportPointer), reinterpret_cast<void *>(&ViewportToWorldRay)) == 0)
+        {
+            setManagedBridgeFailure("RegisterPointerApi");
             return false;
         }
 

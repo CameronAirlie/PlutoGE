@@ -631,6 +631,27 @@ internal static unsafe partial class ScriptBridge
         return 1;
     }
 
+    private static delegate* unmanaged[Cdecl]<NativeVector3> _getViewportPointer;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3*, NativeVector3*, int> _viewportToWorldRay;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPointerApi")]
+    public static int RegisterPointerApi(delegate* unmanaged[Cdecl]<NativeVector3> pointer,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3*, NativeVector3*, int> ray)
+    {
+        if (pointer == null || ray == null) return 0;
+        _getViewportPointer = pointer; _viewportToWorldRay = ray; return 1;
+    }
+    internal static bool TryGetViewportPointer(out Vector2 point)
+    {
+        var value = _getViewportPointer == null ? default : _getViewportPointer();
+        point = new(value.X, value.Y); return value.Z > 0;
+    }
+    internal static bool TryViewportToWorldRay(uint entity, Vector2 point, out Vector3 origin, out Vector3 direction)
+    {
+        NativeVector3 a = default, b = default;
+        bool valid = _viewportToWorldRay != null && _viewportToWorldRay(entity, new(point.X, point.Y, 0), &a, &b) != 0;
+        origin = new(a.X, a.Y, a.Z); direction = new(b.X, b.Y, b.Z); return valid;
+    }
+
     private static delegate* unmanaged[Cdecl]<int> _getDisplayVSync;
     private static delegate* unmanaged[Cdecl]<int, int> _setDisplayVSync;
     private static delegate* unmanaged[Cdecl]<int, int> _setSceneShadowResolution;

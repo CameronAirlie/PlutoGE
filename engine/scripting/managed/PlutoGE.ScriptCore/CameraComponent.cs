@@ -1,4 +1,5 @@
 using PlutoGE.ScriptCore.Native;
+using System.Numerics;
 
 namespace PlutoGE.ScriptCore;
 
@@ -12,6 +13,17 @@ public sealed class CameraComponent : ComponentReference
     }
 
     internal override ScriptBridge.NativeComponentType ComponentType => ScriptBridge.NativeComponentType.Camera;
+
+    /// <summary>Projects normalized viewport coordinates (top-left 0,0; bottom-right 1,1) using the current game viewport.</summary>
+    public bool TryViewportToWorldRay(Vector2 point, out Vector3 origin, out Vector3 direction) =>
+        ScriptBridge.TryViewportToWorldRay(EntityId, point, out origin, out direction);
+
+    /// <summary>Returns false outside the game viewport, when unfocused, or when UI captures the pointer.</summary>
+    public bool TryGetPointerRay(out Vector3 origin, out Vector3 direction)
+    {
+        origin = direction = default;
+        return ScriptBridge.TryGetViewportPointer(out var point) && TryViewportToWorldRay(point, out origin, out direction);
+    }
 
     public bool IsMainCamera
     {

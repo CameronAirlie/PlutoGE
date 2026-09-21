@@ -1,5 +1,5 @@
 PostProcessPresetVersion 1 12
-Effect "SSR" 1 9
+Effect "SSR" 1 7
 Parameter 0 "Intensity" "0.800000" 0
 Parameter 0 "Max Ray Distance" "30.000000" 0
 Parameter 0 "Thickness" "0.350000" 0
@@ -7,8 +7,6 @@ Parameter 0 "Start Offset" "0.080000" 0
 Parameter 1 "Steps" "48" 0
 Parameter 1 "Binary Search Steps" "5" 0
 Parameter 0 "Edge Fade" "0.120000" 0
-Parameter 0 "Fresnel Power" "5.000000" 0
-Parameter 0 "Metallic Boost" "0.750000" 0
 Effect "SSAO" 1 11
 Parameter 0 "Radius" "0.850000" 0
 Parameter 0 "Bias" "0.080000" 0
@@ -21,14 +19,19 @@ Parameter 1 "Samples" "16" 0
 Parameter 1 "Blur Radius" "1" 0
 Parameter 3 "Half Resolution" "true" 0
 Parameter 3 "AO Only" "false" 0
-Effect "VCTGI" 1 18
+Effect "VCTGI" 0 23
 Parameter 4 "Resolution" "0" 2 "64" "128"
 Parameter 1 "Cascade Count" "2" 0
 Parameter 0 "Volume Size" "40.000000" 0
+Parameter 3 "World Cache" "true" 0
+Parameter 0 "Cache Size" "432.000000" 0
+Parameter 1 "Cache Updates" "64" 0
 Parameter 0 "Intensity" "8.000000" 0
 Parameter 1 "Cone Count" "2" 0
 Parameter 4 "Trace Quality" "0" 2 "Balanced" "High"
 Parameter 3 "Inject Local Lights" "false" 0
+Parameter 0 "Local Light Bounce" "1.000000" 0
+Parameter 0 "Secondary Bounce" "1.000000" 0
 Parameter 1 "Voxelization LOD Bias" "0" 0
 Parameter 1 "Voxelization Command Budget" "8" 0
 Parameter 0 "Cone Aperture" "1.200000" 0
@@ -40,15 +43,18 @@ Parameter 0 "History Depth Threshold" "0.250000" 0
 Parameter 0 "History Normal Threshold" "0.900000" 0
 Parameter 4 "Debug View" "0" 9 "Final Composite" "Raw Cone Trace" "Temporal Result" "History Validation" "Voxel Radiance" "Voxel Opacity" "Upsample Classification" "Voxel Sample Count" "Cascade Coverage"
 Parameter 3 "Indirect Only" "false" 0
-Effect "VolumetricFog" 0 15
+Effect "VolumetricFog" 0 18
 Parameter 0 "Density" "0.015000" 0
 Parameter 0 "Height Falloff" "0.050000" 0
 Parameter 0 "Height Offset" "-97.000000" 0
-Parameter 0 "Max Distance" "5000.000000" 0
+Parameter 0 "Shadow Detail Distance" "5000.000000" 0
 Parameter 0 "Scattering" "0.650000" 0
 Parameter 0 "Anisotropy" "0.200000" 0
 Parameter 0 "Ambient Contribution" "0.000000" 0
 Parameter 0 "Directional Contribution" "1.000000" 0
+Parameter 0 "Horizon Haze" "1.000000" 0
+Parameter 0 "Haze Width" "4.000000" 0
+Parameter 0 "Haze Distance" "2000.000000" 0
 Parameter 0 "Max Opacity" "0.920000" 0
 Parameter 1 "Step Count" "32" 0
 Parameter 1 "Shadow Step Stride" "2" 0
@@ -91,7 +97,7 @@ Parameter 0 "Adapt Down" "0.060000" 0
 Effect "ToneMapping" 1 2
 Parameter 0 "Exposure" "1.000000" 0
 Parameter 0 "Gamma" "2.200000" 0
-Effect "TAA" 1 10
+Effect "TAA" 1 11
 Parameter 4 "Quality" "0" 2 "Balanced" "High"
 Parameter 0 "History Weight" "0.900000" 0
 Parameter 0 "Stationary History Weight" "0.940000" 0
@@ -102,6 +108,7 @@ Parameter 0 "Normal Rejection Threshold" "0.820000" 0
 Parameter 0 "Velocity Rejection Scale" "80.000000" 0
 Parameter 0 "Jitter Strength" "0.800000" 0
 Parameter 3 "Jitter Enabled" "true" 0
+Parameter 3 "Jitter Debug" "false" 0
 Effect "ColorGrading" 0 18
 Parameter 4 "Preset" "1" 9 "Custom" "Neutral" "Filmic" "Cinematic" "Teal & Orange" "Vintage" "Bleach Bypass" "Noir" "Dreamy"
 Parameter 0 "Brightness" "0.000000" 0

@@ -21,6 +21,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
 END_COMPONENT
@@ -46,6 +47,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	project://Models/ArenaBanks.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
 END_COMPONENT
@@ -71,6 +73,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	project://Models/ArenaShell.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -86,6 +89,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
 END_COMPONENT
@@ -111,6 +115,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
 END_COMPONENT
@@ -136,6 +141,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -161,6 +167,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -186,6 +193,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -211,6 +219,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -236,6 +245,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
@@ -261,6 +271,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
@@ -286,6 +297,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
@@ -311,6 +323,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
 END_COMPONENT
@@ -336,6 +349,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -361,6 +375,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -386,6 +401,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -411,6 +427,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
@@ -436,6 +453,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
@@ -461,6 +479,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
@@ -486,6 +505,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
@@ -501,6 +521,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -521,6 +542,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -541,6 +563,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -561,6 +584,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -581,6 +605,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -601,6 +626,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -621,6 +647,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -641,6 +668,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -661,6 +689,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -681,6 +710,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -701,6 +731,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
@@ -731,6 +762,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
 END_COMPONENT
@@ -792,6 +824,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
 END_COMPONENT
@@ -806,6 +839,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -820,6 +854,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -834,6 +869,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -848,6 +884,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -873,6 +910,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
 END_COMPONENT
@@ -934,6 +972,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
 END_COMPONENT
@@ -948,6 +987,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -962,6 +1002,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -976,6 +1017,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -990,6 +1032,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
@@ -1015,6 +1058,7 @@ PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
 END_COMPONENT
@@ -1049,7 +1093,7 @@ PROPERTY	kickoffDelay	0	1.500000	0
 PROPERTY	winningScore	1	5	0
 PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
-ENTITY	50	0	1	Chase Camera	-20.500000,4.050000,0.000000	0.000000,-90.000000,0.000000	1.000000,1.000000,1.000000
+ENTITY	50	0	1	Chase Camera	-19.750000,4.050000,18.670000	-15.700000,0.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	50	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.RocketChaseCamera	0
 PROPERTY	blueCar	9	20	0
@@ -1066,6 +1110,8 @@ PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
 COMPONENT	50	CameraComponent	1
 PROPERTY	FOV	0	72.000000	0
+PROPERTY	Projection	6	0	2	Perspective	Orthographic
+PROPERTY	OrthographicHeight	0	26.000000	0
 PROPERTY	NearPlane	0	0.100000	0
 PROPERTY	FarPlane	0	300.000000	0
 PROPERTY	MainCamera	4	true	0
@@ -1075,11 +1121,13 @@ ENTITY	51	0	1	Arena Sun	0.000000,20.000000,0.000000	-55.000000,35.000000,0.00000
 COMPONENT	51	LightComponent	1
 PROPERTY	Color	3	0.850000,0.920000,1.000000	0
 PROPERTY	Intensity	0	7.000000	0
-PROPERTY	Range	0	100.000000	0
 PROPERTY	CastsShadows	4	true	0
 PROPERTY	Direction	3	-0.573576,-0.671010,-0.469846	0
 PROPERTY	LightType	6	1	3	Point	Directional	Spot
 PROPERTY	Static	4	true	0
+PROPERTY	Shadow Method	6	1	2	Cascaded Shadow Maps (Legacy)	Virtual Shadow Maps (Default)
+PROPERTY	VSM Page Updates per Frame	1	64	0
+PROPERTY	VSM Triangle Budget per Frame	1	1000000	0
 PROPERTY	Shadow Cascade Count	1	4	0
 PROPERTY	Shadow Resolution	1	2048	0
 PROPERTY	Shadow Cascade Resolution Falloff	0	0.750000	0
@@ -1102,7 +1150,6 @@ ENTITY	52	0	1	Centre Light	0.000000,10.000000,0.000000	0.000000,0.000000,0.00000
 COMPONENT	52	LightComponent	1
 PROPERTY	Color	3	0.450000,0.650000,1.000000	0
 PROPERTY	Intensity	0	29.000000	0
-PROPERTY	Range	0	34.000000	0
 PROPERTY	CastsShadows	4	false	0
 PROPERTY	Direction	3	0.000000,0.000000,-1.000000	0
 PROPERTY	LightType	6	0	3	Point	Directional	Spot

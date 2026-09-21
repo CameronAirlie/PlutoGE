@@ -1,6 +1,6 @@
 # PlutoGE
 
-PlutoGE is a work-in-progress 3D game engine, editor, and standalone runtime written in C++20. It combines an OpenGL renderer, entity/component scene system, asset pipeline, physics, audio, runtime UI, and hosted .NET 8 C# scripting in one CMake-based repository.
+PlutoGE is a work-in-progress 3D game engine, editor, and standalone runtime written in C++20. It combines Vulkan and OpenGL rendering, an entity/component scene system, asset pipeline, physics, audio, runtime UI, and hosted .NET 8 C# scripting in one CMake-based repository.
 
 The editor and runtime support Windows and Linux (including Arch Linux). It is under active development, so file formats and public engine APIs may change.
 
@@ -32,6 +32,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Translate, rotate, and scale gizmos with local/world modes and snapping
 - Perspective and orthographic editor cameras
 - Entity selection, parenting, copy/paste, duplication, deletion, and undo/redo
+- Multi-entity selection, group transforms, mixed-value editing, and prefab property variants
 - Play-in-editor with configurable simulation speed
 - Selectively keep serialized play-mode changes as one undoable edit
 - Named viewport bookmarks with project-local persistence
@@ -42,46 +43,63 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Grouped undo/redo for serialized inspector and scene-setting edits
 - Undoable ground placement with surface alignment and seeded yaw/scale variation
 - Dedicated material, mesh, particle-system, shader-graph, animation-clip, and animation-graph editors
+- Dockable Sequencer editor with track/key editing, binding repair, scrubbing, and restored visual previews
 - Scene baking with fast, balanced, final, and custom quality settings
 - Project settings for startup scene, script assembly, window size/title, VSync, editor camera, and post-processing
 
 ### Rendering
 
-- OpenGL 4.3 core renderer with a deferred G-buffer pipeline
+- Vulkan and OpenGL render hardware interface (RHI), Slang shaders compiled to SPIR-V/GLSL, and a legacy OpenGL deferred G-buffer pipeline
 - Geometry, shadow, lighting, transparent, particle, ocean, physical-sky, volumetric-cloud, grid, runtime-UI, and post-process passes
 - Directional, point, and spot lighting with shadow support
-- Materials, textures, shader graphs, render targets, LODs, indirect drawing, and frustum culling
+- Directional virtual shadow maps by default in the RHI, with explicit legacy cascaded shadows as an alternative
+- Materials, textures, shader graphs, render targets, LODs, indirect drawing, frustum culling, and occlusion culling
 - Environment maps, image-based lighting capture volumes, and baked probe volumes
 - Terrain, foliage, splines, skeletal animation, particles, oceans, and volumetric clouds
-- Post-processing effects including bloom, tone mapping, color grading, auto exposure, SSAO, SSGI, SSR, TAA, FXAA, motion blur, depth of field, lens flare, volumetric fog, gamma correction, LPV/RSM lighting, and voxel cone tracing
+- Post-processing including bloom, tone mapping, color grading, chromatic aberration, auto exposure, SSAO, SSGI, SSR, TAA, FXAA, motion blur, depth of field, lens flare, volumetric fog, gamma correction, and voxel cone tracing
+- Voxel GI world caching and secondary bounce, rough reflections, glass, decals, toon shading, and outlines
+- Procedural ocean waves, crest/shoreline foam, ripples, and shallow-water caustics
+- Spatial upscaling and optional Vulkan FSR 2 / NVIDIA DLSS Super Resolution integrations
 - CPU/GPU render-pass timings and draw/submission statistics in the editor profiler
 
 Standalone games disable OpenGL renderer profiling and Vulkan GPU timestamp/scope
 profiling automatically. Editor hosts retain these diagnostics for the profiler.
 
 Some advanced rendering paths are experimental and may depend on scene setup, compatible hardware, or generated bake data.
+See [Rendering support](docs/RENDERING.md) for backend selection and limitations.
+LPV/RSM effects remain in the legacy OpenGL pipeline; they are not supported RHI
+post-process effects. VSM no longer maintains or automatically falls back to cascades.
 
 ### Gameplay systems
 
 - Hierarchical entities with serializable native components
 - Bullet-based rigidbodies, colliders, collision events, raycasts, and kinematic movement
+- Skeletal/active ragdolls, cloth, skeleton attachments, and surface response assets
 - OpenAL Soft audio, with XAudio2 integration on Windows
 - 2D and 3D sound emitters/listeners, looping, one-shots, and audio obstruction support
 - Navigation meshes and navigation agents
 - Runtime canvas, image, text, and button components
+- RmlUi document interfaces with RML/RCSS assets and managed controls
 - Prefabs, tags, scene transitions, animation graphs/events, and scriptable data assets
+- Camera rigs with follow/orbit, obstruction avoidance, shake, and target blending
+- Additive scene sections with asynchronous reads, activation, cancellation, and unloading
+- Sequencer playback for transforms, camera FOV, lights, audio, and script events
+- Banked spline roads with collision, segment LODs, guardrails, and explicit junction/roadside bakes
 - .NET 8 C# behaviours with editor-serialized fields and native component wrappers
+- Fixed-step callbacks, gamepad input, and named input action maps
 - Multi-client networking with reliable messaging, targeted sends, broadcasts, and JSON/binary payloads
+- Entity replication with authority/ownership, full snapshots, late join, interpolation, and prefab scene bindings
 
 ## Technology
 
 | Area | Implementation |
 |---|---|
 | Language | C++20 engine/editor; C#/.NET 8 gameplay API |
-| Build | CMake 3.10+ with CMake presets |
+| Build | CMake 3.20+; presets require a compatible schema/generator version |
 | Window/input | GLFW |
-| Graphics | OpenGL 4.3 core, GLAD, GLM |
+| Graphics | Vulkan (Volk/Vulkan Memory Allocator), OpenGL, Slang, GLAD, GLM |
 | Editor UI | Dear ImGui docking branch and ImGuizmo |
+| Game UI | Native canvas components and RmlUi/FreeType |
 | Physics | Bullet |
 | Audio | OpenAL Soft; XAudio2 on Windows |
 | Networking | Managed .NET 8 TCP transport with main-thread event dispatch |
@@ -103,21 +121,29 @@ sudo pacman -S --needed base-devel cmake git tbb zenity \
   wayland-protocols libxkbcommon mesa
 ```
 
-You need a GPU driver supporting OpenGL 4.3 and the .NET 8 SDK for C# authoring and gameplay scripting. PlutoGE loads `libhostfxr.so` from `DOTNET_ROOT`, `/usr/share/dotnet`, `/usr/lib/dotnet`, or an exported game's bundled `DotnetRuntime` directory. `zenity` provides the editor's Linux file dialogs.
+You need a GPU driver supporting the selected Vulkan or OpenGL backend and the .NET 8 SDK for C# authoring and gameplay scripting. Install `slangc` on `PATH` to compile RHI shaders. PlutoGE loads `libhostfxr.so` from `DOTNET_ROOT`, `/usr/share/dotnet`, `/usr/lib/dotnet`, or an exported game's bundled `DotnetRuntime` directory. `zenity` provides the editor's Linux file dialogs.
 
 ### Windows
 
 The Windows workflow requires:
 
 - A 64-bit Windows installation
-- A GPU and driver supporting OpenGL 4.3
+- A GPU and driver supporting the selected Vulkan or OpenGL backend
 - [Git](https://git-scm.com/)
-- [CMake](https://cmake.org/) 3.10 or newer
-- Visual Studio 2022 with the **Desktop development with C++** workload
+- [CMake](https://cmake.org/) 3.20 or newer for the root build; use a version supporting the preset schema and selected Visual Studio generator
+- Visual Studio with the **Desktop development with C++** workload matching the chosen preset's `generator`
+- The Slang shader compiler (`slangc`) on `PATH` for RHI shader artifacts
 - The .NET 8 SDK for building gameplay scripts
 - PowerShell for the shipping export helper
 
 The repository also contains a `gcc` preset aimed at `C:\w64devkit`, but it is machine-specific. The MSVC presets are the portable starting point for a normal Windows checkout.
+
+Check `CMakePresets.json` before configuring: the development `msvc` generator
+in this checkout is Visual Studio 18 2026, while `msvc-shipping` selects Visual
+Studio 17 2022. Their display labels may differ from the actual generator.
+Vulkan headers and the loader integration are fetched by CMake; a machine-wide
+Vulkan SDK is not required for the base renderer. Optional upscalers have
+additional requirements in [FSR 2](docs/FSR2.md) and [DLSS](docs/DLSS.md).
 
 ## Build and run
 
@@ -140,7 +166,7 @@ cpack --config out/build/linux/CPackConfig.cmake
 
 ### Windows
 
-Clone and configure the MSVC build:
+Clone and configure the MSVC build using the Visual Studio version selected by the preset:
 
 ```powershell
 git clone https://github.com/CameronAirlie/PlutoGE.git
@@ -302,11 +328,11 @@ Attachable classes derive from `ScriptBehaviour` and expose editor-editable valu
 
 - Entity lookup, tags, activation, transforms, destruction, and script messaging
 - Mesh, camera, light, rigidbody, collider, animation, particle, audio, and runtime-UI wrappers
-- Keyboard, mouse, cursor, and application state
+- Keyboard, mouse, gamepad, input action maps, cursor, and application state
 - Raycasts, tagged raycasts, impulses/forces, and kinematic movement
-- Prefab instantiation and deferred scene loading
+- Prefab instantiation, deferred scene replacement, and additive scene sections
 - Scriptable objects and safe project/user-data storage
-- `OnCreate`, `OnUpdate`, `OnLateUpdate`, `OnDestroy`, collision, and animation-event callbacks
+- `OnCreate`, `OnUpdate`, `OnFixedUpdate`, `OnLateUpdate`, `OnDestroy`, collision, and animation-event callbacks
 - Reliable multi-client networking with raw binary, string, and JSON messages
 
 Networking is available through `PlutoGE.ScriptCore.Networking`. Socket I/O runs
@@ -339,7 +365,8 @@ public override void OnDestroy()
 
 Start with the [game developer manual](docs/README.md) for editor setup and practical examples, then use the [C# scripting reference](docs/CSHARP_SCRIPTING.md) for supported serialized types and APIs. PlutoGE behaviours use `OnUpdate`, `OnFixedUpdate`, and `OnLateUpdate`; Unity APIs such as `MonoBehaviour`, `Transform`, and coroutines are not available.
 See [PlutoGE networking](docs/NETWORKING.md) for the transport design, usage
-model, wire format, and planned replication layers.
+model and wire format, and [entity replication](docs/ENTITY_REPLICATION.md) for
+the implemented snapshot/session layer.
 
 ## Projects and assets
 
@@ -372,6 +399,8 @@ Important PlutoGE formats include:
 | `.plutoparticles` | Particle-system asset |
 | `.plutopostprocess` | Post-process preset |
 | `.plutoscriptable` | C# scriptable-object data |
+| `.plutosurface` | Footstep/impact surface responses and contact friction |
+| `.rml` / `.rcss` | RmlUi documents and stylesheets |
 | `.plutometa` | Asset metadata |
 | `.plutopack` | Cooked standalone content container |
 
@@ -402,7 +431,9 @@ From the repository root:
   "C:\Builds\MyGame\MyGame.exe"
 ```
 
-The export helper:
+The export helper reuses a prebuilt shipping runtime by default. On first export
+or after engine changes, add `-RebuildRuntime`; use `-RuntimePath` to select a
+different prebuilt runtime. With `-RebuildRuntime`, it:
 
 1. Configures the `msvc-shipping` preset.
 2. Builds a Release runtime without the editor or tests.
@@ -417,7 +448,12 @@ For more detail and the lower-level runtime command, see [Exporting a game](EXPO
 
 ## Tests
 
-Tests are enabled by CMake's standard `BUILD_TESTING` option and currently cover large-mesh optimization, model assets, and post-process initialization.
+Tests are enabled by CMake's standard `BUILD_TESTING` option. Coverage includes
+assets/import/cooking, editor history and recovery, physics and camera rigs,
+prefab variants, timelines, scene streaming, spline roads, managed input and
+replication, and OpenGL/Vulkan rendering. Graphics suites require a working GPU
+context; managed suites require `dotnet`. See `tests/CMakeLists.txt` for the
+registered suites and build-dependent tests.
 
 Build and run them from the MSVC tree:
 
@@ -442,14 +478,22 @@ ctest --test-dir out/build/msvc -C Debug `
 | `PLUTO_BUILD_RUNTIME` | `ON` | Build `PlutoGERuntime` |
 | `PLUTO_BUILD_SAMPLES` | `ON` | Reserved for sample applications; samples are not currently added by the root build |
 | `BUILD_TESTING` | `ON` | Build and register the test executables |
+| `PLUTO_ENABLE_PCH` | `ON` | Precompile stable headers for larger targets |
+| `PLUTO_ENABLE_FSR2` | `OFF` | Build the Vulkan FSR 2 integration; some presets enable it |
+| `PLUTO_ENABLE_STREAMLINE` | `OFF` | Build the Vulkan DLSS integration with an external Streamline SDK |
+| `PLUTO_RUNTIME_WINDOWED` | `OFF` | Hide the Windows runtime console; shipping enables it |
 
 | Preset | Purpose |
 |---|---|
-| `msvc` | Visual Studio 2022 x64 configure preset |
+| `msvc` | Windows x64 configure preset; check its `generator` for the required Visual Studio version |
 | `msvc-debug` | Debug build for the `msvc` tree |
+| `editor-debug` | Build the editor and dependencies in the `msvc` tree |
+| `msvc-nvidia` / `msvc-nvidia-debug` | Full optimized/debug NVIDIA builds with FSR 2 and Streamline |
+| `linux` | Linux configure/build preset |
 | `msvc-shipping` | Release-only runtime configure preset with editor/tests disabled |
 | `shipping` | Builds `PlutoGERuntime` in Release from `msvc-shipping` |
 | `gcc` | Machine-specific w64devkit configure/build preset |
+| `gcc-nvidia` / `gcc-profile` | Streamline-enabled / optimized profiling variants of `gcc` |
 | `all` | Alias build preset using the `gcc` configure tree |
 
 ## Architecture
@@ -473,7 +517,7 @@ The root `PlutoGE::engine` target is an interface target that collects the engin
 | Module | Responsibility |
 |---|---|
 | `Core` | Engine lifetime and coordination |
-| `Platform` | Window, OpenGL context, input, and frame presentation |
+| `Platform` | GLFW windows, client API selection, input, and OpenGL context management |
 | `Render` | Render graph/passes, cameras, materials, meshes, shaders, textures, and profiling |
 | `Assets` | Projects, asset registry, asset references, loading, cooking, and packing |
 | `Import` | Source-model import and mesh optimization |
@@ -504,7 +548,7 @@ PlutoGE/
 ├── tools/                  Build/export helper scripts
 ├── docs/                   Detailed subsystem documentation
 ├── CMakeLists.txt          Root build
-└── CMakePresets.json       Windows development and shipping presets
+└── CMakePresets.json       Windows/Linux development and shipping presets
 ```
 
 ## Troubleshooting
@@ -519,7 +563,10 @@ cmake --preset msvc
 
 ### The editor fails to initialize rendering
 
-Update the graphics driver and verify the GPU supports an OpenGL 4.3 core context. PlutoGE exits if it cannot prepare the required OpenGL context and function dispatch.
+Check the project's Graphics API and update the matching GPU driver. OpenGL
+requires a working core context; Vulkan requires a working loader/device and
+compiled SPIR-V artifacts. Configure with `slangc` available and build the shader
+target if CMake reported missing RHI shaders. See [Rendering support](docs/RENDERING.md).
 
 ### Scripts do not appear in the component picker
 

@@ -1,5 +1,10 @@
 # RHI Implementation Agent Handoff
 
+> Historical migration handoff. The Vulkan editor compositor and many of the
+> rendering features discussed below are now implemented. Use [Rendering support](RENDERING.md)
+> and current source for availability; unfinished checklists below record the
+> handoff's original state.
+
 ## Objective
 
 Continue migrating PlutoGE rendering to the backend-neutral RHI, with Vulkan scene output visible inside the editor and eventual removal of the OpenGL-owned editor/presentation path. Preserve OpenGL compatibility until Vulkan reaches feature parity.

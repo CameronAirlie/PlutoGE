@@ -10,6 +10,9 @@ effect at a time and compare the same view. Rendering paths are evolving across
 OpenGL and Vulkan; availability and appearance of advanced effects must be tested
 in the actual backend and exported runtime you intend to use.
 
+The [rendering support reference](../RENDERING.md) lists current backend and
+post-process coverage, shader build requirements, and compatibility limits.
+
 Keep an inexpensive test room containing a rough wall, a smooth object, glass,
 a moving character, and a point light. It makes changes to exposure, shadows,
 reflections, and temporal effects easier to diagnose than a fully dressed level.
@@ -79,6 +82,20 @@ Advanced shadow paths have separate
 [point shadow filtering](../point-shadow-filtering.md) references. Their engineering
 notes include implementation constraints; do not assume every quality option has
 the same support in both backends.
+
+Directional VSM is now the default for new lights. Active VSM uses no cascade
+fallback; unavailable VSM paths report their reason in the profiler. Legacy
+Cascaded shadows remain an explicit selection. See [VSM defaults](../VSM_DEFAULT.md)
+for shader-graph restrictions and saved-scene compatibility.
+
+## Timeline effects
+
+Add a Sequencer component and open its **Sequencer Editor** to author transform,
+camera FOV, light, sound-volume, audio-play and script-event tracks. Bind targets,
+capture keys at the playhead, and scrub or play the visual preview. Preview
+restores authoring values and does not dispatch audio/script events; runtime
+playback does. Track edits participate in scene undo/redo. See
+[Sequencer](../SEQUENCER.md) for interpolation and event boundaries.
 
 ## Environment lighting, captures, and baking
 

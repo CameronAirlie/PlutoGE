@@ -110,6 +110,12 @@ MainMenu again from the pause menu. Cache references within each scene and
 reacquire them when the next scene starts. Entity references and runtime IDs are
 not a save-game identity scheme across scene replacements.
 
+For additive level sections, `SceneManager.LoadAdditive` returns a section handle
+with status, activation, cancellation and unloading. File I/O is asynchronous;
+activation remains on the scene thread. Resolve references after activation and
+handle their removal on unload. See [Scene streaming](../SCENE_STREAMING.md) for
+ownership, navigation and cooked-asset behavior.
+
 `GamePause.TimeScale = 0` pauses simulation time. Preserve and restore the previous
 scale on resume, including when leaving a paused scene. Keep menu input responsive
 while gameplay scripts avoid actions for zero simulation delta. Do not place an
@@ -213,11 +219,13 @@ connection-task failures rather than leaving an unobserved asynchronous operatio
 If callbacks never arrive, check Poll, connection errors, address/port, and whether
 the host process is still running.
 
-Transport is not automatic replication: define authority, entity identifiers,
-spawn/despawn messages, state synchronization, interpolation, and late-join
-behavior for your game. Server-side gameplay should validate client requests.
-Consult the networking guide's current scope before assuming matchmaking,
-authentication, encryption, prediction, or automatic physics synchronization.
+For entity state, use the implemented [replication layer](../ENTITY_REPLICATION.md):
+authority/ownership, full snapshots, late join, interpolation and prefab scene
+bindings sit above the transport. Register your prefab types and numeric property
+handlers, choose snapshot cadence, and validate client requests on the server.
+The cooperative pressure-pad sample demonstrates the session lifecycle. This does
+not provide matchmaking, authentication, encryption, prediction or automatic
+physics synchronization.
 
 ## Debugging and performance
 

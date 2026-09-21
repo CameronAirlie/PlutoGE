@@ -1,35 +1,63 @@
 # Virtual shadow maps
 
-Status: experimental GPU-driven directional VSM implementation. September 2026.
+Status: GPU-driven directional VSM is the current RHI default. Resource budgets
+and compatibility limitations still apply. September 2026.
 
 ## Selecting the shadow method
 
-On a directional light, select **Shadow Method: Cascaded Shadow Maps** or **Virtual Shadow Maps (Experimental)**. Existing scenes default to cascades. The choice and update budgets are serialized as component properties and shared between editor and runtime through `scene::ApplyDirectionalShadowSettings`. Direct RHI callers use `BasicLighting::shadowMethod`.
+Directional lights default to Virtual Shadow Maps. An explicitly saved Cascaded
+selection stays Cascaded; lights without a saved method inherit VSM. The choice
+and update budgets are serialized as component properties and shared between
+editor and runtime through `scene::ApplyDirectionalShadowSettings`. Direct RHI
+callers use `BasicLighting::shadowMethod`.
 
-The RHI implementation supports Vulkan and OpenGL through explicit storage-buffer, compute, indexed-indirect and shader-clip-distance capabilities. Unsupported devices use cascades. The legacy OpenGL render-pass pipeline retains its existing cascade implementation. Point and spot lights are unchanged.
+The RHI implementation supports Vulkan and OpenGL through explicit storage-buffer,
+compute, indexed-indirect and shader-clip-distance capabilities. Active VSM never
+allocates or falls back to cascades. Unsupported devices, missing shaders,
+draw-chunk overflow, and vertex-deforming or masked shader graphs disable
+directional shadows with a profiler diagnostic. Opaque fragment-only graphs and
+standard texture alpha masks are supported. Select Cascaded explicitly when
+needed. The legacy OpenGL render-pass pipeline retains its cascade implementation.
+This directional shadow-method setting does not select point/spot shadow paths.
+See [default behavior](VSM_DEFAULT.md).
 
 ## Architecture and frame sequence
 
 `VirtualShadowMaps` owns clipmap policy, GPU resources and VSM pass recording. `BasicRenderer` supplies immutable mesh revisions, draw signatures and a mesh-submission callback. Scene properties are translated separately from renderer implementation. Shared constants and data layouts live in `VirtualShadowConfig.h` and `VirtualShadowCommon.slang`.
 
 1. Render current-frame receiver depth, including alpha-masked receivers. Reconstruct visible world positions in compute and select levels using pixel footprints. Atomically mark and compact unique page requests, including the shadow filter guard.
-2. Use four world-stable directional clipmaps, each representing a 16,384-square virtual map with 128-square pages. Absolute light-space page coordinates preserve cached content while the camera scrolls. Light rotation, scale or snapped depth-range changes alter the projection epoch and invalidate affected content.
-3. Retain requested resident pages in a fixed 256-page pool. Each level receives a fair share; unused capacity is lent to other levels. Allocate from unrequested slots without a CPU feedback round trip.
+2. Use four world-stable fine clipmaps, each representing a 16,384-square virtual map with 128-square pages, plus a coarse root level covering the outer fine level's extent. Absolute light-space coordinates preserve cached content while the camera scrolls. Projection changes invalidate affected content; depth recentering uses hysteresis.
+3. Retain requested resident pages in a fixed 256-page pool. The root's 8x8 pages reserve 64 slots and are requested each frame with priority for new coarse coverage. Fine levels share the remaining capacity without a CPU feedback round trip.
 4. Compute page content signatures from intersecting caster chunks. Signatures cover mesh revisions, transforms/instances, submesh ranges, bounds and alpha material inputs. Caster movement, removal and changed materials invalidate affected content. Unknown bounds conservatively intersect every page.
 5. Select dirty updates under both page and triangle budgets. Rotate update priority across the pool. Generate caster/page lists and indexed-indirect arguments on the GPU. Clear only dirty physical tiles with a generated depth-clear draw, then instance each caster chunk across its selected pages. Hardware clip distances confine geometry to each physical tile.
-6. Publish mappings after rendering and resource barriers. Lighting checks that the complete filter footprint is resident before sampling it. Missing fine pages try coarser resident levels, then use the conventional cascade filter. This avoids repeatedly evaluating cascade filtering inside every missing VSM tap.
+6. Publish new mappings after rendering and resource barriers. Lighting checks filter-footprint residency and tries coarser VSM coverage when fine pages are missing. Dirty resident pages retain usable depth while deferred; new or reassigned pages remain invalid until rendered. No cascade filter runs while VSM is active.
 
-Transparent receivers can sample resident pages and otherwise fall back to cascades. GI and volumetric shadow sampling retain conventional cascade coverage. Persistent maps and asynchronous diagnostics are independent: no CPU readback determines allocation or submission.
+Surface, fog and glass-fog shading use VSM coverage. Missing volume depth
+conservatively suppresses directional scattering. Voxel GI retains a separate
+volume-space injection shadow map, not a cascade fallback. Persistent maps and
+asynchronous diagnostics are independent: no CPU readback determines allocation
+or submission. See [exclusive VSM rendering](vsm-exclusive-shadow-path.md).
 
 ## Performance controls and instrumentation
 
-Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1–256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1–16,000,000). These limit VSM atlas updates; receiver depth, fallback cascades and ordinary scene rendering are additional work. Pages too expensive to update within the budget remain on fallback instead of publishing stale depth. Large meshes should have accurate bounds and useful submesh or LOD granularity.
+Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1–256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1–16,000,000). These limit atlas updates; receiver depth and ordinary scene rendering are additional work. Deferred pages may retain older resident depth or use coarser VSM coverage. Large meshes should have accurate bounds and useful submesh or LOD granularity.
 
-There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Each chunk contains at most 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks and falls back to cascades above this limit.
+There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Each chunk contains at most 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks; exceeding capacity reports VSM unavailable without enabling cascades.
 
-The physical D32 atlas and companion R32 attachment occupy 32 MiB in total. Request masks and page tables add approximately 512 KiB. Caster lists, indirect arguments, receiver targets, uniforms and fallback maps are additional; the profiler reports allocated VSM resource estimates. Disabling VSM releases its resources.
+The physical D32 atlas and companion R32 attachment occupy 32 MiB in total.
+Page tables, requests, caster lists, indirect arguments, receiver targets and
+uniforms add further allocations; use the profiler's resource estimates.
+Disabling VSM releases its resources. Active VSM should report zero allocated
+cascade targets, hits and updates.
 
 GPU scopes distinguish receiver depth, GPU planning and atlas rendering. The profiler reports current CPU submission counts separately from delayed GPU statistics: requested/resident/dirty/updated/deferred pages, hits, evictions, overflow, nonempty indirect draws, caster/page pairs and triangles. Diagnostic readbacks reuse staging buffers and existing frame completion; unavailable readback slots skip a sample without adding a wait. Vulkan post-processing now exposes individual effect timings as well as inclusive parent scopes. Do not sum parent and child scopes.
+
+## Historical implementation measurements
+
+The captures and validation notes below describe earlier revisions, including
+the former cascade fallback and opt-in behavior. They are retained as measurement
+history, not current setup instructions. Current behavior is described above and
+in [VSM defaults](VSM_DEFAULT.md) and the [exclusive-path report](vsm-exclusive-shadow-path.md).
 
 ### Supplied performance capture
 
@@ -72,9 +100,16 @@ RelWithDebInfo builds passed for the editor, runtime and both RHI test executabl
 
 ## Remaining limits
 
-VSM remains experimental and opt-in. Fallback cascades stay allocated and maintained, so VSM adds work and memory and does not guarantee a speedup. Geometry is culled at caster-chunk bounds, not at meshlet or triangle level; this implementation does not provide Nanite-style geometry virtualization. The fixed physical pool can overflow, and deliberately restrictive budgets can retain coarse fallback for expensive pages. More physical capacity, geometry clustering and additional light types are separate extensions, not prerequisites for the implemented directional path.
+At the time of these measurements, VSM was opt-in and maintained fallback
+cascades. That path has been replaced by default, exclusive VSM rendering.
+Geometry remains culled at caster-chunk bounds, not meshlet or triangle level;
+this does not provide Nanite-style geometry virtualization. The fixed physical
+pool can overflow, and restrictive budgets can retain coarse VSM coverage or
+older depth for expensive pages. Performance remains workload-dependent.
 
-OpenGL runtime acceptance and target-scene visual/performance acceptance must be completed on a working graphics context. No production default or Unreal-equivalent performance is claimed.
+OpenGL runtime acceptance was incomplete for this earlier delivery. Later focused
+backend results are recorded in the exclusive-path report; target-scene acceptance
+still requires testing the intended content and hardware.
 
 ## Reference
 

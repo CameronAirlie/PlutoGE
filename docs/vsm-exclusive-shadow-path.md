@@ -9,8 +9,9 @@ pages and volumetric fog.
 ## Behaviour
 
 - Select the effective shadow method before building cascade projections or
-  allocating targets. Unsupported VSM devices/shader packages or draw counts
-  above the VSM chunk capacity select CSM before either path runs.
+  allocating targets. The current default policy reports unsupported VSM
+  devices/shader packages, incompatible graphs or draw-chunk overflow without
+  enabling CSM. Cascades require an explicit selection. See [VSM defaults](VSM_DEFAULT.md).
 - Active VSM performs no CSM projection fitting, target allocation, cache
   validation, object uploads or shadow draws. Switching to VSM releases existing
   CSM textures and per-cascade buffers. Switching back recreates and refreshes

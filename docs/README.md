@@ -26,9 +26,13 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Area | Detailed reference |
 | --- | --- |
 | Engine build and requirements | [Repository README](../README.md#build-and-run) |
+| Current renderer support and limitations | [Rendering support](RENDERING.md) |
 | Editor iteration, recovery, validation, debug drawing | [Editor workflows](EDITOR_WORKFLOWS.md) |
 | Editing several entities | [Multi-entity editing](MULTI_ENTITY_EDITING.md) |
 | Reusable entity variations | [Prefab variants](PREFAB_VARIANTS.md) |
+| Timeline authoring and playback | [Sequencer](SEQUENCER.md) |
+| Additive worlds and section lifetime | [Scene streaming](SCENE_STREAMING.md) |
+| Banked roads, junctions and roadside bakes | [Spline roads](SPLINE_ROADS.md) |
 | Managed API and serialization | [C# scripting](CSHARP_SCRIPTING.md) |
 | Character and vehicle cameras | [Camera rigs](CAMERA_RIGS.md) |
 | Orthographic game cameras | [Projection, framing and zoom](ORTHOGRAPHIC_CAMERAS.md) |
@@ -36,9 +40,18 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
 | Surface marks | [Decals](decals.md) |
+| Directional shadows | [Virtual shadow maps](virtual-shadow-maps.md), [defaults and compatibility](VSM_DEFAULT.md) |
+| Local lights and shadows | [Physical lights](physical-local-lights.md), [point shadow filtering](point-shadow-filtering.md) |
+| Voxel global illumination | [World cache](vct-world-cache.md), [secondary bounce](vct-secondary-bounce.md) |
+| Water | [Ocean waves, foam, ripples and caustics](OCEAN_WATER_EFFECTS.md) |
+| Stylized rendering | [Toon shaders](ToonShaders.md), [outlines](OutlineShaders.md) |
 | Document UI | [RmlUi quick start](RMLUI_QUICKSTART.md), [integration](RMLUI_INTEGRATION.md) |
 | Multiplayer transport | [Networking](NETWORKING.md) |
+| Multiplayer entity state and sessions | [Entity replication](ENTITY_REPLICATION.md) |
 | Measuring performance | [Profiler](PROFILER.md) |
+| Rendering diagnostics | [Geometry profiling](GEOMETRY_PROFILING.md), [occlusion culling](OCCLUSION_CULLING.md) |
+| Player window modes | [Fullscreen and window settings](window-fullscreen.md) |
+| Cooked asset containers | [Content packs](CONTENT_PACKS.md) |
 | Upscaling | [FSR 2](FSR2.md), [DLSS](DLSS.md) |
 | Player builds | [Exporting](../EXPORTING.md) |
 

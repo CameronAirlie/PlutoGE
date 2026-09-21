@@ -1,5 +1,10 @@
 # RHI Post-Process Migration: Next-Agent Handoff
 
+> Historical handoff, not current effect availability. The RHI now includes
+> bloom, temporal effects, SSAO, SSGI, SSR, volumetric fog and VCTGI among its
+> implemented adapters. LPV/RSM remain legacy-only. See [Rendering support](RENDERING.md)
+> for the current list; the implementation order below records the earlier plan.
+
 ## Current state
 
 - `PostProcessGraph` models named immutable resources and passes, derives dependencies, performs stable topological sorting, and rejects invalid graphs.
@@ -55,7 +60,8 @@ Migrate SSAO/LSAO, SSR, SSGI, volumetric fog, depth of field, and motion blur. E
 
 - TAA owns double-buffered color/depth/normal history through graph history resources.
 - Temporal SSAO/SSGI histories use the same invalidation service.
-- LPV, RSM, and VCTGI require 3D texture support and should remain explicitly unsupported until the RHI supports the needed volume formats, usages, and passes.
+- At this handoff, LPV, RSM and VCTGI awaited volume resource support. VCTGI has
+  since been implemented; LPV/RSM still have no RHI post-process adapters.
 
 ### 7. Verification
 

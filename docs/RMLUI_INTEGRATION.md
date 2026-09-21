@@ -109,7 +109,9 @@ deserializer would corrupt those scenes. New screen-space UI should use RmlUi.
   the same screen-space or render-to-texture WorldSpace pipeline.
 - The official GL3 backend supports RmlUi's advanced rendering features, but
   visual regression coverage still needs to be added.
-- Input consumption is not yet fed back into PlutoGE gameplay controls.
+- RmlUi keyboard and pointer capture is fed into the managed input bridge.
+  Captured keyboard/mouse queries are suppressed for gameplay; see
+  `HostFxrScriptRuntime.cpp` for key exceptions and the individual query rules.
 
 ## RHI UI antialiasing
 

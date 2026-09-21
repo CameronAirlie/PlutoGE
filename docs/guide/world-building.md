@@ -138,6 +138,22 @@ Keep generated road geometry above the ground enough to avoid overlapping
 surfaces flickering. Spline collision is not an AI route: bake navigation or
 implement a route-following behaviour separately.
 
+Roads also support banked collision, guardrail ribbons and independent segment
+LODs. **Conform to Terrain**, **Bake Roadside Prefabs** and **Bake Junction Mesh**
+are explicit authoring operations; repeat the appropriate bake after changing
+its inputs. **Export Road Mesh** saves geometry, LODs and material references.
+See [Spline roads](../SPLINE_ROADS.md) for junction constraints and rebuild scope.
+
+## Streamed scene sections
+
+Keep persistent gameplay in the main scene and load level sections through
+`SceneManager.LoadAdditive`. Reads are asynchronous; parsing, asset creation,
+activation and navigation work run on the scene thread and can still hitch.
+Section handles expose progress, activation, cancellation and unload operations.
+Entity IDs are remapped during activation, and section-owned entities are removed
+on unload. See [Scene streaming](../SCENE_STREAMING.md) and the built-in
+`DistanceSceneSection` example before retaining references across section changes.
+
 ## Navigation meshes and agents
 
 NavigationMeshComponent owns walkability data; NavAgentComponent supplies native

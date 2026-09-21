@@ -1,6 +1,8 @@
 # Distributing the PlutoGE engine
 
-PlutoGE currently targets 64-bit Windows. A release contains the editor, standalone
+This guide covers the 64-bit Windows distribution helper. The engine also has
+a Linux build/install/TGZ workflow in the [README](README.md#arch-linux-1).
+A release contains the editor, standalone
 runtime, managed scripting SDK, editor resources, native runtime dependencies, and
 documentation.
 
@@ -11,6 +13,7 @@ Prerequisites:
 - Visual Studio 2022 or newer with Desktop development with C++
 - CMake
 - .NET 8 SDK
+- Slang shader compiler (`slangc`) on `PATH` to generate RHI shader artifacts
 - NSIS 3 when an `.exe` installer is required
 
 From the repository root:
@@ -22,6 +25,10 @@ From the repository root:
 Packages and `SHA256SUMS.txt` are written to `out/packages`. The ZIP is a portable
 distribution. When NSIS is available, the same command also creates a Windows
 installer.
+
+The default helper build does not enable optional FSR 2 or Streamline/DLSS.
+Configure those integrations separately when preparing an upscaler-enabled
+distribution; see [FSR 2](docs/FSR2.md) and [DLSS](docs/DLSS.md).
 
 ## Validate on a clean Windows VM
 

@@ -16,7 +16,7 @@ The current transport provides:
 - broadcast with optional sender exclusion;
 - background accept/read/write loops;
 - main-thread event delivery through `Poll()`;
-- payload-size validation and bounded outbound queues;
+- payload-size validation, bounded outbound queues, and bounded inbound event storage;
 - cancellation and synchronous/asynchronous disposal.
 
 The wire frame is six bytes followed by the payload:
@@ -53,20 +53,26 @@ public static class GameChannels
 Use small immutable DTO records with `SendJson` while prototyping. For frequent
 state replication, encode a compact binary payload and use `Send`.
 
-## Planned layers
+## Entity replication and sessions
 
-The transport is the completed first layer. Recommended follow-on modules are:
+The managed API now includes `EntityReplicationAuthority`,
+`EntityReplicationReplica`, `ReplicationServerSession`, `ReplicationClientSession`
+and `ReplicatedScene`. Together they provide versioned session negotiation,
+network entity IDs, spawn/despawn, ownership, numeric properties, full snapshots,
+late join, interpolation, disconnect cleanup and native prefab bindings.
 
-1. A protocol handshake carrying game version, protocol version, and
-   authentication/session data.
-2. Server-authoritative entity spawning with stable network object IDs and
-   ownership.
-3. Snapshot serialization, delta compression, interpolation, and interest
-   management.
-4. An unreliable sequenced UDP transport for high-rate snapshots while
-   retaining TCP for session/control messages.
-5. Client prediction and server reconciliation for responsive player movement.
-6. Optional encryption or a platform relay for Internet deployment.
+The current model is bounded to 128 entities, 16 numeric properties per entity
+and 32 KiB snapshot packets. Applications register prefab factories, validate
+gameplay requests, choose publication cadence and map streamed section IDs.
+See [Entity replication](ENTITY_REPLICATION.md) for setup, lifecycle rules and
+the cooperative sample.
 
-These layers should depend on the channel/message abstraction rather than on
-TCP directly, preserving the C# API as transports are added.
+Inbound callbacks are bounded to 1,024 events and 16 MiB; overflow closes the
+transport and causes `Poll()` to throw `IOException`. Servers default to 128
+concurrent clients, configurable through `MaxClients`.
+
+## Not implemented
+
+The current layer does not provide delta compression, interest management, UDP
+snapshot transport, client prediction/reconciliation, matchmaking, authentication,
+encryption or relay integration. Session negotiation is not authentication.

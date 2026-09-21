@@ -146,6 +146,14 @@ TCP is ordered and reliable, which suits connection state, chat, and initial
 gameplay replication. High-rate transform snapshots may later use a separate
 unreliable transport without changing channel payload formats.
 
+Entity replication is also implemented in this namespace. Use
+`EntityReplicationAuthority`/`EntityReplicationReplica` for bounded full
+snapshots and interpolation, `ReplicationServerSession`/`ReplicationClientSession`
+for session negotiation and late join, and `ReplicatedScene` for prefab bindings.
+See [Entity replication](ENTITY_REPLICATION.md) for limits, ownership, lifecycle
+and cooperative examples. Prediction, UDP transport and authentication are not
+provided by these classes.
+
 `ScriptBehaviour` provides:
 
 - `public uint EntityId { get; }` — native entity ID.
@@ -476,6 +484,16 @@ bool accepted = SceneManager.LoadScene("project://Scenes/Game.plutoscene");
 ```
 
 The transition is requested for the end of the current frame.
+
+For additive loading, `SceneManager.LoadAdditive(string sceneAssetReference,
+bool activateWhenReady = true)` returns a nullable `SceneSection`. Its `Status`
+contains `State`, `Progress` and `Error`; `Activate`, `Cancel`, `Unload` and
+`Forget` return whether the requested operation was accepted. `Forget` releases
+a completed request; unload an active section first. Reads run asynchronously,
+while parsing and activation run on the scene thread. Handles are scoped to
+`SceneManager.RuntimeGeneration` and become stale after scene replacement.
+See [Scene streaming](SCENE_STREAMING.md) for reference remapping, ownership,
+navigation and cooked content constraints.
 
 Reusable data assets derive from `ScriptableObject`:
 

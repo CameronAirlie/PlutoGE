@@ -1,5 +1,10 @@
 # Editor Vulkan Migration
 
+> Historical migration plan. The OpenGL-owned readback bridge described below
+> has been superseded by backend-specific editor compositors, including Vulkan
+> presentation. See [Rendering support](RENDERING.md) and
+> [EditorCompositor.cpp](../editor/ui/src/EditorCompositor.cpp) for the current path.
+
 ## Goal
 
 Run the editor, scene renderer, and ImGui on the project-selected RHI backend without exposing OpenGL or Vulkan objects to scene and render-pass code.

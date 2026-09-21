@@ -62,7 +62,7 @@ public override void OnCollisionExit(GameObject other) {}
 - Serialized values are applied before `OnCreate`.
 - `OnCreate` runs when Play/runtime starts and the attached script instance is started.
 - `OnUpdate` runs once per runtime frame.
-- `OnLateUpdate` runs after normal script updates.
+- `OnLateUpdate` runs after normal script updates, physics presentation, and built-in camera rigs. Camera-relative aiming and reticles can use the final rig pose here.
 - `OnDestroy` runs once after a started script is stopped, including when Play
   mode ends or its script component is destroyed. Use it to unsubscribe events
   and dispose resources created by the script.

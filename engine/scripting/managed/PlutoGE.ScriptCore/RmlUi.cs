@@ -128,6 +128,8 @@ public sealed class RmlElement
         set => ScriptBridge.RmlSetAttribute(Document.Path, Id, attribute, value);
     }
 
+    public bool ScrollIntoView() => ScriptBridge.RmlScrollIntoView(Document.Path, Id);
+
     public bool SetClass(string name, bool enabled = true) =>
         ScriptBridge.RmlSetClass(Document.Path, Id, name, enabled);
 
@@ -154,6 +156,13 @@ public sealed class RmlElement
         result.Triggered += action;
         return result;
     }
+    /// <summary>Receives the stable ID of the dragged element; never exposes native element pointers.</summary>
+    public RmlEvent OnDrop(Action<string> action) => On("dragdrop", () =>
+    {
+        string source = this["data-drag-source"];
+        this["data-drag-source"] = "";
+        if (!string.IsNullOrEmpty(source)) action(source);
+    });
     public RmlEvent OnClick(Action action) => On("click", action);
     public event Action Clicked
     {

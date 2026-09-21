@@ -2999,6 +2999,12 @@ namespace PlutoGE::ui
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
+            core::CpuScope eventsScope("PollEvents", core::CpuCategory::Other);
+            const auto pollEventsStart = std::chrono::high_resolution_clock::now();
+            window.PollEvents();
+            eventsScope.End();
+            const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
 #ifdef _WIN32
             const auto threadCpuStart = threadCpuTicks();
             ULONG64 threadCyclesStart = 0;
@@ -3165,7 +3171,17 @@ namespace PlutoGE::ui
                         const glm::vec2 viewportSize = viewportPanel2->GetViewportSize();
                         auto *gameRenderTarget = viewportPanel2->GetRenderTarget();
                         const bool hasViewport = gameRenderTarget && viewportSize.x > 0.0f && viewportSize.y > 0.0f;
-                        const ImVec2 mouse = ImGui::GetIO().MousePos;
+                        // Scene updates precede ImGui::NewFrame. IO.MousePos still
+                        // belongs to the previous UI frame here; sample GLFW now.
+                        double cursorX = 0, cursorY = 0;
+                        glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
+                        if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+                        {
+                            int windowX = 0, windowY = 0;
+                            glfwGetWindowPos(windowHandle, &windowX, &windowY);
+                            cursorX += windowX; cursorY += windowY;
+                        }
+                        const ImVec2 mouse(static_cast<float>(cursorX), static_cast<float>(cursorY));
                         const glm::vec2 normalizedMouse = hasViewport
                                                               ? glm::vec2((mouse.x - viewportMin.x) / viewportSize.x,
                                                                           (mouse.y - viewportMin.y) / viewportSize.y)
@@ -4208,13 +4224,6 @@ namespace PlutoGE::ui
             if (vulkanEditorHost && m_engine.GetRenderDevice())
                 frameTimingStats.presentationTimingStats =
                     m_engine.GetRenderDevice()->GetTimingStats("Presentation");
-
-            core::CpuScope eventsScope("PollEvents", core::CpuCategory::Other);
-            const auto pollEventsStart = std::chrono::high_resolution_clock::now();
-            window.PollEvents();
-            eventsScope.End();
-            const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
-            frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
 
             frameScope.End();
             const auto frameEndTime = std::chrono::high_resolution_clock::now();

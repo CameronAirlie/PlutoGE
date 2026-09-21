@@ -21,7 +21,7 @@ component and editing its settings use the existing scene undo/redo history.
 | Collision Padding | Extra clearance before the sweep contact. |
 
 The rig looks along the camera's negative Z axis. It runs after physics presentation
-and script LateUpdate, before audio listener sampling. Use one camera driver per
+before script LateUpdate and audio listener sampling. Use one camera driver per
 camera so scripts and rigs do not compete to set its transform. Ordinary rotated
 parents are supported; unparented or uniformly scaled camera parents give the most
 predictable orientation. A singular parent freezes the rig rather than generating

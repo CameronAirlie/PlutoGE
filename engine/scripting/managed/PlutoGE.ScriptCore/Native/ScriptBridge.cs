@@ -384,6 +384,7 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<ulong> _getUIUpdateSequence;
     private static delegate* unmanaged[Cdecl]<nint, int, int> _rmlShowDocument;
     private static delegate* unmanaged[Cdecl]<nint, int> _rmlReloadDocument;
+    private static delegate* unmanaged[Cdecl]<nint, nint, int> _rmlScrollIntoView;
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlSetText;
     private static delegate* unmanaged[Cdecl]<nint, nint, nint> _rmlGetText;
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> _rmlSetAttribute;
@@ -1288,6 +1289,13 @@ internal static unsafe partial class ScriptBridge
         _setUITextAlignment = setUITextAlignment;
         _getUIUpdateSequence = getUIUpdateSequence;
         return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterRmlNavigationApi")]
+    public static int RegisterRmlNavigationApi(delegate* unmanaged[Cdecl]<nint, nint, int> scrollIntoView)
+    {
+        if (scrollIntoView == null) return 0;
+        _rmlScrollIntoView = scrollIntoView; return 1;
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterRmlUiApi")]
@@ -2619,6 +2627,12 @@ internal static unsafe partial class ScriptBridge
     internal static void SetRmlWidgetVisible(uint entityId, bool value)
     {
         if (_setRmlWidgetVisible != null) _setRmlWidgetVisible(entityId, value ? 1 : 0);
+    }
+    internal static bool RmlScrollIntoView(string document, string id)
+    {
+        if (_rmlScrollIntoView == null) return false;
+        var a = Utf8(document); var b = Utf8(id);
+        fixed (byte* pa = a) fixed (byte* pb = b) return _rmlScrollIntoView((nint)pa, (nint)pb) != 0;
     }
     internal static bool RmlReloadDocument(string document)
     {

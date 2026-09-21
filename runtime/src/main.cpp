@@ -585,6 +585,7 @@ int RunRuntime(int argc, char **argv)
 
     while (!window.ShouldClose())
     {
+        window.PollEvents();
         const auto currentFrameTime = std::chrono::high_resolution_clock::now();
         const float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
@@ -714,11 +715,6 @@ int RunRuntime(int argc, char **argv)
 #endif
             renderer.EndFrame();
         }
-
-#ifdef _WIN32
-        PlutoGE::g_runtimeDiagnostics.currentPhase = "poll events";
-#endif
-        window.PollEvents();
 
         if (benchmarkEnabled)
         {

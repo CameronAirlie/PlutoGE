@@ -2829,6 +2829,10 @@ namespace PlutoGE::scene
         // the authoritative fixed-step state at the start of the next update.
         ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
 
+        // Resolve built-in cameras before late followers compute screen/world positions.
+        if (m_runtimeStarted)
+            VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
+
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
             if (scriptComponent && scriptComponent->IsEnabled())
@@ -2842,8 +2846,6 @@ namespace PlutoGE::scene
                 }
             }
         }
-        if (m_runtimeStarted)
-            VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
         lateScope.End();
         const auto lateScriptsEnd = Clock::now();
         core::CpuScope audioScope("Audio.Update", core::CpuCategory::Audio);

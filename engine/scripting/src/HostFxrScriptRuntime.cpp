@@ -1335,9 +1335,10 @@ namespace PlutoGE::scripting
             auto *handle = static_cast<GLFWwindow *>(window.GetWindow());
             if (!handle || !glfwGetWindowAttrib(handle, GLFW_FOCUSED)) return {};
             glfwGetWindowSize(handle, &width, &height); // Cursor coordinates are logical pixels, not framebuffer pixels.
-            const auto &mouse = window.GetInputState().mouseState;
-            if (width <= 0 || height <= 0 || mouse.x < 0 || mouse.y < 0 || mouse.x >= width || mouse.y >= height) return {};
-            return {static_cast<float>(mouse.x / width), static_cast<float>(mouse.y / height), 1};
+            double cursorX = 0, cursorY = 0;
+            glfwGetCursorPos(handle, &cursorX, &cursorY);
+            if (width <= 0 || height <= 0 || cursorX < 0 || cursorY < 0 || cursorX >= width || cursorY >= height) return {};
+            return {static_cast<float>(cursorX / width), static_cast<float>(cursorY / height), 1};
         }
         int32_t ViewportToWorldRay(uint32_t entityId, NativeVector3 point, NativeVector3 *origin, NativeVector3 *direction)
         {
@@ -3121,6 +3122,8 @@ namespace PlutoGE::scripting
             value = document && id ? render::RmlUiRuntime::Get().GetElementText(document, id) : std::string{};
             return value.c_str();
         }
+        int32_t RmlScrollIntoView(const char *document, const char *id)
+        { return document && id && render::RmlUiRuntime::Get().ScrollElementIntoView(document, id); }
         int32_t RmlSetAttribute(const char *document, const char *id, const char *name, const char *value)
         {
             return document && id && name && value &&
@@ -3385,6 +3388,7 @@ namespace PlutoGE::scripting
         register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
         register_advanced_ui_api_fn registerAdvancedUIApi = nullptr;
         register_rml_ui_api_fn registerRmlUiApi = nullptr;
+        int(PLUTO_HOST_CALL *registerRmlNavigationApi)(void *) = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
@@ -3496,6 +3500,7 @@ namespace PlutoGE::scripting
             impl.registerRuntimeUIApi = nullptr;
             impl.registerAdvancedUIApi = nullptr;
             impl.registerRmlUiApi = nullptr;
+            impl.registerRmlNavigationApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
             impl.registerNavigationApi = nullptr;
@@ -3846,6 +3851,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterRuntimeUIApi"), impl.registerRuntimeUIApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAdvancedUIApi"), impl.registerAdvancedUIApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlUiApi"), impl.registerRmlUiApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterRmlNavigationApi"), impl.registerRmlNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
@@ -4447,6 +4453,12 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&GetUIUpdateSequence)) == 0)
         {
             setManagedBridgeFailure("RegisterAdvancedUIApi");
+            return false;
+        }
+
+        if (!m_impl->registerRmlNavigationApi || m_impl->registerRmlNavigationApi(reinterpret_cast<void *>(&RmlScrollIntoView)) == 0)
+        {
+            setManagedBridgeFailure("RegisterRmlNavigationApi");
             return false;
         }
 

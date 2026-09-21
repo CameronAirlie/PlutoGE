@@ -19,6 +19,17 @@ public:
     void SetScissorRegion(Rml::Rectanglei) override {}
 };
 
+class DropProbe final : public Rml::EventListener
+{
+public:
+    bool received = false;
+    void ProcessEvent(Rml::Event& event) override
+    {
+        auto* source = static_cast<Rml::Element*>(event.GetParameter<void*>("drag_element", nullptr));
+        received = source && source->GetId() == "bag-0" && event.GetCurrentElement()->GetId() == "bag-1";
+    }
+};
+
 int main(int argc, char** argv) try
 {
     if (argc != 5) throw std::runtime_error("Usage: document.rml font.ttf font-family panel-id");
@@ -35,6 +46,8 @@ int main(int argc, char** argv) try
     if (!panel) throw std::runtime_error("Panel missing");
     panel->SetProperty("display", "block");
     document->Show();
+    const bool journal = Rml::String(argv[4]) == "journal-panel";
+    auto* scroll = journal ? document->GetElementById("inventory-page") : panel;
     for (const auto size : {Rml::Vector2i(1280, 720), Rml::Vector2i(1280, 960), Rml::Vector2i(1920, 1080)})
     {
         context->SetDimensions(size);
@@ -44,7 +57,7 @@ int main(int argc, char** argv) try
         for (int i = 0; i < 40; ++i) longContent += "<p>Journal entry: Wanderer's Blade &amp; equipment. Explore the western wall to find the pilgrim cache.</p>";
         auto* overflow = document->CreateElement("div").release();
         overflow->SetInnerRML(longContent);
-        panel->AppendChild(Rml::ElementPtr(overflow));
+        scroll->AppendChild(Rml::ElementPtr(overflow));
         Rml::ElementList buttons;
         panel->GetElementsByTagName(buttons, "button");
         for (auto* button : buttons) button->SetInnerRML("Equipment slot: Wanderer's Blade / owned item details");
@@ -61,12 +74,52 @@ int main(int argc, char** argv) try
         if (width < 500) throw std::runtime_error("Scrollbar collapsed the panel content width");
         if (left < 0 || left + outerWidth > size.x) throw std::runtime_error("Panel escapes the viewport");
         if (std::abs(left + outerWidth / 2 - size.x / 2) > 2) throw std::runtime_error("Panel is not centered");
-        if (panel->GetScrollHeight() <= panel->GetClientHeight()) throw std::runtime_error("Fixture did not exercise overflow");
+        if (scroll->GetScrollHeight() <= scroll->GetClientHeight()) throw std::runtime_error("Fixture did not exercise overflow");
         for (auto* button : buttons)
-            if (button->GetBox().GetSize().x < 450) throw std::runtime_error("Button content collapsed");
-        panel->SetScrollTop(10000);
+            if (button->GetBox().GetSize().x < (Rml::String(argv[4]) == "journal-panel" ? 80 : 450)) throw std::runtime_error("Button content collapsed");
+        if (auto* source = document->GetElementById("bag-0"); source && Rml::String(argv[4]) == "journal-panel")
+        {
+            auto* target = document->GetElementById("bag-1");
+            scroll->SetScrollTop(0);
+            document->GetElementById("inventory-grid")->SetScrollTop(0);
+            source->SetProperty("drag", "clone");
+            context->Update();
+            source->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+            context->Update();
+            const auto a = source->GetAbsoluteOffset(Rml::BoxArea::Border) + Rml::Vector2f(12, 12);
+            const auto b = target->GetAbsoluteOffset(Rml::BoxArea::Border) + Rml::Vector2f(12, 12);
+            DropProbe probe;
+            target->AddEventListener(Rml::EventId::Dragdrop, &probe);
+            context->ProcessMouseMove(int(a.x), int(a.y), 0);
+            context->ProcessMouseButtonDown(0, 0);
+            context->ProcessMouseMove(int(a.x + 10), int(a.y), 0);
+            context->ProcessMouseMove(int(b.x), int(b.y), 0);
+            context->ProcessMouseButtonUp(0, 0);
+            target->RemoveEventListener(Rml::EventId::Dragdrop, &probe);
+            if (!probe.received) throw std::runtime_error("Native slot drag did not deliver its source to the destination");
+            std::cout << "Native drag source bag-0 -> destination bag-1 passed.\n";
+        }
+        if (journal)
+        {
+            auto* tabs = document->GetElementById("journal-tabs");
+            auto* close = document->GetElementById("close-journal");
+            const float contentTop = scroll->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+            const float contentBottom = contentTop + scroll->GetBox().GetSize(Rml::BoxArea::Border).y;
+            if (tabs->GetAbsoluteOffset(Rml::BoxArea::Border).y + tabs->GetBox().GetSize(Rml::BoxArea::Border).y > contentTop ||
+                contentBottom > close->GetAbsoluteOffset(Rml::BoxArea::Border).y)
+                throw std::runtime_error("Tab contents overlap fixed navigation");
+            scroll->SetProperty("display", "none");
+            auto* quests = document->GetElementById("quests-page");
+            quests->SetProperty("display", "block");
+            document->GetElementById("quests")->SetInnerRML(longContent);
+            context->Update();
+            quests->SetScrollTop(10000); context->Update();
+            if (quests->GetScrollTop() <= 0) throw std::runtime_error("Quest tab cannot scroll");
+            quests->SetProperty("display", "none"); scroll->SetProperty("display", "block");
+        }
+        scroll->SetScrollTop(10000);
         context->Update();
-        if (panel->GetScrollTop() <= 0) throw std::runtime_error("Overflow cannot be scrolled");
+        if (scroll->GetScrollTop() <= 0) throw std::runtime_error("Overflow cannot be scrolled");
     }
     Rml::Shutdown();
     Rml::SetRenderInterface(nullptr);

@@ -28,7 +28,7 @@ namespace PlutoGE::scene
         bool BlendTo(std::uint32_t target, float seconds);
         bool Shake(float amplitude, float seconds, float frequency = 20);
         void ResetRuntime();
-        // Scene invokes this after physics presentation and script LateUpdate,
+        // Scene invokes this after physics presentation, before script LateUpdate,
         // only during runtime. Explicit entry point also permits headless tests.
         void UpdateRig(float deltaTime);
         std::vector<Property> Serialize() const override;

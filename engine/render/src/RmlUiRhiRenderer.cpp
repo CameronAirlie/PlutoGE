@@ -7,6 +7,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <cmath>
 
 namespace PlutoGE::render
 {
@@ -49,6 +50,7 @@ namespace PlutoGE::render
         rhi::Buffer vertices;
         rhi::Buffer indices;
         std::uint32_t indexCount = 0;
+        Rml::Rectanglef rectangle = Rml::Rectanglef::MakeInvalid();
     };
 
     struct RmlUiRhiRenderer::Texture
@@ -61,7 +63,9 @@ namespace PlutoGE::render
         Rml::Matrix4f transform;
         float translation[2]{};
         float clipYSign = 1.0f;
-        float padding = 0.0f;
+        float maskMode = 0.0f;
+        float inverseSize[2]{};
+        float padding[2]{};
     };
 
     RmlUiRhiRenderer::RmlUiRhiRenderer(
@@ -76,8 +80,9 @@ namespace PlutoGE::render
         descriptor.colorFormat = rhi::Format::R8G8B8A8Unorm;
         descriptor.depthFormat = rhi::Format::Undefined;
         descriptor.resourceBindings = {
-            {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
-            {8, 1, 0, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+            {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+            {8, 1, 0, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {9, 1, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
         descriptor.vertexLayout = {
             sizeof(RhiVertex),
             {{0, rhi::Format::R32G32Float, offsetof(RhiVertex, position)},
@@ -89,6 +94,9 @@ namespace PlutoGE::render
         descriptor.blend.enabled = true;
         descriptor.debugName = "RmlUi RHI";
         m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
+        descriptor.blend.enabled = false;
+        descriptor.debugName = "RmlUi clip mask";
+        m_clipPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         m_sampler = rhi::Sampler(device, device.CreateSampler({true, false, "RmlUi sampler", false}));
 
         const std::array<std::byte, 4> white{
@@ -170,6 +178,7 @@ namespace PlutoGE::render
             // Vulkan, so it must happen outside the dynamic rendering scope.
             commands.BindPipeline(m_pipeline.Get());
             commands.BindTexture(8, m_uiTarget.Get(), m_sampler.Get());
+            commands.BindTexture(9, m_whiteTexture->resource.Get(), m_sampler.Get());
             commands.BeginRendering(composite);
             commands.SetViewport({0, 0, static_cast<float>(m_width), static_cast<float>(m_height), 0, 1});
             commands.SetScissor({0, 0, composite.width, composite.height});
@@ -220,6 +229,23 @@ namespace PlutoGE::render
             {convertedIndices.size() * sizeof(std::uint32_t), rhi::BufferUsage::Index, "RmlUi indices"},
             {reinterpret_cast<const std::byte *>(convertedIndices.data()), convertedIndices.size() * sizeof(std::uint32_t)}));
         geometry->indexCount = static_cast<std::uint32_t>(convertedIndices.size());
+        // RmlUi emits simple rectangular clipping regions as four corners and
+        // two triangles. Keep that metadata for allocation-free scissor clips.
+        if (vertices.size() == 4 && indices.size() == 6)
+        {
+            auto bounds = Rml::Rectanglef::FromPositionSize(vertices[0].position, {0,0});
+            for (const auto &vertex : vertices) bounds = bounds.Join(vertex.position);
+            bool corners = bounds.Width() > 0 && bounds.Height() > 0;
+            unsigned cornerBits = 0;
+            for (const auto &vertex : vertices)
+            {
+                const auto point = vertex.position;
+                corners &= (point.x == bounds.Left() || point.x == bounds.Right()) &&
+                           (point.y == bounds.Top() || point.y == bounds.Bottom());
+                cornerBits |= 1u << ((point.x == bounds.Right() ? 1 : 0) + (point.y == bounds.Bottom() ? 2 : 0));
+            }
+            if (corners && cornerBits == 15) geometry->rectangle = bounds;
+        }
         if (!geometry->vertices || !geometry->indices)
             return {};
         return reinterpret_cast<Rml::CompiledGeometryHandle>(geometry.release());
@@ -239,14 +265,18 @@ namespace PlutoGE::render
             {translation.x, translation.y},
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f,
             0.0f};
+        parameters.maskMode = m_maskMode != 0 ? m_maskMode : (m_clipEnabled && m_clipValid ? 4.0f : 0.0f);
+        parameters.inverseSize[0] = 1.0f / (m_width * m_renderScale);
+        parameters.inverseSize[1] = 1.0f / (m_height * m_renderScale);
         auto &parameterBuffer = AcquireParameterBuffer();
         m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
         auto &commands = m_device->GetImmediateContext();
-        commands.BindPipeline(m_pipeline.Get());
+        commands.BindPipeline(m_maskMode != 0 ? m_clipPipeline.Get() : m_pipeline.Get());
         commands.BindVertexBuffer(geometry->vertices.Get());
         commands.BindIndexBuffer(geometry->indices.Get());
         commands.BindUniformBuffer(0, parameterBuffer.Get());
         commands.BindTexture(8, texture->resource.Get(), m_sampler.Get());
+        commands.BindTexture(9, m_clipValid ? m_clipTargets[m_clipIndex].Get() : m_whiteTexture->resource.Get(), m_sampler.Get());
         commands.DrawIndexed(geometry->indexCount);
     }
 
@@ -323,6 +353,89 @@ namespace PlutoGE::render
         ApplyScissor();
     }
 
+    void RmlUiRhiRenderer::EnableClipMask(bool enable)
+    {
+        m_clipEnabled = enable;
+        if (!enable) { m_clipValid = false; m_clipRectangle = Rml::Rectanglei::MakeInvalid(); }
+        ApplyScissor();
+    }
+
+    void RmlUiRhiRenderer::RenderToClipMask(Rml::ClipMaskOperation operation,
+                                            Rml::CompiledGeometryHandle geometry, Rml::Vector2f translation)
+    {
+        if (!m_frameActive || !geometry) return;
+        if (operation != Rml::ClipMaskOperation::Intersect)
+        {
+            m_clipValid = false;
+            m_clipRectangle = Rml::Rectanglei::MakeInvalid();
+        }
+        const auto &rectangle = reinterpret_cast<Geometry *>(geometry)->rectangle;
+        if (rectangle.Valid() && operation != Rml::ClipMaskOperation::SetInverse)
+        {
+            const Rml::Vector2f corners[] = {rectangle.TopLeft(), rectangle.TopRight(), rectangle.BottomRight(), rectangle.BottomLeft()};
+            Rml::Vector2f points[4];
+            for (int i = 0; i < 4; ++i)
+            {
+                const auto p = m_transform * Rml::Vector4f(corners[i].x + translation.x, corners[i].y + translation.y, 0, 1);
+                points[i] = {(p.x / p.w + 1) * m_width * 0.5f, (1 - p.y / p.w) * m_height * 0.5f};
+            }
+            bool axisAligned = true;
+            for (int i = 0; i < 4; ++i)
+            {
+                const auto edge = points[(i + 1) % 4] - points[i];
+                axisAligned &= std::abs(edge.x) < 0.001f || std::abs(edge.y) < 0.001f;
+            }
+            if (axisAligned)
+            {
+                auto bounds = Rml::Rectanglef::FromPositionSize(points[0], {0,0});
+                for (const auto &point : points) bounds = bounds.Join(point);
+                auto clip = Rml::Rectanglei::FromCorners(
+                    {static_cast<int>(std::floor(bounds.Left())), static_cast<int>(std::floor(bounds.Top()))},
+                    {static_cast<int>(std::ceil(bounds.Right())), static_cast<int>(std::ceil(bounds.Bottom()))});
+                m_clipRectangle = m_clipRectangle.Valid() ? m_clipRectangle.Intersect(clip) : clip;
+                ApplyScissor();
+                return;
+            }
+        }
+        auto &commands = m_device->GetImmediateContext();
+        commands.EndRendering();
+        const int width = m_width * m_renderScale, height = m_height * m_renderScale;
+        if (m_clipWidth != width || m_clipHeight != height)
+        {
+            for (auto &target : m_clipTargets)
+                target = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
+                     rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment,
+                     "RmlUi clip coverage", true, 1, false, 1}));
+            m_clipWidth = width; m_clipHeight = height; m_clipValid = false;
+        }
+        // Ping-pong coverage allows nested intersections, including transformed
+        // and rounded clips, without sampling the current render attachment.
+        const int destination = 1 - m_clipIndex;
+        const bool inverse = operation == Rml::ClipMaskOperation::SetInverse;
+        m_maskMode = inverse ? 3.0f : operation == Rml::ClipMaskOperation::Intersect && m_clipValid ? 2.0f : 1.0f;
+        commands.BindPipeline(m_clipPipeline.Get());
+        commands.BindTexture(9, m_clipValid ? m_clipTargets[m_clipIndex].Get() : m_whiteTexture->resource.Get(), m_sampler.Get());
+        rhi::RenderingInfo mask;
+        mask.colorAttachments = {m_clipTargets[destination].Get()};
+        mask.width = width; mask.height = height; mask.clearColor = true; mask.clearDepth = false;
+        for (float &channel : mask.clearColorValue) channel = inverse ? 1.0f : 0.0f;
+        commands.BeginRendering(mask);
+        commands.SetViewport({0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1});
+        commands.SetScissor({0, 0, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)});
+        RenderGeometry(geometry, translation, {});
+        commands.EndRendering();
+        m_clipIndex = destination; m_clipValid = true; m_maskMode = 0;
+        commands.BindPipeline(m_pipeline.Get());
+        commands.BindTexture(9, m_clipTargets[m_clipIndex].Get(), m_sampler.Get());
+        rhi::RenderingInfo resume;
+        resume.colorAttachments = {m_renderScale == 2 ? m_uiTarget.Get() : m_outputTarget};
+        resume.width = width; resume.height = height; resume.clearColor = resume.clearDepth = false;
+        commands.BeginRendering(resume);
+        commands.SetViewport({0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1});
+        ApplyScissor();
+    }
+
     void RmlUiRhiRenderer::SetTransform(const Rml::Matrix4f *transform)
     {
         const auto projection = Rml::Matrix4f::ProjectOrtho(
@@ -343,18 +456,19 @@ namespace PlutoGE::render
         if (!m_frameActive)
             return;
         rhi::Scissor scissor{0, 0, static_cast<std::uint32_t>(m_width), static_cast<std::uint32_t>(m_height)};
-        if (m_scissorEnabled && m_scissor.Valid())
+        int left = 0, top = 0, right = m_width, bottom = m_height;
+        const auto intersect = [&](const Rml::Rectanglei &region)
         {
-            const int left = std::clamp(m_scissor.Left(), 0, m_width);
-            const int top = std::clamp(m_scissor.Top(), 0, m_height);
-            const int right = std::clamp(m_scissor.Right(), left, m_width);
-            const int bottom = std::clamp(m_scissor.Bottom(), top, m_height);
-            // The Vulkan clip-space correction above mirrors geometry relative
-            // to its negative-height viewport. Both backends therefore need
-            // RmlUi's top-origin rectangle converted from its bottom edge.
-            scissor = {left, m_height - bottom, static_cast<std::uint32_t>(right - left),
-                       static_cast<std::uint32_t>(bottom - top)};
-        }
+            left = std::clamp(region.Left(), left, right);
+            top = std::clamp(region.Top(), top, bottom);
+            right = std::clamp(region.Right(), left, right);
+            bottom = std::clamp(region.Bottom(), top, bottom);
+        };
+        if (m_scissorEnabled && m_scissor.Valid()) intersect(m_scissor);
+        if (m_clipEnabled && m_clipRectangle.Valid()) intersect(m_clipRectangle);
+        // RmlUi is top-origin; the RHI UI target uses bottom-origin geometry.
+        scissor = {left, m_height - bottom, static_cast<std::uint32_t>(right - left),
+                   static_cast<std::uint32_t>(bottom - top)};
         scissor.x *= m_renderScale;
         scissor.y *= m_renderScale;
         scissor.width *= m_renderScale;

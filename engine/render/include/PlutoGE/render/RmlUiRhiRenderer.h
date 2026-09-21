@@ -13,7 +13,7 @@ namespace PlutoGE::render
 {
     // Basic RmlUi renderer used by both RHI backends. It intentionally
     // implements RmlUi's core geometry, texture, transform, and scissor
-    // contract; advanced layer filters remain on the legacy GL3 renderer.
+    // and clip-mask contract; advanced layer filters remain on the legacy GL3 renderer.
     class RmlUiRhiRenderer final : public Rml::RenderInterface
     {
     public:
@@ -31,7 +31,7 @@ namespace PlutoGE::render
         void BeginFrame(rhi::TextureHandle target, bool beginSubmission = true);
         void EndFrame(bool submit = true);
         // CPU-side state only; the owning service recovers the command context.
-        void CancelFrame() noexcept { m_frameActive = false; m_outputTarget = {}; }
+        void CancelFrame() noexcept { m_frameActive = false; m_outputTarget = {}; m_maskMode = 0; }
 
         Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                     Rml::Span<const int> indices) override;
@@ -45,6 +45,9 @@ namespace PlutoGE::render
         void EnableScissorRegion(bool enable) override;
         void SetScissorRegion(Rml::Rectanglei region) override;
         void SetTransform(const Rml::Matrix4f *transform) override;
+        void EnableClipMask(bool enable) override;
+        void RenderToClipMask(Rml::ClipMaskOperation operation, Rml::CompiledGeometryHandle geometry,
+                              Rml::Vector2f translation) override;
 
     private:
         struct Geometry;
@@ -55,6 +58,11 @@ namespace PlutoGE::render
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
+        rhi::GraphicsPipeline m_clipPipeline;
+        rhi::Texture m_clipTargets[2];
+        int m_clipWidth = 0, m_clipHeight = 0, m_clipIndex = 0;
+        bool m_clipEnabled = false, m_clipValid = false;
+        float m_maskMode = 0;
         rhi::Sampler m_sampler;
         rhi::Texture m_uiTarget;
         rhi::Buffer m_compositeVertices;
@@ -67,6 +75,7 @@ namespace PlutoGE::render
         std::size_t m_parameterCursor = 0;
         Rml::Matrix4f m_transform;
         Rml::Rectanglei m_scissor;
+        Rml::Rectanglei m_clipRectangle = Rml::Rectanglei::MakeInvalid();
         int m_width = 1;
         int m_height = 1;
         bool m_scissorEnabled = false;

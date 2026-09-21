@@ -270,7 +270,18 @@ namespace PlutoGE::render
             RuntimeEventListener(RmlUiRuntime &owner, std::string key)
                 : m_owner(owner), m_key(std::move(key)) {}
 
-            void ProcessEvent(Rml::Event &) override { m_owner.NotifyEvent(m_key); }
+            void ProcessEvent(Rml::Event &event) override
+            {
+                // Preserve the source before RmlUi destroys its drag clone. Managed event callbacks
+                // run later, so passing an Element pointer across the bridge would be unsafe.
+                if (event == Rml::EventId::Dragdrop)
+                {
+                    auto *source = static_cast<Rml::Element *>(event.GetParameter<void *>("drag_element", nullptr));
+                    if (auto *target = event.GetCurrentElement())
+                        target->SetAttribute("data-drag-source", source ? source->GetId() : Rml::String{});
+                }
+                m_owner.NotifyEvent(m_key);
+            }
             void OnDetach(Rml::Element *element) override
             {
                 m_owner.NotifyEventListenerDetached(m_key, element);
@@ -1338,6 +1349,16 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         return element ? element->GetInnerRML() : std::string{};
+    }
+
+    bool RmlUiRuntime::ScrollElementIntoView(const std::string &document, const std::string &id)
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        if (!element) return false;
+        element->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+        MarkWorldSurfaceDirty(doc);
+        return true;
     }
 
     bool RmlUiRuntime::SetElementAttribute(const std::string &document, const std::string &id,

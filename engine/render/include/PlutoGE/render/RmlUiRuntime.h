@@ -92,6 +92,7 @@ namespace PlutoGE::render
         bool ReloadDocument(const std::string &document);
         bool SetElementText(const std::string &document, const std::string &id, const std::string &text);
         std::string GetElementText(const std::string &document, const std::string &id) const;
+        bool ScrollElementIntoView(const std::string &document, const std::string &id);
         bool SetElementAttribute(const std::string &document, const std::string &id,
                                  const std::string &name, const std::string &value);
         std::string GetElementAttribute(const std::string &document, const std::string &id,

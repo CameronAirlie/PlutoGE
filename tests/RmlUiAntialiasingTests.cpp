@@ -6,6 +6,8 @@
 #include <RmlUi/Core.h>
 #include <cmath>
 #include <iostream>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 using namespace PlutoGE;
@@ -18,7 +20,7 @@ void Require(bool condition, const char* message)
 }
 
 template<class Reader>
-void CheckUi(IRenderDevice& device, Reader read)
+void CheckUi(IRenderDevice& device, Reader read, const char* documentPath = nullptr, const char* fontPath = nullptr, const char* capturePrefix = nullptr)
 {
     ShaderArtifactLibrary shaders(PLUTO_RHI_TEST_SHADER_DIR);
     RmlUiRhiRenderer ui(device,shaders.Load("RmlUi","vertex"),shaders.Load("RmlUi","fragment"));
@@ -59,7 +61,35 @@ body { margin: 0; width: 100%; height: 100%; }
     int smooth=render(true,80,64,false);
     Require(smooth>aliased+20,"Supersampling did not improve native rounded border coverage");
     Require(render(true,96,72,true)>aliased+20,"Resize or shared submission broke UI AA");
-    doc->Hide(); context->Update();
+    doc->Hide();
+    auto* clipped = context->LoadDocumentFromMemory(R"(<rml><head><style>
+body { margin: 0; width: 128px; height: 100px; transform-origin: 0px 0px; transform: scale(1.25); }
+div { display: block; }
+#outer { position: absolute; left: 20px; top: 10px; width: 40px; height: 40px; overflow: hidden; transform-origin: 0px 0px; transform: scale(1.5); }
+#inner { margin-left: 10px; margin-top: 10px; width: 40px; height: 40px; overflow: hidden; }
+#fill { width: 80px; height: 80px; background-color: red; }
+</style></head><body><div id="outer"><div id="inner"><div id="fill"></div></div></div></body></rml>)");
+    Require(clipped != nullptr, "Transformed clip fixture failed to load");
+    clipped->Show();
+    for (int variant = 0; variant < 4; ++variant)
+    {
+        const bool aa = variant % 2 != 0;
+        clipped->GetElementById("outer")->SetProperty("border-radius", variant >= 2 ? "8px" : "0px");
+        context->SetDimensions({160,128}); context->Update(); ui.SetViewport(160,128); ui.SetAntialiasingEnabled(aa);
+        Texture target(device, device.CreateTexture({160,128,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Transformed clips",true,1,false,1}));
+        auto& cmd = device.GetImmediateContext(); cmd.BeginFrame();
+        RenderingInfo info; info.colorAttachments={target.Get()}; info.width=160; info.height=128; info.clearDepth=false;
+        cmd.BeginRendering(info); cmd.EndRendering();
+        ui.BeginFrame(target.Get(),false); context->Render(); ui.EndFrame(false); cmd.Submit();
+        auto result=read(target.Get(),160,128);
+        auto red=[&](int x,int y) {return int(result[((127-y)*160+x)*4]);};
+        std::cout << "Clip samples: " << red(50,40) << ", " << red(30,40) << ", " << red(105,40) << ", " << red(50,95) << "\n";
+        Require(red(50,40)>250,"Nested transformed masks clipped visible content");
+        Require(red(30,40)==0 && red(105,40)==0 && red(50,95)==0,"Nested transformed masks leaked outside their intersection");
+        Require(variant >= 2 ? red(98,85) < 20 : red(98,85) > 250, "Rounded mask was approximated by a rectangle");
+    }
+    clipped->Hide(); context->Update();
+    ui.SetAntialiasingEnabled(true);
     // With no visible UI, the transparent layer must not retain a previous frame.
     ui.SetViewport(96,72);
     Texture empty(device,device.CreateTexture({96,72,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Empty UI",true,1,false,1}));
@@ -106,6 +136,50 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         const auto offset=(10*640+630)*4;
         Require(std::abs(int(result[offset])-51)<=1 && std::abs(int(result[offset+2])-153)<=1,"Victory font creation corrupted scene background");
     }
+    if (documentPath)
+    {
+        victory->Hide();
+        std::ifstream fontStream(fontPath, std::ios::binary);
+        const std::vector<Rml::byte> fontBytes((std::istreambuf_iterator<char>(fontStream)), {});
+        Require(Rml::LoadFontFace(fontBytes, "Dungeon", Rml::Style::FontStyle::Normal), "Capture font failed to load");
+        auto* journal = context->LoadDocument(documentPath);
+        Require(journal != nullptr, "Capture document failed to load");
+        journal->SetProperty("width", "1280px"); journal->SetProperty("height", "960px");
+        journal->SetProperty("transform-origin", "0px 0px"); journal->SetProperty("transform", "scale(0.75)");
+        journal->GetElementById("journal-panel")->SetProperty("display", "block");
+        journal->GetElementById("equip-0")->SetInnerRML("WEAPON<br/>Wanderer's Blade");
+        journal->GetElementById("equip-1")->SetInnerRML("ARMOR<br/>Traveler's Coat");
+        journal->GetElementById("item-detail")->SetInnerRML("Select an item to see its details. Equipment slots are your active loadout.");
+        journal->GetElementById("inventory-status")->SetInnerRML("Drag an item to move, swap or equip it.");
+        journal->GetElementById("inventory")->SetInnerRML("BACKPACK / 0 / 24");
+        journal->GetElementById("training")->SetInnerRML("TRAINING / STEEL 0 / ARCANE 1 / VITALITY 0");
+        Rml::String entries;
+        for (int i=0;i<12;++i) entries += "<p>[ACTIVE] The Last Archivist - After clearing the Ossuary, speak to the blue shrine on its eastern side. The sigil opens the descent.</p>";
+        journal->GetElementById("quests")->SetInnerRML(entries);
+        journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
+        for (int page=0;page<3;++page)
+        {
+            if (page==1) journal->GetElementById("inventory-page")->SetScrollTop(10000);
+            if (page==2)
+            {
+                journal->GetElementById("inventory-page")->SetProperty("display","none");
+                journal->GetElementById("quests-page")->SetProperty("display","block");
+                journal->GetElementById("inventory-tab")->SetClass("selected",false);
+                journal->GetElementById("quests-tab")->SetClass("selected",true);
+            }
+            context->Update(); context->Update();
+            Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));
+            commands.BeginFrame(); clear.colorAttachments={target.Get()}; clear.width=960; clear.height=720;
+            commands.BeginRendering(clear); commands.EndRendering();
+            ui.BeginFrame(target.Get(),false); context->Render(); ui.EndFrame(false); commands.Submit();
+            auto capture=read(target.Get(),960,720);
+            std::ofstream output(std::string(capturePrefix)+std::to_string(page)+".ppm",std::ios::binary);
+            output << "P6\n960 720\n255\n";
+            for (int y=719;y>=0;--y) for(int x=0;x<960;++x)
+                output.write(reinterpret_cast<const char*>(capture.data()+(y*960+x)*4),3);
+            Require(bool(output),"Could not write journal capture");
+        }
+    }
     Rml::Shutdown(); Rml::SetRenderInterface(nullptr);
     std::cout<<"Native border partial-coverage pixels: "<<aliased<<" -> "<<smooth<<"; resize, clipping, transparency and shared submission passed.\n";
 }
@@ -126,7 +200,8 @@ int main(int argc,char** argv) try
     else
     {
         vulkan::VulkanDevice device;
-        CheckUi(device,[&](TextureHandle texture,int,int) {return device.ReadTextureRgba8(texture);});
+        CheckUi(device,[&](TextureHandle texture,int,int) {return device.ReadTextureRgba8(texture);},
+                argc==5 ? argv[2] : nullptr, argc==5 ? argv[3] : nullptr, argc==5 ? argv[4] : nullptr);
     }
     return 0;
 }

@@ -2193,7 +2193,6 @@ namespace PlutoGE::ui
             return false;
         }
 
-        m_project->GetManifest().startupScene = m_project->MakeAssetReference(projectScenePath);
         return true;
     }
 
@@ -2446,6 +2445,9 @@ namespace PlutoGE::ui
         m_project->GetManifest().editorFontSize = m_panelManager.GetEditorFontSize();
         m_project->GetManifest().editorFont = m_panelManager.GetEditorFont();
         SetScene(CreateEmptyScene());
+
+        // Choose the initial startup scene once; ordinary saves preserve this setting.
+        m_project->GetManifest().startupScene = m_project->MakeAssetReference(GetDefaultProjectScenePath());
 
         std::string scriptErrorMessage;
         if (!EnsureProjectScriptBuildScaffold(&scriptErrorMessage))
@@ -2927,6 +2929,7 @@ namespace PlutoGE::ui
         std::array<char, 256> projectNameBuffer{};
         std::array<char, 256> projectWindowTitleBuffer{};
         std::array<char, 512> projectScriptAssemblyBuffer{};
+        std::string projectStartupScene;
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
@@ -2947,7 +2950,9 @@ namespace PlutoGE::ui
                 return;
             }
 
+            m_project->RefreshAssetRegistry();
             const auto &manifest = m_project->GetManifest();
+            projectStartupScene = manifest.startupScene;
             std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
             std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
             std::memset(projectScriptAssemblyBuffer.data(), 0, projectScriptAssemblyBuffer.size());
@@ -4043,12 +4048,29 @@ namespace PlutoGE::ui
                     ImGui::Separator();
                     ImGui::Text("Manifest: %s", m_project->GetManifestPath().string().c_str());
                     ImGui::Text("Asset Directory: %s", manifest.assetDirectory.c_str());
-                    ImGui::Text("Startup Scene: %s", manifest.startupScene.empty() ? "<none>" : manifest.startupScene.c_str());
+                    if (ImGui::BeginCombo("Startup Scene", projectStartupScene.empty() ? "<none>" : projectStartupScene.c_str()))
+                    {
+                        if (ImGui::Selectable("<none>", projectStartupScene.empty()))
+                            projectStartupScene.clear();
+                        for (const auto &entry : manifest.assetEntries)
+                        {
+                            if (entry.type != assets::ProjectAssetType::Scene)
+                                continue;
+                            const bool selected = projectStartupScene == entry.reference;
+                            if (ImGui::Selectable(entry.reference.c_str(), selected))
+                                projectStartupScene = entry.reference;
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::TextWrapped("The startup scene is used when opening the project and launching the runtime. Saving another scene does not change it.");
 
                     if (ImGui::Button("Save"))
                     {
                         const bool graphicsApiChanged = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
                         manifest.name = projectNameBuffer.data();
+                        manifest.startupScene = projectStartupScene;
                         manifest.windowTitle = projectWindowTitleBuffer.data();
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);

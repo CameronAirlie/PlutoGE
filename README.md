@@ -278,6 +278,10 @@ The typical content loop is:
 5. Create C# behaviours in `Assets/Scripts`, build them, and attach them with a Script component.
 6. Test in the game viewport with play-in-editor.
 7. Set the startup scene and runtime window options in **Project Settings**.
+
+The **Startup Scene** selector lists saved project scenes. Its selection is stored
+in the project manifest; saving the project while editing another scene preserves
+the selected startup scene.
 8. Bake scene lighting/probes as needed, then export the game.
 
 Useful shortcuts:

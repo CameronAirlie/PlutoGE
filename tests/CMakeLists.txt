@@ -604,3 +604,7 @@ add_test(NAME PlutoGEVulkanOutlineTests COMMAND PlutoGEVulkanRhiTests --outline)
 
 add_test(NAME PlutoGEOpenGLShaderGraphTests COMMAND PlutoGEOpenGLRhiTests --shader-graphs)
 add_test(NAME PlutoGEVulkanShaderGraphTests COMMAND PlutoGEVulkanRhiTests --shader-graphs)
+
+# Accepts external document/font/panel arguments for project UI layout regressions.
+add_executable(PlutoGERmlUiDocumentLayoutTests RmlUiDocumentLayoutTests.cpp)
+target_link_libraries(PlutoGERmlUiDocumentLayoutTests PRIVATE RmlUi::Core)

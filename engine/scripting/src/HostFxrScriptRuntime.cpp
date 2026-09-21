@@ -1319,6 +1319,28 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetFullscreen(fullscreen != 0);
         }
 
+        int32_t GetDisplayVSync() { return core::Engine::GetInstance().IsVSyncEnabled() ? 1 : 0; }
+        int32_t SetDisplayVSync(int32_t enabled)
+        {
+            // Swapchain recreation can fail; never unwind C++ through a managed callback.
+            try { return core::Engine::GetInstance().SetVSyncEnabled(enabled != 0) ? 1 : 0; }
+            catch (...) { return 0; }
+        }
+        int32_t SetSceneShadowResolution(int32_t resolution)
+        {
+            if (resolution < 256 || resolution > 8192) return 0;
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene) return 0;
+            for (auto *light : scene->GetLights())
+            {
+                if (light->type != scene::LightType::Directional) continue;
+                light->directionalShadowSettings.resolution = resolution;
+                light->isDirty = true;
+                light->staticShadowCascadeValid.fill(false);
+            }
+            return 1;
+        }
+
         void QuitApplication()
         {
             core::Engine::GetInstance().RequestApplicationQuit();
@@ -3299,6 +3321,7 @@ namespace PlutoGE::scripting
         register_game_object_api_fn registerGameObjectApi = nullptr;
         register_prefab_api_fn registerPrefabApi = nullptr;
         register_window_api_fn registerWindowApi = nullptr;
+        int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
         register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
@@ -3408,6 +3431,7 @@ namespace PlutoGE::scripting
             impl.registerGameObjectApi = nullptr;
             impl.registerPrefabApi = nullptr;
             impl.registerWindowApi = nullptr;
+            impl.registerDisplayApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerSceneStreamingApi = nullptr;
             impl.registerScriptableObjectApi = nullptr;
@@ -3757,6 +3781,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowApi"), impl.registerWindowApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
@@ -4056,6 +4081,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&SetWindowFullscreen)) == 0)
         {
             setManagedBridgeFailure("RegisterWindowApi");
+            return false;
+        }
+
+        if (!m_impl->registerDisplayApi || m_impl->registerDisplayApi(
+                reinterpret_cast<void *>(&GetDisplayVSync),
+                reinterpret_cast<void *>(&SetDisplayVSync),
+                reinterpret_cast<void *>(&SetSceneShadowResolution)) == 0)
+        {
+            setManagedBridgeFailure("RegisterDisplayApi");
             return false;
         }
 

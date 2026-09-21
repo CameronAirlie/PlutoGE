@@ -631,6 +631,24 @@ internal static unsafe partial class ScriptBridge
         return 1;
     }
 
+    private static delegate* unmanaged[Cdecl]<int> _getDisplayVSync;
+    private static delegate* unmanaged[Cdecl]<int, int> _setDisplayVSync;
+    private static delegate* unmanaged[Cdecl]<int, int> _setSceneShadowResolution;
+    internal static bool DisplaySettingsSupported => _getDisplayVSync != null && _setDisplayVSync != null && _setSceneShadowResolution != null;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterDisplayApi")]
+    public static int RegisterDisplayApi(delegate* unmanaged[Cdecl]<int> getVSync,
+        delegate* unmanaged[Cdecl]<int, int> setVSync, delegate* unmanaged[Cdecl]<int, int> setShadowResolution)
+    {
+        if (getVSync == null || setVSync == null || setShadowResolution == null) return 0;
+        _getDisplayVSync = getVSync;
+        _setDisplayVSync = setVSync;
+        _setSceneShadowResolution = setShadowResolution;
+        return 1;
+    }
+    internal static bool GetDisplayVSync() => _getDisplayVSync != null && _getDisplayVSync() != 0;
+    internal static bool SetDisplayVSync(bool value) => _setDisplayVSync != null && _setDisplayVSync(value ? 1 : 0) != 0;
+    internal static bool SetSceneShadowResolution(int resolution) => _setSceneShadowResolution != null && _setSceneShadowResolution(resolution) != 0;
+
     private static delegate* unmanaged[Cdecl]<int> _getWindowFullscreen;
     private static delegate* unmanaged[Cdecl]<int, void> _setWindowFullscreen;
 

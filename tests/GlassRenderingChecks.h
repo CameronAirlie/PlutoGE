@@ -233,6 +233,31 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     std::array disjoint{groupedPane, otherPane};
     require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 2,
             "Disjoint glass did not share a snapshot");
+    std::array gapPanes{groupedPane, groupedPane, groupedPane};
+    const std::array<rhi::Scissor, 3> gapBounds{{{0, 0, 20, 20}, {80, 80, 20, 20}, {80, 0, 20, 20}}};
+    require(PlanGlassSnapshotGroup(gapPanes, gapBounds, 0).end == 3,
+            "Empty space inside the group rectangle prevented safe snapshot sharing");
+    auto overlappingBounds = gapBounds;
+    overlappingBounds[2] = {10, 10, 20, 20};
+    require(PlanGlassSnapshotGroup(gapPanes, overlappingBounds, 0).end == 2,
+            "Glass grouping ignored an earlier pane's read/write dependency");
+    const std::array<glm::vec3, 3> gapPositions{{{-.55f, -.55f, .6f}, {.55f, .55f, .6f}, {.55f, -.55f, .6f}}};
+    for (std::size_t i = 0; i < gapPanes.size(); ++i)
+    {
+        auto &draw = gapPanes[i];
+        draw.model = glm::translate(glm::mat4(1), gapPositions[i]) * glm::scale(glm::mat4(1), glm::vec3(.1f));
+        draw.shadowBoundsCenter = draw.occlusionBoundsCenter = gapPositions[i];
+        draw.shadowBoundsRadius = .18f;
+        draw.occlusionBoundsExtents = glm::vec3(.1f);
+    }
+    std::array gapScene{gapPanes[0], gapPanes[1], gapPanes[2], left, right};
+    render(gapScene);
+    require(renderer.GetFrameStats().glassSnapshots == 1, "Disjoint gap panes did not record a shared snapshot");
+    const auto gapPixels = readPixels(renderer.GetColorTexture());
+    for (std::size_t i = 0; i < 3; ++i) gapScene[i].shadowBoundsRadius = -1;
+    render(gapScene);
+    require(renderer.GetFrameStats().glassSnapshots == 3 && readPixels(renderer.GetColorTexture()) == gapPixels,
+            "Gap-aware glass grouping changed image pixels");
     std::array groupedScene{disjoint[0], disjoint[1], left, right};
     render(groupedScene);
     require(renderer.GetFrameStats().glassSnapshots == 1 && renderer.GetFrameStats().glassPanes == 2,

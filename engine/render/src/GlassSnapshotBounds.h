@@ -56,28 +56,51 @@ namespace PlutoGE::render
         rhi::Scissor bounds;
     };
 
-    // A sample footprint also contains the pane's raster footprint. Disjoint
-    // footprints therefore cannot read one another's writes. Comparing with
-    // the growing union is conservative and keeps planning linear in panes.
-    inline GlassSnapshotGroup PlanGlassSnapshotGroup(std::span<const BasicDraw> draws, std::size_t first,
-        const glm::mat4 &viewProjection, glm::vec2 clipOffset, std::uint32_t width, std::uint32_t height, bool flipY)
+    inline bool GlassFootprintsOverlap(const rhi::Scissor &a, const rhi::Scissor &b)
     {
-        GlassSnapshotGroup group{first + 1,
-            GlassSnapshotBounds(draws[first], viewProjection, clipOffset, width, height, flipY)};
-        while (group.end < draws.size() && draws[group.end].surfaceType == 1u)
+        return a.x < b.x + static_cast<std::int32_t>(b.width) &&
+            b.x < a.x + static_cast<std::int32_t>(a.width) &&
+            a.y < b.y + static_cast<std::int32_t>(b.height) &&
+            b.y < a.y + static_cast<std::int32_t>(a.height);
+    }
+
+    // A sample footprint contains the pane's raster footprint too. Compare
+    // actual footprints, not their enclosing rectangle (which includes gaps).
+    // Bound group size to keep planning cost bounded for very large imports.
+    inline GlassSnapshotGroup PlanGlassSnapshotGroup(std::span<const BasicDraw> draws,
+        std::span<const rhi::Scissor> footprints, std::size_t first)
+    {
+        GlassSnapshotGroup group{first + 1, footprints[first]};
+        const auto limit = std::min(draws.size(), first + std::size_t{64});
+        while (group.end < limit && draws[group.end].surfaceType == 1u)
         {
-            const auto next = GlassSnapshotBounds(draws[group.end], viewProjection, clipOffset, width, height, flipY);
+            const auto &next = footprints[group.end];
+            bool overlaps = false;
+            for (auto index = first; index < group.end; ++index)
+                if (GlassFootprintsOverlap(footprints[index], next))
+                {
+                    overlaps = true;
+                    break;
+                }
+            if (overlaps) break;
             const auto right = group.bounds.x + static_cast<std::int32_t>(group.bounds.width);
             const auto bottom = group.bounds.y + static_cast<std::int32_t>(group.bounds.height);
             const auto nextRight = next.x + static_cast<std::int32_t>(next.width);
             const auto nextBottom = next.y + static_cast<std::int32_t>(next.height);
-            if (next.x < right && group.bounds.x < nextRight && next.y < bottom && group.bounds.y < nextBottom)
-                break;
             const auto x = std::min(group.bounds.x, next.x), y = std::min(group.bounds.y, next.y);
             group.bounds = {x, y, static_cast<std::uint32_t>(std::max(right, nextRight) - x),
                 static_cast<std::uint32_t>(std::max(bottom, nextBottom) - y)};
             ++group.end;
         }
         return group;
+    }
+
+    inline GlassSnapshotGroup PlanGlassSnapshotGroup(std::span<const BasicDraw> draws, std::size_t first,
+        const glm::mat4 &viewProjection, glm::vec2 clipOffset, std::uint32_t width, std::uint32_t height, bool flipY)
+    {
+        std::vector<rhi::Scissor> footprints(draws.size());
+        for (auto index = first; index < std::min(draws.size(), first + std::size_t{64}); ++index)
+            footprints[index] = GlassSnapshotBounds(draws[index], viewProjection, clipOffset, width, height, flipY);
+        return PlanGlassSnapshotGroup(draws, footprints, first);
     }
 } // namespace PlutoGE::render

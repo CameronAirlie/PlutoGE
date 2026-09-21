@@ -2402,17 +2402,27 @@ namespace PlutoGE::render
             ++historyIndex;
         }
         commands.EndGpuScope();
-        std::stable_sort(transparentDraws.begin(), transparentDraws.end(), [&](const auto &a, const auto &b)
+        // Project each center once and sort small indices. Sorting whole draw
+        // packets repeatedly copied shared ownership and recomputed view depths.
+        std::vector<float> transparentDepths;
+        std::vector<std::size_t> transparentOrder;
+        transparentDepths.reserve(transparentDraws.size());
+        transparentOrder.reserve(transparentDraws.size());
+        for (const auto &draw : transparentDraws)
         {
-            const auto depth = [&](const auto &draw)
-            {
-                const glm::vec3 center = draw.shadowBoundsRadius >= 0.0f
-                    ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
-                return -(lighting.view * glm::vec4(center, 1.0f)).z;
-            };
-            const float depthA = depth(a), depthB = depth(b);
-            return depthA == depthB ? a.graphPassOrder < b.graphPassOrder : depthA > depthB;
+            const auto center = draw.shadowBoundsRadius >= 0 ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
+            transparentDepths.push_back(-(lighting.view * glm::vec4(center, 1)).z);
+            transparentOrder.push_back(transparentOrder.size());
+        }
+        std::stable_sort(transparentOrder.begin(), transparentOrder.end(), [&](auto a, auto b) {
+            return transparentDepths[a] == transparentDepths[b]
+                ? transparentDraws[a].graphPassOrder < transparentDraws[b].graphPassOrder
+                : transparentDepths[a] > transparentDepths[b];
         });
+        std::vector<BasicDraw> sortedTransparency;
+        sortedTransparency.reserve(transparentDraws.size());
+        for (const auto index : transparentOrder) sortedTransparency.push_back(std::move(transparentDraws[index]));
+        transparentDraws.swap(sortedTransparency);
         commands.EndRendering();
         commands.EndGpuScope();
         geometryScope.End();
@@ -2468,6 +2478,11 @@ namespace PlutoGE::render
                 commands.Draw(3);
                 commands.EndRendering();
             }
+            std::vector<rhi::Scissor> glassFootprints(transparentDraws.size());
+            for (std::size_t index = 0; index < transparentDraws.size(); ++index)
+                if (transparentDraws[index].surfaceType == 1u)
+                    glassFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
+                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
             geometryResourcesBound = false;
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
@@ -2479,8 +2494,7 @@ namespace PlutoGE::render
                 if (pane.surfaceType == 1u) ++m_frameStats.glassPanes;
                 if (pane.surfaceType == 1u && paneIndex >= snapshotGroupEnd)
                 {
-                    const auto group = PlanGlassSnapshotGroup(transparentDraws, paneIndex, viewProjection,
-                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
+                    const auto group = PlanGlassSnapshotGroup(transparentDraws, glassFootprints, paneIndex);
                     snapshotGroupEnd = group.end;
                     ++m_frameStats.glassSnapshots;
                     if (rendering)

@@ -145,3 +145,66 @@ All 13 selected graphics regression checks passed, covering Vulkan/OpenGL
 render optimizations, VSM, transparency, temporal motion, opaque batching and
 outlines, plus Vulkan preparation caching. An additional non-consecutive
 material-reuse image test compares against forced separate preparation.
+
+## Remaining CPU bottlenecks: visibility, submission and transparency
+
+The latest attached editor capture averaged 16.114 ms CPU and 7.926 ms GPU at
+1748 × 1137 with the debugger attached. Visibility preparation (2.059 ms),
+mesh submission (1.949 ms) and transparency (1.846 ms) were the next targets.
+
+- Submission now copies each command directly into its destination, skips
+  ordering comparisons after the list is already dirty, and fast-paths
+  byte-identical shadow transforms while preserving the tolerant comparison.
+- LOD selection and transition evaluation share a metadata traversal. Updating
+  only fade/transition data no longer dirties command ordering; changing the
+  selected LOD still does. Invalid imported ranges retain their fallback behavior.
+- Transparency projects each depth once, stably sorts indices, and moves draw
+  packets once. Existing depth and graph-pass ordering are preserved.
+- Glass footprints are computed once per frame. Sharing checks individual pane
+  footprints instead of their enclosing union, avoiding false dependencies in
+  empty gaps. Groups are capped at 64 panes to bound planning work. Overlapping
+  panes and ordinary transparency still end a group; conservative bounds remain.
+
+### Validation and measurements
+
+The MSVC Debug editor and graphics test targets built successfully. All 14
+selected tests passed: engine graphics API; Vulkan/OpenGL transparency, render
+optimizations, VSM, temporal motion, opaque batching and outlines; and Vulkan
+preparation caching. New checks compare LOD selection against the former
+algorithm at thresholds and invalid ranges, and verify three-pane glass sharing
+against forced separate snapshots with exact pixel equality.
+
+Two alternating before/after runs used the saved Testing scene, fixed camera,
+320 × 180 render target, 100 warm-up frames and 240 measured frames. Compilation,
+the editor and other graphics tests were stopped during timings. Visibility was
+measured separately with a viewport height of 1137, stationary and moving cameras,
+40 warm-up iterations and 240 samples per camera. Submission is outside those
+visibility timers.
+
+| CPU stage | Before 1 ms | After 1 ms | Before 2 ms | After 2 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Scene update excluding submission | 1.618 | 1.463 | 1.112 | 1.142 |
+| Mesh submission | 2.760 | 1.479 | 2.151 | 1.253 |
+| Render service | 20.256 | 16.557 | 16.505 | 14.446 |
+| Stationary visibility | 0.749 | 0.606 | 0.694 | 0.577 |
+| Moving visibility | 0.720 | 0.734 | 0.669 | 0.562 |
+
+Submission improved 42–46% and render service 12–18% in these pairs. Stationary
+visibility improved 17–19%; moving visibility was mixed (2% slower, then 16%
+faster). Run-to-run variation is substantial, so these timings are directional,
+not a guaranteed FPS increase. The harness is Debug but has no attached debugger
+and uses a simplified post-processing stack; the actual editor needs a fresh
+capture at the same camera, viewport and debugger configuration.
+
+All four final RGB images have SHA-256
+`7B7F2D744CFA3BBB53701E703D9FD337D4DE77896C44994143CF374890D99456`.
+Each run averaged 1,870 indexed and 265 non-indexed draws. Visibility checksum
+values are order-sensitive and differ even between unchanged baseline launches
+because command keys include pointer addresses; they are not cross-run correctness
+evidence. LOD regression checks and image comparisons provide that validation.
+
+Evidence: `out/bistro-remaining-before/{run,repeat}.log`,
+`out/build/bistro-remaining-after.log`, `out/bistro-remaining-after-repeat.log`,
+`out/bistro-remaining-{before,after}/{capture,repeat}/benchmark.ppm`,
+`out/build/bistro-remaining-build.log` and
+`out/build/bistro-remaining-regressions.log`.

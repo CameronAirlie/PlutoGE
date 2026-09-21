@@ -629,6 +629,46 @@ namespace PlutoGE::render
 
             return selectedLod;
         }
+        struct LodSelection
+        {
+            uint32_t index = 0, transitionIndex = 0;
+            float fade = 0;
+        };
+        LodSelection SelectSubmeshLodWithTransition(size_t submeshIndex, float projectedRadiusPixels,
+                                                   uint32_t minimumIndex) const
+        {
+            if (submeshIndex >= m_config.submeshes.size()) return {};
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            const auto count = std::max<size_t>(submesh.lods.size(), 1);
+            minimumIndex = std::min(minimumIndex, static_cast<uint32_t>(count - 1));
+            uint32_t selected = 0;
+            LodSelection transition;
+            bool foundTransition = false;
+            // Selection and transition thresholds share one metadata traversal.
+            // Preserve the first transition and the last eligible LOD, including
+            // the fallback range semantics for malformed imported ranges.
+            for (size_t i = 0; i < submesh.lods.size(); ++i)
+            {
+                const auto &lod = submesh.lods[i];
+                if (projectedRadiusPixels <= lod.maxScreenRadiusPixels) selected = static_cast<uint32_t>(i);
+                if (foundTransition || i == 0 || i - 1 < minimumIndex) continue;
+                const bool valid = lod.indexCount > 0 && lod.indexOffset <= m_config.data.indices.size() &&
+                    static_cast<size_t>(lod.indexCount) <= m_config.data.indices.size() - lod.indexOffset;
+                const float threshold = valid ? lod.maxScreenRadiusPixels : std::numeric_limits<float>::max();
+                if (!std::isfinite(threshold) || threshold <= 0) continue;
+                const float upper = threshold * 1.15f, lower = threshold * .85f;
+                if (projectedRadiusPixels <= upper && projectedRadiusPixels >= lower)
+                {
+                    transition = {static_cast<uint32_t>(i - 1), static_cast<uint32_t>(i),
+                        glm::clamp((upper - projectedRadiusPixels) / std::max(upper - lower, .001f), 0.0f, 1.0f)};
+                    foundTransition = true;
+                }
+            }
+            const auto index = std::max(selected, minimumIndex);
+            if (!foundTransition) return {index, index, 0};
+            if (!(transition.fade > 0 && transition.fade < 1)) transition.index = index;
+            return transition;
+        }
         const MeshBounds &GetBounds() const { return m_bounds; }
         const Skeleton &GetSkeleton() const { return m_config.skeleton; }
         bool HasSkeleton() const { return !m_config.skeleton.joints.empty(); }

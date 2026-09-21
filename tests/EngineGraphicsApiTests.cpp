@@ -18,6 +18,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
+#include "LodSelectionChecks.h"
 
 #include <array>
 #include <chrono>
@@ -66,6 +67,8 @@ int main(int argc, char **argv)
     };
     if (!engine.Initialize(config))
         return 1;
+    try { CheckLodSelection(); }
+    catch (const std::exception &error) { std::cerr << error.what() << std::endl; return 48; }
     if (engine.GetWindow().GetClientApi() != platform::WindowClientApi::None)
         return 2;
     if (!engine.GetRenderDevice() || engine.GetRenderDevice()->GetApi() != render::rhi::GraphicsApi::Vulkan)
@@ -236,6 +239,38 @@ int main(int argc, char **argv)
             std::ofstream file(std::filesystem::path(argv[4]) / "benchmark.ppm", std::ios::binary);
             file << "P6\n" << output.extentWidth << ' ' << output.extentHeight << "\n255\n";
             for (std::size_t i = 0; i < pixels.size(); i += 4) file.write(reinterpret_cast<const char *>(pixels.data() + i), 3);
+            // Measure the editor's visibility path independently of the small
+            // render-service target. Re-submit source commands every iteration
+            // just as Scene::Update does; only preparation is inside the timer.
+            for (bool moving : {false, true})
+            {
+                double visibilityMs = 0;
+                // Diagnostic within a process only: render order includes
+                // pointer keys, so this checksum is not stable across launches.
+                std::uint64_t checksum = 1469598103934665603ull;
+                auto &renderer = engine.GetRenderer();
+                for (int frame = 0; frame < 280; ++frame)
+                {
+                    renderer.ClearRenderCommands();
+                    scene->SubmitRenderCommands();
+                    auto view = camera;
+                    if (moving)
+                        view.view = glm::lookAtRH(eye + glm::vec3(std::sin(frame * .02f), 0, 0), target, glm::vec3(0, 1, 0));
+                    const auto start = Clock::now();
+                    renderer.PrepareVisibleRenderCommands(view, 1137);
+                    const auto end = Clock::now();
+                    if (frame < 40) continue;
+                    visibilityMs += std::chrono::duration<double, std::milli>(end - start).count();
+                    for (const auto &draw : renderer.GetVisibleRenderCommands())
+                    {
+                        checksum = (checksum ^ draw.submeshIndex) * 1099511628211ull;
+                        checksum = (checksum ^ draw.lodIndex) * 1099511628211ull;
+                        checksum = (checksum ^ draw.minLodIndex) * 1099511628211ull;
+                    }
+                }
+                std::cout << "Bistro visibility " << (moving ? "moving" : "stationary")
+                          << " samples=240 cpu_ms=" << visibilityMs / 240 << " checksum=" << checksum << std::endl;
+            }
             service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
         }
         if (vsmCapture)

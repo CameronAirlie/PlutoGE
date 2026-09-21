@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numeric>
 #include <string_view>
@@ -72,6 +73,9 @@ namespace PlutoGE::render
         bool ShadowTransformsEqual(const glm::mat4 &a, const glm::mat4 &b,
                                    float epsilon = 0.0001f)
         {
+            // Static imports overwhelmingly have byte-identical history. Keep
+            // the tolerance path for actual differences (including signed zero).
+            if (std::memcmp(&a[0][0], &b[0][0], sizeof(float) * 16) == 0) return true;
             for (int column = 0; column < 4; ++column)
                 for (int row = 0; row < 4; ++row)
                     if (std::abs(a[column][row] - b[column][row]) > epsilon)
@@ -178,7 +182,8 @@ namespace PlutoGE::render
             bool intersects = false;
             for (const auto &plane : planes)
             {
-                const float signedDistance = glm::dot(plane.normal, bounds.center) + plane.distance;
+                const float signedDistance = plane.normal.x * bounds.center.x +
+                    plane.normal.y * bounds.center.y + plane.normal.z * bounds.center.z + plane.distance;
                 if (signedDistance < -bounds.radius)
                 {
                     return FrustumContainment::Outside;
@@ -1031,13 +1036,12 @@ namespace PlutoGE::render
             return;
         }
 
-        if (!m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
+        if (!m_renderCommandsDirty && !m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
             m_renderCommandsDirty = true;
         const std::size_t commandIndex = m_renderCommands.size();
-        auto submitted=command;
+        auto &submitted = m_renderCommands.emplace_back(command);
         if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
             submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
-        m_renderCommands.push_back(submitted);
         TrackShadowCommand(commandIndex, submitted);
         if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
         if(command.material)for(const auto &pass:command.material->GetConfig().additionalPasses){
@@ -1066,16 +1070,15 @@ namespace PlutoGE::render
                 continue;
             }
 
-            if (!insertedAny && !m_renderCommands.empty() &&
+            if (!m_renderCommandsDirty && !insertedAny && !m_renderCommands.empty() &&
                 CompareRenderCommandKeys(command, m_renderCommands.back()))
             {
                 m_renderCommandsDirty = true;
             }
             const std::size_t commandIndex = m_renderCommands.size();
-            auto submitted=command;
+            auto &submitted = m_renderCommands.emplace_back(command);
             if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
                 submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
-            m_renderCommands.push_back(submitted);
             TrackShadowCommand(commandIndex, submitted);
             if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
             if (command.material)
@@ -1190,7 +1193,6 @@ namespace PlutoGE::render
 
     void Renderer::UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight)
     {
-        constexpr float kLodTransitionWidth = 0.15f;
         const glm::mat4 inverseView = glm::inverse(cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
         const float projectionScaleY = std::abs(cameraData.projection[1][1]);
@@ -1217,9 +1219,9 @@ namespace PlutoGE::render
                     command.GetLodTransitionIndex() != 0 ||
                     command.GetLodTransitionFade() != 0.0f)
                 {
+                    changed |= command.lodIndex != 0;
                     command.lodIndex = 0;
                     command.SetLodTransition(0, 0.0f);
-                    changed = true;
                 }
             }
             else if (command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
@@ -1227,45 +1229,20 @@ namespace PlutoGE::render
                 const glm::vec3 cameraOffset = command.worldBounds.center - cameraPosition;
                 const float safeDistance = std::sqrt(std::max(glm::dot(cameraOffset, cameraOffset), 0.000001f));
                 const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
-                const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
-                const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
-                const uint32_t minLodIndex = lodCount > 0 ? std::min(command.GetMinLodIndex(), static_cast<uint32_t>(lodCount - 1)) : 0u;
-                const uint32_t lodIndex = std::max(selectedLodIndex, minLodIndex);
-                uint32_t transitionIndex = lodIndex;
-                uint32_t transitionBaseIndex = lodIndex;
-                float transitionFade = 0.0f;
-
-                for (uint32_t farLodIndex = 1; farLodIndex < lodCount; ++farLodIndex)
-                {
-                    const uint32_t nearLodIndex = farLodIndex - 1;
-                    if (nearLodIndex < minLodIndex)
-                        continue;
-                    const float threshold = command.mesh->GetSubmeshLodRange(command.submeshIndex, farLodIndex).maxScreenRadiusPixels;
-                    if (!std::isfinite(threshold) || threshold <= 0.0f)
-                        continue;
-                    const float upperRadius = threshold * (1.0f + kLodTransitionWidth);
-                    const float lowerRadius = threshold * (1.0f - kLodTransitionWidth);
-                    if (projectedRadiusPixels <= upperRadius && projectedRadiusPixels >= lowerRadius)
-                    {
-                        transitionBaseIndex = nearLodIndex;
-                        transitionIndex = farLodIndex;
-                        transitionFade = glm::clamp((upperRadius - projectedRadiusPixels) /
-                                                        std::max(upperRadius - lowerRadius, 0.001f),
-                                                    0.0f, 1.0f);
-                        break;
-                    }
-                }
-
-                const uint32_t resolvedLodIndex = transitionFade > 0.0f && transitionFade < 1.0f
-                                                      ? transitionBaseIndex
-                                                      : lodIndex;
+                const auto selection = command.mesh->SelectSubmeshLodWithTransition(
+                    command.submeshIndex, projectedRadiusPixels, command.GetMinLodIndex());
+                const auto resolvedLodIndex = selection.index;
+                const auto transitionIndex = selection.transitionIndex;
+                const auto transitionFade = selection.fade;
                 if (command.lodIndex != resolvedLodIndex ||
                     command.GetLodTransitionIndex() != transitionIndex ||
                     std::abs(command.GetLodTransitionFade() - transitionFade) > (1.0f / 65535.0f))
                 {
+                    // Fade/history bits are not sort keys. Only a new index
+                    // range can disturb the already sorted command order.
+                    changed |= command.lodIndex != resolvedLodIndex;
                     command.lodIndex = resolvedLodIndex;
                     command.SetLodTransition(transitionIndex, transitionFade);
-                    changed = true;
                 }
             }
 

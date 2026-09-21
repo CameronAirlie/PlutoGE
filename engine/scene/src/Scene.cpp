@@ -3110,13 +3110,25 @@ namespace PlutoGE::scene
                          scriptClass.empty() ? "<unassigned>" : scriptClass, elapsedMs, entity);
     }
 
-    void Scene::SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside)
+    void Scene::SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside,
+                                          const glm::vec4 &pointerViewport)
     {
         m_runtimeUIInputOverride = RuntimeUIInputOverride{
             .canvasSize = glm::max(canvasSize, glm::vec2(0.0f)),
             .mousePosition = mousePosition,
             .pointerInside = pointerInside,
+            .pointerViewport = pointerViewport,
         };
+    }
+
+    bool Scene::GetRuntimePointerViewport(glm::vec4 &viewport) const
+    {
+        if (!m_runtimeUIInputOverride) return false;
+        const auto bounds = m_runtimeUIInputOverride->pointerViewport;
+        if (!std::isfinite(bounds.x) || !std::isfinite(bounds.y) || !std::isfinite(bounds.z) ||
+            !std::isfinite(bounds.w) || bounds.z <= 0 || bounds.w <= 0) return false;
+        viewport = bounds;
+        return true;
     }
 
     void Scene::ClearRuntimeUIInputOverride()

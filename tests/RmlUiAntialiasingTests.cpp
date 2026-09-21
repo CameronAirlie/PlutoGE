@@ -157,7 +157,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         for (int i=0;i<12;++i) entries += "<p>[ACTIVE] The Last Archivist - After clearing the Ossuary, speak to the blue shrine on its eastern side. The sigil opens the descent.</p>";
         journal->GetElementById("quests")->SetInnerRML(entries);
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
-        for (int page=0;page<3;++page)
+        for (int page=0;page<4;++page)
         {
             if (page==1) journal->GetElementById("inventory-page")->SetScrollTop(10000);
             if (page==2)
@@ -166,6 +166,21 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                 journal->GetElementById("quests-page")->SetProperty("display","block");
                 journal->GetElementById("inventory-tab")->SetClass("selected",false);
                 journal->GetElementById("quests-tab")->SetClass("selected",true);
+            }
+            if (page==3)
+            {
+                journal->GetElementById("quests-page")->SetProperty("display","none");
+                journal->GetElementById("inventory-page")->SetProperty("display","block");
+                journal->GetElementById("inventory-page")->SetScrollTop(0);
+                auto* slot=journal->GetElementById("bag-0");
+                slot->SetInnerRML("<span class=\"slot-caption\">1</span><br/>Cinder Staff");
+                slot->SetProperty("drag","clone");
+                context->Update();
+                const auto point=slot->GetAbsoluteOffset(Rml::BoxArea::Border)*0.75f+Rml::Vector2f(12,12);
+                context->ProcessMouseMove(int(point.x),int(point.y),0);
+                context->ProcessMouseButtonDown(0,0);
+                context->ProcessMouseMove(int(point.x+30),int(point.y+30),0);
+                context->ProcessMouseMove(int(point.x+170),int(point.y+100),0);
             }
             context->Update(); context->Update();
             Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));
@@ -178,6 +193,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
             for (int y=719;y>=0;--y) for(int x=0;x<960;++x)
                 output.write(reinterpret_cast<const char*>(capture.data()+(y*960+x)*4),3);
             Require(bool(output),"Could not write journal capture");
+            if (page==3) context->ProcessMouseButtonUp(0,0);
         }
     }
     Rml::Shutdown(); Rml::SetRenderInterface(nullptr);

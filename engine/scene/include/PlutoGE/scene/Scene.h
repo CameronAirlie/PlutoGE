@@ -131,7 +131,11 @@ namespace PlutoGE::scene
         void StartRuntime();
         void StopRuntime();
         void Update(float deltaTime);
-        void SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside);
+        // Optional viewport bounds use the host window's logical, top-left cursor coordinates.
+        // They let late gameplay queries resample the OS cursor without changing UI event snapshots.
+        void SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside,
+                                       const glm::vec4 &pointerViewport = glm::vec4(0.0f));
+        [[nodiscard]] bool GetRuntimePointerViewport(glm::vec4 &viewport) const;
         void ClearRuntimeUIInputOverride();
         [[nodiscard]] bool GetRuntimeUIInputOverride(glm::vec2 &canvasSize,
                                                      glm::vec2 &mousePosition,
@@ -315,6 +319,7 @@ namespace PlutoGE::scene
             glm::vec2 canvasSize{0.0f};
             glm::vec2 mousePosition{0.0f};
             bool pointerInside = false;
+            glm::vec4 pointerViewport{0.0f};
         };
         std::optional<RuntimeUIInputOverride> m_runtimeUIInputOverride;
         std::unique_ptr<UISystem> m_uiSystem;

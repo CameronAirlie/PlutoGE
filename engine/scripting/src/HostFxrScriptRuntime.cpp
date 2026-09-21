@@ -1329,6 +1329,20 @@ namespace PlutoGE::scripting
             if (scene && scene->GetRuntimeUIInputOverride(size, pointer, inside))
             {
                 if (!inside || size.x <= 0 || size.y <= 0) return {};
+                glm::vec4 viewport{};
+                if (scene->GetRuntimePointerViewport(viewport))
+                {
+                    // UI events keep their frame snapshot, but aiming samples at
+                    // the instant of the query, after simulation and camera work.
+                    auto *handle = static_cast<GLFWwindow *>(window.GetWindow());
+                    if (!handle) return {};
+                    double cursorX = 0, cursorY = 0;
+                    glfwGetCursorPos(handle, &cursorX, &cursorY);
+                    const double x = (cursorX - viewport.x) / viewport.z;
+                    const double y = (cursorY - viewport.y) / viewport.w;
+                    if (x < 0 || y < 0 || x >= 1 || y >= 1) return {};
+                    return {static_cast<float>(x), static_cast<float>(y), 1};
+                }
                 return {pointer.x / size.x, 1.0f - pointer.y / size.y, 1};
             }
             int width = 0, height = 0;

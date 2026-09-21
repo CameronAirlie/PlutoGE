@@ -615,3 +615,5 @@ When generating a PlutoGE script:
 - Managed/native bridge: `engine/scripting/managed/PlutoGE.ScriptCore/Native/ScriptBridge.cs`
 - Runtime host: `engine/scripting/src/HostFxrScriptRuntime.cpp`
 - Script component lifecycle: `engine/scene/src/components/ScriptComponent.cpp`
+
+Pointer-ray queries in hosted game viewports sample the current OS cursor using the viewport's host-window logical bounds. Call `CameraComponent.TryGetPointerRay` during `OnLateUpdate` for camera-relative aiming. Runtime UI event coordinates remain frame snapshots so UI processing is deterministic. A rendered world reticle still incurs normal rendering/presentation latency.

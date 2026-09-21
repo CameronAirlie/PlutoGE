@@ -3175,11 +3175,13 @@ namespace PlutoGE::ui
                         // belongs to the previous UI frame here; sample GLFW now.
                         double cursorX = 0, cursorY = 0;
                         glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
+                        glm::vec2 windowOrigin(0.0f);
                         if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
                         {
                             int windowX = 0, windowY = 0;
                             glfwGetWindowPos(windowHandle, &windowX, &windowY);
                             cursorX += windowX; cursorY += windowY;
+                            windowOrigin = glm::vec2(windowX, windowY);
                         }
                         const ImVec2 mouse(static_cast<float>(cursorX), static_cast<float>(cursorY));
                         const glm::vec2 normalizedMouse = hasViewport
@@ -3195,7 +3197,8 @@ namespace PlutoGE::ui
                                                          : glm::vec2(0.0f);
                         const glm::vec2 canvasMouse(normalizedMouse.x * canvasSize.x,
                                                     (1.0f - normalizedMouse.y) * canvasSize.y);
-                        m_scene->SetRuntimeUIInputOverride(canvasSize, canvasMouse, pointerInside);
+                        m_scene->SetRuntimeUIInputOverride(canvasSize, canvasMouse, pointerInside,
+                            glm::vec4(viewportMin - windowOrigin, viewportSize));
                     }
                     m_scene->Update(deltaTime.count());
                     const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();

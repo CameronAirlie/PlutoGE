@@ -80,6 +80,25 @@ int main(int argc, char** argv) try
         if (auto* source = document->GetElementById("bag-0"); source && Rml::String(argv[4]) == "journal-panel")
         {
             auto* target = document->GetElementById("bag-1");
+            // A drag clone lives outside #journal-panel. Reproduce that ancestry
+            // so a regression cannot hide behind the source slot's grid styles.
+            auto preview = source->Clone();
+            preview->SetId("drag-preview-probe");
+            preview->SetInnerRML("<span class=\"slot-caption\">1</span><br/>Cinder Staff");
+            preview->SetPseudoClass("drag", true);
+            preview->SetProperty("position", "absolute");
+            preview->SetProperty("left", "0px"); preview->SetProperty("top", "0px");
+            auto* card = document->AppendChild(std::move(preview));
+            context->Update();
+            const auto previewSize = card->GetBox().GetSize(Rml::BoxArea::Border);
+            if (std::abs(previewSize.x - 144) > 0.5f || std::abs(previewSize.y - 84) > 0.5f)
+                throw std::runtime_error("Reparented drag preview lost its card dimensions");
+            if (card->GetComputedValues().overflow_x() != Rml::Style::Overflow::Hidden ||
+                card->GetComputedValues().overflow_y() != Rml::Style::Overflow::Hidden ||
+                std::abs(card->GetComputedValues().font_size() - 16) > 0.5f)
+                throw std::runtime_error("Reparented drag preview lost its font or clipping");
+            document->RemoveChild(card);
+
             scroll->SetScrollTop(0);
             document->GetElementById("inventory-grid")->SetScrollTop(0);
             source->SetProperty("drag", "clone");

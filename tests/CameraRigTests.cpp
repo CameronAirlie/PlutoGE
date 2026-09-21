@@ -198,8 +198,28 @@ void OrthographicProjection()
             "Camera projection must survive serialization");
 }
 
+void ViewportPointerBounds()
+{
+    PlutoGE::scene::Scene scene;
+    glm::vec4 viewport{};
+    Require(!scene.GetRuntimePointerViewport(viewport), "Standalone runtime must use the window cursor");
+    scene.SetRuntimeUIInputOverride({1920,1080}, {960,540}, true, {-200,80,960,540});
+    Require(scene.GetRuntimePointerViewport(viewport) && viewport == glm::vec4(-200,80,960,540),
+            "Logical viewport bounds must be independent of render resolution and allow detached windows");
+    glm::vec2 size{}, pointer{}; bool inside = false;
+    Require(scene.GetRuntimeUIInputOverride(size,pointer,inside) && pointer == glm::vec2(960,540) && inside,
+            "Live aiming must not replace the UI event snapshot");
+    scene.SetRuntimeUIInputOverride({1920,1080},{960,540},true);
+    Require(!scene.GetRuntimePointerViewport(viewport), "Legacy overrides must clear stale live bounds");
+    scene.SetRuntimeUIInputOverride({1920,1080},{960,540},true,{0,0,0,540});
+    Require(!scene.GetRuntimePointerViewport(viewport), "Collapsed viewport cannot be sampled");
+    scene.SetRuntimeUIInputOverride({1920,1080},{960,540},true,{0,0,960,540});
+    scene.ClearRuntimeUIInputOverride();
+    Require(!scene.GetRuntimePointerViewport(viewport), "Leaving editor play mode must clear live bounds");
+}
+
 int main()
 {
-    try { OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
+    try { ViewportPointerBounds(); OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

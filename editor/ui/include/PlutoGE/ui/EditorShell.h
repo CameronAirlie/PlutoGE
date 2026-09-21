@@ -304,6 +304,7 @@ namespace PlutoGE::ui
         bool CreateProjectAtPath(const std::filesystem::path &manifestPath);
         bool SaveProjectToDisk();
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
+        bool RunTestBuild();
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;

@@ -489,6 +489,20 @@ if (TARGET PlutoGEEditorUI)
     endif()
     add_test(NAME PlutoGEEditorProfilerPanelTests COMMAND PlutoGEEditorProfilerPanelTests)
     set_tests_properties(PlutoGEEditorProfilerPanelTests PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(PlutoGERuntimeProfilerTests RuntimeProfilerTests.cpp ../runtime/src/RuntimeProfiler.cpp)
+    target_include_directories(PlutoGERuntimeProfilerTests PRIVATE ../runtime/src)
+    target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE PlutoGE::EditorUI)
+    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE
+            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
+    endif()
+    if (TARGET OpenAL)
+        add_custom_command(TARGET PlutoGERuntimeProfilerTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGERuntimeProfilerTests>/$<TARGET_FILE_NAME:OpenAL>)
+    endif()
+    add_test(NAME PlutoGERuntimeProfilerTests COMMAND PlutoGERuntimeProfilerTests)
+    set_tests_properties(PlutoGERuntimeProfilerTests PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_test(NAME PlutoGEVulkanParticlePointTests COMMAND PlutoGEVulkanRhiTests --particles-points-only)

@@ -1,5 +1,10 @@
 add_executable(PlutoGERuntime
     src/main.cpp
+    src/RuntimeProfiler.cpp
+    ../editor/ui/src/EditorProfiler.cpp
+    ../editor/ui/src/panels/ProfilerPanel.cpp
+    ../editor/ui/src/panels/ProfilerTimeline.cpp
+    ../editor/ui/src/panels/Panel.cpp
 )
 
 if (WIN32)
@@ -11,6 +16,7 @@ endif()
 target_include_directories(PlutoGERuntime
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/editor/ui/include
 )
 
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
@@ -24,7 +30,7 @@ else()
     )
 endif()
 
-target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm)
+target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm PlutoGE::imgui PlutoGE::glfw)
 
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
 pluto_attach_streamline_runtime(PlutoGERuntime)

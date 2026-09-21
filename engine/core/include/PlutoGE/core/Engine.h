@@ -48,6 +48,7 @@ namespace PlutoGE::core
         bool vSync = true;
         bool isEditorHost = false;
         render::rhi::TemporalUpscalerOptions temporalUpscaler;
+        bool enableProfiling = false;
     };
 
     struct MeshImportStatus

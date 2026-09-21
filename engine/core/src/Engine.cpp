@@ -273,7 +273,7 @@ namespace PlutoGE::core
             m_textureManager.SetWindow(&m_window);
             render::RendererConfig rendererConfig;
             rendererConfig.window = &m_window;
-            rendererConfig.enableProfiling = m_config.isEditorHost;
+            rendererConfig.enableProfiling = m_config.isEditorHost || m_config.enableProfiling;
             if (!m_renderer.Initialize(rendererConfig))
             {
                 std::cerr << "Failed to initialize renderer." << std::endl;

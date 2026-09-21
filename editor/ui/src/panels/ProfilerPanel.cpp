@@ -44,7 +44,7 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::CopyMetricsToClipboard()
     {
-        if (!m_profiler || !m_panelManager || !m_renderer)
+        if (!m_profiler || !m_renderer)
         {
             return;
         }
@@ -59,7 +59,7 @@ namespace PlutoGE::ui
         }
         const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
         m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
-            m_panelManager->GetTimingStats(),
+            (m_panelManager ? m_panelManager->GetTimingStats() : PanelManagerTimingStats{}),
             m_profiler->GetLatestFrameTimingStats(),
             m_renderer->GetCpuPassTimings(),
             m_renderer->GetCpuFrameStats(),
@@ -101,7 +101,7 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::Render()
     {
-        if (!m_profiler || !m_panelManager || !m_renderer)
+        if (!m_profiler || !m_renderer)
         {
             ImGui::TextUnformatted("Profiler is unavailable.");
             return;
@@ -111,7 +111,7 @@ namespace PlutoGE::ui
         RenderProfilerWorkspace();
         if (!ImGui::CollapsingHeader("Detailed frame metrics")) return;
         const auto *selected = GetSelectedFrame();
-        const auto &timingStats = (selected ? selected->panels : m_panelManager->GetTimingStats());
+        const auto &timingStats = (selected ? selected->panels : (m_panelManager ? m_panelManager->GetTimingStats() : PanelManagerTimingStats{}));
         const auto &cpuPassTimings = (selected ? selected->cpuPasses : m_renderer->GetCpuPassTimings());
         const auto &cpuFrameStats = (selected ? selected->renderer : m_renderer->GetCpuFrameStats());
         const auto &gpuPassTimings = (selected ? selected->gpuPasses : m_renderer->GetGpuPassTimings());

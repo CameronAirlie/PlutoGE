@@ -1,3 +1,4 @@
+#include "RuntimeProfiler.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
@@ -356,6 +357,7 @@ int RunRuntime(int argc, char **argv)
 
     constexpr std::size_t benchmarkWarmupFrames = 120;
     constexpr std::size_t defaultBenchmarkFrames = 600;
+    const bool profilerEnabled = argc > 1 && std::string_view(argv[1]) == "--profiler";
     const bool benchmarkEnabled = argc > 1 && std::string_view(argv[1]) == "--benchmark";
     std::size_t benchmarkFrameCount = defaultBenchmarkFrames;
     if (benchmarkEnabled && argc > 2)
@@ -373,11 +375,11 @@ int RunRuntime(int argc, char **argv)
 
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
     PlutoGE::TemporaryContentDirectory temporaryContent;
-    auto manifestPath = argc > 1 && !benchmarkEnabled
+    auto manifestPath = argc > 1 && !benchmarkEnabled && !profilerEnabled
                             ? std::filesystem::path(argv[1])
                             : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
 
-    if (argc <= 1 || benchmarkEnabled)
+    if (argc <= 1 || benchmarkEnabled || profilerEnabled)
     {
         const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
         if (std::filesystem::exists(contentPackPath))
@@ -466,6 +468,7 @@ int RunRuntime(int argc, char **argv)
             .fullscreen = false,
         }};
     config.vSync = project->GetManifest().vSyncEnabled;
+    config.enableProfiling = profilerEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
     config.temporalUpscaler = project->GetManifest().GetTemporalUpscalerOptions();
 
@@ -584,8 +587,25 @@ int RunRuntime(int argc, char **argv)
     if (benchmarkEnabled)
         benchmarkFrameTimes.reserve(benchmarkFrameCount);
 
+    std::unique_ptr<PlutoGE::RuntimeProfiler> runtimeProfiler;
+    if (profilerEnabled)
+    {
+        runtimeProfiler = std::make_unique<PlutoGE::RuntimeProfiler>(renderer);
+        if (!runtimeProfiler->Initialize())
+        {
+            std::cerr << "Failed to initialize runtime profiler window." << std::endl;
+            runtimeProfiler.reset();
+            engine.StopRuntime();
+            engine.Shutdown();
+            return 1;
+        }
+    }
+
     while (!window.ShouldClose())
     {
+        PlutoGE::core::CpuTrace cpuTrace(runtimeProfiler && runtimeProfiler->profiler.IsRecording());
+        PlutoGE::ui::EditorFrameTimingStats frameTiming;
+        const auto frameStart = std::chrono::high_resolution_clock::now();
         window.PollEvents();
         const auto currentFrameTime = std::chrono::high_resolution_clock::now();
         const float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
@@ -594,10 +614,15 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "scene update";
 #endif
+        if (runtimeProfiler) renderer.BeginProfilingFrame();
         if (scene)
         {
+            PlutoGE::core::CpuScope scope("Runtime.SceneUpdate", PlutoGE::core::CpuCategory::Other);
             scene->Update(deltaTime);
         }
+        const auto updateEnd = std::chrono::high_resolution_clock::now();
+        PlutoGE::core::CpuScope renderScope("Runtime.Render", PlutoGE::core::CpuCategory::Rendering);
+        frameTiming.sceneUpdateMs = std::chrono::duration<float, std::milli>(updateEnd - currentFrameTime).count();
 
         if (const auto requestedScene = engine.ConsumeSceneLoadRequest())
         {
@@ -717,6 +742,47 @@ int RunRuntime(int argc, char **argv)
             renderer.EndFrame();
         }
 
+        renderScope.End();
+        if (runtimeProfiler)
+        {
+            const auto frameEnd = std::chrono::high_resolution_clock::now();
+            frameTiming.viewportRenderMs = std::chrono::duration<float, std::milli>(frameEnd - updateEnd).count();
+            frameTiming.eventPollingMs = std::chrono::duration<float, std::milli>(currentFrameTime - frameStart).count();
+            frameTiming.gameViewportWidth = windowExtents.width;
+            frameTiming.gameViewportHeight = windowExtents.height;
+            frameTiming.renderedViewportCount = 1;
+            frameTiming.renderedViewportPixels = std::uint64_t((std::max)(0, windowExtents.width)) * (std::max)(0, windowExtents.height);
+            frameTiming.vSyncEnabled = config.vSync;
+            if (useVulkanRenderer)
+            {
+                frameTiming.rhiTimingStats = engine.GetRenderDevice()->GetTimingStats("Scene");
+                frameTiming.rhiSceneTimingStats = engine.GetRhiRenderService().GetTimingStats();
+            }
+            if (scene)
+            {
+                const auto &update = scene->GetUpdateTimingStats();
+                frameTiming.scenePreparationMs = update.preparationMs;
+                frameTiming.sceneRuntimeUiMs = update.runtimeUiMs;
+                frameTiming.sceneComponentsMs = update.componentsMs;
+                frameTiming.sceneLateScriptsMs = update.lateScriptsMs;
+                frameTiming.sceneAudioMs = update.audioMs;
+                frameTiming.sceneRenderSubmissionMs = update.renderSubmissionMs;
+                frameTiming.sceneMeshSubmissionMs = update.meshSubmissionMs;
+                frameTiming.sceneTerrainSubmissionMs = update.terrainSubmissionMs;
+                frameTiming.sceneFoliageSubmissionMs = update.foliageSubmissionMs;
+                frameTiming.scenePhysicsMs = update.physicsMs;
+                frameTiming.componentTimings = update.componentTimings;
+                frameTiming.animationTimings = update.animationTimings;
+                frameTiming.scriptUpdateTimings = update.scriptUpdateTimings;
+                frameTiming.scriptLateUpdateTimings = update.scriptLateUpdateTimings;
+            }
+            runtimeProfiler->profiler.CompleteFrame(
+                std::chrono::duration<float, std::milli>(frameEnd - frameStart).count(),
+                frameTiming, {}, renderer, PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming(),
+                cpuTrace.TakeSamples(), cpuTrace.GetDroppedCount());
+            runtimeProfiler->Draw();
+        }
+
         if (benchmarkEnabled)
         {
             if (benchmarkFrameIndex >= benchmarkWarmupFrames)
@@ -746,6 +812,7 @@ int RunRuntime(int argc, char **argv)
 #endif
     }
 
+    runtimeProfiler.reset();
     runtimeUpscaler.Shutdown();
     if (runtimeRenderTarget)
     {

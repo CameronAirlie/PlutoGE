@@ -41,6 +41,12 @@ namespace PlutoGE::render
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
+        [[nodiscard]] const RhiSceneTimingStats &GetTimingStats() const noexcept
+        {
+            static const RhiSceneTimingStats empty;
+            return m_sceneRenderer ? m_sceneRenderer->GetTimingStats() : empty;
+        }
+
         BasicMesh CreateMesh(const BasicMeshData &data);
 
     private:

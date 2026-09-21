@@ -201,11 +201,20 @@ The initial checks cover:
 - Invalid scene headers, malformed records, missing component owners, duplicate
   entity IDs, missing parents, cycles, and incomplete scans.
 
-**Build Project** and **Build and Run Project** validate saved project data after
+**Build Project**, **Build and Run Project**, and **Run Test Build** validate saved project data after
 saving and building scripts, before rebuilding/copying the runtime. Errors stop
 export and open the panel. Warnings permit export. All saved assets are checked,
 including unused assets. Fix errors and build again; there is no stale-result
 bypass. Other callers of the low-level export API must invoke validation themselves.
+
+**File > Run Test Build** exports to a unique `PlutoGE-TestBuild-*` folder in the
+system temporary directory without an output-path dialog, then launches the
+standalone game with its own Runtime Profiler window. The profiler measures the
+game process and supports frame captures, CPU timelines, and copying metrics.
+Game frame timings exclude the profiler window's rendering. Closing the profiler
+does not stop the game. Successful exports remain in the temporary directory for
+log inspection (the editor console shows the path); failed exports are removed.
+The runtime also accepts `--profiler` when launching an exported game directly.
 
 Validation is read-only and does not instantiate scenes, start scripts, write
 metadata, or repair files. It runs synchronously on demand, so large projects can

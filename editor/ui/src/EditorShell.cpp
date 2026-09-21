@@ -204,7 +204,10 @@ namespace PlutoGE::ui
                     (void)chdir(workingDirectory.c_str());
                 }
                 const auto executable = executablePath.string();
-                execl(executable.c_str(), executable.c_str(), static_cast<char *>(nullptr));
+                if (arguments.empty())
+                    execl(executable.c_str(), executable.c_str(), static_cast<char *>(nullptr));
+                else
+                    execl(executable.c_str(), executable.c_str(), arguments.c_str(), static_cast<char *>(nullptr));
                 _exit(127);
             }
             return true;
@@ -2712,6 +2715,44 @@ namespace PlutoGE::ui
         return WriteTextFile(sdkDirectory / "README.md", readmeContent, errorMessage);
     }
 
+    bool EditorShell::RunTestBuild()
+    {
+        if (!m_project)
+            return false;
+
+        std::error_code error;
+        const auto temporaryRoot = std::filesystem::temp_directory_path(error);
+        if (error)
+        {
+            m_statusMessage = "Could not locate temporary directory: " + error.message();
+            return false;
+        }
+        const auto directory = temporaryRoot / ("PlutoGE-TestBuild-" +
+            std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+        if (!std::filesystem::create_directory(directory, error))
+        {
+            m_statusMessage = "Could not create test build directory: " + directory.string() + " " + error.message();
+            return false;
+        }
+        const auto executable = directory / GetDefaultExportExecutablePath().filename();
+        if (!BuildProjectToPath(executable))
+        {
+            std::filesystem::remove_all(directory, error);
+            return false;
+        }
+        std::string launchError;
+        if (!LaunchExecutable(executable, &launchError, "--profiler"))
+        {
+            m_statusMessage = launchError;
+            std::filesystem::remove_all(directory, error);
+            return false;
+        }
+        // Keep successful builds available while the external runtime is using them.
+        m_statusMessage = "Test build running with profiler: " + directory.string();
+        Log(ConsoleSeverity::Info, m_statusMessage);
+        return true;
+    }
+
     bool EditorShell::BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath)
     {
         if (!BuildProjectToPath(destinationExecutablePath))
@@ -3662,6 +3703,10 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Build and Run Project...", "Ctrl+Shift+B", false, m_project != nullptr))
                     {
                         buildAndRunProject();
+                    }
+                    if (ImGui::MenuItem("Run Test Build", nullptr, false, m_project != nullptr))
+                    {
+                        RunTestBuild();
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("New Scene", "Ctrl+Alt+N"))

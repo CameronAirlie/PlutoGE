@@ -202,7 +202,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
-        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 4> vctCompute;
+        std::array<rhi::ComputePipelineDescriptor::ShaderCode, 5> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
         std::array<BasicPostProcessShaderPackage, 2> volumetricTrace; // fog, clouds
@@ -434,6 +434,9 @@ namespace PlutoGE::render
     struct BasicRendererFrameStats
     {
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
+        std::uint64_t vctVoxelizedTriangles = 0, vctRelitVoxels = 0;
+        std::uint32_t vctGeometryBuilds = 0, vctRelightDispatches = 0, vctPublications = 0;
+        std::uint32_t vctSecondarySlices = 0, vctSecondaryPublications = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
@@ -645,6 +648,10 @@ namespace PlutoGE::render
         VctProbeSchedule m_vctProbeSchedule;
         std::uint32_t m_vctNextCascade = 0;
         const void *m_vctHistoryOwner = nullptr;
+        rhi::GraphicsPipeline m_vctRelightPipeline;
+        void RelightVctCascade(std::uint32_t index, const BasicLighting &lighting, float localLightBounce, rhi::ICommandContext &commands);
+        void PublishVctCascade(std::uint32_t index, float secondaryGain, rhi::ICommandContext &commands, bool staging = false);
+        std::uint32_t AdvanceVctSecondary(std::uint32_t sliceBudget, float gain, rhi::ICommandContext &commands);
         rhi::GraphicsPipeline m_vctResolvePipeline;
         rhi::GraphicsPipeline m_vctBouncePipeline;
         rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
@@ -653,9 +660,14 @@ namespace PlutoGE::render
         struct VctCascade
         {
             std::array<rhi::Texture, 4> accumulation;
-            rhi::Texture surfaceRecord, secondaryVolume;
+            rhi::Texture surfaceRecord, secondaryVolume, directVolume, shadowDepth, shadowColor;
+            bool geometryReady = false, relightPending = false, fullRelight = true;
+            bool deferredPublication = false;
+            std::uint64_t lightingSignature = 0, directionalSignature = 0;
+            BasicLighting publishedLighting;
+            bool publishedInjectLocalLights = false;
             std::uint32_t nextBounceSlice = 0;
-            bool secondaryReady = false;
+            bool secondaryReady = false, secondaryDirty = false;
             float appliedSecondaryBounce = 0.0f;
             glm::vec3 origin{0.0f};
             float size = 0.0f;
@@ -673,7 +685,6 @@ namespace PlutoGE::render
             bool pendingInjectLocalLights = false;
             float pendingSecondaryBounce = 0.0f;
             bool secondaryPass = false;
-            bool stagedBounceSource = false;
             glm::mat4 pendingShadowMatrix{1.0f};
             std::size_t nextShadowDraw = 0;
             std::uint32_t nextShadowIndex = 0;
@@ -684,7 +695,11 @@ namespace PlutoGE::render
         std::array<VctCascade, 3> m_vctCascades;
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
         std::array<rhi::Texture, 6> m_vctInjectionAtlases;
-        rhi::Texture m_vctShadowDepth, m_vctShadowColor;
+        // One immutable direct-light snapshot and scratch output are shared by
+        // all cascades. Completed secondary volumes remain readable during work.
+        rhi::Texture m_vctSecondaryScratch;
+        std::uint32_t m_vctBounceCascade = 3, m_vctNextBounceCascade = 0;
+        std::uint64_t m_vctBounceLightingSignature = 0;
         rhi::Texture m_vctTraceTarget;
         std::uint32_t m_vctTraceWidth = 0, m_vctTraceHeight = 0;
         rhi::Texture m_vctCompositeTarget;
@@ -696,6 +711,7 @@ namespace PlutoGE::render
         std::uint32_t m_vctCascadeCount = 0;
         std::uint8_t m_vctHistoryIndex = 0;
         bool m_vctHistoryValid = false;
+        std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};
         rhi::Texture m_ssaoRawTarget;
         std::array<rhi::Texture, 2> m_ssaoHistoryTargets;

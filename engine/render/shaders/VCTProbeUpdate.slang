@@ -1,3 +1,4 @@
+#include "VCTHistory.slang"
 // Stationary ambient-cube probes. Distances are normalized by the cache span
 // so squared moments remain representable in half precision.
 struct ProbeParameters
@@ -36,9 +37,9 @@ void computeMain(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= pass.update.y) return;
     // Odd stride interleaves updates throughout the volume instead of sweeping a plane.
-    uint index = ((pass.update.x + id.x) * 2053u) % 4096u;
+    uint index = ((pass.update.x + id.x) * ((pass.update.z & 2u) != 0 ? 1u : 2053u)) % 4096u;
     uint3 cell = uint3(index % 16u, (index / 16u) % 16u, index / 256u);
-    if (pass.update.z != 0)
+    if ((pass.update.z & 1u) != 0)
     {
         for (uint face = 0; face < 6; ++face)
         {
@@ -87,7 +88,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         // Never retain stale radiance or visibility for a newly embedded probe.
         float baseHistory = pass.update.w != 0 ? asfloat(pass.update.w) : 0.75;
         float history = old.a > 0.0 && !embedded ? baseHistory : 0.0;
-        probeRadiance[at] = float4(lerp(radiance, old.rgb, history), embedded ? 0.0 : 1.0);
+        probeRadiance[at] = float4(lerp(radiance, old.rgb, vctHistoryWeight(radiance, old.rgb, history)), embedded ? 0.0 : 1.0);
         probeVisibility[at] = lerp(float4(first, second, 0, 0), probeVisibility[at], history);
     }
 }

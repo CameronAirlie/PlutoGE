@@ -3,29 +3,7 @@ float4 shaderGraphTexture(int slot, float2 uv);
 #include "ShaderGraphEvaluation.slang"
 #include "VCTCoverage.slang"
 
-struct LocalLight { float4 positionRange; float4 colorIntensity; float4 directionSpot; float4 cone; };
-struct VoxelParameters
-{
-    float3 volumeOrigin;
-    float volumeSize;
-    uint resolution;
-    uint hasDirectionalLight;
-    float secondaryBounce;
-    uint bounceCascade;
-    float4 lightDirectionIntensity;
-    float4 lightColor;
-    column_major float4x4 shadowMatrices[4];
-    column_major float4x4 view;
-    float4 shadowCascadeSplits;
-    uint shadowsEnabled;
-    uint shadowFlipY;
-    float shadowDepthScale;
-    float shadowDepthBias;
-    float4 shadowInverseResolutions[4];
-    float4 shadowCascadeParameters;
-    uint4 localLightCount;
-    LocalLight localLights[16];
-};
+#include "VCTLightingParameters.slang"
 struct ObjectParameters { column_major float4x4 model; };
 struct MaterialParameters
 {
@@ -105,57 +83,7 @@ struct GeometryOutput
     float2 uv : TEXCOORD0;
 };
 
-float sampleShadowCascade(int cascade, float2 uv)
-{
-    if (cascade == 0) return shadowTexture0.Sample(uv).r;
-    if (cascade == 1) return shadowTexture1.Sample(uv).r;
-    if (cascade == 2) return shadowTexture2.Sample(uv).r;
-    return shadowTexture3.Sample(uv).r;
-}
-
-float evaluateShadowCascade(int cascade, float3 worldPosition)
-{
-    const float4 lightClip = mul(voxel.shadowMatrices[cascade], float4(worldPosition, 1.0));
-    const float3 shadowCoord = lightClip.xyz / lightClip.w;
-    float2 shadowUv = shadowCoord.xy * 0.5 + 0.5;
-    if (voxel.shadowFlipY != 0) shadowUv.y = 1.0 - shadowUv.y;
-    if (!all(shadowUv >= 0.0) || !all(shadowUv <= 1.0) ||
-        shadowCoord.z < 0.0 || shadowCoord.z > 1.0)
-        return 1.0;
-    const float2 texel = voxel.shadowInverseResolutions[cascade].xy *
-                         voxel.shadowCascadeParameters.z;
-    float visibleSamples = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-            visibleSamples += shadowCoord.z * voxel.shadowDepthScale + voxel.shadowDepthBias - 0.0015 <=
-                                      sampleShadowCascade(cascade, shadowUv + float2(x, y) * texel)
-                                  ? 1.0 : 0.0;
-    return visibleSamples / 9.0;
-}
-
-float evaluateShadow(float3 worldPosition)
-{
-    if (voxel.shadowsEnabled == 0) return 1.0;
-    const float receiverDistance = -(mul(voxel.view, float4(worldPosition, 1.0))).z;
-    const int cascadeCount = clamp((int)voxel.shadowCascadeParameters.x, 1, 4);
-    int cascade = cascadeCount - 1;
-    for (int index = 0; index < cascadeCount; ++index)
-        if (receiverDistance <= voxel.shadowCascadeSplits[index])
-        {
-            cascade = index;
-            break;
-        }
-    float visibility = evaluateShadowCascade(cascade, worldPosition);
-    const float blendDistance = voxel.shadowCascadeParameters.y;
-    if (cascade + 1 < cascadeCount && blendDistance > 0.0)
-    {
-        const float blend = saturate((receiverDistance -
-            (voxel.shadowCascadeSplits[cascade] - blendDistance)) / blendDistance);
-        if (blend > 0.0)
-            visibility = lerp(visibility, evaluateShadowCascade(cascade + 1, worldPosition), blend);
-    }
-    return visibility;
-}
+#include "VCTLighting.slang"
 
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
@@ -252,24 +180,7 @@ void fragmentMain(GeometryOutput input)
         material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
     if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;
     const float coverage = areaCoverage * (material.alphaMode == 2 ? saturate(albedo.a) : 1.0);
-    float3 direct = 0.0;
-    if (voxel.hasDirectionalLight != 0)
-        direct = voxel.lightColor.rgb * voxel.lightDirectionIntensity.w *
-                 max(dot(normal, normalize(-voxel.lightDirectionIntensity.xyz)), 0.0) *
-                 evaluateShadow(input.worldPosition);
-    for (uint i = 0; i < min(voxel.localLightCount.x, 16u); ++i)
-    {
-        const LocalLight light = voxel.localLights[i];
-        const float3 toLight = light.positionRange.xyz - input.worldPosition;
-        const float distance = length(toLight);
-        if (distance >= light.positionRange.w) continue;
-        const float3 direction = toLight / max(distance, 0.0001);
-        float attenuation = (1.0 - smoothstep(light.positionRange.w * 0.9, light.positionRange.w, distance)) /
-                            max(distance * distance, 0.0001);
-        if (light.directionSpot.w > 0.5)
-            attenuation *= smoothstep(light.cone.x, max(light.cone.y, light.cone.x + 0.000001), dot(-direction, normalize(light.directionSpot.xyz)));
-        direct += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * max(dot(normal, direction), 0.0);
-    }
+    float3 direct = voxel.localLightCount.z == 0 ? evaluateDirectLighting(input.worldPosition, normal) : float3(0);
     float3 radiance = material.graph.header.y != 0 ? albedo.rgb+emission :
         albedo.rgb*(1.0-metallic)*direct*(1.0/3.14159265)+max(emission,0.0);
     // Clamp source radiance before weighting so the storage limit cannot
@@ -287,7 +198,7 @@ void fragmentMain(GeometryOutput input)
     {
         // One coherent representative surface, independent of fragment ordering.
         uint3 n = uint3(round(saturate(normal * 0.5 + 0.5) * 31.0));
-        uint3 c = uint3(round(clamp(albedo.rgb * (1.0 - metallic), 0.0, 0.95) * 31.0));
+        uint3 c = uint3(round(clamp(material.graph.header.y != 0 ? float3(0) : albedo.rgb * (1.0 - metallic), 0.0, 0.95) * 31.0));
         uint packed = 0x80000000u | n.x | (n.y << 5) | (n.z << 10) |
                       (c.r << 15) | (c.g << 20) | (c.b << 25);
         InterlockedMax(surfaceRecord[coordinate], packed);

@@ -110,6 +110,7 @@ namespace PlutoGE::render
         result.vctCompute[0] = Load("VCTResolve", "compute");
         result.vctCompute[1] = Load("VCTDirectionalMip", "compute");
         result.vctCompute[2] = Load("VCTProbeUpdate", "compute");
+        result.vctCompute[4] = Load("VCTRelight", "compute");
         result.vctCompute[3] = Load("VCTBounceUpdate", "compute");
         result.vctVoxelization.vertexShader = Load("VCTVoxelize", "vertex");
         result.vctVoxelization.geometryShader = Load("VCTVoxelize", "geometry");

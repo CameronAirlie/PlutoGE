@@ -36,7 +36,23 @@ Distance moments interpolate continuously between directional lobes. Unoccluded 
 
 The RHI renderer supplies GI with the unculled scene and its actual materials, including surfaces that do not cast direct shadows. Shadow-only draw packets and camera-visible lists are not substitutes for this input. Direct BasicRenderer callers that cull visible draws should supply the optional `giDraws` scene span.
 
-RHI voxel rebuilds snapshot their draws, instance transforms and lighting. Directional injection uses a dedicated 1024-square shadow map fitted to the voxel volume with upstream caster coverage, independent of camera rotation and presentation shadow cascades. Shadow drawing is budgeted in chunks before voxelization; the map stays fixed for the entire job. The staging depth/color pair adds 8 MiB and extra draw work when a volume rebuilds. Publishing a volume invalidates screen-space GI history. The legacy effect retains its existing shadow snapshot path. Finite caster coverage, opaque shadow treatment of cutouts and voxel filtering still limit shadow accuracy.
+RHI geometry rebuilds snapshot draws and instance transforms. Directional lighting uses a dedicated 1024-square shadow map per cascade, fitted to its voxel volume with upstream caster coverage, independent of the presentation camera. The depth/color pair costs 8 MiB per allocated cascade and is reused for local-light edits and directional intensity/color changes. Geometry, sun direction, or shadow configuration changes invalidate it. Shadow work remains budgeted. The legacy effect retains its existing snapshot path.
+
+## Cached surface relighting (RHI)
+
+The Vulkan and OpenGL RHI paths separate geometry/material signatures from lighting signatures. Geometry rasterization stores coverage, emission, and the existing packed representative diffuse surface/normal. `VCTRelight` evaluates lighting against those cached surfaces into one RGBA16F volume per cascade (2 MiB at 64 cubed, 16 MiB at 128 cubed). Lighting changes do not replay mesh voxelization. The shared lighting functions keep cone attenuation and directional shadow evaluation consistent with the legacy raster path.
+
+Point/spot changes relight the union of their old and new range bounds, clipped to each cascade. This removes old contributions when lights move, disappear, turn off, change color, or change slots. Spot bounds conservatively use the range sphere. Cascades outside those bounds are not invalidated; geometry, emissive-material, and global directional changes still require broader work. Directional shadows retain their matching snapshot, while completed geometry jobs consume the latest local lights.
+
+First-bounce lighting is published before progressive secondary gathering. New light changes queue a later snapshot without restarting that gather or invalidating geometry. Camera-only volume replacement preserves the old settled field and uses a shared staging field until its secondary data is ready, avoiding a brightness dip when scrolling through an otherwise unchanged scene. Secondary strength edits continue to reuse cached unit-bounce data.
+
+Screen history reacts to lighting/material publication for eight frames. Within that window, each pixel reduces its history weight only when irradiance changes substantially; unchanged pixels retain their base smoothing. Probe radiance uses the same change-aware filter, while distance moments retain their normal smoothing. This reduces stale light at the cost of less temporal smoothing in changed areas.
+
+Affected stationary probes receive up to half the existing probe budget first, with at most four contiguous priority dispatches per frame. The regular interleaved sweep always keeps the remaining budget to avoid starvation. A one-probe border around the relit region provides conservative local priority; more distant indirect changes still propagate through the ordinary sweeps.
+
+`VctRelighting.h` owns conservative region calculation, `VctProbeSchedule` owns bounded probe scheduling, and `RelightVctCascade`/`PublishVctCascade` separate GPU passes from progressive geometry scheduling. Frame stats expose geometry starts, voxelized triangles, relighting dispatches/voxels, and publications for regression and profiling.
+
+This remains voxel GI: relighting evaluates at voxel centers using a quantized representative surface, and intersecting surfaces share a cell. Emission retains coverage-weighted atomic accumulation. Regional relighting still regenerates the affected cascade's directional mip chains; it is not a sparse-brick mip implementation. Local-light injection remains unshadowed before cone occlusion. No fixed frame-time improvement is guaranteed; large moving lights or widespread changes can still consume the full configured work budget.
 
 ## Validation
 
@@ -52,13 +68,13 @@ A Vulkan voxel-radiance check renders a 0.02-unit emissive submesh at seven alig
 
 ## RHI local injection and trace resolution
 
-The RHI voxelizer injects up to 16 point/spot lights whose ranges intersect each cascade when Inject Local Lights is enabled. Spot cones and inverse-square distance falloff match the legacy injector; scene-light cutoffs are derived from intensity. These local sources are unshadowed during injection; voxel occlusion still affects subsequent cone tracing. Light position, range, color, intensity, spot direction, and the injection toggle invalidate the field. Progressive jobs retain their starting light snapshot.
+The RHI voxelizer injects up to 16 point/spot lights whose ranges intersect each cascade when Inject Local Lights is enabled. Spot cones and inverse-square distance falloff match the legacy injector; scene-light cutoffs are derived from intensity. These local sources are unshadowed during injection; voxel occlusion still affects subsequent cone tracing. Light position, range, color, intensity, spot direction, and the injection toggle invalidate the field. RHI geometry jobs consume current local lighting at publication; the legacy raster path retains its starting snapshot.
 
 Trace Quality now controls RHI cone-trace dimensions: High traces at half width/height, Balanced at quarter width/height. Depth/normal-aware reconstruction feeds full-resolution temporal history and compositing. Debug views retain full-resolution tracing. This reduces cone-trace invocations by four or sixteen respectively, without reducing voxel resolution; total GPU savings depend on scene and rebuild costs. Directional shadow staging is skipped when directional intensity is zero.
 
 The focused regressions cover point/spot injection, stationary-cache refresh after light color changes, the injection toggle, and trace-divisor changes under broad lighting. At very small output sizes, quarter-resolution tracing can undersample narrow spotlight bounce; High retains more of that detail. These checks establish behavior, not a measured scene-wide frame-time speedup.
 
-**Local Light Bounce** scales point/spot radiance during injection (0–16, default 1). Use 2–4 for stronger local bounce without raising direct illumination, directional GI, or emissive sources. Both render paths rebuild affected volumes after edits. This is an artistic gain; radiance storage still clamps at 16, so very bright sources can saturate. RHI packets encode gain minus one in lane 5.x so zero-initialized packets preserve unit gain.
+**Local Light Bounce** scales point/spot radiance during injection (0–16, default 1). Use 2–4 for stronger local bounce without raising direct illumination, directional GI, or emissive sources. The RHI path relights affected cached surfaces after edits; the legacy path rebuilds affected volumes. This is an artistic gain; radiance storage still clamps at 16, so very bright sources can saturate. RHI packets encode gain minus one in lane 5.x so zero-initialized packets preserve unit gain.
 
 ## Update speed
 
@@ -70,8 +86,9 @@ values spend more CPU/GPU time per frame; speed is bounded by dispatch granulari
 and cascade publication, so it is not a guaranteed frame-rate or latency ratio.
 Changes take effect on in-progress work without clearing valid GI or resetting
 its cache. Old scenes retain speed 1. The existing Cache Updates, Voxelization
-Command Budget and Update Interval remain the base settings. Temporal Blend is the base smoothing weight; Update Speed now scales its decay
-as well, so new lighting becomes visible sooner at higher speeds.
+Command Budget and Update Interval remain the base settings. Temporal Blend independently controls screen-space smoothing. Update Speed does
+not reduce it. The lighting-change detector reduces its weight by at most 35%
+on changed pixels, preserving accumulation during continuous light motion.
 
 The former **Update Interval** setting is now labelled **Refresh Interval
 (frames)**. It limits when a new rebuild may start; a rebuild already in progress
@@ -81,3 +98,14 @@ unchanged. Speed also advances multiple publication stages per frame under a
 shared draw/triangle/bounce budget, so it affects small scenes as well as large
 meshes. Probe updates can continue sampling the last published volume while a
 replacement is built, and their history decay also follows Update Speed.
+
+
+Secondary gathers run independently of direct relighting. A round-robin job
+captures an immutable first-bounce snapshot, writes a shared scratch volume, and
+swaps it into the cascade only when complete. Moving lights do not restart the
+job or discard the last completed bounce. If lighting changes during gathering,
+a fresh snapshot is queued after completion. Geometry changes cancel incompatible
+jobs. At 64 voxels, a gather takes eight frames at speed 1 or two at speed 4;
+multiple cascades share this budget. This adds one shared RGBA16F volume (2 MiB
+at 64 cubed, 16 MiB at 128 cubed). The snapshot excludes secondary radiance to
+prevent unintended feedback between updates.

@@ -1595,7 +1595,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
         m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
-        m_temporalResolveShader->SetUniform("uTemporalBlend", VctHistoryWeight(m_temporalBlend, m_updateSpeed));
+        m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
         m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
         m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
         m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
@@ -1638,7 +1638,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
             m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
             m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
-            m_temporalResolveShader->SetUniform("uTemporalBlend", VctHistoryWeight(m_temporalBlend, m_updateSpeed));
+            m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
             m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
             m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
             m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);

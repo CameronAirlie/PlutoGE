@@ -18,6 +18,8 @@ struct ResolveParameters
 
 [[vk::binding(6, 0)]] RWTexture3D<float4> secondaryVolume : register(u6, space0);
 
+[[vk::binding(7, 0)]] RWTexture3D<float4> directVolume : register(u7, space0);
+
 float opacityAt(int3 coordinate, int3 size)
 {
     if (any(coordinate < 0) || any(coordinate >= size)) return 0.0;
@@ -38,6 +40,8 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (weight > 0)
         radiance = float3(accumulationR[coordinate], accumulationG[coordinate],
                           accumulationB[coordinate]) * (1.0 / max(float(weight), 4095.0));
+    if (pass.padding != 0)
+        radiance = min(radiance + directVolume[coordinate].rgb, 16.0 * opacityAt(coordinate, size));
     if (pass.secondaryGain > 0.0) radiance += secondaryVolume[coordinate].rgb * pass.secondaryGain;
     float opacity = opacityAt(coordinate, size);
     const int3 offsets[6] = {int3(1,0,0), int3(-1,0,0), int3(0,1,0),

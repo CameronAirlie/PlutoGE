@@ -235,6 +235,19 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     }
     if (openEnergy < std::max(100.0, blockedEnergy * 1.5))
         throw std::runtime_error("World shadow map suppressed unoccluded directional GI");
+    // Cached geometry still needs a progressive shadow update when the sun
+    // moves. The pending lighting job must not restart itself every frame.
+    lighting.directionalDirection = glm::normalize(glm::vec3(.2f,-1,0));
+    unsigned directionalPublications = 0;
+    for (int frame = 0; frame < 24; ++frame)
+    {
+        renderFrames(1);
+        const auto &stats = renderer.GetFrameStats();
+        directionalPublications += stats.vctPublications;
+        if (stats.vctGeometryBuilds || stats.vctVoxelizedTriangles)
+            throw std::runtime_error("Sun movement revoxelized static geometry");
+    }
+    if (directionalPublications < 3) throw std::runtime_error("Progressive directional relighting stalled");
 
     // Local lights must inject bounce, invalidate a stationary cache on edits,
     // and obey the injection toggle without resetting the effect owner.
@@ -277,6 +290,69 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     std::cout << "VCT local light energy: point=" << channelEnergy(point, 0)
               << ", spot=" << channelEnergy(spot, 0) << '\n';
     if (channelEnergy(spot, 0) < 100) throw std::runtime_error("Spot lights did not inject VCT radiance");
+    // Measure direct relighting with configured screen history, independently
+    // of the separately budgeted secondary gather tested below.
+    effect.parameters[1].y = .92f;
+    effect.parameters[5].y = 0;
+    renderFrames(160);
+    std::uint64_t relitVoxels = 0;
+    std::uint32_t relights = 0;
+    for (int turn = 0; turn < 4; ++turn)
+    {
+        const bool on = turn % 2 != 0;
+        lighting.spotLights[0].direction = on ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
+        double energy = 0;
+        for (int frame = 0; frame < 6; ++frame)
+        {
+            energy = channelEnergy(renderFrames(1), 0);
+            const auto &stats = renderer.GetFrameStats();
+            if (stats.vctGeometryBuilds || stats.vctVoxelizedTriangles)
+                throw std::runtime_error("Rotating a spotlight rebuilt cached geometry");
+            relitVoxels += stats.vctRelitVoxels;
+            relights += stats.vctRelightDispatches;
+        }
+        std::cout << "VCT spot turn=" << turn << ", on=" << on << ", energy=" << energy << ", reference=" << channelEnergy(spot, 0) << '\n';
+        if ((!on && energy > channelEnergy(spot, 0) * .15) ||
+            (on && energy < channelEnergy(spot, 0) * .5))
+            throw std::runtime_error("Moving spotlight waited for secondary bounce or retained stale lighting");
+    }
+    if (!relights || relitVoxels >= std::uint64_t(relights) * 128 * 128 * 128 / 4)
+        throw std::runtime_error("Local spotlight changes relit entire voxel volumes");
+    std::cout << "VCT moving spot: " << relights << " regional dispatches, " << relitVoxels
+              << " voxels, zero geometry draws\n";
+    // Match the reported 64-voxel, two-cascade configuration and change the
+    // light EVERY frame. Secondary work must finish, with bounded per-frame
+    // dispatches, while the higher work multiplier finishes more snapshots.
+    effect.parameters[5].y = 1;
+    const auto savedVolumes = effect.parameters[2];
+    const float savedCache = effect.parameters[4].x;
+    effect.parameters[2] = {64,2,1,1};
+    effect.parameters[4].x = 0;
+    const auto continuousUpdates = [&](float speed) {
+        effect.parameters[5].z = speed - 1;
+        renderFrames(64);
+        std::uint32_t completed = 0;
+        for (int frame = 0; frame < 32; ++frame)
+        {
+            lighting.spotLights[0].direction = glm::normalize(glm::vec3(.005f * frame,1,.01f));
+            renderFrames(1);
+            const auto &stats = renderer.GetFrameStats();
+            completed += stats.vctSecondaryPublications;
+            if (stats.vctGeometryBuilds || stats.vctVoxelizedTriangles ||
+                stats.vctSecondarySlices > std::uint32_t(8 * speed))
+                throw std::runtime_error("Continuous relighting exceeded its secondary or geometry budget");
+        }
+        return completed;
+    };
+    const auto normalSecondary = continuousUpdates(1), fastSecondary = continuousUpdates(4);
+    std::cout << "VCT continuous secondary completions in 32 frames: normal=" << normalSecondary
+              << ", fast=" << fastSecondary << '\n';
+    if (normalSecondary < 3 || fastSecondary < normalSecondary * 3)
+        throw std::runtime_error("Continuous light motion starved secondary updates or ignored Update Speed");
+    effect.parameters[2] = savedVolumes;
+    effect.parameters[4].x = savedCache;
+    effect.parameters[5].z = 0;
+    effect.parameters[1].y = effect.parameters[5].y = 0;
     // Rotate horizontally between the two planes: the cone no longer covers
     // the ceiling patch. This catches treating spots as omnidirectional points.
     lighting.spotLights[0].direction = {1,0,0};
@@ -312,15 +388,24 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         lighting.pointLights[0].intensity = 16;
         const double warmEnergy = channelEnergy(renderFrames(180),0);
         if(warmEnergy < 100) throw std::runtime_error("VCT live-response fixture did not warm up");
+        const auto &idle = renderer.GetFrameStats();
+        if (idle.vctGeometryBuilds || idle.vctVoxelizedTriangles || idle.vctRelightDispatches || idle.vctPublications)
+            throw std::runtime_error("Unchanged VCT lighting performed rebuild or relighting work");
         effect.parameters[5].z = speed-1;
         lighting.pointLights[0].intensity = 0;
         for(int frame=1;frame<=240;++frame)
-            if(channelEnergy(renderFrames(1),0)<warmEnergy*.05) return frame;
+        {
+            const auto pixels = renderFrames(1);
+            const auto &stats = renderer.GetFrameStats();
+            if (stats.vctGeometryBuilds || stats.vctVoxelizedTriangles)
+                throw std::runtime_error("Changing a light revoxelized cached geometry");
+            if(channelEnergy(pixels,0)<warmEnergy*.05) return frame;
+        }
         throw std::runtime_error("VCT retained stale lighting after live change");
     };
     const int normalDecay=decayFrames(1), fastDecay=decayFrames(4);
     std::cout << "VCT live lighting decay: normal=" << normalDecay << ", fast=" << fastDecay << " frames" << std::endl;
-    if(fastDecay>=normalDecay) throw std::runtime_error("VCT Update Speed did not accelerate visible lighting changes");
+    if (normalDecay > 8 || fastDecay > normalDecay) throw std::runtime_error("VCT relighting retained excessive lighting latency");
 }
 
 // A tiny emissive submesh of a larger mesh must deposit radiance regardless of
@@ -452,6 +537,11 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     effect.parameters[1].y = .92f;
     effect.parameters[3].x = 3;
     render(1);
+    effect.parameters[5].z = 3; // Scheduling speed must not change Temporal Blend.
+    const auto fastHistory = render(2);
+    if (fastHistory.g < 230 || fastHistory.r > 1)
+        throw std::runtime_error("Update Speed weakened stationary temporal accumulation");
+    effect.parameters[5].z = 0;
     const auto viewBeforeMotion = lighting.view;
     lighting.cameraPosition.x += .4f;
     lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(.4f,0,0), glm::vec3(0,1,0));

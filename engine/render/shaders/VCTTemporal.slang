@@ -1,3 +1,4 @@
+#include "VCTHistory.slang"
 #include "Fullscreen.slang"
 #include "ScreenSpaceCommon.slang"
 struct TemporalParameters
@@ -15,6 +16,7 @@ struct TemporalParameters
     uint zeroToOneDepth;
     uint indirectOnly;
     uint modulateIndirect;
+    uint lightingChanged;
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TemporalParameters pass; };
 [[vk::binding(1, 0)]] Sampler2D currentIndirect : register(t1, space0);
@@ -111,10 +113,7 @@ float4 resolveIndirect(float2 uv)
     }
     const bool valid = historyWeights > 0.00001;
     history = valid ? history / historyWeights : current;
-    // Depth/normal validation rejects disocclusions. Camera speed alone must
-    // not discard history, nor should a freshly published lighting field clamp
-    // validated history to its new brightness before temporal blending occurs.
-    const float weight = valid ? pass.temporalBlend : 0.0;
+    const float weight = valid ? (pass.lightingChanged != 0 ? vctHistoryWeight(current, history, pass.temporalBlend) : pass.temporalBlend) : 0.0;
     const float3 resolved = lerp(current, history, weight);
     if (pass.debugView != 0) return float4(valid ? float3(0, weight, 0) : float3(1,0,0), currentViewDepth);
     return float4(max(resolved, 0.0), currentViewDepth);

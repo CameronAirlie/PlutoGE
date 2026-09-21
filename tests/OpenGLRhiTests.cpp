@@ -218,6 +218,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.vctCompute[0].glsl = ReadText("VCTResolve.compute.glsl");
         shaders.vctCompute[1].glsl = ReadText("VCTDirectionalMip.compute.glsl");
         shaders.vctCompute[2].glsl = ReadText("VCTProbeUpdate.compute.glsl");
+        shaders.vctCompute[4].glsl = ReadText("VCTRelight.compute.glsl");
         shaders.vctCompute[3].glsl = ReadText("VCTBounceUpdate.compute.glsl");
         shaders.vctVoxelization.vertexShader.glsl = ReadText("VCTVoxelize.vertex.glsl");
         shaders.vctVoxelization.geometryShader.glsl = ReadText("VCTVoxelize.geometry.glsl");
@@ -288,6 +289,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 return pixels;
             });
             return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")
+        {
+            CheckVctWorldCacheRendering(basicRenderer, [&](auto texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-secondary")
         {

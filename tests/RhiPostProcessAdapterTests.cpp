@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
+#include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
@@ -64,6 +65,22 @@ int main()
     if (!Near(defaults.x, .9f) || !Near(defaults.y, .975f)) return 111;
 
     VoxelConeTracingEffect vct;
+    std::array<VctLocalLight, 1> oldLight{{{{2,2,2,1}, {1,1,1,1}, {}, {}}}};
+    auto movedLight = oldLight;
+    movedLight[0].positionRange.x = 6;
+    const auto region = VctChangedLightRegion(oldLight, movedLight, glm::vec3(0), 8, 32, false);
+    if (region.origin != glm::uvec4(4,4,4,0) || region.extent != glm::uvec4(24,8,8,0)) return 130;
+    if (VctChangedLightRegion(oldLight, oldLight, glm::vec3(0), 8, 32, false).VoxelCount() != 0) return 131;
+    if (VctChangedLightRegion(oldLight, {}, glm::vec3(0), 8, 32, false).VoxelCount() != 512) return 132;
+    if (VctChangedLightRegion({}, {}, glm::vec3(0), 8, 32, true).VoxelCount() != 32768) return 133;
+    VctProbeSchedule priority;
+    priority.Prioritize({2,3,4}, {4,4,5});
+    unsigned updated = 0;
+    const auto update = [&](unsigned first, unsigned count) {
+        if (first != 2 + 3 * 16 + 4 * 256 || count != 2) throw std::runtime_error("Incorrect priority probe region");
+        updated += count;
+    };
+    if (priority.UpdatePriority(8, update) != 2 || updated != 2 || priority.UpdatePriority(8, update) != 0) return 134;
     if (!Near(vct.GetSettings().updateSpeed, 1.0f)) return 112;
     vct.ApplyParameters({{"Update Interval", PostProcessParameterType::Int, "8"}});
     if(vct.GetSettings().updateInterval!=8 || VctUpdateInterval(8,4)!=2) return 118;

@@ -87,7 +87,15 @@ find_program(PLUTO_SLANGC_EXECUTABLE NAMES slangc)
 if (PLUTO_SLANGC_EXECUTABLE)
     set(PLUTO_RHI_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
+    set(PLUTO_VCT_SHARED_SHADERS
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTLightingParameters.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTLighting.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTHistory.slang")
     function(pluto_add_slang_graphics_shader MODULE SOURCE VERTEX_ENTRY FRAGMENT_ENTRY)
+        set(vct_dependencies)
+        if (MODULE MATCHES "^VCT")
+            set(vct_dependencies ${PLUTO_VCT_SHARED_SHADERS})
+        endif()
         set(outputs
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl"
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl"
@@ -102,13 +110,17 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
     endfunction()
 
     function(pluto_add_slang_compute_shader MODULE SOURCE ENTRY)
+        set(vct_dependencies)
+        if (MODULE MATCHES "^VCT")
+            set(vct_dependencies ${PLUTO_VCT_SHARED_SHADERS})
+        endif()
         set(normalize_arguments
             -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl.raw
             -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl)
@@ -127,13 +139,17 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl.raw"
         COMMAND ${CMAKE_COMMAND} ${normalize_arguments} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.spv"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang compute shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
     endfunction()
 
     function(pluto_add_slang_geometry_shader MODULE SOURCE VERTEX_ENTRY GEOMETRY_ENTRY FRAGMENT_ENTRY)
+        set(vct_dependencies)
+        if (MODULE MATCHES "^VCT")
+            set(vct_dependencies ${PLUTO_VCT_SHARED_SHADERS})
+        endif()
         set(outputs
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl"
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.glsl"
@@ -153,7 +169,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang geometry pipeline for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -224,6 +240,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(BloomUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain upsampleMain)
     pluto_add_slang_graphics_shader(BloomComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain compositeMain)
     pluto_add_slang_compute_shader(VCTProbeUpdate "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeUpdate.slang" computeMain rgba16f)
+    pluto_add_slang_compute_shader(VCTRelight "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTRelight.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTBounceUpdate "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTBounceUpdate.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTResolve.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTDirectionalMip "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTDirectionalMip.slang" computeMain rgba16f)

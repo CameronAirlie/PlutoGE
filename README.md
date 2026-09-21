@@ -184,7 +184,10 @@ eight parallel project jobs (override the count with `--parallel N`):
 cmake --build --preset editor-debug
 ```
 
-The `msvc-debug` preset still builds the runtime and tests as well. PlutoGE's
+Building `PlutoGEEditor` also builds `PlutoGERuntime` in the selected configuration
+when `PLUTO_BUILD_RUNTIME` is enabled (the default), keeping the executable used
+for game exports current. Existing exported games must be exported again to pick
+up runtime changes. The `msvc-debug` preset additionally builds tests. PlutoGE's
 own Visual Studio targets also compile up to two source files concurrently per
 project; configure `-DPLUTO_MSVC_COMPILE_JOBS=1` to reduce memory pressure.
 The larger render, scene, and editor UI targets use private precompiled standard

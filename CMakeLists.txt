@@ -64,6 +64,12 @@ if (PLUTO_BUILD_RUNTIME)
     add_subdirectory(runtime)
 endif()
 
+# Editor-only target builds must also refresh the executable used by game exports.
+# Keep runtime-only and explicitly editor-only configurations supported.
+if (TARGET PlutoGEEditor AND TARGET PlutoGERuntime)
+    add_dependencies(PlutoGEEditor PlutoGERuntime)
+endif()
+
 if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()

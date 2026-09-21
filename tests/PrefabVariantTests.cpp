@@ -2,6 +2,8 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/ProjectValidation.h"
@@ -17,7 +19,7 @@ void Require(bool value, const std::string &message) { if (!value) throw std::ru
 struct Scratch
 {
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("PlutoGE-variants-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    ~Scratch() { if (root.parent_path() == std::filesystem::temp_directory_path() && root.filename().string().starts_with("PlutoGE-variants-")) { std::error_code ec; std::filesystem::remove_all(root, ec); } }
+    ~Scratch() { content::UnmountAll(); if (root.parent_path() == std::filesystem::temp_directory_path() && root.filename().string().starts_with("PlutoGE-variants-")) { std::error_code ec; std::filesystem::remove_all(root, ec); } }
 };
 int main()
 {
@@ -95,6 +97,42 @@ int main()
         auto *added = instances.AddEntity(std::make_unique<scene::Entity>(), nested);
         Require(!scene::Prefab::SaveVariant(*nested, scratch.root / "Rejected.plutoprefab", &error) && !std::filesystem::exists(scratch.root / "Rejected.plutoprefab"), "Structural changes were silently discarded");
         instances.RemoveEntity(added);
+
+        // Exported assets exist only in a mounted pack, never as loose files.
+        const auto cooked = scratch.root / "Cooked";
+        std::ofstream(cooked / "Assets/Impact.plutoparticles")
+            << "ParticleSystemVersion=2\nPlayOnAwake=false\nMaxParticles=64\nEmissionRateOverTime=0\n";
+        std::ofstream(cooked / "Assets/Impact.plutoprefab")
+            << "SCENE\t1\nENTITY\t1\t0\t1\tImpact\t0,0,0\t0,0,0\t1,1,1\n"
+               "COMPONENT\t1\tParticleSystemComponent\t1\n"
+               "PROPERTY\tParticleSystemAsset\t2\tproject://Impact.plutoparticles\t0\nEND_COMPONENT\n";
+        const auto pack = scratch.root / "Game.plutopack";
+        const auto mounted = scratch.root / "Runtime";
+        Require(content::WritePack(cooked, pack, {}, &error), error);
+        Require(content::Mount(pack, mounted, &error), error);
+        core::Engine::GetInstance().GetAssetManager().SetProjectContext(mounted.string());
+        Require(!std::filesystem::exists(mounted / "Assets/Base.plutoprefab"), "Packed fixture has loose files");
+        const auto preload = scene::Prefab::Preload("project://Base.plutoprefab");
+        Require(preload.ready, "Packed prefab preload failed: " + preload.error);
+        Require(scene::Prefab::IsReady("project://Base.plutoprefab"), "Packed prefab cache is not ready");
+        Require(scene::Prefab::Preload("project://Base.plutoprefab").cacheHit, "Packed prefab cache missed");
+        auto *packedBase = scene::Prefab::Instantiate(instances, "project://Base.plutoprefab", nullptr, &error);
+        Require(packedBase && packedBase->GetComponent<scene::ColliderComponent>(), "Packed pickup prefab failed: " + error);
+        auto *packedNested = scene::Prefab::Instantiate(instances, "project://Nested.plutoprefab", nullptr, &error);
+        Require(packedNested && packedNested->GetName() == "Applied" && packedNested->GetScale().x == 3,
+                "Packed variant inheritance failed: " + error);
+        auto *impact = scene::Prefab::Instantiate(instances, "project://Impact.plutoprefab", nullptr, &error);
+        Require(impact != nullptr, "Packed impact prefab failed: " + error);
+        auto *particles = impact->GetComponent<scene::ParticleSystemComponent>();
+        Require(particles && particles->GetMaxParticles() == 64 && particles->GetEmissionRateOverTime() == 0,
+                "Packed particle asset was not loaded");
+        particles->Emit(12);
+        Require(particles->ConsumePendingEmitCount() == 12, "Packed particle burst was not queued");
+        Require(assets::AssetDatabase::HashFile(mounted / "Assets/Base.plutoprefab") ==
+                assets::AssetDatabase::HashFile(cooked / "Assets/Base.plutoprefab"), "Packed dependency hash differs from loose file");
+        content::UnmountAll();
+        Require(!scene::Prefab::IsReady("project://Base.plutoprefab"), "Unmounted prefab remained ready");
+        Require(!scene::Prefab::Preload("project://Base.plutoprefab").ready, "Unmounted prefab remained loadable");
         core::Engine::GetInstance().GetAssetManager().ClearProjectContext();
         std::cout << "Prefab variant tests passed\n";
     }

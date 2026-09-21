@@ -537,7 +537,11 @@ namespace PlutoGE::scene
             const auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(reference)).string();
             if (stack.size() >= 64 || !stack.insert(path).second)
                 throw std::runtime_error("Prefab dependency cycle: " + path);
-            dependencies[path] = {std::filesystem::last_write_time(path), assets::AssetDatabase::HashFile(path)};
+            std::error_code timestampError;
+            const auto modified = content::LastWriteTime(path, timestampError);
+            if (timestampError)
+                throw std::runtime_error("Cannot read prefab " + path + ": " + timestampError.message());
+            dependencies[path] = {modified, assets::AssetDatabase::HashFile(path)};
             VariantData variant;
             std::unique_ptr<Scene> scene;
             if (ReadVariant(path, variant))
@@ -579,7 +583,7 @@ namespace PlutoGE::scene
             for (const auto &[path, timestamp] : cached.dependencies)
             {
                 std::error_code error;
-                const auto current = std::filesystem::last_write_time(path, error);
+                const auto current = content::LastWriteTime(path, error);
                 if (error || current != timestamp.first || assets::AssetDatabase::HashFile(path) != timestamp.second) return false;
             }
             return true;
@@ -614,7 +618,7 @@ namespace PlutoGE::scene
             if (resolutionMs) *resolutionMs = ElapsedMs(resolutionStart);
             if (resolvedPathOut) *resolvedPathOut = resolvedPath;
             std::error_code timestampError;
-            const auto lastWriteTime = std::filesystem::last_write_time(resolvedPath, timestampError);
+            const auto lastWriteTime = content::LastWriteTime(resolvedPath, timestampError);
             const bool hasLastWriteTime = !timestampError;
 
             std::scoped_lock lock(PrefabStateMutex());
@@ -956,7 +960,7 @@ namespace PlutoGE::scene
     {
         const std::string resolvedPath = ResolvePrefabPath(prefabReference);
         std::error_code timestampError;
-        const auto lastWriteTime = std::filesystem::last_write_time(resolvedPath, timestampError);
+        const auto lastWriteTime = content::LastWriteTime(resolvedPath, timestampError);
         const bool hasLastWriteTime = !timestampError;
         std::scoped_lock lock(PrefabStateMutex());
         const auto cached = PrefabCache().find(resolvedPath);

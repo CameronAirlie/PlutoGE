@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/platform/ContentPack.h"
 
 #include <algorithm>
 #include <array>
@@ -87,7 +88,7 @@ namespace PlutoGE::assets
 
     std::uint64_t AssetDatabase::HashFile(const std::filesystem::path &path)
     {
-        std::ifstream input(path, std::ios::binary);
+        content::InputFile input(path, std::ios::binary);
         std::uint64_t hash = 14695981039346656037ull;
         std::array<char, 64 * 1024> buffer{};
         while (input)

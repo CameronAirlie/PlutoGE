@@ -5,6 +5,24 @@
 
 namespace PlutoGE::render
 {
+    // Full cone opening angles in degrees. Defaults preserve the original
+    // outer/inner cosine thresholds of 0.9 and 0.975.
+    struct SpotCone
+    {
+        float innerAngle = 25.677136f;
+        float outerAngle = 51.683865f;
+        void Sanitize()
+        {
+            outerAngle = std::isfinite(outerAngle) ? std::clamp(outerAngle, 1.0f, 179.0f) : 51.683865f;
+            innerAngle = std::isfinite(innerAngle) ? std::clamp(innerAngle, 0.0f, outerAngle) : std::min(25.677136f, outerAngle);
+        }
+        [[nodiscard]] glm::vec2 Cosines() const
+        {
+            auto cone = *this; cone.Sanitize();
+            return {std::cos(glm::radians(cone.outerAngle * 0.5f)), std::cos(glm::radians(cone.innerAngle * 0.5f))};
+        }
+    };
+
     // Local intensity is candela, assuming one world unit is one metre.
     // The brightest channel falls below 0.01 lux at the culling radius.
     inline float LocalLightRange(float intensity, const glm::vec3 &color)

@@ -831,7 +831,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
         if (pointDirectionSpot[light].w > 0.5)
         {
-            attenuation *= smoothstep(0.9, 0.975, dot(-l, pointDirectionSpot[light].xyz));
+            attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
             if (attenuation > 0 && pointSettings[light].y >= 0)
                 visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition, pointReceiverNormal);
         }

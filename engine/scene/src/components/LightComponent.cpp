@@ -148,6 +148,13 @@ namespace PlutoGE::scene
         if (m_config.type != LightType::Directional) MarkDirty();
     }
 
+    void LightComponent::SetSpotCone(float innerAngle, float outerAngle)
+    {
+        m_config.spotCone = {innerAngle, outerAngle};
+        m_config.spotCone.Sanitize();
+        MarkDirty();
+    }
+
     void LightComponent::SetDirection(const glm::vec3 &direction)
     {
         if (glm::dot(direction, direction) <= 0.000001f)
@@ -240,6 +247,11 @@ namespace PlutoGE::scene
             {"Static", PropertyType::Bool, m_config.isStatic ? "true" : "false"},
         };
 
+        if (m_config.type == LightType::Spot)
+        {
+            properties.push_back({"Inner Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.innerAngle)});
+            properties.push_back({"Outer Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.outerAngle)});
+        }
         if (m_config.type == LightType::Directional)
         {
             properties.push_back({"Shadow Method", PropertyType::Enum,
@@ -282,6 +294,10 @@ namespace PlutoGE::scene
                 const float intensity = std::stof(property.value);
                 m_config.intensity = std::isfinite(intensity) ? std::max(intensity, 0.0f) : 0.0f;
             }
+            else if (property.name == "Inner Cone Angle (degrees)")
+                m_config.spotCone.innerAngle = std::stof(property.value);
+            else if (property.name == "Outer Cone Angle (degrees)")
+                m_config.spotCone.outerAngle = std::stof(property.value);
             else if (property.name == "Range")
             {
                 // Legacy scenes may contain Range; intensity now determines the cutoff.
@@ -386,6 +402,7 @@ namespace PlutoGE::scene
                 m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness = std::clamp(std::stof(property.value), 0.001f, 1.0f);
             }
         }
+        m_config.spotCone.Sanitize();
         // Most directional-shadow settings (distance, first split, lambda and
         // blend width) do not require texture recreation. They still change the
         // cascade projections, so explicitly invalidate the cached shadow state

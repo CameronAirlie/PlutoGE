@@ -138,7 +138,8 @@ Read-only inspection of `D:/PlutoProjects/SSS/Assets/Scenes/Main.plutoscene` fou
 ## Spotlight shadows
 
 Surface lighting supports up to 16 spotlights alongside 16 point lights, using
-inverse-square attenuation and the existing 0.9–0.975 cosine cone falloff.
+inverse-square attenuation and editable inner/outer cone angles. Their defaults
+preserve the original 0.9–0.975 cosine falloff.
 The first four eligible shadow-casting spots use perspective VSM projections,
 independently of the directional shadow toggle or legacy cascaded selection.
 Each spot reserves a 4×4 grid of 128-pixel pages (512×512 coverage) in the shared
@@ -151,3 +152,10 @@ does not. Caster movement, masks and instances use the shared VSM invalidation p
 Spot page frusta conservatively cull caster spheres in homogeneous coordinates.
 Spot pages and directional root pages receive priority before directional refinement.
 The page and triangle update budgets apply to their combined work.
+
+Select a Spot light in the inspector to edit **Inner Cone Angle (degrees)** and
+**Outer Cone Angle (degrees)**. These are full opening angles: the inner cone is
+fully lit and fades to zero at the outer cone. The outer angle is clamped to
+1–179 degrees; the inner angle is clamped to 0–outer. Settings survive scene and
+prefab serialization. Older scenes retain the original cone width. Changing the
+outer angle also changes the VSM projection and invalidates its cached pages.

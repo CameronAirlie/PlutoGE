@@ -100,7 +100,7 @@ namespace PlutoGE::render
             direction = std::isfinite(lengthSquared) && lengthSquared > 1.e-8f ? glm::normalize(direction) : glm::vec3(0,-1,0);
             const auto up = std::abs(direction.y) > 0.99f ? glm::vec3(0,0,1) : glm::vec3(0,1,0);
             const int level = PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++;
-            const auto matrix = glm::perspectiveRH_ZO(2.0f * std::acos(0.9f), 1.0f, 0.01f, spot.light.range) *
+            const auto matrix = glm::perspectiveRH_ZO(2.0f * std::acos(spot.cone.Cosines().x), 1.0f, 0.01f, spot.light.range) *
                 glm::lookAt(spot.light.position, spot.light.position + direction, up);
             result.matrices[level] = matrix;
             result.origins[level] = {0, 0, static_cast<int>(ProjectionEpoch(matrix, 0, spot.light.range, 0)), 1};

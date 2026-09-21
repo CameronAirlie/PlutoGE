@@ -719,7 +719,7 @@ namespace PlutoGE::render
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)
-                    effectiveLighting.spotLights.push_back({local, light->direction});
+                    effectiveLighting.spotLights.push_back({local, light->direction, light->spotCone});
             }
         }
         // Camera-relative lighting consumers (surface cascade selection,
@@ -1065,7 +1065,9 @@ namespace PlutoGE::render
                     const auto &local = *smokeLights[light];
                     v[9 + light] = {glm::vec3(cameraData.view * glm::vec4(local.position, 1)), local.GetRange()};
                     v[13 + light] = {local.color * local.intensity, static_cast<float>(local.type)};
-                    v[17 + light] = {glm::mat3(cameraData.view) * local.direction, 0};
+                    const auto cone = local.spotCone.Cosines();
+                    v[17 + light] = {glm::mat3(cameraData.view) * local.direction, cone.x};
+                    v[22][light] = cone.y;
                 }
                 constexpr glm::vec2 corners[] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {-0.5f, 0.5f},
                                                  {-0.5f, 0.5f},  {0.5f, -0.5f}, {0.5f, 0.5f}};

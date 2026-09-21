@@ -55,6 +55,7 @@ namespace PlutoGE::scene
         LightType type = LightType::Point; // Type of the light (point, directional, spot)
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::vec3 color{1.0f, 1.0f, 1.0f};          // Color of the light (default to white)
+        render::SpotCone spotCone;
         float intensity = 1.0f; // Candela for point/spot, illuminance for directional.
         [[nodiscard]] float GetRange() const { return render::LocalLightRange(intensity, color); }
         glm::vec3 direction{0.0f, -1.0f, 0.0f};     // Direction of the light (for directional and spot lights)
@@ -99,6 +100,7 @@ namespace PlutoGE::scene
         void SetLightType(LightType type);
         void SetColor(const glm::vec3 &color);
         void SetIntensity(float intensity);
+        void SetSpotCone(float innerAngle, float outerAngle);
         void SetDirection(const glm::vec3 &direction);
         void SetStatic(bool isStatic);
         void SetCastsShadows(bool castsShadows);

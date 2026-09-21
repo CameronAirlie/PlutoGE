@@ -118,6 +118,7 @@ namespace PlutoGE::scene
             glm::vec3 direction{0.0f, -1.0f, 0.0f};
             bool castsShadows = false;
             float shadowSoftness = 0.0f;
+            glm::vec2 spotCosines{0.9f, 0.975f};
         };
 
         template <typename Callback>
@@ -220,6 +221,7 @@ namespace PlutoGE::scene
                         .shadowSoftness = light.type == LightType::Directional
                                               ? std::max(light.directionalShadowSettings.softness, 0.0f)
                                               : 0.0f,
+                        .spotCosines = light.spotCone.Cosines(),
                     });
                 }
 
@@ -1329,7 +1331,7 @@ namespace PlutoGE::scene
                             if (lightType == 2)
                             {
                                 float coneFactor = dot(-lightDirection, normalize(light.DirectionRange.xyz));
-                                attenuation *= smoothstep(0.9, 0.975, coneFactor);
+                                attenuation *= smoothstep(light.CastsShadows.z, max(light.CastsShadows.w, light.CastsShadows.z + 0.000001), coneFactor);
                             }
                         }
 
@@ -1635,7 +1637,7 @@ namespace PlutoGE::scene
                     .positionAndType = glm::vec4(light.position, static_cast<float>(light.type)),
                     .colorAndIntensity = glm::vec4(light.color, light.intensity),
                     .directionAndRange = glm::vec4(light.direction, light.range),
-                    .castsShadows = glm::vec4(light.castsShadows ? 1.0f : 0.0f, light.shadowSoftness, 0.0f, 0.0f),
+                    .castsShadows = glm::vec4(light.castsShadows ? 1.0f : 0.0f, light.shadowSoftness, light.spotCosines.x, light.spotCosines.y),
                 });
             }
 
@@ -2039,7 +2041,7 @@ namespace PlutoGE::scene
                     if (light.type == LightType::Spot)
                     {
                         const float coneFactor = glm::dot(-lightDirection, light.direction);
-                        attenuation *= glm::smoothstep(0.9f, 0.975f, coneFactor);
+                        attenuation *= glm::smoothstep(light.spotCosines.x, std::max(light.spotCosines.y, light.spotCosines.x + 0.000001f), coneFactor);
                     }
                 }
 

@@ -237,6 +237,7 @@ namespace PlutoGE::render
             {"Volume Size", PostProcessParameterType::Float, std::to_string(m_volumeSize)},
             {"World Cache", PostProcessParameterType::Bool, m_worldCache ? "true" : "false"},
             {"Cache Size", PostProcessParameterType::Float, std::to_string(m_cacheSize)},
+            {"Update Speed", PostProcessParameterType::Float, std::to_string(m_updateSpeed)},
             {"Cache Updates", PostProcessParameterType::Int, std::to_string(m_cacheUpdates)},
             {"Intensity", PostProcessParameterType::Float, std::to_string(m_intensity)},
             {"Cone Count", PostProcessParameterType::Int, std::to_string(m_coneCount)},
@@ -265,6 +266,7 @@ namespace PlutoGE::render
                 .coneCount = m_coneCount,
                 .traceResolutionDivisor = m_traceResolutionDivisor,
                 .updateInterval = m_updateInterval,
+                .updateSpeed = m_updateSpeed,
                 .voxelizationCommandBudget = m_voxelizationCommandBudget,
                 .voxelizationLodBias = m_voxelizationLodBias,
                 .debugView = m_debugView,
@@ -335,6 +337,8 @@ namespace PlutoGE::render
                 const float next = std::clamp(std::stof(p.value), 16.0f, 4096.0f);
                 if (next != m_cacheSize) { m_cacheSize = next; ReleaseVolume(); ResetHistory(); }
             }
+            else if (p.name == "Update Speed")
+                m_updateSpeed = VctUpdateSpeed(std::stof(p.value));
             else if (p.name == "Cache Updates")
                 m_cacheUpdates = std::clamp(std::stoi(p.value), 1, 256);
             else if (p.name == "Intensity")
@@ -1114,11 +1118,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             }
             m_voxelizationShader->SetUniform("uCaptureSurface", 1);
             glBindImageTexture(5, cascade.surfaceRecord, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-            const std::size_t triangleBudget = kMaxVoxelTrianglesPerFrame;
+            const std::size_t triangleBudget = VctUpdateBudget(kMaxVoxelTrianglesPerFrame, m_updateSpeed);
             int submittedDraws = 0;
             std::size_t submittedTriangles = 0;
             while (cascade.jobIndex < cascade.jobs.size() &&
-                   submittedDraws < m_voxelizationCommandBudget &&
+                   submittedDraws < VctUpdateBudget(m_voxelizationCommandBudget, m_updateSpeed) &&
                    submittedTriangles < triangleBudget)
             {
                 auto &job = cascade.jobs[cascade.jobIndex];
@@ -1271,7 +1275,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         }
         if (cascade.secondaryPass && !cascade.secondaryReady && m_secondaryBounce > 0.0f)
         {
-            const auto slices = std::max(4u, (32768u / (unsigned(m_resolution) * unsigned(m_resolution)) / 4u) * 4u);
+            const auto slices = VctBounceSlices(unsigned(m_resolution), m_updateSpeed);
             const glm::uvec4 params(unsigned(m_resolution), cascade.stagedBounceSource ? 0u : unsigned(cascadeIndex),
                                     cascade.stagedBounceSource ? 1u : unsigned(m_activeCascadeCount), cascade.nextBounceSlice);
             const auto &bounceSource = cascade.stagedBounceSource ? m_injectionAtlases : m_radianceAtlases;
@@ -1418,7 +1422,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             // to update. Origin tracking remains immediate, while content/light
             // checks are amortized and skipped entirely during progressive jobs.
             const unsigned long long contentCheckInterval =
-                static_cast<unsigned long long>(std::max(m_updateInterval, 4));
+                static_cast<unsigned long long>(VctUpdateInterval(std::max(m_updateInterval, 4), m_updateSpeed));
             bool originRequiresRebuild = false;
             for (std::size_t cascadeIndex = 0; cascadeIndex < m_activeCascadeCount; ++cascadeIndex)
             {
@@ -1448,7 +1452,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                                              (m_cachedSceneSignature != cascade.lastSceneSignature ||
                                               m_cachedLightSignature != cascade.lastLightSignature));
                 const bool updateDue = cascade.lastVoxelizedFrame == ~0ull ||
-                                       renderContext.frameSequence - cascade.lastVoxelizedFrame >= static_cast<unsigned>(m_updateInterval);
+                                       renderContext.frameSequence - cascade.lastVoxelizedFrame >= VctUpdateInterval(m_updateInterval, m_updateSpeed);
                 if (!originChanged && !contentChanged && cascade.appliedSecondaryBounce != m_secondaryBounce)
                 {
                     cascade.secondaryPass = true;
@@ -1543,8 +1547,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
             };
             if (m_probeSchedule.clear) { dispatch(0, 4096, true); m_probeSchedule.clear = false; }
-            const unsigned budget = m_probeSchedule.Budget(m_cacheUpdates);
-            if (budget) { dispatch(m_probeSchedule.cursor, budget, false); m_probeSchedule.Advance(budget); }
+            const unsigned budget = m_probeSchedule.Budget(m_cacheUpdates, m_updateSpeed);
+            if (budget) { dispatch(m_probeSchedule.cursor, budget, false); m_probeSchedule.Advance(budget, m_updateSpeed); }
         }
         Graphics::BindRenderTarget(m_indirectTarget.get());
         Graphics::SetViewport(0, 0, width, height);

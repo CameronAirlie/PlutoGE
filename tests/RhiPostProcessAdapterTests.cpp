@@ -50,7 +50,42 @@ int main()
     physicalLight.SetIntensity(-1);
     if (physicalLight.GetLight().GetRange() != 0) return 106;
 
+    physicalLight.SetLightType(PlutoGE::scene::LightType::Spot);
+    physicalLight.SetSpotCone(30, 80);
+    if (!physicalLight.IsDirty()) return 107;
+    PlutoGE::scene::LightComponent restoredSpot;
+    restoredSpot.Deserialize(physicalLight.Serialize());
+    if (!Near(restoredSpot.GetLight().spotCone.innerAngle, 30) || !Near(restoredSpot.GetLight().spotCone.outerAngle, 80)) return 108;
+    restoredSpot.Deserialize({{"Outer Cone Angle (degrees)", PlutoGE::scene::PropertyType::Float, "10"}});
+    if (!Near(restoredSpot.GetLight().spotCone.innerAngle, 10) || !Near(restoredSpot.GetLight().spotCone.outerAngle, 10)) return 109;
+    restoredSpot.SetSpotCone(-20, 300);
+    if (!Near(restoredSpot.GetLight().spotCone.innerAngle, 0) || !Near(restoredSpot.GetLight().spotCone.outerAngle, 179)) return 110;
+    const auto defaults = SpotCone{}.Cosines();
+    if (!Near(defaults.x, .9f) || !Near(defaults.y, .975f)) return 111;
+
     VoxelConeTracingEffect vct;
+    if (!Near(vct.GetSettings().updateSpeed, 1.0f)) return 112;
+    vct.ApplyParameters({{"Update Speed", PostProcessParameterType::Float, "4"}});
+    VoxelConeTracingEffect savedSpeed;
+    savedSpeed.ApplyParameters(vct.GetParameters());
+    if (!Near(savedSpeed.GetSettings().updateSpeed, 4) ||
+        !Near(AdaptPostProcessEffect(savedSpeed, .1f, 1000)->parameters[5].z, 3)) return 113;
+    if (VctUpdateBudget(65536, 4) != 262144 || VctUpdateBudget(8, .25f) != 2 ||
+        VctBounceSlices(128, 4) != 16 || VctUpdateInterval(8, 4) != 2) return 114;
+    VctProbeSchedule slowSchedule, fastSchedule;
+    slowSchedule.Refresh(); fastSchedule.Refresh();
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        slowSchedule.Advance(slowSchedule.Budget(64, .25f), .25f);
+        fastSchedule.Advance(fastSchedule.Budget(64, 4), 4);
+    }
+    if (slowSchedule.initialized != 256 || fastSchedule.initialized != 4096) return 115;
+    vct.ApplyParameters({{"Update Speed", PostProcessParameterType::Float, "nan"}});
+    if (!Near(vct.GetSettings().updateSpeed, 1)) return 116;
+    vct.ApplyParameters({{"Update Speed", PostProcessParameterType::Float, "1000"}});
+    if (!Near(vct.GetSettings().updateSpeed, 16)) return 117;
+    vct.ApplyParameters({{"Update Speed", PostProcessParameterType::Float, "1"}});
+
     for (const bool enabled : {false, true})
     {
         vct.ApplyParameters({{.name = "Inject Local Lights", .type = PostProcessParameterType::Bool,

@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/OceanParameters.h"
 
@@ -367,7 +368,7 @@ namespace PlutoGE::render
         OcclusionMode occlusionMode = OcclusionMode::Off;
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
-        struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; };
+        struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; SpotCone cone; };
         std::vector<SpotLight> spotLights;
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};

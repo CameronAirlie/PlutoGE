@@ -185,7 +185,7 @@ namespace PlutoGE::render
             }
         }
 
-        struct VctLocalLight { glm::vec4 positionRange{}, colorIntensity{}, directionSpot{}; };
+        struct VctLocalLight { glm::vec4 positionRange{}, colorIntensity{}, directionSpot{}, cone{}; };
         struct alignas(16) VctVoxelParameters
         {
             glm::vec3 volumeOrigin{0.0f}; float volumeSize = 1.0f;
@@ -245,7 +245,7 @@ namespace PlutoGE::render
         };
         struct alignas(16) VctMetadataParameters
         { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
-        static_assert(sizeof(VctVoxelParameters) == 1280);
+        static_assert(sizeof(VctVoxelParameters) == 1536);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+96);
         static_assert(sizeof(VctResolveParameters) == 16);
@@ -281,7 +281,7 @@ namespace PlutoGE::render
                 HashVctValue(hash, lighting.pointLights.size());
                 for (const auto &light : lighting.pointLights) hashLight(light);
                 HashVctValue(hash, lighting.spotLights.size());
-                for (const auto &spot : lighting.spotLights) { hashLight(spot.light); HashVctValue(hash, spot.direction); }
+                for (const auto &spot : lighting.spotLights) { hashLight(spot.light); HashVctValue(hash, spot.direction); HashVctValue(hash, spot.cone.Cosines()); }
             }
             HashVctValue(hash, lighting.directionalDirection);
             HashVctValue(hash, lighting.directionalColor);
@@ -1652,7 +1652,8 @@ namespace PlutoGE::render
             frameParameters.pointPositionRange[index] = {spot.light.position, spot.light.range};
             frameParameters.pointColorIntensity[index] = {spot.light.color, spot.light.intensity};
             frameParameters.pointDirectionSpot[index] = {direction, 1};
-            frameParameters.pointSettings[index] = {-1, -1, 0, 0};
+            const auto cone = spot.cone.Cosines();
+            frameParameters.pointSettings[index] = {-1, -1, cone.x, cone.y};
             if (virtualShadowsActive && spot.light.castsShadows && spot.light.range > 0.02f && spotShadowCount < PLUTO_VSM_SPOT_COUNT)
                 frameParameters.pointSettings[index].y = static_cast<float>(PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++);
         }
@@ -3096,9 +3097,10 @@ namespace PlutoGE::render
         for (const auto &draw : draws)
             if (draw.mesh && draw.contributesToGi && draw.surfaceType != 1 && draw.alphaMode != 2)
                 liveMeshes.emplace(draw.mesh, draw.mesh->GetRevision());
+        const float updateSpeed = VctUpdateSpeed(1.0f + effect.parameters[5].z);
         // Strength changes reuse the original injection and cached unit bounce.
-        const auto updateInterval = static_cast<std::uint64_t>(
-            std::clamp(effect.parameters[2].w, 1.0f, 1024.0f));
+        const auto updateInterval = VctUpdateInterval(static_cast<std::uint32_t>(
+            std::clamp(effect.parameters[2].w, 1.0f, 1024.0f)), updateSpeed);
         std::size_t rebuildIndex = cascadeCount;
         for (std::uint32_t index = 0; index < cascadeCount; ++index)
         {
@@ -3191,7 +3193,7 @@ namespace PlutoGE::render
         // triangle budget between shadow injection and voxelization, and retain
         // an index cursor so every triangle is eventually submitted exactly once.
         constexpr std::uint32_t maxIndicesPerDraw = 32768 * 3;
-        std::uint32_t remainingIndices = 65536 * 3;
+        std::uint32_t remainingIndices = VctUpdateBudget(65536, updateSpeed) * 3;
         if (rebuildIndex < cascadeCount && !m_vctCascades[rebuildIndex].shadowReady)
         {
             auto &cascade = m_vctCascades[rebuildIndex];
@@ -3225,7 +3227,7 @@ namespace PlutoGE::render
             commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
             commands.BindUniformBuffer(0, cameraBuffer.Get());
             const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
-            const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+            const std::size_t budget = VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
             std::size_t submitted = 0;
             while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
             {
@@ -3288,16 +3290,16 @@ namespace PlutoGE::render
                 voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
                 if (cascade.pendingInjectLocalLights)
                 {
-                    const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot) {
+                    const auto appendLight = [&](const BasicPointLight &light, glm::vec4 directionSpot, glm::vec2 cone = {}) {
                         const auto closest = glm::clamp(light.position, cascade.pendingOrigin,
                             cascade.pendingOrigin + glm::vec3(cascade.pendingSize));
                         if (light.intensity <= 0 || light.range <= 0 ||
                             glm::length(light.position - closest) >= light.range || voxel.localLightCount.x >= 16) return;
                         voxel.localLights[voxel.localLightCount.x++] = {
-                            glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot};
+                            glm::vec4(light.position, light.range), glm::vec4(light.color, light.intensity), directionSpot, glm::vec4(cone, 0, 0)};
                     };
                     for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
-                    for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1));
+                    for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1), spot.cone.Cosines());
                 }
                 voxel.shadowMatrices.fill(cascade.pendingShadowMatrix);
                 voxel.view = glm::mat4(1.0f);
@@ -3319,7 +3321,7 @@ namespace PlutoGE::render
                 commands.BindStorageImage(0, cascade.surfaceRecord.Get());
                 for (std::size_t channel = 0; channel < 4; ++channel)
                     commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
-                const std::size_t budget = static_cast<std::size_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+                const std::size_t budget = VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
                 std::size_t submitted = 0;
                 while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
                 {
@@ -3392,7 +3394,7 @@ namespace PlutoGE::render
             {
                 const ScopedGpuTiming bounceTiming(commands, "RHI VCT Secondary Gather");
                 // Fixed voxel work, independent of scene triangles/draws. Skip empty cells in the shader.
-                const auto slices = std::max(4u, (32768u / (resolution * resolution) / 4u) * 4u);
+                const auto slices = VctBounceSlices(resolution, updateSpeed);
                 const glm::uvec4 params(resolution, cascade.stagedBounceSource ? 0u : static_cast<std::uint32_t>(rebuildIndex),
                                         cascade.stagedBounceSource ? 1u : cascadeCount, cascade.nextBounceSlice);
                 const auto &bounceSource = cascade.stagedBounceSource ? m_vctInjectionAtlases : m_vctRadianceAtlases;
@@ -3499,8 +3501,8 @@ namespace PlutoGE::render
                 commands.Dispatch((count + 63) / 64, 1, 1); commands.ShaderMemoryBarrier();
             };
             if (m_vctProbeSchedule.clear) { dispatch(0, 4096, true); m_vctProbeSchedule.clear = false; }
-            const auto budget = m_vctProbeSchedule.Budget(int(effect.parameters[4].z));
-            if (budget) { dispatch(m_vctProbeSchedule.cursor, budget, false); m_vctProbeSchedule.Advance(budget); }
+            const auto budget = m_vctProbeSchedule.Budget(int(effect.parameters[4].z), updateSpeed);
+            if (budget) { dispatch(m_vctProbeSchedule.cursor, budget, false); m_vctProbeSchedule.Advance(budget, updateSpeed); }
         }
         VctTraceParameters trace;
         trace.inverseViewProjection = m_inverseViewProjection; trace.view = m_postProcessView;

@@ -59,3 +59,16 @@ Trace Quality now controls RHI cone-trace dimensions: High traces at half width/
 The focused regressions cover point/spot injection, stationary-cache refresh after light color changes, the injection toggle, and trace-divisor changes under broad lighting. At very small output sizes, quarter-resolution tracing can undersample narrow spotlight bounce; High retains more of that detail. These checks establish behavior, not a measured scene-wide frame-time speedup.
 
 **Local Light Bounce** scales point/spot radiance during injection (0–16, default 1). Use 2–4 for stronger local bounce without raising direct illumination, directional GI, or emissive sources. Both render paths rebuild affected volumes after edits. This is an artistic gain; radiance storage still clamps at 16, so very bright sources can saturate. RHI packets encode gain minus one in lane 5.x so zero-initialized packets preserve unit gain.
+
+## Update speed
+
+**Update Speed** in the VCTGI effect is a work multiplier (0.125–16, default 1).
+Use 2 or 4 to refresh lighting faster, or 0.5/0.25 to reduce work per frame.
+It scales progressive voxelization draw/triangle budgets, secondary-bounce work,
+probe updates and cache blend-in, and inversely scales Update Interval. Higher
+values spend more CPU/GPU time per frame; speed is bounded by dispatch granularity
+and cascade publication, so it is not a guaranteed frame-rate or latency ratio.
+Changes take effect on in-progress work without clearing valid GI or resetting
+its cache. Old scenes retain speed 1. The existing Cache Updates, Voxelization
+Command Budget and Update Interval remain the base settings. Temporal Blend is
+still an independent control over smoothing after new lighting is available.

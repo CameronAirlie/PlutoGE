@@ -194,7 +194,7 @@ float viewDepth(float2 uv, float depth)
             if (values[13 + lightIndex].w == 2.0)
             {
                 const float cone = dot(-lightDirection, normalize(values[17 + lightIndex].xyz));
-                attenuation *= smoothstep(0.90, 0.975, cone);
+                attenuation *= smoothstep(values[17 + lightIndex].w, max(values[22][lightIndex], values[17 + lightIndex].w + 0.000001), cone);
             }
             float localDiffuse = max(dot(normalView, lightDirection), 0.0);
             if (uParticleRenderMode == 1)

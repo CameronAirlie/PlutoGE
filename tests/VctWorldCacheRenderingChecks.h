@@ -128,6 +128,26 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     paddedIndices.insert(paddedIndices.end(), indices.begin(), indices.end());
     auto paddedMesh = renderer.CreateMesh({vertices, paddedIndices});
     for (auto &draw : draws) draw.mesh = &paddedMesh;
+    const std::array<int, 2> speedOwners{};
+    const auto framesToLight = [&](float speed, const void *owner) {
+        effect.historyOwner = owner;
+        effect.parameters[5].z = speed - 1.0f;
+        for (int frame = 1; frame <= 160; ++frame)
+        {
+            const auto pixels = renderFrames(1);
+            // Until a volume is ready the renderer shows the source image,
+            // which includes the emissive ceiling. Wait for the reference GI,
+            // not merely non-black pixels from that fallback.
+            if (pixels == reference) return frame;
+        }
+        throw std::runtime_error("VCT update speed never completed its progressive mesh");
+    };
+    const int slowFrames = framesToLight(.25f, &speedOwners[0]);
+    const int fastFrames = framesToLight(4.0f, &speedOwners[1]);
+    std::cout << "VCT update speed: slow=" << slowFrames << ", fast=" << fastFrames << " frames" << std::endl;
+    if (fastFrames >= slowFrames) throw std::runtime_error("VCT update speed did not accelerate progressive voxelization");
+    effect.historyOwner = &effect;
+    effect.parameters[5].z = 0;
     const auto chunked = renderFrames(24);
     double chunkError = 0;
     for (std::size_t at = 0; at < reference.size(); at += 4)
@@ -247,10 +267,11 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     if (channelEnergy(disabled, 1) > channelEnergy(edited, 1) * .1)
         throw std::runtime_error("VCT ignored the local injection toggle");
     lighting.pointLights.clear();
-    // Illuminate a broad ceiling patch so its bounce reaches the visible floor.
-    // A mid-height light aimed down only lights a tiny floor patch; the
-    // resulting ceiling bounce is almost invisible to this camera in RGBA8.
-    lighting.spotLights = {{{{0,.25f,0},12,{1,0,0},128},{0,1,0}}};
+    // Aimed up, the cone reaches the ceiling. Aimed horizontally from halfway
+    // between the planes, its 2.5m range cannot touch either plane: the maximum
+    // vertical reach is 2.5 * sin(25.84 degrees) < 1.5m. A light only .25m above
+    // the floor still illuminates it when horizontal and is not a dark control.
+    lighting.spotLights = {{{{0,1.5f,0},2.5f,{1,0,0},128},{0,1,0}}};
     effect.parameters[4].w = 1;
     const auto spot = renderFrames(160);
     std::cout << "VCT local light energy: point=" << channelEnergy(point, 0)
@@ -260,6 +281,7 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
     // the ceiling patch. This catches treating spots as omnidirectional points.
     lighting.spotLights[0].direction = {1,0,0};
     const auto turnedSpot = renderFrames(160);
+    std::cout << "VCT turned spot energy=" << channelEnergy(turnedSpot, 0) << std::endl;
     if (channelEnergy(turnedSpot, 0) > channelEnergy(spot, 0) * .1)
         throw std::runtime_error("Spot direction did not constrain VCT injection");
     lighting.spotLights[0].direction = {0,1,0};

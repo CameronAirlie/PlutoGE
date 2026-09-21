@@ -196,6 +196,13 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     lighting.spotLights = {{{{0,0,1.2f}, 4, {1,0,0}, 2, false}, {0,0,-1}}};
     const int lit = spotFrame();
     if (lit < dark + 40) throw std::runtime_error("Spotlight did not illuminate receiver");
+    lighting.spotLights[0].light.position.x = .35f;
+    lighting.spotLights[0].cone = {8, 10};
+    if (spotFrame() > dark + 3) throw std::runtime_error("Narrowing the spotlight angle did not shrink its cone");
+    lighting.spotLights[0].cone = {60, 80};
+    if (spotFrame() < dark + 40) throw std::runtime_error("Widening the spotlight angle did not expand its cone");
+    lighting.spotLights[0].cone = {};
+    lighting.spotLights[0].light.position.x = 0;
     lighting.spotLights[0].direction = {1,0,0};
     if (spotFrame() > dark + 3) throw std::runtime_error("Spotlight illuminated outside its cone");
     lighting.spotLights[0].direction = {0,0,-1};
@@ -204,6 +211,15 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     const int shadow = spotFrame();
     if (!renderer.GetFrameStats().virtualShadowsActive || shadow > lit - 30)
         throw std::runtime_error("Spotlight VSM did not shadow without directional shadows");
+    lighting.spotLights[0].light.position.x = .6f;
+    lighting.spotLights[0].cone = {80, 90};
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    if (spotFrame() > dark + 3) throw std::runtime_error("VSM projection did not expand with spotlight angle");
+    lighting.spotLights[0].light.castsShadows = false;
+    if (spotFrame() < dark + 40) throw std::runtime_error("Wide spotlight did not illuminate the expanded shadow test region");
+    lighting.spotLights[0].light.castsShadows = true;
+    lighting.spotLights[0].light.position.x = 0;
+    lighting.spotLights[0].cone = {};
     caster.model[3].x = 3;
     for (int frame = 0; frame < 8; ++frame) spotFrame();
     if (spotFrame() < lit - 3) throw std::runtime_error("Spotlight VSM retained a moved caster");

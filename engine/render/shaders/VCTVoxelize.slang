@@ -3,7 +3,7 @@ float4 shaderGraphTexture(int slot, float2 uv);
 #include "ShaderGraphEvaluation.slang"
 #include "VCTCoverage.slang"
 
-struct LocalLight { float4 positionRange; float4 colorIntensity; float4 directionSpot; };
+struct LocalLight { float4 positionRange; float4 colorIntensity; float4 directionSpot; float4 cone; };
 struct VoxelParameters
 {
     float3 volumeOrigin;
@@ -267,7 +267,7 @@ void fragmentMain(GeometryOutput input)
         float attenuation = (1.0 - smoothstep(light.positionRange.w * 0.9, light.positionRange.w, distance)) /
                             max(distance * distance, 0.0001);
         if (light.directionSpot.w > 0.5)
-            attenuation *= smoothstep(0.9, 0.975, dot(-direction, normalize(light.directionSpot.xyz)));
+            attenuation *= smoothstep(light.cone.x, max(light.cone.y, light.cone.x + 0.000001), dot(-direction, normalize(light.directionSpot.xyz)));
         direct += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * max(dot(normal, direction), 0.0);
     }
     float3 radiance = material.graph.header.y != 0 ? albedo.rgb+emission :

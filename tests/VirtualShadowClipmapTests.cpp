@@ -59,6 +59,9 @@ int main()
         lighting.cameraPosition += glm::vec3(10);
         const auto spotCameraMoved = VirtualShadowMaps::BuildClipmaps(lighting);
         Require(spot.origins[spotLevel] == spotCameraMoved.origins[spotLevel], "Camera movement invalidated spotlight pages");
+        lighting.spotLights[0].cone.outerAngle = 90;
+        const auto wideSpot = VirtualShadowMaps::BuildClipmaps(lighting);
+        Require(wideSpot.origins[spotLevel].z != spot.origins[spotLevel].z, "Spot cone edit did not invalidate VSM projection");
         lighting.spotLights[0].light.position.x += 1;
         const auto spotMoved = VirtualShadowMaps::BuildClipmaps(lighting);
         Require(spot.origins[spotLevel].z != spotMoved.origins[spotLevel].z, "Spot movement retained stale projection epoch");

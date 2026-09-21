@@ -425,6 +425,11 @@ Pass a project manifest directly to the runtime:
 
 The runtime loads the manifest, managed assembly, and startup scene, then chooses the active main camera. A project therefore needs a valid startup scene and at least one enabled Camera component for normal rendering.
 
+On Windows, double-clicking a built game opens no console window. Launching it
+from CMD sends output to that console, and file/pipe redirection is supported.
+CMD may return to its prompt while the game runs; use `start /wait "" Game.exe`
+when you need it to wait for the game to exit.
+
 ### Export a distributable build
 
 From the repository root:
@@ -485,7 +490,6 @@ ctest --test-dir out/build/msvc -C Debug `
 | `PLUTO_ENABLE_PCH` | `ON` | Precompile stable headers for larger targets |
 | `PLUTO_ENABLE_FSR2` | `OFF` | Build the Vulkan FSR 2 integration; some presets enable it |
 | `PLUTO_ENABLE_STREAMLINE` | `OFF` | Build the Vulkan DLSS integration with an external Streamline SDK |
-| `PLUTO_RUNTIME_WINDOWED` | `OFF` | Hide the Windows runtime console; shipping enables it |
 
 | Preset | Purpose |
 |---|---|

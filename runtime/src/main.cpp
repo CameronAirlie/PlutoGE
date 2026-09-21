@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -797,9 +798,31 @@ int RunRuntime(int argc, char **argv)
     return 0;
 }
 
-#if defined(_WIN32) && defined(PLUTO_RUNTIME_WINDOWED)
+#if defined(_WIN32)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
+    // GUI executables do not allocate a console. Join the caller's console when
+    // launched from a terminal, preserving any inherited file/pipe redirection.
+    const auto isRedirected = [](DWORD stream)
+    {
+        const HANDLE handle = GetStdHandle(stream);
+        if (handle == nullptr || handle == INVALID_HANDLE_VALUE) return false;
+        const DWORD type = GetFileType(handle);
+        return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+    };
+    const bool inputRedirected = isRedirected(STD_INPUT_HANDLE);
+    const bool outputRedirected = isRedirected(STD_OUTPUT_HANDLE);
+    const bool errorRedirected = isRedirected(STD_ERROR_HANDLE);
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        if (!inputRedirected) static_cast<void>(std::freopen("CONIN$", "r", stdin));
+        if (!outputRedirected) static_cast<void>(std::freopen("CONOUT$", "w", stdout));
+        if (!errorRedirected) static_cast<void>(std::freopen("CONOUT$", "w", stderr));
+        std::cin.clear();
+        std::cout.clear();
+        std::cerr.clear();
+        std::clog.clear();
+    }
     return RunRuntime(__argc, __argv);
 }
 #else

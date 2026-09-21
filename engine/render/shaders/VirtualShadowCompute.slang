@@ -19,14 +19,14 @@ void resetMain(uint3 id : SV_DispatchThreadID)
         uint2 at = virtualPageCoordinate(index);
         const uint level = index / PLUTO_VSM_LEVEL_PAGES;
         const uint2 local = virtualPageCoordinate(index % PLUTO_VSM_LEVEL_PAGES);
-        const bool root = level == PLUTO_VSM_ROOT_LEVEL && all(local < PLUTO_VSM_ROOT_GRID);
+        const bool root = ((level == PLUTO_VSM_ROOT_LEVEL && vsm.camera.w > 0.5) || vsm.origins[level].w != 0) && all(local < virtualGrid(level));
         requestMask[at] = root ? 1u : 0u;
         pageTable[at] = 0;
         if (root)
-            requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + local.y * PLUTO_VSM_ROOT_GRID + local.x] =
+            requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + local.y * virtualGrid(level) + local.x] =
                 local.y * PLUTO_VSM_GRID + local.x;
     }
-    if (index < PLUTO_VSM_LEVELS) requests[index] = index == PLUTO_VSM_ROOT_LEVEL ? PLUTO_VSM_ROOT_PAGES : 0;
+    if (index < PLUTO_VSM_LEVELS) requests[index] = ((index == PLUTO_VSM_ROOT_LEVEL && vsm.camera.w > 0.5) || vsm.origins[index].w != 0) ? virtualGrid(index) * virtualGrid(index) : 0;
     if (index < 16) stats[index] = 0;
     if (index < PLUTO_VSM_CAPACITY && vsm.settings.z > 0.5)
         pages[index] = (VirtualShadowPage)0;
@@ -67,19 +67,22 @@ void requestMain(uint3 id : SV_DispatchThreadID)
     float3 world = reconstruct(id.xy, depth);
     float footprint = virtualReceiverFootprint(vsm, world);
     int level = selectVirtualLevel(vsm, world, footprint);
-    if (level >= 0) requestFootprint(world, level);
+    if (vsm.camera.w > 0.5 && level >= 0) requestFootprint(world, level);
 }
 [shader("compute")][numthreads(1, 1, 1)]
 void allocateMain(uint3 id : SV_DispatchThreadID)
 {
     uint counts[PLUTO_VSM_LEVELS];
     uint quotas[PLUTO_VSM_LEVELS];
+    uint reserved = PLUTO_VSM_ROOT_PAGES;
+    for (uint level = PLUTO_VSM_DIRECTIONAL_LEVELS; level < PLUTO_VSM_LEVELS; ++level) reserved += requests[level];
     uint spare = PLUTO_VSM_CAPACITY;
     for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
         counts[level] = 0;
         const uint share = level == PLUTO_VSM_ROOT_LEVEL ? PLUTO_VSM_ROOT_PAGES :
-            (PLUTO_VSM_CAPACITY - PLUTO_VSM_ROOT_PAGES) / PLUTO_VSM_FINE_LEVELS;
+            level >= PLUTO_VSM_DIRECTIONAL_LEVELS ? requests[level] :
+            (PLUTO_VSM_CAPACITY - reserved) / PLUTO_VSM_FINE_LEVELS;
         quotas[level] = min(requests[level], share);
         spare -= quotas[level];
     }
@@ -134,6 +137,21 @@ bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
 {
     if (caster.bounds.w < 0) return true;
     uint level = page.address.z;
+    if (level >= PLUTO_VSM_DIRECTIONAL_LEVELS)
+    {
+        // Test the world sphere against homogeneous page-frustum planes. This
+        // stays conservative even when the sphere crosses the light plane.
+        float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(level) * 2.0 - 1.0;
+        float2 hi = lo + 2.0 / virtualGrid(level);
+        float4 planes[6] = {float4(1,0,0,-lo.x), float4(-1,0,0,hi.x),
+            float4(0,1,0,-lo.y), float4(0,-1,0,hi.y), float4(0,0,1,0), float4(0,0,-1,1)};
+        for (int i = 0; i < 6; ++i)
+        {
+            float4 plane = mul(planes[i], vsm.matrices[level]);
+            if (dot(plane, float4(caster.bounds.xyz, 1)) < -caster.bounds.w * length(plane.xyz)) return false;
+        }
+        return true;
+    }
     float3 uv = virtualCoordinate(vsm, level, caster.bounds.xyz);
     float2 radius = caster.bounds.w / vsm.metrics[level].w;
     float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(level);
@@ -183,7 +201,7 @@ void budgetMain(uint3 id : SV_DispatchThreadID)
                 continue;
             }
             const uint pagePriority = p.state.z != 0 ? 2u :
-                (p.address.z == PLUTO_VSM_ROOT_LEVEL ? 0u : 1u);
+                (p.address.z >= PLUTO_VSM_ROOT_LEVEL ? 0u : 1u);
             if (pagePriority != priority) continue;
             ++stats[2];
             if (updates < vsm.limits.z && p.pending.z <= remaining)

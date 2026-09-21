@@ -49,6 +49,24 @@ int main()
         lighting.directionalDirection.x += .1f;
         const auto sun = VirtualShadowMaps::BuildClipmaps(lighting);
         Require(sun.origins[0].z != original.origins[0].z, "Sun rotation did not invalidate projection epoch");
+        lighting.spotLights = {{{{1,2,3}, 10, {1,1,1}, 1, true}, {0,0,-1}}};
+        const auto spot = VirtualShadowMaps::BuildClipmaps(lighting);
+        constexpr int spotLevel = PLUTO_VSM_DIRECTIONAL_LEVELS;
+        auto projected = spot.matrices[spotLevel] * glm::vec4(1,2,1,1);
+        projected /= projected.w;
+        Require(std::abs(projected.x) < .0001f && std::abs(projected.y) < .0001f && projected.z > 0 && projected.z < 1,
+                "Spot projection does not cover the cone axis");
+        lighting.cameraPosition += glm::vec3(10);
+        const auto spotCameraMoved = VirtualShadowMaps::BuildClipmaps(lighting);
+        Require(spot.origins[spotLevel] == spotCameraMoved.origins[spotLevel], "Camera movement invalidated spotlight pages");
+        lighting.spotLights[0].light.position.x += 1;
+        const auto spotMoved = VirtualShadowMaps::BuildClipmaps(lighting);
+        Require(spot.origins[spotLevel].z != spotMoved.origins[spotLevel].z, "Spot movement retained stale projection epoch");
+        lighting.spotLights[0].direction = {1,0,0};
+        const auto spotRotated = VirtualShadowMaps::BuildClipmaps(lighting);
+        Require(spotMoved.origins[spotLevel].z != spotRotated.origins[spotLevel].z, "Spot rotation retained stale projection epoch");
+        lighting.spotLights[0].light.castsShadows = false;
+        Require(VirtualShadowMaps::BuildClipmaps(lighting).origins[spotLevel].w == 0, "Disabled spotlight still requests pages");
         std::cout << "Virtual shadow clipmap policy passed\n";
         return 0;
     }

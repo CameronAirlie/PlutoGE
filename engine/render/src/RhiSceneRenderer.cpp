@@ -656,7 +656,13 @@ namespace PlutoGE::render
         const auto shadowStart = std::chrono::steady_clock::now();
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
         core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
-        if (lighting.shadowsEnabled)
+        const bool localShadows = scene
+            ? std::ranges::any_of(scene->GetLights(), [](const auto *light) {
+                return light && light->type != scene::LightType::Directional && light->castsShadows;
+            })
+            : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
+              std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
+        if (lighting.shadowsEnabled || localShadows)
             appendDraws(shadowCommands, preparation.shadows, true);
         else
             preparation.shadows = {};

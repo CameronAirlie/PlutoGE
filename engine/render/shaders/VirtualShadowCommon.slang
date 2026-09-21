@@ -29,7 +29,8 @@ uint virtualGrid(uint level) { return PLUTO_VSM_LEVEL_GRID(level); }
 uint virtualResolution(uint level) { return virtualGrid(level) * PLUTO_VSM_PAGE_SIZE; }
 float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
 {
-    float3 clip = mul(p.matrices[level], float4(world, 1)).xyz;
+    float4 projected = mul(p.matrices[level], float4(world, 1));
+    float3 clip = projected.xyz / projected.w;
     return float3(clip.xy * 0.5 + 0.5, clip.z);
 }
 float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
@@ -46,7 +47,7 @@ float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
 int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 {
     footprint *= max(p.settings.w, 1.0);
-    for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
+    for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);
         float guard = 7.0 / virtualResolution(level);

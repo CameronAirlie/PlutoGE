@@ -71,7 +71,7 @@ namespace PlutoGE::render
         }
         // Projection epochs hash float bits; -0 and +0 are the same centre.
         if (depthCentre == 0.0f) depthCentre = 0.0f;
-        for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
+        for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
         {
             // Keep the resident root projection unchanged while fine coverage
             // adapts, so refinement changes never discard the safety coverage.
@@ -90,7 +90,23 @@ namespace PlutoGE::render
             result.origins[level] = glm::ivec4(origin, static_cast<int>(ProjectionEpoch(view, depthCentre, depthRange, span)), 0);
             result.metrics[level] = {span / (grid * PLUTO_VSM_PAGE_SIZE), depthRange, page, span};
         }
-        result.camera = glm::vec4(lighting.cameraPosition, 1);
+        int spotShadowCount = 0;
+        for (std::size_t index = 0; index < std::min(lighting.spotLights.size(), std::size_t{16}) && spotShadowCount < PLUTO_VSM_SPOT_COUNT; ++index)
+        {
+            const auto &spot = lighting.spotLights[index];
+            if (!spot.light.castsShadows || spot.light.range <= 0.02f) continue;
+            auto direction = spot.direction;
+            const float lengthSquared = glm::dot(direction, direction);
+            direction = std::isfinite(lengthSquared) && lengthSquared > 1.e-8f ? glm::normalize(direction) : glm::vec3(0,-1,0);
+            const auto up = std::abs(direction.y) > 0.99f ? glm::vec3(0,0,1) : glm::vec3(0,1,0);
+            const int level = PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++;
+            const auto matrix = glm::perspectiveRH_ZO(2.0f * std::acos(0.9f), 1.0f, 0.01f, spot.light.range) *
+                glm::lookAt(spot.light.position, spot.light.position + direction, up);
+            result.matrices[level] = matrix;
+            result.origins[level] = {0, 0, static_cast<int>(ProjectionEpoch(matrix, 0, spot.light.range, 0)), 1};
+            result.metrics[level] = {1.0f / (PLUTO_VSM_SPOT_GRID * PLUTO_VSM_PAGE_SIZE), spot.light.range, 0, 0};
+        }
+        result.camera = glm::vec4(lighting.cameraPosition, lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f);
         return result;
     }
     void VirtualShadowMaps::Initialize(rhi::IRenderDevice &device, const VirtualShadowShaders &shaders)

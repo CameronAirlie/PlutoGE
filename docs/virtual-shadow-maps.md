@@ -1,6 +1,6 @@
 # Virtual shadow maps
 
-Status: GPU-driven directional VSM is the current RHI default. Resource budgets
+Status: GPU-driven directional VSM is the current RHI default. Spot shadows also use VSM. Resource budgets
 and compatibility limitations still apply. September 2026.
 
 ## Selecting the shadow method
@@ -134,3 +134,20 @@ Focused reproduction: `build/tests/RelWithDebInfo/PlutoGEVulkanRhiTests.exe --sh
 ### Scene-specific follow-up
 
 Read-only inspection of `D:/PlutoProjects/SSS/Assets/Scenes/Main.plutoscene` found resolution 2048, four cascades, resolution falloff 0.75, near distance 8, softness 1, and screen-space radius 4. The previous RHI shader used the maximum of softness and screen-space radius as shadow-map tap spacing, so this scene sampled at four-texel intervals. The revised filter uses only shadow softness for its footprint. A GPU regression verifies that enabling the screen-space radius-four setting leaves RHI shadow-map coverage unchanged. The scene file was not modified.
+
+## Spotlight shadows
+
+Surface lighting supports up to 16 spotlights alongside 16 point lights, using
+inverse-square attenuation and the existing 0.9–0.975 cosine cone falloff.
+The first four eligible shadow-casting spots use perspective VSM projections,
+independently of the directional shadow toggle or legacy cascaded selection.
+Each spot reserves a 4×4 grid of 128-pixel pages (512×512 coverage) in the shared
+physical pool. These pages use GPU residency, caster signatures, bounded updates,
+indirect page rasterization and a 3×3 comparison filter. They do not allocate a
+conventional spotlight shadow texture. Additional spots contribute unshadowed light.
+
+Spot position, direction and range invalidate the projection epoch; camera motion
+does not. Caster movement, masks and instances use the shared VSM invalidation path.
+Spot page frusta conservatively cull caster spheres in homogeneous coordinates.
+Spot pages and directional root pages receive priority before directional refinement.
+The page and triangle update budgets apply to their combined work.

@@ -4,7 +4,7 @@ float virtualShadowVolumeVisibility(VirtualShadowParameters parameters,
                                     Sampler2D atlas, Sampler2D table, float3 world,
                                     float missingVisibility = 0.0)
 {
-    for (int level = 0; level < PLUTO_VSM_LEVELS; ++level)
+    for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
     {
         const float3 coordinate = virtualCoordinate(parameters, level, world);
         if (any(coordinate.xy < 0.0) || any(coordinate.xy >= 1.0) ||
@@ -30,7 +30,7 @@ float virtualShadowVolumeVisibility(VirtualShadowParameters parameters,
 float virtualShadowFogVisibility(VirtualShadowParameters parameters,
                                 Sampler2D atlas, Sampler2D table, float3 world)
 {
-    const float3 coordinate = virtualCoordinate(parameters, PLUTO_VSM_LEVELS - 1, world);
+    const float3 coordinate = virtualCoordinate(parameters, PLUTO_VSM_ROOT_LEVEL, world);
     const float edge = min(min(min(coordinate.x, 1.0 - coordinate.x),
                                min(coordinate.y, 1.0 - coordinate.y)),
                                min(coordinate.z, 1.0 - coordinate.z));

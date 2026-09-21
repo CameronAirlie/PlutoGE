@@ -67,9 +67,10 @@ cbuffer CameraParameters : register(b0, space0)
     float4 physicalSkyParameters[6];
     float4 physicalSkySettings;
     float4 temporalClipOffset;
-    float4 pointPositionRange[16];
-    float4 pointColorIntensity[16];
-    float4 pointSettings[16];
+    float4 pointPositionRange[32];
+    float4 pointColorIntensity[32];
+    float4 pointSettings[32];
+    float4 pointDirectionSpot[32];
     column_major float4x4 pointShadowMatrices[24];
     float4 pointParameters;
 };
@@ -318,13 +319,39 @@ float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 r
     return visibility;
 }
 
+float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal)
+{
+    // Bias in world space before projection; perspective depth is nonlinear.
+    float4 clip = mul(vsm.matrices[level], float4(world, 1));
+    float3 receiver = world + normal * max(0.0001, clip.w * 0.001);
+    float3 coordinate = virtualCoordinate(vsm, level, receiver);
+    if (clip.w <= 0 || any(coordinate.xy <= 0) || any(coordinate.xy >= 1) || coordinate.z < 0 || coordinate.z > 1) return 1;
+    int resolution = int(virtualResolution(level));
+    int2 center = int2(coordinate.xy * resolution);
+    float visibility = 0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            int2 texel = clamp(center + int2(x,y), 0, resolution - 1);
+            int2 page = texel / PLUTO_VSM_PAGE_SIZE;
+            float2 tableUv = (float2(page + int2(0, level * PLUTO_VSM_GRID)) + 0.5) /
+                float2(PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS);
+            uint mapping = uint(virtualShadowTable.SampleLevel(tableUv, 0).r);
+            if (mapping == 0) { visibility += 1; continue; }
+            uint slot = mapping - 1;
+            float2 atlasUv = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
+                float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
+            visibility += coordinate.z - 0.000005 <= virtualShadowAtlas.SampleLevel(atlasUv, 0).r ? 1.0 : 0.0;
+        }
+    return visibility / 9.0;
+}
 float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
                             float slope, out float rawVisibility, out float normalizedLevel)
 {
     rawVisibility = 1.0; normalizedLevel = 0.0;
     int firstLevel = selectVirtualLevel(vsm, world, virtualReceiverFootprint(vsm, world));
     if (firstLevel < 0) return -1.0;
-    for (int level = firstLevel; level < PLUTO_VSM_LEVELS; ++level)
+    for (int level = firstLevel; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
     {
         // Softness is defined at the requested resolution. A coarse fallback
         // must not multiply the world-space penumbra by its larger texel size.
@@ -402,7 +429,7 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                     visibility += comparison * weight; weightSum += weight;
                     if (all(texel == nearestTexel)) rawVisibility = comparison;
                 }
-            normalizedLevel = float(level) / (PLUTO_VSM_LEVELS - 1);
+            normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
             return visibility / max(weightSum, 0.000001);
         }
         const int pageBoundaryX = (lowPage.x + 1) * PLUTO_VSM_PAGE_SIZE;
@@ -429,7 +456,7 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                 if (all(texel == nearestTexel)) rawVisibility = comparison;
             }
         }
-        normalizedLevel = float(level) / (PLUTO_VSM_LEVELS - 1);
+        normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
         return visibility / max(weightSum, 0.000001);
     }
     return -1.0;
@@ -801,7 +828,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             const uint row = uint(pointSettings[light].x);
             visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal);
         }
-        const float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
+        float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
+        if (pointDirectionSpot[light].w > 0.5)
+        {
+            attenuation *= smoothstep(0.9, 0.975, dot(-l, pointDirectionSpot[light].xyz));
+            if (attenuation > 0 && pointSettings[light].y >= 0)
+                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition, pointReceiverNormal);
+        }
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
         if(customLighting)
             pointLighting += evaluateShaderGraphLighting(shaderGraph,input.worldPosition,normalize(input.worldNormal),

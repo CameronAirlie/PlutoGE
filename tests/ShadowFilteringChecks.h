@@ -177,6 +177,64 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     if (renderer.GetFrameStats().virtualShadowsActive)
         throw std::runtime_error("Disabled shadows retained the GPU virtual path");
     std::cout << "GPU virtual shadows: depth requests, residency, scrolling, invalidation, masks, budgets and switching passed\n";
+    // Spotlights must illuminate and allocate VSM pages without a directional light.
+    lighting = BasicLighting{};
+    lighting.shadowsEnabled = false;
+    lighting.directionalIntensity = 0;
+    lighting.ambientIntensity = 0;
+    lighting.cameraPosition = {0,0,2};
+    receiver.model = glm::translate(glm::mat4(1), glm::vec3(0,0,.2f));
+    receiver.roughness = 1;
+    caster = receiver;
+    caster.model[3].z = .7f;
+    const auto spotFrame = [&]() {
+        renderer.Render(glm::mat4(1), lighting, {&receiver,1}, {}, {&caster,1});
+        const auto image = readPixels(renderer.GetColorTexture());
+        return static_cast<unsigned char>(image[(128 * 256 + 128) * 4]);
+    };
+    const int dark = spotFrame();
+    lighting.spotLights = {{{{0,0,1.2f}, 4, {1,0,0}, 2, false}, {0,0,-1}}};
+    const int lit = spotFrame();
+    if (lit < dark + 40) throw std::runtime_error("Spotlight did not illuminate receiver");
+    lighting.spotLights[0].direction = {1,0,0};
+    if (spotFrame() > dark + 3) throw std::runtime_error("Spotlight illuminated outside its cone");
+    lighting.spotLights[0].direction = {0,0,-1};
+    lighting.spotLights[0].light.castsShadows = true;
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    const int shadow = spotFrame();
+    if (!renderer.GetFrameStats().virtualShadowsActive || shadow > lit - 30)
+        throw std::runtime_error("Spotlight VSM did not shadow without directional shadows");
+    caster.model[3].x = 3;
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    if (spotFrame() < lit - 3) throw std::runtime_error("Spotlight VSM retained a moved caster");
+    caster.model[3].x = 0;
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    if (spotFrame() > lit - 30) throw std::runtime_error("Spotlight VSM failed to restore a caster");
+    lighting.spotLights[0].light.castsShadows = false;
+    if (spotFrame() < lit - 3 || renderer.GetFrameStats().virtualShadowsActive)
+        throw std::runtime_error("Disabling spotlight shadows retained stale occlusion");
+    lighting.spotLights[0].light.castsShadows = true;
+    caster = receiver;
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    if (spotFrame() < lit - 3) throw std::runtime_error("Spotlight VSM self-shadow acne");
+    caster.model[3].z = .7f;
+    caster.alphaMode = 1;
+    caster.baseColor.a = 0;
+    for (int frame = 0; frame < 8; ++frame) spotFrame();
+    if (spotFrame() < lit - 3) throw std::runtime_error("Spotlight VSM ignored alpha mask");
+    caster.alphaMode = 0;
+    caster.baseColor.a = 1;
+    lighting.spotLights[0].light.intensity = .5f;
+    lighting.spotLights.resize(4, lighting.spotLights[0]);
+    for (const auto method : {ShadowMethod::Virtual, ShadowMethod::Cascaded})
+    {
+        lighting.shadowsEnabled = true;
+        lighting.shadowMethod = method;
+        for (int frame = 0; frame < 16; ++frame) spotFrame();
+        if (spotFrame() > lit - 30 || !renderer.GetFrameStats().virtualShadowsActive)
+            throw std::runtime_error("Four spotlight VSMs failed alongside directional shadows");
+    }
+    std::cout << "Spotlight lighting, cone, VSM shadows, caster motion and disabling passed\n";
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

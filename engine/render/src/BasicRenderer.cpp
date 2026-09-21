@@ -106,13 +106,14 @@ namespace PlutoGE::render
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
             glm::vec4 temporalClipOffset{0.0f};
-            std::array<glm::vec4, 16> pointPositionRange{};
-            std::array<glm::vec4, 16> pointColorIntensity{};
-            std::array<glm::vec4, 16> pointSettings{};
+            std::array<glm::vec4, 32> pointPositionRange{};
+            std::array<glm::vec4, 32> pointColorIntensity{};
+            std::array<glm::vec4, 32> pointSettings{};
+            std::array<glm::vec4, 32> pointDirectionSpot{};
             std::array<glm::mat4, 24> pointShadowMatrices{};
             glm::vec4 pointParameters{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 3216);
+        static_assert(sizeof(BasicFrameParameters) == 4496);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -1362,7 +1363,8 @@ namespace PlutoGE::render
     bool BasicRenderer::UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
                                           std::span<const BasicDraw> shadowDraws) const
     {
-        return lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual &&
+        return ((lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
+            std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; })) &&
             VirtualShadowUnavailableReason(draws, shadowDraws) == nullptr;
     }
 
@@ -1453,7 +1455,8 @@ namespace PlutoGE::render
 
         auto &commands = m_device->GetImmediateContext();
         const float graphTime = ShaderGraphTimeSeconds();
-        const bool virtualShadowsRequested = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual;
+        const bool virtualShadowsRequested = (lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
+            std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; });
         const char *virtualShadowIssue = virtualShadowsRequested ? VirtualShadowUnavailableReason(draws, shadowDraws) : nullptr;
         bool virtualShadowsActive = virtualShadowsRequested && !virtualShadowIssue;
         const bool cascadedShadowsActive = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Cascaded;
@@ -1588,7 +1591,7 @@ namespace PlutoGE::render
             glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
             glm::vec4(lighting.directionalColor, 1.0f),
             lighting.shadowMatrices,
-            (virtualShadowsActive || cascadedShadowsActive) ? 1u : 0u,
+            lighting.shadowsEnabled && (virtualShadowsActive || cascadedShadowsActive) ? 1u : 0u,
             lighting.shadowFlipY ? 1u : 0u,
             lighting.shadowDepthScale,
             lighting.shadowDepthBias,
@@ -1597,7 +1600,7 @@ namespace PlutoGE::render
             lighting.shadowCascadeMetrics,
             glm::vec4(static_cast<float>(std::clamp(lighting.shadowCascadeCount, 1u, 4u)),
                       std::max(lighting.shadowCascadeBlendDistance, 0.0f),
-                      std::max(lighting.shadowSoftness, 0.0f), virtualShadowsActive ? 1.0f : 0.0f),
+                      std::max(lighting.shadowSoftness, 0.0f), virtualShadowsActive && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f),
             glm::vec4(lighting.shadowFilterEnabled ? 1.0f : 0.0f,
                       static_cast<float>(std::clamp(lighting.shadowFilterRadius, 0u, 4u)),
                       std::clamp(lighting.shadowFilterRenderScale, 0.25f, 1.0f),
@@ -1616,7 +1619,8 @@ namespace PlutoGE::render
             temporalClipOffset,
         };
         const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
-        frameParameters.pointParameters = {static_cast<float>(pointCount),
+        const auto spotCount = std::min<std::size_t>(lighting.spotLights.size(), 16);
+        frameParameters.pointParameters = {static_cast<float>(pointCount + spotCount),
                                            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f,
                                            static_cast<float>(geometryMode)};
         std::size_t pointShadowCount = 0;
@@ -1636,6 +1640,21 @@ namespace PlutoGE::render
                     glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.01f, light.range) *
                     glm::lookAt(light.position, light.position + directions[face], ups[face]);
             ++pointShadowCount;
+        }
+        std::size_t spotShadowCount = 0;
+        for (std::size_t spotIndex = 0; spotIndex < spotCount; ++spotIndex)
+        {
+            const auto &spot = lighting.spotLights[spotIndex];
+            const auto index = pointCount + spotIndex;
+            auto direction = spot.direction;
+            const float lengthSquared = glm::dot(direction, direction);
+            direction = std::isfinite(lengthSquared) && lengthSquared > 1.e-8f ? glm::normalize(direction) : glm::vec3(0,-1,0);
+            frameParameters.pointPositionRange[index] = {spot.light.position, spot.light.range};
+            frameParameters.pointColorIntensity[index] = {spot.light.color, spot.light.intensity};
+            frameParameters.pointDirectionSpot[index] = {direction, 1};
+            frameParameters.pointSettings[index] = {-1, -1, 0, 0};
+            if (virtualShadowsActive && spot.light.castsShadows && spot.light.range > 0.02f && spotShadowCount < PLUTO_VSM_SPOT_COUNT)
+                frameParameters.pointSettings[index].y = static_cast<float>(PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++);
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky)

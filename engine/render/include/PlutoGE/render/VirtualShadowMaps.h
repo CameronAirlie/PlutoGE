@@ -26,7 +26,7 @@ namespace PlutoGE::render
         glm::uvec4 viewport{}, limits{};
         glm::vec4 settings{}, camera{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 672);
+    static_assert(sizeof(VirtualShadowParameters) == 192 + 96 * PLUTO_VSM_LEVELS);
 
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,

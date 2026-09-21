@@ -40,18 +40,20 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
     uint slot = pageLists[drawParameters.x * PLUTO_VSM_CAPACITY + instance / drawParameters.y];
     VirtualShadowPage page = pages[slot];
     float3 world = mul(models[instance % drawParameters.y], float4(input.position, 1)).xyz;
-    float3 coordinate = virtualCoordinate(vsm, page.address.z, world);
-    float2 local = coordinate.xy * virtualGrid(page.address.z) - float2(virtualPageCoordinate(page.state.x));
-    float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) + local) / PLUTO_VSM_ATLAS_TILES;
+    float4 projected = mul(vsm.matrices[page.address.z], float4(world, 1));
+    // Keep the page transform homogeneous: vertices on/behind the light
+    // plane must reach hardware clipping without a divide by zero.
+    float2 local = (projected.xy * 0.5 + projected.w * 0.5) * virtualGrid(page.address.z) -
+        float2(virtualPageCoordinate(page.state.x)) * projected.w;
+    float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * projected.w + local) / PLUTO_VSM_ATLAS_TILES;
     PageOutput output;
-    output.position = float4(atlas * 2.0 - 1.0, coordinate.z, 1);
+    output.position = float4(atlas * 2.0 - projected.w, projected.z, projected.w);
     if (vsm.viewport.z != 0) output.position.y = -output.position.y;
-    if (vsm.viewport.w == 0) output.position.z = output.position.z * 2.0 - 1.0;
+    if (vsm.viewport.w == 0) output.position.z = output.position.z * 2.0 - output.position.w;
     output.uv = input.uv;
-    // Hardware primitive clipping prevents large casters rasterizing over
-    // neighbouring physical tiles before the depth test.
+    // Hardware primitive clipping confines each caster to its physical tile.
     output.pageClip[0] = local.x; output.pageClip[1] = local.y;
-    output.pageClip[2] = 1.0 - local.x; output.pageClip[3] = 1.0 - local.y;
+    output.pageClip[2] = projected.w - local.x; output.pageClip[3] = projected.w - local.y;
     return output;
 }
 [shader("fragment")]

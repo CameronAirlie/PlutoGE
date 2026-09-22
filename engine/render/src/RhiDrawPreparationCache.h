@@ -11,6 +11,7 @@ namespace PlutoGE::render
     class RhiDrawPreparationCache
     {
       public:
+        std::vector<RenderCommand> giSource;
         struct MaterialEntry
         {
             BasicDraw draw;

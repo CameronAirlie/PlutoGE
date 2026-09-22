@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/VctRelighting.h"
+#include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
@@ -30,6 +31,23 @@ namespace
 int main()
 {
     using namespace PlutoGE::render;
+
+    // Disposable rigid effects must not enter an authored static GI cache.
+    RenderCommand fixed, transient;
+    fixed.mesh = reinterpret_cast<decltype(fixed.mesh)>(1);
+    fixed.material = reinterpret_cast<decltype(fixed.material)>(1);
+    fixed.isStatic = true;
+    transient = fixed; transient.isStatic = false;
+    std::vector<RenderCommand> source{fixed, transient}, selected;
+    SelectVctScene(source, selected);
+    if (selected.size() != 1 || !selected.front().isStatic) return 120;
+    source.erase(source.begin()+1);
+    SelectVctScene(source, selected);
+    if (selected.size() != 1 || !selected.front().isStatic) return 121;
+    source = {transient}; SelectVctScene(source, selected);
+    if (selected.size() != 1) return 122; // Preserve unclassified imported scenes.
+    source.clear(); SelectVctScene(source, selected);
+    if (!selected.empty()) return 123;
 
     // Physical units and derived bounds, independent of a graphics context.
     PlutoGE::scene::LightComponent physicalLight;

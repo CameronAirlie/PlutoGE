@@ -17,6 +17,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "RhiDrawPreparationCache.h"
+#include "PlutoGE/render/VctSceneSelection.h"
 #include "RhiSkinning.h"
 #include "rhi/NormalMipmaps.h"
 
@@ -965,7 +966,8 @@ namespace PlutoGE::render
             const auto sceneCommands = shadowCommands.empty() ? commands : shadowCommands;
             core::CpuScope giScope("GI packet preparation", core::CpuCategory::Rendering);
             const auto start = std::chrono::steady_clock::now();
-            appendDraws(sceneCommands, preparation.gi, false, true);
+            SelectVctScene(sceneCommands, preparation.giSource);
+            appendDraws(preparation.giSource, preparation.gi, false, true);
             m_timingStats.giPreparationMs = millisecondsBetween(start, std::chrono::steady_clock::now());
         }
         else

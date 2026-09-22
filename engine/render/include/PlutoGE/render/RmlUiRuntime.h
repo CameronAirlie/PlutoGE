@@ -172,6 +172,7 @@ namespace PlutoGE::render
         std::unordered_set<std::string> m_loadedFontFaces;
         std::vector<std::vector<unsigned char>> m_fontData;
         std::unordered_map<std::string, std::unique_ptr<Rml::EventListener>> m_eventListeners;
+        std::unique_ptr<Rml::EventListener> m_panZoom;
         std::unordered_map<std::string, Rml::Element *> m_eventListenerElements;
         int m_width = 0;
         int m_height = 0;

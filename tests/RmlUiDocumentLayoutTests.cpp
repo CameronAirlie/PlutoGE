@@ -78,6 +78,10 @@ int main(int argc, char** argv) try
         if (scroll->GetScrollHeight() <= scroll->GetClientHeight()) throw std::runtime_error("Fixture did not exercise overflow");
         for (auto* button : buttons)
         {
+            bool hidden = false;
+            for (auto* ancestor = button; ancestor; ancestor = ancestor->GetParentNode())
+                hidden |= ancestor->GetComputedValues().display() == Rml::Style::Display::None;
+            if (hidden) continue; // Inactive tab pages deliberately have no layout boxes.
             float minimum = !journal ? 450 : button->GetId() == "close-journal" ? 24 : button->IsClassSet("inventory-slot") ? 44 : 85;
             if (button->GetBox().GetSize().x < minimum) throw std::runtime_error("Button content collapsed");
         }

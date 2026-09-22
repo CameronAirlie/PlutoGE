@@ -1,3 +1,4 @@
+#include "PlutoGE/render/RmlPanZoom.h"
 #include <RmlUi/Core/FileInterface.h>
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
@@ -607,6 +608,9 @@ namespace PlutoGE::render
             m_window = nullptr;
             return false;
         }
+        auto panZoom = std::make_unique<RmlPanZoom>();
+        panZoom->Attach(*m_context);
+        m_panZoom = std::move(panZoom);
         return true;
     }
 
@@ -623,6 +627,7 @@ namespace PlutoGE::render
             Rml::RemoveContext(m_context->GetName());
             m_context = nullptr;
         }
+        m_panZoom.reset();
         Rml::Shutdown();
         m_system.reset();
         m_rhiRenderer.reset();
@@ -1415,7 +1420,8 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         if (!element) return false;
-        element->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+        if (!RmlPanZoom::Reveal(element))
+            element->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
         MarkWorldSurfaceDirty(doc);
         return true;
     }

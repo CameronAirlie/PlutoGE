@@ -39,6 +39,7 @@ namespace PlutoGE::render
         class IRenderDevice;
     }
     class RmlUiRhiRenderer;
+    class ScenePortrait;
     struct RmlUiCpuTiming
     {
         float initializeMs = 0.0f;
@@ -76,6 +77,8 @@ namespace PlutoGE::render
 
         bool Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice = nullptr);
         void ResetRuntimeState();
+        // Run before the host begins scene recording; cached previews submit only when dirty.
+        void PrepareScenePortraits(const scene::Scene &scene, rhi::IRenderDevice &device);
         void Shutdown();
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
                     const glm::mat4 &view, const glm::mat4 &projection,
@@ -110,6 +113,15 @@ namespace PlutoGE::render
 
     private:
         RmlUiRuntime() = default;
+        void ClearScenePortraits();
+        struct PortraitEntry
+        {
+            std::shared_ptr<ScenePortrait> renderer;
+            std::string source, signature;
+        };
+        std::unordered_map<std::string, PortraitEntry> m_portraits;
+        const scene::Scene *m_portraitScene = nullptr;
+        std::uint64_t m_portraitSequence = 0;
         void SynchronizeDocuments(const scene::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection);
         void ProcessInput(platform::Window &window, const scene::Scene &scene);
         Rml::ElementDocument *FindDocument(const std::string &document) const;

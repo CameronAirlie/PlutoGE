@@ -148,3 +148,20 @@ shared-atlas shadows use the denser base glyphs. Atlas memory grows with the
 square of the density, bounded at 4x per axis. `PlutoGERmlUiFontRasterTests`
 checks atlas density, unchanged layout and hit testing at 3x canvas scale,
 resize transitions, font effects, atlas reuse and resource cleanup.
+
+## Cached 3D portraits
+
+An `img` element can display a GPU-cached snapshot of a character hierarchy and detached equipment visuals:
+
+```csharp
+Span<uint> equipment = stackalloc uint[] { weaponVisualId, armourVisualId };
+document.Element("character-portrait").SetScenePortrait(player.EntityId, equipment, ++appearanceRevision, 320, 384);
+```
+
+Give the image an explicit CSS width/height. Call this when the appearance changes, after equipment visuals have been created. Zero attachment IDs are ignored. A new revision refreshes the image even if the entity IDs are unchanged. Ordinary scene movement does not invalidate the portrait. Rendering uses root-relative transforms, automatic framing, neutral lighting and a transparent background.
+
+`ScenePortrait` collects visible mesh components from the requested hierarchies without spawning entities or running gameplay. `RmlUiRuntime::PrepareScenePortraits` runs before host scene recording in the runtime and editor RHI paths. It compares root, attachments, revision and resolution, then renders only changed visible requests. Hidden/removed previews release their render resources; scene changes and runtime shutdown clear all previews. Up to four simultaneous portraits and 32 detached roots are supported, with dimensions bounded to 32–1024 pixels. This initial implementation targets static mesh hierarchies such as rigid equipment; animation-pose/skinning snapshots and material overlay passes are not included.
+
+The managed helper uses `data-preview-root`, `data-preview-attachments`, `data-preview-revision`, `data-preview-width` and `data-preview-height`. Native code binds a `portrait://` texture source on success and publishes `data-preview-render-count` and `data-preview-rendered-revision` for diagnostics. RmlUi consumes the render texture directly through a shared external-texture binding. No screenshot files or GPU-to-CPU readback are involved in production. The transparent-copy shader uses reversed depth to remove the scene background, and the UI binding handles texture orientation.
+
+Validation: the project-backed `PlutoGERmlUiAntialiasingTests --capture <document> <font> <prefix>` fixture renders the real player, armour and weapon assets, checks visible/transparent pixels, verifies equipment changes alter the image, and captures the result inside the inventory. Use `--opengl` in place of `--capture` for the OpenGL backend.

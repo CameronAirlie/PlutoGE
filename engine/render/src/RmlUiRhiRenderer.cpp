@@ -56,6 +56,7 @@ namespace PlutoGE::render
     struct RmlUiRhiRenderer::Texture
     {
         rhi::Texture resource;
+        std::shared_ptr<ExternalTexture> external;
     };
 
     struct alignas(16) RmlUiRhiRenderer::Parameters
@@ -65,7 +66,8 @@ namespace PlutoGE::render
         float clipYSign = 1.0f;
         float maskMode = 0.0f;
         float inverseSize[2]{};
-        float padding[2]{};
+        float flipTextureY = 0;
+        float padding = 0;
     };
 
     RmlUiRhiRenderer::RmlUiRhiRenderer(
@@ -258,7 +260,8 @@ namespace PlutoGE::render
             return;
         auto *geometry = reinterpret_cast<Geometry *>(handle);
         auto *texture = textureHandle ? reinterpret_cast<Texture *>(textureHandle) : m_whiteTexture.get();
-        if (!texture || !texture->resource)
+        const auto resource = texture->external ? texture->external->resource.Get() : texture->resource.Get();
+        if (!resource)
             return;
         Parameters parameters{
             m_transform,
@@ -266,6 +269,7 @@ namespace PlutoGE::render
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f,
             0.0f};
         parameters.maskMode = m_maskMode != 0 ? m_maskMode : (m_clipEnabled && m_clipValid ? 4.0f : 0.0f);
+        parameters.flipTextureY = texture->external && texture->external->flipY ? 1.0f : 0.0f;
         parameters.inverseSize[0] = 1.0f / (m_width * m_renderScale);
         parameters.inverseSize[1] = 1.0f / (m_height * m_renderScale);
         auto &parameterBuffer = AcquireParameterBuffer();
@@ -275,7 +279,7 @@ namespace PlutoGE::render
         commands.BindVertexBuffer(geometry->vertices.Get());
         commands.BindIndexBuffer(geometry->indices.Get());
         commands.BindUniformBuffer(0, parameterBuffer.Get());
-        commands.BindTexture(8, texture->resource.Get(), m_sampler.Get());
+        commands.BindTexture(8, resource, m_sampler.Get());
         commands.BindTexture(9, m_clipValid ? m_clipTargets[m_clipIndex].Get() : m_whiteTexture->resource.Get(), m_sampler.Get());
         commands.DrawIndexed(geometry->indexCount);
     }
@@ -287,6 +291,13 @@ namespace PlutoGE::render
 
     Rml::TextureHandle RmlUiRhiRenderer::LoadTexture(Rml::Vector2i &dimensions, const Rml::String &source)
     {
+        if (const auto found = m_externalTextures.find(source); found != m_externalTextures.end())
+        {
+            auto texture = std::make_unique<Texture>();
+            texture->external = found->second;
+            dimensions = {texture->external->width, texture->external->height};
+            return reinterpret_cast<Rml::TextureHandle>(texture.release());
+        }
         auto *files = Rml::GetFileInterface();
         const auto file = files ? files->Open(source) : Rml::FileHandle{};
         if (!file)
@@ -339,6 +350,21 @@ namespace PlutoGE::render
     void RmlUiRhiRenderer::ReleaseTexture(Rml::TextureHandle texture)
     {
         delete reinterpret_cast<Texture *>(texture);
+    }
+
+    void RmlUiRhiRenderer::RegisterExternalTexture(const std::string &source, std::shared_ptr<ExternalTexture> texture)
+    {
+        m_externalTextures[source] = std::move(texture);
+    }
+
+    void RmlUiRhiRenderer::UnregisterExternalTexture(const std::string &source)
+    {
+        if (auto found = m_externalTextures.find(source); found != m_externalTextures.end())
+        {
+            found->second->resource = {};
+            m_externalTextures.erase(found);
+            Rml::ReleaseTexture(source, this);
+        }
     }
 
     void RmlUiRhiRenderer::EnableScissorRegion(bool enable)

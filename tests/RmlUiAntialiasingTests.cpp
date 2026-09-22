@@ -3,6 +3,13 @@
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/platform/Window.h"
+#include "PlutoGE/render/ScenePortrait.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
+#include <filesystem>
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Spritesheet.h>
 #include <RmlUi/Core/StyleSheet.h>
@@ -49,7 +56,7 @@ body { margin: 0; width: 100%; height: 100%; }
     doc->Show();
     auto render=[&](bool aa,int width,int height,bool shared) {
         context->SetDimensions({width,height}); context->Update(); ui.SetViewport(width,height); ui.SetAntialiasingEnabled(aa);
-        Texture target(device,device.CreateTexture({static_cast<unsigned>(width),static_cast<unsigned>(height),Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"UI test",true,1,false,1}));
+        rhi::Texture target(device,device.CreateTexture({static_cast<unsigned>(width),static_cast<unsigned>(height),Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"UI test",true,1,false,1}));
         auto& commands=device.GetImmediateContext();
         commands.BeginFrame("UI AA test");
         RenderingInfo clear; clear.colorAttachments={target.Get()}; clear.width=width; clear.height=height; clear.clearDepth=false;
@@ -87,7 +94,7 @@ div { display: block; }
         const bool aa = variant % 2 != 0;
         clipped->GetElementById("outer")->SetProperty("border-radius", variant >= 2 ? "8px" : "0px");
         context->SetDimensions({160,128}); context->Update(); ui.SetViewport(160,128); ui.SetAntialiasingEnabled(aa);
-        Texture target(device, device.CreateTexture({160,128,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Transformed clips",true,1,false,1}));
+        rhi::Texture target(device, device.CreateTexture({160,128,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Transformed clips",true,1,false,1}));
         auto& cmd = device.GetImmediateContext(); cmd.BeginFrame();
         RenderingInfo info; info.colorAttachments={target.Get()}; info.width=160; info.height=128; info.clearDepth=false;
         cmd.BeginRendering(info); cmd.EndRendering();
@@ -103,7 +110,7 @@ div { display: block; }
     ui.SetAntialiasingEnabled(true);
     // With no visible UI, the transparent layer must not retain a previous frame.
     ui.SetViewport(96,72);
-    Texture empty(device,device.CreateTexture({96,72,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Empty UI",true,1,false,1}));
+    rhi::Texture empty(device,device.CreateTexture({96,72,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Empty UI",true,1,false,1}));
     auto& commands=device.GetImmediateContext(); commands.BeginFrame();
     RenderingInfo clear; clear.colorAttachments={empty.Get()}; clear.width=96; clear.height=72; clear.clearDepth=false;
     commands.BeginRendering(clear); commands.EndRendering();
@@ -116,7 +123,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
 #status { display: none; font-size: 48px; }
 </style></head><body><div>HEALTH 100</div><div id="status"></div></body></rml>)");
     victory->Show();
-    Texture victoryTarget(device,device.CreateTexture({640,240,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Victory UI",true,1,false,1}));
+    rhi::Texture victoryTarget(device,device.CreateTexture({640,240,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Victory UI",true,1,false,1}));
     context->SetDimensions({640,240}); ui.SetViewport(640,240);
     for(int frame=0;frame<15;++frame) {
         if(frame==3) { victory->GetElementById("status")->SetInnerRML("HEIR FELLED / R to restart"); victory->GetElementById("status")->SetProperty("display","block"); }
@@ -155,6 +162,32 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         Require(Rml::LoadFontFace(fontBytes, "Dungeon", Rml::Style::FontStyle::Normal), "Capture font failed to load");
         auto* journal = context->LoadDocument(documentPath);
         Require(journal != nullptr, "Capture document failed to load");
+        // Exercise the real player/equipment assets without starting a gameplay scene.
+        const auto project = std::filesystem::path(documentPath).parent_path().parent_path().parent_path();
+        core::Engine::GetInstance().GetAssetManager().SetProjectContext(project.string());
+        scene::Scene portraitScene;
+        std::string portraitError;
+        auto* hero = scene::Prefab::Instantiate(portraitScene, "project://Prefabs/Player.plutoprefab", nullptr, &portraitError);
+        auto* armour = scene::Prefab::Instantiate(portraitScene, "project://Prefabs/Armour/traveler_coat.plutoprefab", nullptr, &portraitError);
+        auto* weapon = scene::Prefab::Instantiate(portraitScene, "project://Prefabs/Weapons/earthshaker.plutoprefab", nullptr, &portraitError);
+        Require(hero && armour && weapon, portraitError.c_str());
+        const auto heroPosition = hero->GetWorldPosition();
+        armour->SetWorldPosition(heroPosition);
+        weapon->SetWorldPosition(heroPosition + glm::vec3(.65f, .1f, -.25f));
+        ScenePortrait portrait;
+        const std::array<std::uint32_t, 2> attachments{armour->GetID(), weapon->GetID()};
+        Require(portrait.Render(device, portraitScene, hero->GetID(), attachments, 320, 384), "3D portrait failed to render");
+        auto portraitPixels = read(portrait.Texture()->resource.Get(), 320, 384);
+        int opaque = 0, transparent = 0;
+        for (size_t i = 3; i < portraitPixels.size(); i += 4)
+        {
+            opaque += int(portraitPixels[i]) > 250;
+            transparent += int(portraitPixels[i]) == 0;
+        }
+        Require(opaque > 3000 && transparent > 3000, "Portrait must contain a visible character and transparent background");
+        Require(hero->GetWorldPosition() == heroPosition, "Portrait modified gameplay transforms");
+        ui.RegisterExternalTexture("portrait://test", portrait.Texture());
+        journal->GetElementById("character-portrait")->SetAttribute("src", "portrait://test");
         journal->SetProperty("width", "1280px"); journal->SetProperty("height", "960px");
         journal->SetProperty("transform-origin", "0px 0px"); journal->SetProperty("transform", "scale(0.75)");
         journal->GetElementById("journal-panel")->SetProperty("display", "block");
@@ -171,7 +204,14 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
             journal->GetElementById("bag-" + std::to_string(i))->SetInnerRML("<img class=\"item-icon\" sprite=\"weapon-" + Rml::String(weaponIds[i]) + "\"/><span class=\"slot-name\">" + weaponIds[i] + "</span>");
         journal->GetElementById("item-preview")->SetProperty("display", "block");
         journal->GetElementById("item-preview")->SetInnerRML("<img class=\"item-preview-image\" sprite=\"weapon-earthshaker\"/>");
-        journal->GetElementById("equip-1")->SetInnerRML("<span class=\"slot-fallback\">ARM</span><span class=\"slot-caption\">ARMOR</span>");
+        const auto* armourSprite = journal->GetStyleSheet()->GetSprite("armour-traveler_coat");
+        Require(armourSprite != nullptr, "Armour sprite is missing from stylesheet");
+        const auto armourSize = armourSprite->sprite_sheet->texture_source.GetTexture(context->GetRenderManager()).GetDimensions();
+        Require(armourSize.x == 384 && armourSize.y == 128, "Armour atlas failed native decoding/upload");
+        journal->GetElementById("equip-1")->SetInnerRML("<img id=\"armour-icon-probe\" class=\"item-icon\" sprite=\"armour-traveler_coat\"/><span class=\"slot-caption\">ARMOR</span>");
+        const char* armourIds[] = {"traveler_coat", "sentinel_mail", "quilted_vest"};
+        for (int i = 0; i < 3; ++i)
+            journal->GetElementById("bag-" + std::to_string(11 + i))->SetInnerRML("<img class=\"item-icon\" sprite=\"armour-" + Rml::String(armourIds[i]) + "\"/>");
         journal->GetElementById("equip-2")->SetInnerRML("<span class=\"slot-fallback\">SIG</span><span class=\"slot-caption\">CHARM</span>");
         std::ifstream inspectorFile(std::string(capturePrefix) + "item.rml");
         const std::string inspectorMarkup((std::istreambuf_iterator<char>(inspectorFile)), {});
@@ -184,7 +224,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         if (auto* stats = journal->GetElementById("character-stat-list")) stats->SetInnerRML(characterStats);
         if (inspectorMarkup.empty()) journal->GetElementById("item-detail")->SetInnerRML("Select an item to see its details.");
         journal->GetElementById("inventory-status")->SetInnerRML("Drag an item to move, swap or equip it.");
-        journal->GetElementById("inventory")->SetInnerRML("BACKPACK / 11 / 24");
+        journal->GetElementById("inventory")->SetInnerRML("BACKPACK / 14 / 24");
         journal->GetElementById("training")->SetInnerRML("TRAINING / STEEL 0 / ARCANE 1 / VITALITY 0");
         Rml::String entries;
         for (int i=0;i<12;++i) entries += "<p>[ACTIVE] The Last Archivist - After clearing the Ossuary, speak to the blue shrine on its eastern side. The sigil opens the descent.</p>";
@@ -192,7 +232,18 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
         for (int page=0;page<4;++page)
         {
-            if (page==1) journal->GetElementById("item-inspection")->SetScrollTop(10000);
+            if (page==1)
+            {
+                journal->GetElementById("item-inspection")->SetScrollTop(10000);
+                auto* mail = scene::Prefab::Instantiate(portraitScene, "project://Prefabs/Armour/sentinel_mail.plutoprefab", nullptr, &portraitError);
+                Require(mail != nullptr, portraitError.c_str());
+                mail->SetWorldPosition(heroPosition);
+                const std::array<std::uint32_t, 2> changed{mail->GetID(), weapon->GetID()};
+                Require(portrait.Render(device, portraitScene, hero->GetID(), changed, 320, 384), "Equipment refresh failed");
+                Require(read(portrait.Texture()->resource.Get(), 320, 384) != portraitPixels, "Equipment refresh did not change portrait pixels");
+                Require(portrait.RenderCount() == 2, "Portrait rendered outside explicit refresh calls");
+                journal->GetElementById("equip-1")->SetInnerRML("<img class=\"item-icon\" sprite=\"armour-sentinel_mail\"/><span class=\"slot-caption\">ARMOR</span>");
+            }
             if (page==2)
             {
                 journal->GetElementById("inventory-page")->SetProperty("display","none");
@@ -216,14 +267,16 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                 context->ProcessMouseMove(int(point.x+170),int(point.y+100),0);
             }
             context->Update(); context->Update();
-            Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));
+            rhi::Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));
             commands.BeginFrame(); clear.colorAttachments={target.Get()}; clear.width=960; clear.height=720;
             commands.BeginRendering(clear); commands.EndRendering();
             ui.BeginFrame(target.Get(),false); context->Render(); ui.EndFrame(false); commands.Submit();
             auto capture=read(target.Get(),960,720);
             if (page == 0)
             {
-                auto* icon = journal->GetElementById("inventory-icon-probe");
+              for (const auto* probe : {"inventory-icon-probe", "armour-icon-probe"})
+              {
+                auto* icon = journal->GetElementById(probe);
                 const auto origin = icon->GetAbsoluteOffset(Rml::BoxArea::Content) * 0.75f;
                 const auto size = icon->GetBox().GetSize(Rml::BoxArea::Content) * 0.75f;
                 int white = 0, samples = 0;
@@ -236,6 +289,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                         ++samples;
                     }
                 Require(samples > 100 && white < samples / 4, "Inventory icon rendered as an opaque white placeholder");
+              }
                 std::cout << "Inventory atlas decoded at " << atlasSize.x << 'x' << atlasSize.y << "; GPU icon pixels passed.\n";
             }
             std::ofstream output(std::string(capturePrefix)+std::to_string(page)+".ppm",std::ios::binary);
@@ -260,7 +314,7 @@ int main(int argc,char** argv) try
             std::vector<std::byte> pixels(width*height*4);
             glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
             glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data()); return pixels;
-        });
+        }, argc==5 ? argv[2] : nullptr, argc==5 ? argv[3] : nullptr, argc==5 ? argv[4] : nullptr);
     }
     else
     {

@@ -130,6 +130,20 @@ public sealed class RmlElement
 
     public bool ScrollIntoView() => ScriptBridge.RmlScrollIntoView(Document.Path, Id);
 
+    /// <summary>Requests a cached visual-only mesh portrait on an img element. Increment revision to refresh.
+    /// Attachments are detached visual entity roots, rendered relative to the character root.
+    /// Hidden portraits release their render resources and refresh when shown again.</summary>
+    public void SetScenePortrait(uint root, ReadOnlySpan<uint> attachments, ulong revision, int width = 256, int height = 384)
+    {
+        if (width < 32 || width > 1024 || height < 32 || height > 1024)
+            throw new ArgumentOutOfRangeException(nameof(width), "Portrait dimensions must be between 32 and 1024.");
+        this["data-preview-attachments"] = string.Join(" ", attachments.ToArray());
+        this["data-preview-width"] = width.ToString(CultureInfo.InvariantCulture);
+        this["data-preview-height"] = height.ToString(CultureInfo.InvariantCulture);
+        this["data-preview-revision"] = revision.ToString(CultureInfo.InvariantCulture);
+        this["data-preview-root"] = root.ToString(CultureInfo.InvariantCulture);
+    }
+
     public bool SetClass(string name, bool enabled = true) =>
         ScriptBridge.RmlSetClass(Document.Path, Id, name, enabled);
 

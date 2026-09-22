@@ -63,6 +63,7 @@ namespace PlutoGE::render
         const bool combineRuntimeUiSubmission = scene && scene->HasRmlRuntimeUI() &&
                                                 RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
+        if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,

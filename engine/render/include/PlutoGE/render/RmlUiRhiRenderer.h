@@ -8,6 +8,8 @@
 
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <string>
 
 namespace PlutoGE::render
 {
@@ -17,6 +19,15 @@ namespace PlutoGE::render
     class RmlUiRhiRenderer final : public Rml::RenderInterface
     {
     public:
+        // Shared binding keeps UI handles valid when a producer replaces or releases its target.
+        struct ExternalTexture
+        {
+            rhi::Texture resource;
+            int width = 0, height = 0;
+            bool flipY = false;
+        };
+        void RegisterExternalTexture(const std::string &source, std::shared_ptr<ExternalTexture> texture);
+        void UnregisterExternalTexture(const std::string &source);
         RmlUiRhiRenderer(rhi::IRenderDevice &device,
                          const rhi::GraphicsPipelineDescriptor::ShaderCode &vertexShader,
                          const rhi::GraphicsPipelineDescriptor::ShaderCode &fragmentShader);
@@ -71,6 +82,7 @@ namespace PlutoGE::render
         int m_renderScale = 1;
         bool m_antialiasingEnabled = true;
         std::unique_ptr<Texture> m_whiteTexture;
+        std::unordered_map<std::string, std::shared_ptr<ExternalTexture>> m_externalTextures;
         std::vector<rhi::Buffer> m_parameterBuffers;
         std::size_t m_parameterCursor = 0;
         Rml::Matrix4f m_transform;

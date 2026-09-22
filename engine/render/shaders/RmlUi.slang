@@ -20,7 +20,8 @@ cbuffer RmlUiParameters : register(b0, space0)
     float clipYSign;
     float maskMode;
     float2 inverseSize;
-    float2 padding;
+    float flipTextureY;
+    float padding;
 };
 
 [[vk::binding(0, 1)]] Sampler2D sourceTexture : register(t0, space1);
@@ -36,7 +37,7 @@ VertexOutput vertexMain(VertexInput input)
     // projection otherwise invert Y twice. OpenGL uses +1; Vulkan uses -1.
     output.position.y *= clipYSign;
     output.color = input.color;
-    output.uv = input.uv;
+    output.uv = float2(input.uv.x, flipTextureY > 0.5 ? 1.0 - input.uv.y : input.uv.y);
     return output;
 }
 

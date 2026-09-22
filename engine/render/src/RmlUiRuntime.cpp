@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/render/ScenePortrait.h"
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
@@ -635,6 +636,7 @@ namespace PlutoGE::render
 
     void RmlUiRuntime::ResetRuntimeState()
     {
+        ClearScenePortraits();
         DetachEventSubscriptions();
         for (const auto &[key, document] : m_documents)
         {
@@ -656,6 +658,63 @@ namespace PlutoGE::render
         m_pendingEvents.clear();
         m_lastInputFrame = 0;
         m_cpuTiming = {};
+    }
+
+    void RmlUiRuntime::ClearScenePortraits()
+    {
+        if (m_rhiRenderer)
+            for (const auto &[key, entry] : m_portraits) m_rhiRenderer->UnregisterExternalTexture(entry.source);
+        m_portraits.clear();
+        m_portraitScene = nullptr;
+    }
+
+    void RmlUiRuntime::PrepareScenePortraits(const scene::Scene &scene, rhi::IRenderDevice &device)
+    {
+        if (!m_context || !m_rhiRenderer) return;
+        if (m_portraitScene != &scene) { ClearScenePortraits(); m_portraitScene = &scene; }
+        std::unordered_set<std::string> visible;
+        for (const auto &[documentKey, document] : m_documents)
+        {
+            Rml::ElementList elements;
+            document->QuerySelectorAll(elements, "img[data-preview-root]");
+            for (auto *element : elements)
+            {
+                if (!element->IsVisible(true) || element->GetId().empty()) continue;
+                const auto root = element->GetAttribute<int>("data-preview-root", 0);
+                if (root <= 0) continue;
+                const auto key = documentKey + "#" + element->GetId();
+                visible.insert(key);
+                if (!m_portraits.contains(key) && m_portraits.size() >= 4) continue;
+                auto &entry = m_portraits[key];
+                const auto attachmentsText = element->GetAttribute<Rml::String>("data-preview-attachments", "");
+                const auto revision = element->GetAttribute<Rml::String>("data-preview-revision", "0");
+                const int width = std::clamp(element->GetAttribute<int>("data-preview-width", 256), 32, 1024);
+                const int height = std::clamp(element->GetAttribute<int>("data-preview-height", 384), 32, 1024);
+                const auto signature = std::to_string(root) + ":" + attachmentsText + ":" + revision + ":" + std::to_string(width) + ":" + std::to_string(height);
+                if (signature == entry.signature) continue;
+                std::vector<std::uint32_t> attachments;
+                std::istringstream input(attachmentsText);
+                std::uint32_t id;
+                while (input >> id && attachments.size() < 32) if (id != 0) attachments.push_back(id);
+                if (!entry.renderer) entry.renderer = std::make_shared<ScenePortrait>();
+                if (!entry.renderer->Render(device, scene, root, attachments, width, height)) continue;
+                if (entry.source.empty()) entry.source = "portrait://" + std::to_string(++m_portraitSequence);
+                m_rhiRenderer->RegisterExternalTexture(entry.source, entry.renderer->Texture());
+                element->SetAttribute("src", entry.source);
+                element->SetAttribute("data-preview-render-count", std::to_string(entry.renderer->RenderCount()));
+                element->SetAttribute("data-preview-rendered-revision", revision);
+                entry.signature = signature;
+            }
+        }
+        for (auto it = m_portraits.begin(); it != m_portraits.end();)
+        {
+            if (!visible.contains(it->first))
+            {
+                m_rhiRenderer->UnregisterExternalTexture(it->second.source);
+                it = m_portraits.erase(it);
+            }
+            else ++it;
+        }
     }
 
     bool RmlUiRuntime::ConsumeAssetFileChange()

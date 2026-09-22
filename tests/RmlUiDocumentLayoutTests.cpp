@@ -47,7 +47,7 @@ int main(int argc, char** argv) try
     panel->SetProperty("display", "block");
     document->Show();
     const bool journal = Rml::String(argv[4]) == "journal-panel";
-    auto* scroll = journal ? document->GetElementById("inventory-page") : panel;
+    auto* scroll = journal ? document->GetElementById("backpack-scroll") : panel;
     for (const auto size : {Rml::Vector2i(1280, 720), Rml::Vector2i(1280, 960), Rml::Vector2i(1920, 1080)})
     {
         context->SetDimensions(size);
@@ -60,7 +60,8 @@ int main(int argc, char** argv) try
         scroll->AppendChild(Rml::ElementPtr(overflow));
         Rml::ElementList buttons;
         panel->GetElementsByTagName(buttons, "button");
-        for (auto* button : buttons) button->SetInnerRML("Equipment slot: Wanderer's Blade / owned item details");
+        for (auto* button : buttons)
+            if (!journal) button->SetInnerRML("Equipment slot: Wanderer's Blade / owned item details");
         context->Update();
         context->Update();
         const float width = panel->GetClientWidth();
@@ -76,7 +77,10 @@ int main(int argc, char** argv) try
         if (std::abs(left + outerWidth / 2 - size.x / 2) > 2) throw std::runtime_error("Panel is not centered");
         if (scroll->GetScrollHeight() <= scroll->GetClientHeight()) throw std::runtime_error("Fixture did not exercise overflow");
         for (auto* button : buttons)
-            if (button->GetBox().GetSize().x < (Rml::String(argv[4]) == "journal-panel" ? 80 : 450)) throw std::runtime_error("Button content collapsed");
+        {
+            float minimum = !journal ? 450 : button->GetId() == "close-journal" ? 24 : button->IsClassSet("inventory-slot") ? 44 : 85;
+            if (button->GetBox().GetSize().x < minimum) throw std::runtime_error("Button content collapsed");
+        }
         if (auto* source = document->GetElementById("bag-0"); source && Rml::String(argv[4]) == "journal-panel")
         {
             auto* target = document->GetElementById("bag-1");
@@ -121,20 +125,36 @@ int main(int argc, char** argv) try
         if (journal)
         {
             auto* tabs = document->GetElementById("journal-tabs");
-            auto* close = document->GetElementById("close-journal");
-            const float contentTop = scroll->GetAbsoluteOffset(Rml::BoxArea::Border).y;
-            const float contentBottom = contentTop + scroll->GetBox().GetSize(Rml::BoxArea::Border).y;
+            auto* footer = document->GetElementById("journal-footer");
+            auto* inventoryPage = document->GetElementById("inventory-page");
+            const float contentTop = inventoryPage->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+            const float contentBottom = contentTop + inventoryPage->GetBox().GetSize(Rml::BoxArea::Border).y;
             if (tabs->GetAbsoluteOffset(Rml::BoxArea::Border).y + tabs->GetBox().GetSize(Rml::BoxArea::Border).y > contentTop ||
-                contentBottom > close->GetAbsoluteOffset(Rml::BoxArea::Border).y)
+                contentBottom > footer->GetAbsoluteOffset(Rml::BoxArea::Border).y)
                 throw std::runtime_error("Tab contents overlap fixed navigation");
-            scroll->SetProperty("display", "none");
+            const auto first = document->GetElementById("bag-0")->GetAbsoluteOffset();
+            const auto eighth = document->GetElementById("bag-7")->GetAbsoluteOffset();
+            const auto ninth = document->GetElementById("bag-8")->GetAbsoluteOffset();
+            if (std::abs(first.y - eighth.y) > 1 || ninth.y <= first.y) throw std::runtime_error("Backpack is not an eight-column grid");
+            auto* main = document->GetElementById("inventory-main");
+            auto* inspector = document->GetElementById("selected-item-panel");
+            if (main->GetAbsoluteOffset().x + main->GetBox().GetSize(Rml::BoxArea::Border).x > inspector->GetAbsoluteOffset().x)
+                throw std::runtime_error("Selected item inspector overlaps the character sheet");
+            auto* inspection = document->GetElementById("item-inspection");
+            document->GetElementById("item-detail")->SetInnerRML(longContent);
+            context->Update(); inspection->SetScrollTop(10000); context->Update();
+            if (inspection->GetScrollTop() <= 0) throw std::runtime_error("Long item stats cannot scroll independently");
+            const float inspectionBottom = inspection->GetAbsoluteOffset().y + inspection->GetBox().GetSize(Rml::BoxArea::Border).y;
+            if (inspectionBottom > document->GetElementById("item-actions")->GetAbsoluteOffset().y)
+                throw std::runtime_error("Item stats overlap equip/drop actions");
+            inventoryPage->SetProperty("display", "none");
             auto* quests = document->GetElementById("quests-page");
             quests->SetProperty("display", "block");
             document->GetElementById("quests")->SetInnerRML(longContent);
             context->Update();
             quests->SetScrollTop(10000); context->Update();
             if (quests->GetScrollTop() <= 0) throw std::runtime_error("Quest tab cannot scroll");
-            quests->SetProperty("display", "none"); scroll->SetProperty("display", "block");
+            quests->SetProperty("display", "none"); inventoryPage->SetProperty("display", "block");
         }
         scroll->SetScrollTop(10000);
         context->Update();

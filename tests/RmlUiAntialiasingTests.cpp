@@ -171,10 +171,20 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
             journal->GetElementById("bag-" + std::to_string(i))->SetInnerRML("<img class=\"item-icon\" sprite=\"weapon-" + Rml::String(weaponIds[i]) + "\"/><span class=\"slot-name\">" + weaponIds[i] + "</span>");
         journal->GetElementById("item-preview")->SetProperty("display", "block");
         journal->GetElementById("item-preview")->SetInnerRML("<img class=\"item-preview-image\" sprite=\"weapon-earthshaker\"/>");
-        journal->GetElementById("equip-1")->SetInnerRML("ARMOR<br/>Traveler's Coat");
-        journal->GetElementById("item-detail")->SetInnerRML("Select an item to see its details. Equipment slots are your active loadout.");
+        journal->GetElementById("equip-1")->SetInnerRML("<span class=\"slot-fallback\">ARM</span><span class=\"slot-caption\">ARMOR</span>");
+        journal->GetElementById("equip-2")->SetInnerRML("<span class=\"slot-fallback\">SIG</span><span class=\"slot-caption\">CHARM</span>");
+        std::ifstream inspectorFile(std::string(capturePrefix) + "item.rml");
+        const std::string inspectorMarkup((std::istreambuf_iterator<char>(inspectorFile)), {});
+        if (!inspectorMarkup.empty()) journal->GetElementById("item-detail")->SetInnerRML(inspectorMarkup);
+        const char* statLabels[] = {"Health", "Aether", "Melee damage", "Spell damage", "Damage reduction", "Aether regen", "Primary hit", "Move speed"};
+        const char* statValues[] = {"100 / 100", "100 / 100", "x1", "x1", "5%", "12 / s", "24", "6"};
+        Rml::String characterStats;
+        for (int i = 0; i < 8; ++i)
+            characterStats += "<div class=\"character-stat-row" + Rml::String(i % 2 ? " alt" : "") + "\"><span class=\"stat-label\">" + statLabels[i] + "</span><span class=\"stat-value\">" + statValues[i] + "</span></div>";
+        if (auto* stats = journal->GetElementById("character-stat-list")) stats->SetInnerRML(characterStats);
+        if (inspectorMarkup.empty()) journal->GetElementById("item-detail")->SetInnerRML("Select an item to see its details.");
         journal->GetElementById("inventory-status")->SetInnerRML("Drag an item to move, swap or equip it.");
-        journal->GetElementById("inventory")->SetInnerRML("BACKPACK / 0 / 24");
+        journal->GetElementById("inventory")->SetInnerRML("BACKPACK / 11 / 24");
         journal->GetElementById("training")->SetInnerRML("TRAINING / STEEL 0 / ARCANE 1 / VITALITY 0");
         Rml::String entries;
         for (int i=0;i<12;++i) entries += "<p>[ACTIVE] The Last Archivist - After clearing the Ossuary, speak to the blue shrine on its eastern side. The sigil opens the descent.</p>";
@@ -182,7 +192,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
         for (int page=0;page<4;++page)
         {
-            if (page==1) journal->GetElementById("inventory-page")->SetScrollTop(10000);
+            if (page==1) journal->GetElementById("item-inspection")->SetScrollTop(10000);
             if (page==2)
             {
                 journal->GetElementById("inventory-page")->SetProperty("display","none");

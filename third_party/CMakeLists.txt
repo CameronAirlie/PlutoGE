@@ -58,6 +58,8 @@ if (PLUTO_ENABLE_FSR2)
         GIT_REPOSITORY https://github.com/GPUOpen-Effects/FidelityFX-FSR2.git
         GIT_TAG        1680d1edd5c034f88ebbbb793d8b88f8842cf804
         # PlutoGE consumes only the SDK API/backend sources, not AMD's sample.
+        # Skip Cauldron and its sample media; neither is needed by the SDK.
+        GIT_SUBMODULES ""
         SOURCE_SUBDIR  _plutoge_no_cmake_project
     )
     FetchContent_MakeAvailable(fidelityfx_fsr2)

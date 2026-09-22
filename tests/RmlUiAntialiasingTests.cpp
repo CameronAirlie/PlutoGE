@@ -4,6 +4,8 @@
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/platform/Window.h"
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Spritesheet.h>
+#include <RmlUi/Core/StyleSheet.h>
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -22,10 +24,19 @@ void Require(bool condition, const char* message)
 template<class Reader>
 void CheckUi(IRenderDevice& device, Reader read, const char* documentPath = nullptr, const char* fontPath = nullptr, const char* capturePrefix = nullptr)
 {
+    struct TestLog final : Rml::SystemInterface {
+        bool LogMessage(Rml::Log::Type, const Rml::String& message) override
+        { std::cerr << message << '\n'; return true; }
+    } log;
+    Rml::SetSystemInterface(&log);
     ShaderArtifactLibrary shaders(PLUTO_RHI_TEST_SHADER_DIR);
     RmlUiRhiRenderer ui(device,shaders.Load("RmlUi","vertex"),shaders.Load("RmlUi","fragment"));
     Rml::SetRenderInterface(&ui);
     Require(Rml::Initialise(),"RmlUi initialization failed");
+    // Failed texture checks must clean up documents before destroying their renderer.
+    struct RmlScope {
+        ~RmlScope() { Rml::Shutdown(); Rml::SetRenderInterface(nullptr); Rml::SetSystemInterface(nullptr); }
+    } rmlScope;
     auto* context=Rml::CreateContext("AA",{80,64});
     auto* doc=context->LoadDocumentFromMemory(R"(<rml><head><style>
 div { display: block; }
@@ -147,7 +158,19 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         journal->SetProperty("width", "1280px"); journal->SetProperty("height", "960px");
         journal->SetProperty("transform-origin", "0px 0px"); journal->SetProperty("transform", "scale(0.75)");
         journal->GetElementById("journal-panel")->SetProperty("display", "block");
-        journal->GetElementById("equip-0")->SetInnerRML("WEAPON<br/>Wanderer's Blade");
+        // Resolve through the actual stylesheet and renderer: valid sprite markup alone
+        // does not prove that its backing image format can be decoded and uploaded.
+        const auto* weaponSprite = journal->GetStyleSheet()->GetSprite("weapon-wanderer_blade");
+        Require(weaponSprite != nullptr, "Inventory sprite is missing from stylesheet");
+        auto atlas = weaponSprite->sprite_sheet->texture_source.GetTexture(context->GetRenderManager());
+        const auto atlasSize = atlas.GetDimensions();
+        Require(atlasSize.x > 0 && atlasSize.y > 0, "Inventory sprite atlas failed native texture decoding/upload");
+        journal->GetElementById("equip-0")->SetInnerRML("<img id=\"inventory-icon-probe\" class=\"item-icon\" sprite=\"weapon-wanderer_blade\"/><span class=\"slot-caption\">WEAPON</span><span class=\"slot-name\">Wanderer's Blade</span>");
+        const char* weaponIds[] = {"wanderer_blade", "warden_edge", "iron_sabre", "cinder_staff", "ash_wand", "iron_maul", "frost_hammer", "earthshaker", "spirit_tome", "winter_grimoire", "legion_codex"};
+        for (int i = 0; i < 11; ++i)
+            journal->GetElementById("bag-" + std::to_string(i))->SetInnerRML("<img class=\"item-icon\" sprite=\"weapon-" + Rml::String(weaponIds[i]) + "\"/><span class=\"slot-name\">" + weaponIds[i] + "</span>");
+        journal->GetElementById("item-preview")->SetProperty("display", "block");
+        journal->GetElementById("item-preview")->SetInnerRML("<img class=\"item-preview-image\" sprite=\"weapon-earthshaker\"/>");
         journal->GetElementById("equip-1")->SetInnerRML("ARMOR<br/>Traveler's Coat");
         journal->GetElementById("item-detail")->SetInnerRML("Select an item to see its details. Equipment slots are your active loadout.");
         journal->GetElementById("inventory-status")->SetInnerRML("Drag an item to move, swap or equip it.");
@@ -188,6 +211,23 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
             commands.BeginRendering(clear); commands.EndRendering();
             ui.BeginFrame(target.Get(),false); context->Render(); ui.EndFrame(false); commands.Submit();
             auto capture=read(target.Get(),960,720);
+            if (page == 0)
+            {
+                auto* icon = journal->GetElementById("inventory-icon-probe");
+                const auto origin = icon->GetAbsoluteOffset(Rml::BoxArea::Content) * 0.75f;
+                const auto size = icon->GetBox().GetSize(Rml::BoxArea::Content) * 0.75f;
+                int white = 0, samples = 0;
+                for (int y = int(origin.y)+2; y < int(origin.y+size.y)-2; ++y)
+                    for (int x = int(origin.x)+2; x < int(origin.x+size.x)-2; ++x)
+                    {
+                        Require(x >= 0 && x < 960 && y >= 0 && y < 720, "Inventory icon is outside the capture");
+                        const auto offset = ((719-y)*960+x)*4;
+                        if (int(capture[offset]) > 245 && int(capture[offset+1]) > 245 && int(capture[offset+2]) > 245) ++white;
+                        ++samples;
+                    }
+                Require(samples > 100 && white < samples / 4, "Inventory icon rendered as an opaque white placeholder");
+                std::cout << "Inventory atlas decoded at " << atlasSize.x << 'x' << atlasSize.y << "; GPU icon pixels passed.\n";
+            }
             std::ofstream output(std::string(capturePrefix)+std::to_string(page)+".ppm",std::ios::binary);
             output << "P6\n960 720\n255\n";
             for (int y=719;y>=0;--y) for(int x=0;x<960;++x)
@@ -196,7 +236,6 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
             if (page==3) context->ProcessMouseButtonUp(0,0);
         }
     }
-    Rml::Shutdown(); Rml::SetRenderInterface(nullptr);
     std::cout<<"Native border partial-coverage pixels: "<<aliased<<" -> "<<smooth<<"; resize, clipping, transparency and shared submission passed.\n";
 }
 int main(int argc,char** argv) try

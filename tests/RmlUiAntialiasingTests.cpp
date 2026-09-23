@@ -371,6 +371,23 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                         "Minimap terrain escaped its scaled clipping viewport");
                 }
                 Require(terrainPixels > 100, "Minimap terrain was not rendered");
+                std::ifstream legacyFile(std::string(capturePrefix) + "minimap.rml.legacy");
+                const std::string legacyMarkup((std::istreambuf_iterator<char>(legacyFile)), {});
+                if (!legacyMarkup.empty())
+                {
+                    board->SetInnerRML(legacyMarkup); context->Update(); context->Update();
+                    commands.BeginFrame(); commands.BeginRendering(clear); commands.EndRendering();
+                    ui.BeginFrame(target.Get(), false); context->Render(); ui.EndFrame(false); commands.Submit();
+                    auto legacyPixels = read(target.Get(), 960, 720);
+                    int mismatches = 0;
+                    auto terrain = [](const auto& pixels, size_t offset) {
+                        return std::abs(int(pixels[offset]) - 107) <= 1 && std::abs(int(pixels[offset+1]) - 135) <= 1 && std::abs(int(pixels[offset+2]) - 145) <= 1;
+                    };
+                    for (size_t i = 0; i < capture.size(); i += 4) mismatches += terrain(capture, i) != terrain(legacyPixels, i);
+                    Require(mismatches <= std::max(8, terrainPixels / 100), "Compressed minimap changed visible terrain coverage");
+                    std::cout << "GPU minimap old/new terrain mask mismatch: " << mismatches << " / " << terrainPixels << " pixels\n";
+                    board->SetInnerRML(minimapMarkup); context->Update(); context->Update();
+                }
                 std::cout << "GPU minimap terrain remains inside its scaled viewport.\n";
             }
             std::ofstream output(std::string(capturePrefix)+std::to_string(page)+".ppm",std::ios::binary);

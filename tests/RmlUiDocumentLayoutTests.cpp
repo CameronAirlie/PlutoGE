@@ -6,6 +6,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <cstdlib>
+#include <chrono>
 
 // Asset-driven layout regression harness; no graphics device or project code required.
 class LayoutRenderer final : public Rml::RenderInterface
@@ -41,7 +42,7 @@ public:
 
 int main(int argc, char** argv) try
 {
-    if (argc != 5) throw std::runtime_error("Usage: document.rml font.ttf font-family panel-id");
+    if (argc != 5 && argc != 6) throw std::runtime_error("Usage: document.rml font.ttf font-family panel-id");
     // Default Win32 assertion logging opens a modal dialog, which hangs CI.
     struct TestSystem final : Rml::SystemInterface
     {
@@ -83,10 +84,39 @@ int main(int argc, char** argv) try
         if (lookup.Find(document, "lookup-probe")) throw std::runtime_error("Removed subtree retained by cache");
         lookup.Clear();
     }
-    auto* panel = document->GetElementById(argv[4]);
+    auto* panel = document->GetElementById(Rml::String(argv[4]) == "minimap-performance" ? "minimap-panel" : argv[4]);
     if (!panel) throw std::runtime_error("Panel missing");
     panel->SetProperty("display", "block");
     document->Show();
+    if (Rml::String(argv[4]) == "minimap-performance")
+    {
+        if (argc != 6) throw std::runtime_error("Minimap benchmark requires the generated fixture path");
+        document->GetElementById("gameplay-hud")->SetProperty("display", "block");
+        auto* board = document->GetElementById("minimap-board");
+        for (bool legacy : {true, false})
+        {
+            std::ifstream input(std::string(argv[5]) + (legacy ? ".legacy" : ""));
+            const std::string markup((std::istreambuf_iterator<char>(input)), {});
+            if (markup.empty()) throw std::runtime_error("Minimap benchmark fixture is empty");
+            board->SetInnerRML(markup); context->Update(); context->Render();
+            auto frame = [&](int i) {
+                const auto offset = std::to_string(float(i % 100) * .01f) + "%";
+                for (const char* id : {"minimap-terrain", "minimap-markers"})
+                {
+                    auto* layer = document->GetElementById(id);
+                    if (legacy) { layer->SetProperty("left", offset); layer->SetProperty("top", offset); }
+                    else layer->SetProperty("transform", "translate(" + offset + "," + offset + ")");
+                }
+                context->Update(); context->Render();
+            };
+            for (int i = 0; i < 30; ++i) frame(i);
+            const auto start = std::chrono::steady_clock::now();
+            for (int i = 0; i < 300; ++i) frame(i);
+            const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            std::cout << (legacy ? "Legacy" : "Optimized") << " minimap: 300 moving UI layout/render updates " << ms << " ms (CPU, no graphics device)\n";
+        }
+        Rml::Shutdown(); Rml::SetRenderInterface(nullptr); return 0;
+    }
     if (Rml::String(argv[4]) == "display-panel")
     {
         auto fail = [](const char* message) { Rml::Shutdown(); throw std::runtime_error(message); };

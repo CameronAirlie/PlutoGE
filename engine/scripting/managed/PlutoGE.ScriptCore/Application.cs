@@ -3,6 +3,13 @@ namespace PlutoGE.ScriptCore;
 /// <summary>Application window, lifecycle, and project paths.</summary>
 public static class Application
 {
+    public static bool WindowSizeSupported => Native.ScriptBridge.WindowSizeSupported;
+    /// <summary>Logical client size; in borderless mode returns the windowed restore size.</summary>
+    public static (int Width, int Height) WindowedSize => Native.ScriptBridge.GetWindowedSize(false);
+    /// <summary>Maximum windowed client size fitting the current monitor work area, with decoration margin.</summary>
+    public static (int Width, int Height) WindowedSizeLimit => Native.ScriptBridge.GetWindowedSize(true);
+    /// <summary>Resizes the host window, or its borderless restore size. Invalid/out-of-bounds sizes are rejected.</summary>
+    public static bool TrySetWindowedSize(int width, int height) => Native.ScriptBridge.SetWindowedSize(width, height);
     /// <summary>Borderless fullscreen on the window's current monitor (the editor window when hosted).</summary>
     public static bool Fullscreen
     {

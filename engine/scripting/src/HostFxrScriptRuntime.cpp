@@ -1310,6 +1310,25 @@ namespace PlutoGE::scripting
             return activeScene ? activeScene->GetFilePath().c_str() : "";
         }
 
+        int32_t GetWindowedSize(int32_t *width, int32_t *height)
+        {
+            if (!width || !height) return 0;
+            const auto size = core::Engine::GetInstance().GetWindow().GetWindowedSize();
+            *width = size.width; *height = size.height;
+            return size.width > 0 && size.height > 0;
+        }
+        int32_t GetWindowedSizeLimit(int32_t *width, int32_t *height)
+        {
+            if (!width || !height) return 0;
+            const auto size = core::Engine::GetInstance().GetWindow().GetWindowedSizeLimit();
+            *width = size.width; *height = size.height;
+            return size.width > 0 && size.height > 0;
+        }
+        int32_t SetWindowedSize(int32_t width, int32_t height)
+        {
+            return core::Engine::GetInstance().GetWindow().SetWindowedSize(width, height) ? 1 : 0;
+        }
+
         int32_t GetWindowFullscreen()
         {
             return core::Engine::GetInstance().GetWindow().IsFullscreen() ? 1 : 0;
@@ -3416,6 +3435,7 @@ namespace PlutoGE::scripting
         register_window_api_fn registerAudioPreparationApi = nullptr;
         register_window_api_fn registerProfilingApi = nullptr;
         register_window_api_fn registerPointerApi = nullptr;
+        int(PLUTO_HOST_CALL *registerWindowSizeApi)(void *, void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
@@ -3530,6 +3550,7 @@ namespace PlutoGE::scripting
             impl.registerAudioPreparationApi = nullptr;
             impl.registerProfilingApi = nullptr;
             impl.registerPointerApi = nullptr;
+            impl.registerWindowSizeApi = nullptr;
             impl.registerDisplayApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerSceneStreamingApi = nullptr;
@@ -3884,6 +3905,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterAudioPreparationApi"), impl.registerAudioPreparationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterProfilingApi"), impl.registerProfilingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPointerApi"), impl.registerPointerApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterWindowSizeApi"), impl.registerWindowSizeApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
@@ -4206,6 +4228,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&GetViewportPointer), reinterpret_cast<void *>(&ViewportToWorldRay)) == 0)
         {
             setManagedBridgeFailure("RegisterPointerApi");
+            return false;
+        }
+
+        if (!m_impl->registerWindowSizeApi || m_impl->registerWindowSizeApi(
+                reinterpret_cast<void *>(&GetWindowedSize),
+                reinterpret_cast<void *>(&GetWindowedSizeLimit),
+                reinterpret_cast<void *>(&SetWindowedSize)) == 0)
+        {
+            setManagedBridgeFailure("RegisterWindowSizeApi");
             return false;
         }
 

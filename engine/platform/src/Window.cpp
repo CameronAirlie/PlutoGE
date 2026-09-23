@@ -353,6 +353,59 @@ namespace PlutoGE::platform
         glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
     }
 
+    WindowExtents Window::GetWindowedSize() const
+    {
+        if (!m_window) return {0, 0};
+        if (m_config.fullscreen) return {m_windowedWidth, m_windowedHeight};
+        int width, height;
+        glfwGetWindowSize(m_window, &width, &height);
+        return {width, height};
+    }
+
+    WindowExtents Window::GetWindowedSizeLimit() const
+    {
+        if (!m_window) return {0, 0};
+        int x, y, width, height, count;
+        glfwGetWindowPos(m_window, &x, &y);
+        glfwGetWindowSize(m_window, &width, &height);
+        auto *selected = glfwGetPrimaryMonitor();
+        auto **monitors = glfwGetMonitors(&count);
+        int bestArea = -1;
+        for (int i = 0; i < count; ++i)
+        {
+            int mx, my, mw, mh;
+            glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+            int area = (std::max)(0, (std::min)(x + width, mx + mw) - (std::max)(x, mx)) *
+                       (std::max)(0, (std::min)(y + height, my + mh) - (std::max)(y, my));
+            if (area > bestArea) { bestArea = area; selected = monitors[i]; }
+        }
+        if (!selected) return {0, 0};
+        glfwGetMonitorWorkarea(selected, &x, &y, &width, &height);
+        // Reserve decoration space even while the current window is borderless.
+        int left, top, right, bottom;
+        glfwGetWindowFrameSize(m_window, &left, &top, &right, &bottom);
+        return {(std::max)(0, width - (std::max)(left + right, 16)),
+                (std::max)(0, height - (std::max)(top + bottom, 48))};
+    }
+
+    bool Window::SetWindowedSize(int width, int height)
+    {
+        if (!m_window || width < 320 || height < 200) return false;
+        const auto current = GetWindowedSize();
+        if (current.width == width && current.height == height) return true;
+        const auto limit = GetWindowedSizeLimit();
+        if (width > limit.width || height > limit.height) return false;
+        if (m_config.fullscreen)
+        {
+            m_windowedWidth = width; m_windowedHeight = height; m_windowedMaximized = false;
+            return true;
+        }
+        if (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED)) glfwRestoreWindow(m_window);
+        glfwSetWindowSize(m_window, width, height);
+        const auto actual = GetWindowedSize();
+        return actual.width == width && actual.height == height;
+    }
+
     void Window::SetTitle(const std::string &title)
     {
         m_config.title = title;

@@ -41,6 +41,10 @@ namespace PlutoGE::platform
         void Close();
         void RequestClose();
         void SetFullscreen(bool fullscreen);
+        // Logical window coordinates, not framebuffer pixels. Borderless retains its restore size.
+        [[nodiscard]] WindowExtents GetWindowedSize() const;
+        [[nodiscard]] WindowExtents GetWindowedSizeLimit() const;
+        bool SetWindowedSize(int width, int height);
         [[nodiscard]] bool IsFullscreen() const { return m_config.fullscreen; }
         void SetTitle(const std::string &title);
 

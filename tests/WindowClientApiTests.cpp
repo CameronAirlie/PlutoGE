@@ -25,6 +25,10 @@ int main()
         return 5;
 
     auto *native = static_cast<GLFWwindow *>(window.GetWindow());
+    const auto limit = window.GetWindowedSizeLimit();
+    if (limit.width <= 0 || limit.height <= 0) return 14;
+    if (window.SetWindowedSize(0, 720) || window.SetWindowedSize(limit.width + 1, 540)) return 15;
+    if (!window.SetWindowedSize(640, 480)) return 16;
     int x, y, width, height;
     glfwGetWindowPos(native, &x, &y);
     glfwGetWindowSize(native, &width, &height);
@@ -39,6 +43,10 @@ int main()
     if (window.IsFullscreen() || !glfwGetWindowAttrib(native, GLFW_DECORATED)) return 8;
     if (x != restoredX || y != restoredY || width != restoredWidth || height != restoredHeight) return 9;
     if (glfwGetWindowAttrib(native, GLFW_CLIENT_API) != GLFW_NO_API) return 10;
+    window.SetFullscreen(true);
+    if (!window.SetWindowedSize(800, 500) || window.GetWindowedSize().width != 800) return 17;
+    window.SetFullscreen(false);
+    if (window.GetWindowedSize().width != 800 || window.GetWindowedSize().height != 500) return 18;
     window.Close();
     if (!window.Create({.title = "PlutoGE borderless startup test", .width = 640, .height = 480,
                         .visible = false, .fullscreen = true, .clientApi = WindowClientApi::None})) return 11;

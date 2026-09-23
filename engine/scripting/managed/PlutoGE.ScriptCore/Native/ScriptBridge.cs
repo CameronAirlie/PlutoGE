@@ -672,6 +672,25 @@ internal static unsafe partial class ScriptBridge
     internal static bool SetSceneShadowResolution(int resolution) => _setSceneShadowResolution != null && _setSceneShadowResolution(resolution) != 0;
 
     private static delegate* unmanaged[Cdecl]<int> _getWindowFullscreen;
+    private static delegate* unmanaged[Cdecl]<int*, int*, int> _getWindowedSize;
+    private static delegate* unmanaged[Cdecl]<int*, int*, int> _getWindowedSizeLimit;
+    private static delegate* unmanaged[Cdecl]<int, int, int> _setWindowedSize;
+    internal static bool WindowSizeSupported => _getWindowedSize != null && _getWindowedSizeLimit != null && _setWindowedSize != null;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterWindowSizeApi")]
+    public static int RegisterWindowSizeApi(delegate* unmanaged[Cdecl]<int*, int*, int> getSize,
+        delegate* unmanaged[Cdecl]<int*, int*, int> getLimit, delegate* unmanaged[Cdecl]<int, int, int> setSize)
+    {
+        if (getSize == null || getLimit == null || setSize == null) return 0;
+        _getWindowedSize = getSize; _getWindowedSizeLimit = getLimit; _setWindowedSize = setSize;
+        return 1;
+    }
+    internal static (int Width, int Height) GetWindowedSize(bool limit)
+    {
+        var get = limit ? _getWindowedSizeLimit : _getWindowedSize;
+        int width = 0, height = 0;
+        return get != null && get(&width, &height) != 0 ? (width, height) : (0, 0);
+    }
+    internal static bool SetWindowedSize(int width, int height) => _setWindowedSize != null && _setWindowedSize(width, height) != 0;
     private static delegate* unmanaged[Cdecl]<int, void> _setWindowFullscreen;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterWindowApi")]

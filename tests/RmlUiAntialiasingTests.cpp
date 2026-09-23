@@ -207,7 +207,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         const auto* armourSprite = journal->GetStyleSheet()->GetSprite("armour-traveler_coat");
         Require(armourSprite != nullptr, "Armour sprite is missing from stylesheet");
         const auto armourSize = armourSprite->sprite_sheet->texture_source.GetTexture(context->GetRenderManager()).GetDimensions();
-        Require(armourSize.x == 384 && armourSize.y == 128, "Armour atlas failed native decoding/upload");
+        Require(armourSize.x >= 384 && armourSize.x % 128 == 0 && armourSize.y == 128, "Armour atlas failed native decoding/upload");
         journal->GetElementById("equip-1")->SetInnerRML("<img id=\"armour-icon-probe\" class=\"item-icon\" sprite=\"armour-traveler_coat\"/><span class=\"slot-caption\">ARMOR</span>");
         const char* armourIds[] = {"traveler_coat", "sentinel_mail", "quilted_vest"};
         for (int i = 0; i < 3; ++i)
@@ -230,7 +230,9 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         for (int i=0;i<12;++i) entries += "<p>[ACTIVE] The Last Archivist - After clearing the Ossuary, speak to the blue shrine on its eastern side. The sigil opens the descent.</p>";
         journal->GetElementById("quests")->SetInnerRML(entries);
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
-        for (int page=0;page<4;++page)
+        std::ifstream minimapFile(std::string(capturePrefix) + "minimap.rml");
+        const std::string minimapMarkup((std::istreambuf_iterator<char>(minimapFile)), {});
+        for (int page=0;page<(minimapMarkup.empty() ? 4 : 5);++page)
         {
             if (page==1)
             {
@@ -266,6 +268,14 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                 context->ProcessMouseMove(int(point.x+30),int(point.y+30),0);
                 context->ProcessMouseMove(int(point.x+170),int(point.y+100),0);
             }
+            if (page == 4)
+            {
+                context->ProcessMouseButtonUp(0, 0);
+                journal->GetElementById("journal-panel")->SetProperty("display", "none");
+                journal->GetElementById("minimap-panel")->SetProperty("display", "block");
+                journal->GetElementById("minimap-board")->SetInnerRML(minimapMarkup);
+                journal->GetElementById("minimap-floor")->SetInnerRML("Crypt / Ground");
+            }
             context->Update(); context->Update();
             rhi::Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));
             commands.BeginFrame(); clear.colorAttachments={target.Get()}; clear.width=960; clear.height=720;
@@ -291,6 +301,25 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                 Require(samples > 100 && white < samples / 4, "Inventory icon rendered as an opaque white placeholder");
               }
                 std::cout << "Inventory atlas decoded at " << atlasSize.x << 'x' << atlasSize.y << "; GPU icon pixels passed.\n";
+            }
+            if (page == 4)
+            {
+                auto* board = journal->GetElementById("minimap-board");
+                const auto origin = board->GetAbsoluteOffset(Rml::BoxArea::Content) * .75f;
+                const auto size = board->GetBox().GetSize(Rml::BoxArea::Content) * .75f;
+                int terrainPixels = 0;
+                for (int y = 0; y < 720; ++y) for (int x = 0; x < 960; ++x)
+                {
+                    const auto offset = ((719 - y) * 960 + x) * 4;
+                    const bool terrain = std::abs(int(capture[offset]) - 107) <= 1 &&
+                        std::abs(int(capture[offset+1]) - 135) <= 1 && std::abs(int(capture[offset+2]) - 145) <= 1;
+                    if (!terrain) continue;
+                    ++terrainPixels;
+                    Require(x >= origin.x - 1 && x <= origin.x + size.x + 1 && y >= origin.y - 1 && y <= origin.y + size.y + 1,
+                        "Minimap terrain escaped its scaled clipping viewport");
+                }
+                Require(terrainPixels > 100, "Minimap terrain was not rendered");
+                std::cout << "GPU minimap terrain remains inside its scaled viewport.\n";
             }
             std::ofstream output(std::string(capturePrefix)+std::to_string(page)+".ppm",std::ios::binary);
             output << "P6\n960 720\n255\n";

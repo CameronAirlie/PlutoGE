@@ -80,6 +80,48 @@ int main(int argc, char** argv) try
     if (!panel) throw std::runtime_error("Panel missing");
     panel->SetProperty("display", "block");
     document->Show();
+    if (Rml::String(argv[4]) == "minimap-panel")
+    {
+        auto* board = document->GetElementById("minimap-board");
+        auto* player = document->GetElementById("minimap-player");
+        auto* terrain = document->GetElementById("minimap-terrain");
+        document->GetElementById("minimap-floor")->SetInnerRML("Lower crypt / floor 2");
+        terrain->SetInnerRML("<div class=\"minimap-cell\" style=\"left:-40%;top:-40%;width:180%;height:180%;\"></div>");
+        for (const auto size : {Rml::Vector2i(960, 540), Rml::Vector2i(1280, 720), Rml::Vector2i(1920, 1080)})
+            for (const float scale : {.8f, 1.f, 1.25f})
+                for (const int pixels : {160, 200, 240})
+                {
+                    // Canvas scaling reduces the document's logical viewport.
+                    const Rml::Vector2i logical(int(size.x / scale), int(size.y / scale));
+                    context->SetDimensions(logical);
+                    board->SetProperty("width", std::to_string(pixels) + "px");
+                    board->SetProperty("height", std::to_string(pixels) + "px");
+                    context->Update(); context->Update();
+                    const auto origin = panel->GetAbsoluteOffset(Rml::BoxArea::Border);
+                    const auto bounds = panel->GetBox().GetSize(Rml::BoxArea::Border);
+                    const auto boardOrigin = board->GetAbsoluteOffset(Rml::BoxArea::Content);
+                    const auto boardSize = board->GetBox().GetSize(Rml::BoxArea::Content);
+                    const auto playerCenter = player->GetAbsoluteOffset(Rml::BoxArea::Border) + player->GetBox().GetSize(Rml::BoxArea::Border) * .5f;
+                    if (origin.x < 0 || origin.y < 0 || origin.x + bounds.x > logical.x || origin.y + bounds.y > logical.y)
+                        throw std::runtime_error("Minimap escapes scaled viewport");
+                    if (std::abs(boardSize.x - boardSize.y) > 1 || boardSize.x < 100)
+                        throw std::runtime_error("Minimap lost square/readable viewport");
+                    if ((playerCenter - (boardOrigin + boardSize * .5f)).Magnitude() > 2)
+                        throw std::runtime_error("Minimap player is not centered");
+                    if (board->GetComputedValues().overflow_x() != Rml::Style::Overflow::Hidden ||
+                        board->GetComputedValues().overflow_y() != Rml::Style::Overflow::Hidden)
+                        throw std::runtime_error("Minimap geometry is not clipped");
+                    auto* controls = document->GetElementById("top-right");
+                    if (origin.y < controls->GetAbsoluteOffset().y + controls->GetBox().GetSize().y)
+                        throw std::runtime_error("Minimap overlaps menu controls");
+                    auto* feedback = document->GetElementById("combat-feedback");
+                    if (origin.y + bounds.y > feedback->GetAbsoluteOffset().y)
+                        throw std::runtime_error("Minimap overlaps combat feedback");
+                }
+        Rml::Shutdown(); Rml::SetRenderInterface(nullptr);
+        std::cout << "PASS: minimap square, centered, clipped and bounded at three resolutions, UI scales and sizes.\n";
+        return 0;
+    }
     const bool journal = Rml::String(argv[4]) == "journal-panel";
     auto* scroll = journal ? document->GetElementById("backpack-scroll") : panel;
     for (const auto size : {Rml::Vector2i(1280, 720), Rml::Vector2i(1280, 960), Rml::Vector2i(1920, 1080)})

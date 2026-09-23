@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
@@ -2395,6 +2396,34 @@ namespace PlutoGE::scripting
             if (auto *component = FindSoundEmitter(entityId))
                 component->Stop();
         }
+        int32_t BeginScriptCpuScope(const char *name)
+        {
+            if (!name || !core::CpuTrace::current) return -1;
+            try { return core::CpuTrace::current->Begin(name, core::CpuCategory::Scripts); }
+            catch (...) { return -1; }
+        }
+        void EndScriptCpuScope(int32_t token)
+        {
+            if (token >= 0 && core::CpuTrace::current) core::CpuTrace::current->End(token);
+        }
+
+        int32_t PreloadAudioClip(const char *reference)
+        {
+            if (!reference || !*reference) return 0;
+            try
+            {
+                auto &engine = core::Engine::GetInstance();
+                return engine.GetAudioSystem().PreloadClip(engine.GetAssetManager().ResolveAssetPath(reference));
+            }
+            catch (...) { return 0; } // Never unwind native exceptions across the managed boundary.
+        }
+        void PrewarmAudioVoices(int32_t count)
+        {
+            if (count <= 0) return;
+            try { core::Engine::GetInstance().GetAudioSystem().PrewarmVoicePool(static_cast<std::size_t>(count)); }
+            catch (...) {} // Preparation is optional; normal playback can still allocate on demand.
+        }
+
         const char *GetSoundEmitterClipReference(uint32_t entityId)
         {
             thread_local std::string assetReferenceStorage;
@@ -3384,6 +3413,8 @@ namespace PlutoGE::scripting
         register_game_object_api_fn registerGameObjectApi = nullptr;
         register_prefab_api_fn registerPrefabApi = nullptr;
         register_window_api_fn registerWindowApi = nullptr;
+        register_window_api_fn registerAudioPreparationApi = nullptr;
+        register_window_api_fn registerProfilingApi = nullptr;
         register_window_api_fn registerPointerApi = nullptr;
         int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
@@ -3496,6 +3527,8 @@ namespace PlutoGE::scripting
             impl.registerGameObjectApi = nullptr;
             impl.registerPrefabApi = nullptr;
             impl.registerWindowApi = nullptr;
+            impl.registerAudioPreparationApi = nullptr;
+            impl.registerProfilingApi = nullptr;
             impl.registerPointerApi = nullptr;
             impl.registerDisplayApi = nullptr;
             impl.registerSceneApi = nullptr;
@@ -3848,6 +3881,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowApi"), impl.registerWindowApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAudioPreparationApi"), impl.registerAudioPreparationApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterProfilingApi"), impl.registerProfilingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPointerApi"), impl.registerPointerApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
@@ -4142,6 +4177,20 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<is_prefab_ready_fn>(&IsPrefabReady))) == 0)
         {
             setManagedBridgeFailure("RegisterPrefabApi");
+            return false;
+        }
+
+        if (!m_impl->registerProfilingApi || m_impl->registerProfilingApi(
+                reinterpret_cast<void *>(&BeginScriptCpuScope), reinterpret_cast<void *>(&EndScriptCpuScope)) == 0)
+        {
+            setManagedBridgeFailure("RegisterProfilingApi");
+            return false;
+        }
+
+        if (!m_impl->registerAudioPreparationApi || m_impl->registerAudioPreparationApi(
+                reinterpret_cast<void *>(&PreloadAudioClip), reinterpret_cast<void *>(&PrewarmAudioVoices)) == 0)
+        {
+            setManagedBridgeFailure("RegisterAudioPreparationApi");
             return false;
         }
 

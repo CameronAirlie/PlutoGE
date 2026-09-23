@@ -624,3 +624,10 @@ add_test(NAME PlutoGEVulkanShaderGraphTests COMMAND PlutoGEVulkanRhiTests --shad
 # Accepts external document/font/panel arguments for project UI layout regressions.
 add_executable(PlutoGERmlUiDocumentLayoutTests RmlUiDocumentLayoutTests.cpp)
 target_link_libraries(PlutoGERmlUiDocumentLayoutTests PRIVATE RmlUi::Core)
+
+target_include_directories(PlutoGERmlUiDocumentLayoutTests PRIVATE "${CMAKE_SOURCE_DIR}/engine/render/include")
+
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEPresentationPreparationManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.PresentationPreparationTests/PlutoGE.PresentationPreparationTests.csproj --configuration Release)
+endif()

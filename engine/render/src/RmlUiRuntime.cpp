@@ -776,7 +776,10 @@ namespace PlutoGE::render
     {
         // The OS watcher is a non-blocking event check. Filesystem metadata is
         // inspected only after the project Assets directory actually changes.
+        core::CpuScope watcherScope("Runtime UI file watcher", core::CpuCategory::UI);
         const bool checkForHotReload = ConsumeAssetFileChange();
+        watcherScope.End();
+        core::CpuScope discoveryScope("Runtime UI document discovery", core::CpuCategory::UI);
 
         std::unordered_map<std::string, DocumentRequest> requestedDocuments;
         const glm::vec2 viewportSize{static_cast<float>(m_width), static_cast<float>(m_height)};
@@ -814,6 +817,8 @@ namespace PlutoGE::render
             CollectDocuments(owner, viewportSize, requestedDocuments, view, projection,
                              inheritedScale, insideDocumentCanvas, false);
         }
+
+        discoveryScope.End();
 
         // Canvas transforms enlarge geometry without requesting larger font
         // faces. Match the atlas to the largest active canvas and the RHI's 2x
@@ -1043,6 +1048,8 @@ namespace PlutoGE::render
                     ConfigureDocument(*document, request, m_width, m_height, true, true);
                     (request.visible && request.inFrontOfCamera && !request.worldSurface) ? document->Show() : document->Hide();
                     m_documents.emplace(key, document);
+                    m_missingDocuments.clear();
+                    m_eventSubscriptionsDirty = true;
                     m_documentReferences[key] = reference;
                     m_documentScales[key] = std::max(request.scale, 0.0001f);
                     m_documentUsesBackdrop[key] = false;
@@ -1077,6 +1084,8 @@ namespace PlutoGE::render
                 ConfigureDocument(*document, request, m_width, m_height, true, true);
                 (request.visible && request.inFrontOfCamera && !request.worldSurface) ? document->Show() : document->Hide();
                 m_documents.emplace(key, document);
+                m_missingDocuments.clear();
+                m_eventSubscriptionsDirty = true;
                 m_documentReferences[key] = reference;
                 m_documentScales[key] = scale;
                 m_documentUsesBackdrop[key] = SourceUsesBackdropFilter(path);
@@ -1299,6 +1308,9 @@ namespace PlutoGE::render
             m_documentAliases.erase(alias);
         }
 
+        if (m_missingDocuments.contains(document))
+            return nullptr;
+
         // Canvas paths and serialized script fields may spell the same asset
         // differently (for example a project asset URI versus a path relative
         // to the Assets directory). Resolve both forms before giving up so the
@@ -1318,6 +1330,7 @@ namespace PlutoGE::render
                 return loaded;
             }
         }
+        m_missingDocuments.insert(document);
         return nullptr;
     }
 
@@ -1371,6 +1384,8 @@ namespace PlutoGE::render
             return false;
         loaded->Show();
         m_documents[document] = loaded;
+        m_missingDocuments.clear();
+        m_eventSubscriptionsDirty = true;
         m_documentReferences[document] = reference;
         m_documentUsesBackdrop[document] = SourceUsesBackdropFilter(path);
         std::error_code error;
@@ -1400,10 +1415,12 @@ namespace PlutoGE::render
     bool RmlUiRuntime::SetElementText(const std::string &document, const std::string &id, const std::string &text)
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
         if (element->GetInnerRML() == text)
             return true;
+        m_elementLookup.Invalidate(doc);
+        m_eventSubscriptionsDirty = true;
         element->SetInnerRML(text);
         MarkWorldSurfaceDirty(doc);
         return true;
@@ -1412,14 +1429,14 @@ namespace PlutoGE::render
     std::string RmlUiRuntime::GetElementText(const std::string &document, const std::string &id) const
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         return element ? element->GetInnerRML() : std::string{};
     }
 
     bool RmlUiRuntime::ScrollElementIntoView(const std::string &document, const std::string &id)
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
         if (!RmlPanZoom::Reveal(element))
             element->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
@@ -1431,10 +1448,15 @@ namespace PlutoGE::render
                                            const std::string &name, const std::string &value)
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
         if (element->GetAttribute<Rml::String>(name, {}) == value)
             return true;
+        if (name == "id")
+        {
+            m_elementLookup.Invalidate(doc);
+            m_eventSubscriptionsDirty = true;
+        }
         element->SetAttribute(name, value);
         MarkWorldSurfaceDirty(doc);
         return true;
@@ -1444,7 +1466,7 @@ namespace PlutoGE::render
                                                   const std::string &name) const
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         return element ? element->GetAttribute<Rml::String>(name, {}) : std::string{};
     }
 
@@ -1452,7 +1474,7 @@ namespace PlutoGE::render
                                        const std::string &name, bool enabled)
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
         if (element->IsClassSet(name) == enabled)
             return true;
@@ -1465,7 +1487,7 @@ namespace PlutoGE::render
                                        const std::string &name, const std::string &value)
     {
         auto *doc = FindDocument(document);
-        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
         // Compare only inline properties: a matching inherited value must still
         // be overridden so later stylesheet changes preserve script intent.
@@ -1482,7 +1504,8 @@ namespace PlutoGE::render
         const std::string key = EventKey(document, id, event);
         if (m_attachedEvents.contains(key))
             return true;
-        m_eventSubscriptions.insert(key);
+        if (m_eventSubscriptions.insert(key).second)
+            m_eventSubscriptionsDirty = true;
         AttachEventSubscriptions();
         return m_attachedEvents.contains(key);
     }
@@ -1509,11 +1532,15 @@ namespace PlutoGE::render
         {
             found->second = nullptr;
             m_attachedEvents.erase(key);
+            m_eventSubscriptionsDirty = true;
         }
     }
 
     void RmlUiRuntime::AttachEventSubscriptions()
     {
+        if (!m_eventSubscriptionsDirty) return;
+        core::CpuScope scope("Runtime UI event binding", core::CpuCategory::UI);
+        m_eventSubscriptionsDirty = false;
         for (const auto &key : m_eventSubscriptions)
         {
             if (m_attachedEvents.contains(key))
@@ -1526,7 +1553,7 @@ namespace PlutoGE::render
             const std::string id = key.substr(first + 1, second - first - 1);
             const std::string event = key.substr(second + 1);
             auto *doc = FindDocument(document);
-            auto *element = doc ? doc->GetElementById(id) : nullptr;
+            auto *element = m_elementLookup.Find(doc, id);
             if (!element)
                 continue;
 
@@ -1544,6 +1571,9 @@ namespace PlutoGE::render
 
     void RmlUiRuntime::DetachEventSubscriptions()
     {
+        m_elementLookup.Clear();
+        m_missingDocuments.clear();
+        m_eventSubscriptionsDirty = true;
         for (const auto &[key, listener] : m_eventListeners)
         {
             const auto first = key.find(kEventSeparator);

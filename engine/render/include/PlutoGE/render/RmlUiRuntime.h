@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include "PlutoGE/render/RmlElementLookup.h"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -166,6 +167,9 @@ namespace PlutoGE::render
         std::unordered_map<std::string, WorldSurfaceTarget> m_worldSurfaceTargets;
         std::vector<RmlUiWorldSurface> m_worldSurfaceDraws;
         std::unordered_map<std::string, int> m_pendingEvents;
+        mutable RmlElementLookup m_elementLookup;
+        mutable std::unordered_set<std::string> m_missingDocuments;
+        bool m_eventSubscriptionsDirty = true;
         std::unordered_set<std::string> m_eventSubscriptions;
         std::unordered_set<std::string> m_attachedEvents;
         std::unordered_set<std::string> m_reportedLoadFailures;

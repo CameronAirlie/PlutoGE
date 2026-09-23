@@ -54,6 +54,7 @@ namespace PlutoGE::audio
     class AudioSystem
     {
     public:
+        static constexpr std::size_t MaximumMixedVoiceCount = 64;
         struct AudioClip
         {
             int channels = 0;

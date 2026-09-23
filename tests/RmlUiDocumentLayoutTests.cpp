@@ -1,4 +1,5 @@
 #include <RmlUi/Core.h>
+#include "PlutoGE/render/RmlElementLookup.h"
 #include <fstream>
 #include <cmath>
 #include <iostream>
@@ -54,6 +55,27 @@ int main(int argc, char** argv) try
     auto* context = Rml::CreateContext("Document layout", {1280, 720});
     auto* document = context->LoadDocument(argv[1]);
     if (!document) throw std::runtime_error("Document load failed");
+    // Exercise stable IDs, destruction, rename, replacement and a missing ID
+    // becoming available, without retaining ownership through the lookup cache.
+    {
+        PlutoGE::render::RmlElementLookup lookup;
+        auto container = document->CreateElement("div");
+        auto* parent = document->AppendChild(std::move(container));
+        parent->SetInnerRML("<div id=\"lookup-probe\"></div>");
+        auto* first = lookup.Find(document, "lookup-probe");
+        if (!first || lookup.Find(document, "lookup-probe") != first) throw std::runtime_error("Cached ID lookup failed");
+        first->SetId("lookup-renamed");
+        if (lookup.Find(document, "lookup-probe")) throw std::runtime_error("Renamed element returned for stale ID");
+        if (lookup.Find(document, "lookup-renamed") != first) throw std::runtime_error("Renamed element missing");
+        parent->SetInnerRML("<div id=\"lookup-probe\"></div>");
+        if (lookup.Find(document, "lookup-renamed")) throw std::runtime_error("Destroyed element retained by cache");
+        if (!lookup.Find(document, "lookup-probe")) throw std::runtime_error("Replacement element missing");
+        lookup.Invalidate(document);
+        if (!lookup.Find(document, "lookup-probe")) throw std::runtime_error("Invalidated lookup failed");
+        document->RemoveChild(parent);
+        if (lookup.Find(document, "lookup-probe")) throw std::runtime_error("Removed subtree retained by cache");
+        lookup.Clear();
+    }
     auto* panel = document->GetElementById(argv[4]);
     if (!panel) throw std::runtime_error("Panel missing");
     panel->SetProperty("display", "block");

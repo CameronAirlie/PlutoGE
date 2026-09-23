@@ -2198,7 +2198,7 @@ namespace PlutoGE::scene
         auto &engine = core::Engine::GetInstance();
         auto &audioSystem = engine.GetAudioSystem();
         audioSystem.ClearEmitters();
-        audioSystem.PrewarmVoicePool(16);
+        audioSystem.PrewarmVoicePool(audio::AudioSystem::MaximumMixedVoiceCount);
 
         // Decode and upload scene clips before gameplay begins. Without this,
         // the first shot and hit confirmation can prepare two clips in one frame.

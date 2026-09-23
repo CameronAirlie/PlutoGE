@@ -601,7 +601,7 @@ namespace PlutoGE::audio
 
     bool AudioSystem::PreloadClip(const std::string &clipPath)
     {
-        if (clipPath.empty())
+        if (!m_initialized || clipPath.empty())
             return false;
         const AudioClip *clip = nullptr;
         return EnsureClipLoaded(clipPath, clip);
@@ -613,7 +613,13 @@ namespace PlutoGE::audio
         if (!m_usingOpenAl)
             return;
 
-        while (m_availableOpenAlSources.size() < voiceCount)
+        // The request describes total capacity, including voices already in use.
+        voiceCount = std::min(voiceCount, MaximumMixedVoiceCount);
+        const auto sourceTarget = voiceCount > m_activeVoices.size() ? voiceCount - m_activeVoices.size() : 0;
+        const auto activeFilters = static_cast<std::size_t>(std::count_if(
+            m_activeVoices.begin(), m_activeVoices.end(), [](const auto &entry) { return entry.second.backendFilter != 0; }));
+        const auto filterTarget = voiceCount > activeFilters ? voiceCount - activeFilters : 0;
+        while (m_availableOpenAlSources.size() < sourceTarget)
         {
             ALuint source = 0;
             alGenSources(1, &source);
@@ -624,7 +630,7 @@ namespace PlutoGE::audio
 
         if (m_openAlEfxAvailable)
         {
-            while (m_availableOpenAlFilters.size() < voiceCount)
+            while (m_availableOpenAlFilters.size() < filterTarget)
             {
                 ALuint filter = 0;
                 alGetError();
@@ -660,6 +666,8 @@ namespace PlutoGE::audio
             const ALuint source = static_cast<ALuint>(it->second.backendSource);
             alSourceStop(source);
             alSourcei(source, AL_DIRECT_FILTER, 0);
+            if (m_openAlEfxAvailable)
+                alSource3i(source, AL_AUXILIARY_SEND_FILTER, 0, 0, AL_FILTER_NULL);
             alSourcei(source, AL_BUFFER, 0);
             m_availableOpenAlSources.push_back(source);
         }
@@ -1026,7 +1034,7 @@ namespace PlutoGE::audio
 
         // Keep backend mixing cost bounded. Sounds which cannot currently make
         // an audible contribution are the first candidates for voice stealing.
-        constexpr std::size_t maximumMixedVoiceCount = 64;
+        constexpr std::size_t maximumMixedVoiceCount = MaximumMixedVoiceCount;
         std::unordered_set<std::uint64_t> mixedKeys;
         mixedKeys.reserve(std::min(emitters.size(), maximumMixedVoiceCount));
         if (emitters.size() <= maximumMixedVoiceCount)
@@ -1248,6 +1256,9 @@ namespace PlutoGE::audio
                     }
 
                     currentVoice = m_activeVoices.emplace(emitter.key, std::move(newVoice)).first;
+                    // Pooled sources retain their old gain, pitch and spatial state.
+                    // Configure before starting so the mixer never sees stale settings.
+                    UpdateVoice(currentVoice->second, listener, emitter, 0.0f);
 
                     if (!emitter.paused)
                     {

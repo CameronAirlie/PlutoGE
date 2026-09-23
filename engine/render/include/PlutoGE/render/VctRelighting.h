@@ -22,6 +22,32 @@ namespace PlutoGE::render
     };
     static_assert(sizeof(VctRelightRegion) == 32);
 
+    inline VctRelightRegion VctUnionRegion(VctRelightRegion a, VctRelightRegion b)
+    {
+        if (!a.VoxelCount()) return b;
+        if (!b.VoxelCount()) return a;
+        const auto low = glm::min(a.origin, b.origin);
+        return {low, glm::max(a.origin + a.extent, b.origin + b.extent) - low};
+    }
+
+    // Resolve reads the six opacity neighbours. Include the halo before
+    // propagating half-open bounds up the directional mip chain.
+    inline VctRelightRegion VctResolveRegion(VctRelightRegion region, std::uint32_t resolution)
+    {
+        if (!region.VoxelCount()) return {};
+        const auto low = glm::max(glm::ivec3(region.origin) - 1, glm::ivec3(0));
+        const auto high = glm::min(glm::uvec3(region.origin + region.extent) + 1u, glm::uvec3(resolution));
+        return {glm::uvec4(low, 0), glm::uvec4(high - glm::uvec3(low), 0)};
+    }
+
+    inline VctRelightRegion VctNextMipRegion(VctRelightRegion region)
+    {
+        if (!region.VoxelCount()) return {};
+        const auto low = glm::uvec3(region.origin) / 2u;
+        const auto high = (glm::uvec3(region.origin + region.extent) + 1u) / 2u;
+        return {glm::uvec4(low, 0), glm::uvec4(high - low, 0)};
+    }
+
     inline VctRelightRegion VctChangedLightRegion(std::span<const VctLocalLight> previous,
         std::span<const VctLocalLight> current, glm::vec3 volumeOrigin, float volumeSize,
         std::uint32_t resolution, bool fullRefresh)

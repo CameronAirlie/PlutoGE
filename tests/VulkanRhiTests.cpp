@@ -22,8 +22,10 @@
 #include "TemporalMotionRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
+#include "VctPublicationChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
 #include "VsmOnlyRenderingChecks.h"
+#include "VsmMembershipChecks.h"
 
 #include <array>
 #include <filesystem>
@@ -230,8 +232,14 @@ int main(int argc, char **argv)
             CheckVctRemovedCharacter(renderer);
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-publication")
         {
+            CheckVctIncrementalPublication(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && (std::string_view(argv[1]) == "--vct-world-cache" || std::string_view(argv[1]) == "--vct-world-cache-full"))
+        {
+            renderer.SetIncrementalVctPublicationEnabled(std::string_view(argv[1]) != "--vct-world-cache-full");
             CheckVctWorldCacheRendering(renderer, [&](rhi::TextureHandle texture)
             {
                 return device.ReadTextureRgba8(texture);
@@ -244,6 +252,11 @@ int main(int argc, char **argv)
             return 0;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--vsm-membership")
+        {
+            CheckVsmMembership(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-only")
         {
             PlutoGE::scene::LightComponent light;

@@ -91,6 +91,15 @@ int main()
     if (VctChangedLightRegion(oldLight, oldLight, glm::vec3(0), 8, 32, false).VoxelCount() != 0) return 131;
     if (VctChangedLightRegion(oldLight, {}, glm::vec3(0), 8, 32, false).VoxelCount() != 512) return 132;
     if (VctChangedLightRegion({}, {}, glm::vec3(0), 8, 32, true).VoxelCount() != 32768) return 133;
+    // Half-open dirty bounds must include opacity neighbours and every affected
+    // parent, including odd coordinates and the last voxel of a cascade.
+    const auto edge = VctResolveRegion({{31,0,15,0}, {1,1,2,0}}, 32);
+    if (edge.origin != glm::uvec4(30,0,14,0) || edge.extent != glm::uvec4(2,2,4,0)) return 140;
+    const auto mip = VctNextMipRegion({{3,5,31,0},{2,2,1,0}});
+    if (mip.origin != glm::uvec4(1,2,15,0) || mip.extent != glm::uvec4(2,2,1,0)) return 141;
+    if (VctResolveRegion({},32).VoxelCount() || VctNextMipRegion({}).VoxelCount()) return 142;
+    const auto united = VctUnionRegion({{2,4,6,0},{2,2,2,0}}, {{7,1,6,0},{1,1,1,0}});
+    if (united.origin != glm::uvec4(2,1,6,0) || united.extent != glm::uvec4(6,5,2,0)) return 143;
     VctProbeSchedule priority;
     priority.Prioritize({2,3,4}, {4,4,5});
     unsigned updated = 0;

@@ -113,6 +113,10 @@ namespace PlutoGE::render::rhi
         virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
         // Makes prior shader writes visible to subsequent shader reads/writes.
         virtual void ShaderMemoryBarrier() {}
+        // Publish compute image writes to subsequent compute/fragment accesses.
+        // Images retain their layout; independent destinations can be batched.
+        // Backends without resource-scoped barriers may use the broad fallback.
+        virtual void ComputeImageBarrier(std::span<const TextureHandle>) { ShaderMemoryBarrier(); }
         virtual void ClearStorageImageUint(TextureHandle, std::uint32_t = 0) {}
         // Submit all rendering recorded since the previous call. Explicit APIs
         // use this as the frame boundary; immediate APIs may make it a no-op.

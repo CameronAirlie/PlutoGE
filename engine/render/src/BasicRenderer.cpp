@@ -220,12 +220,17 @@ namespace PlutoGE::render
             std::array<glm::vec4, 3> emissionChannels{};
         };
         struct alignas(16) VctResolveParameters
-        { std::uint32_t resolution = 1, destinationZOffset = 0; float secondaryGain = 0.0f; std::uint32_t padding = 0; };
+        {
+            std::uint32_t resolution = 1, destinationZOffset = 0;
+            float secondaryGain = 0.0f; std::uint32_t padding = 0;
+            VctRelightRegion region;
+        };
         struct alignas(16) VctMipParameters
         {
             std::uint32_t axis = 0; std::int32_t sign = 1;
             std::uint32_t cascadeIndex = 0, cascadeMipSize = 1, sourceMip = 0;
             glm::uvec3 padding{};
+            VctRelightRegion region;
         };
         struct alignas(16) VctTraceParameters
         {
@@ -249,8 +254,9 @@ namespace PlutoGE::render
         static_assert(sizeof(VctVoxelParameters) == 1536);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+96);
-        static_assert(sizeof(VctResolveParameters) == 16);
-        static_assert(sizeof(VctMipParameters) == 32);
+        static_assert(sizeof(VctResolveParameters) == 48);
+        static_assert(sizeof(VctMipParameters) == 64);
+        static_assert(offsetof(VctMipParameters, region) == 32);
         static_assert(sizeof(VctTraceParameters) == 256);
         static_assert(sizeof(VctTemporalParameters) == 240);
         static_assert(sizeof(VctMetadataParameters) == 144);
@@ -3185,6 +3191,8 @@ namespace PlutoGE::render
             if (cascade.nextBounceSlice == resolution)
             {
                 std::swap(cascade.secondaryVolume, m_vctSecondaryScratch);
+                // Secondary light can propagate outside the direct relight box.
+                cascade.fullPublication = true;
                 cascade.secondaryReady = true;
                 cascade.secondaryDirty = cascade.relightPending || cascade.lightingSignature != m_vctBounceLightingSignature;
                 PublishVctCascade(m_vctBounceCascade, cascade.pendingSecondaryBounce, commands);
@@ -3262,6 +3270,7 @@ namespace PlutoGE::render
             {previous.localLights.data(), previous.localLightCount.x},
             {params.localLights.data(), params.localLightCount.x}, cascade.pendingOrigin,
             cascade.pendingSize, resolution, cascade.fullRelight);
+        cascade.publicationDirty = VctUnionRegion(cascade.publicationDirty, region);
         if (region.VoxelCount() != 0)
         {
             if (index + 1 == m_vctCascadeCount && cascade.valid && m_vctCacheOriginSize.w > 0)
@@ -3303,14 +3312,24 @@ namespace PlutoGE::render
     void BasicRenderer::PublishVctCascade(std::uint32_t index, float gain, rhi::ICommandContext &commands, bool staging)
     {
         auto &cascade = m_vctCascades[index];
-        ++m_frameStats.vctPublications;
         auto &destination = staging ? m_vctInjectionAtlases : m_vctRadianceAtlases;
         const auto resolution = m_vctResolution;
         const auto destinationCascade = staging ? 0u : index;
+        // The shared staging field has a different owner at each gather. Gain
+        // edits and new secondary volumes also have full-volume dependencies.
+        auto region = !m_incrementalVctPublication || staging || !cascade.valid || cascade.fullPublication || gain != cascade.appliedSecondaryBounce
+            ? VctRelightRegion{{0,0,0,0}, {resolution,resolution,resolution,0}}
+            : VctResolveRegion(cascade.publicationDirty, resolution);
+        if (!region.VoxelCount()) return;
+        ++m_frameStats.vctPublications;
+        m_frameStats.vctPublishedVoxels += region.VoxelCount();
         const VctResolveParameters resolve{
-            resolution, destinationCascade * resolution, gain, 1};
+            resolution, destinationCascade * resolution, gain, 1, region};
         auto &resolveBuffer = AcquireVctBuffer(m_vctBufferCursor++);
         m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(resolve));
+        std::array<rhi::TextureHandle, 6> destinations;
+        for (std::size_t direction = 0; direction < destination.size(); ++direction)
+            destinations[direction] = destination[direction].Get();
         for (auto &atlas : destination)
         {
             commands.BindPipeline(m_vctResolvePipeline.Get());
@@ -3320,26 +3339,34 @@ namespace PlutoGE::render
             commands.BindStorageImage(5, atlas.Get());
             commands.BindStorageImage(6, cascade.secondaryVolume.Get());
             commands.BindStorageImage(7, cascade.directVolume.Get());
-            commands.Dispatch((resolution + 3) / 4, (resolution + 3) / 4, (resolution + 3) / 4);
-            commands.ShaderMemoryBarrier();
+            commands.Dispatch((region.extent.x + 3) / 4, (region.extent.y + 3) / 4, (region.extent.z + 3) / 4);
         }
+        commands.ComputeImageBarrier(destinations);
         const auto maximumMip = static_cast<std::uint32_t>(std::floor(std::log2(resolution)));
-        for (std::size_t direction = 0; direction < destination.size(); ++direction)
-            for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
+        for (std::uint32_t mip = 1; mip <= maximumMip; ++mip)
+        {
+            region = VctNextMipRegion(region);
+            for (std::size_t direction = 0; direction < destination.size(); ++direction)
             {
                 const std::uint32_t mipSize = std::max(1u, resolution >> mip);
                 const VctMipParameters params{static_cast<std::uint32_t>(direction / 2),
                     direction % 2 == 0 ? 1 : -1,
-                    destinationCascade, mipSize, mip - 1, {}};
+                    destinationCascade, mipSize, mip - 1, {}, region};
                 auto &buffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(buffer.Get(), 0, Bytes(params));
                 commands.BindPipeline(m_vctDirectionalMipPipeline.Get());
                 commands.BindUniformBuffer(0, buffer.Get());
                 commands.BindTexture(1, destination[direction].Get(), m_vctVolumeSampler.Get());
                 commands.BindStorageImage(2, destination[direction].Get(), mip);
-                commands.Dispatch((mipSize + 3) / 4, (mipSize + 3) / 4, (mipSize + 3) / 4);
-                commands.ShaderMemoryBarrier();
+                commands.Dispatch((region.extent.x + 3) / 4, (region.extent.y + 3) / 4, (region.extent.z + 3) / 4);
             }
+            commands.ComputeImageBarrier(destinations);
+        }
+        if (!staging)
+        {
+            cascade.publicationDirty = {};
+            cascade.fullPublication = false;
+        }
     }
 
     rhi::TextureHandle BasicRenderer::RenderVctgi(rhi::TextureHandle source,
@@ -3540,6 +3567,7 @@ namespace PlutoGE::render
                 cascade.secondaryDirty = true;
                 if (geometryChanged)
                 {
+                    cascade.fullPublication = true;
                     cascade.secondaryReady = false;
                     cascade.nextBounceSlice = 0;
                     if (m_vctBounceCascade == index) m_vctBounceCascade = 3;

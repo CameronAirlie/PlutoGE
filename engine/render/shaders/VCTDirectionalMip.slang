@@ -5,7 +5,12 @@ struct MipParameters
     uint cascadeIndex;
     uint cascadeMipSize;
     uint sourceMip;
-    uint3 padding;
+    // Scalars keep the C++ and std140 layouts identical after sourceMip.
+    uint padding0;
+    uint padding1;
+    uint padding2;
+    uint4 regionOrigin;
+    uint4 regionExtent;
 };
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { MipParameters pass; };
@@ -22,7 +27,8 @@ float4 over(float4 front, float4 back)
 [numthreads(4, 4, 4)]
 void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    const int3 destination = int3(dispatchThreadId);
+    if (any(dispatchThreadId >= pass.regionExtent.xyz)) return;
+    const int3 destination = int3(dispatchThreadId + pass.regionOrigin.xyz);
     const int3 localSize = int3(pass.cascadeMipSize);
     if (any(destination >= localSize)) return;
     const int sourceCascadeSize = int(pass.cascadeMipSize * 2);

@@ -25,8 +25,9 @@ namespace PlutoGE::render
         std::array<glm::vec4, PLUTO_VSM_LEVELS> metrics{};
         glm::uvec4 viewport{}, limits{};
         glm::vec4 settings{}, camera{};
+        std::array<glm::uvec4, (PLUTO_VSM_LEVELS + 3) / 4> membershipEpochs{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 192 + 96 * PLUTO_VSM_LEVELS);
+    static_assert(sizeof(VirtualShadowParameters) == 192 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
 
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
@@ -58,6 +59,7 @@ namespace PlutoGE::render
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
         [[nodiscard]] VirtualShadowStats GetStats() const;
+        void SetMembershipCachingEnabled(bool enabled) noexcept { m_cacheMembership = enabled; }
     private:
       struct Chunk
       {
@@ -74,6 +76,7 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 5> m_raster;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_receiverColor, m_white;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
+        rhi::Buffer m_membership;
         rhi::Sampler m_sampler, m_materialSampler;
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
@@ -82,6 +85,7 @@ namespace PlutoGE::render
         std::vector<std::byte> m_uploadedCasters;
         std::uint32_t m_inputChangeFrame = 0;
         bool m_reuseFrame = false;
+        bool m_cacheMembership = true;
         float m_resolutionScale = 1.0f;
         std::uint32_t m_feedbackAfter = 0, m_feedbackFrame = 0, m_lowPressureFrames = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();

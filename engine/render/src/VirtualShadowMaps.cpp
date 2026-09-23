@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -121,6 +122,7 @@ namespace PlutoGE::render
             bindings.push_back({slot, 0, slot, ResourceBindingType::StorageBuffer, ShaderStageMask::Compute});
         for (std::uint32_t slot = 8; slot <= 9; ++slot)
             bindings.push_back({slot - 8, 0, slot, ResourceBindingType::StorageImage, ShaderStageMask::Compute});
+        bindings.push_back({0, 0, 10, ResourceBindingType::StorageBuffer, ShaderStageMask::Compute});
         constexpr std::array<const char *, 7> names{"VSM reset", "VSM depth requests", "VSM residency", "VSM signatures", "VSM update budget", "VSM caster binning", "VSM publish"};
         for (std::size_t index = 0; index < m_compute.size(); ++index)
             m_compute[index] = GraphicsPipeline(device, device.CreateComputePipeline({shaders.compute[index], bindings, names[index]}));
@@ -161,7 +163,7 @@ namespace PlutoGE::render
             TextureUsage::Sampled, "VSM GPU request mask", false, 1, true, 1}));
         m_parameters = Buffer(device, device.CreateBuffer({sizeof(VirtualShadowParameters), BufferUsage::Uniform, "VSM clipmaps"}));
         m_pages = Buffer(device, device.CreateBuffer({PLUTO_VSM_CAPACITY * 64, BufferUsage::Storage, "VSM persistent physical metadata"}));
-        m_requestList = Buffer(device, device.CreateBuffer({(PLUTO_VSM_LEVELS + PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES) * 4,
+        m_requestList = Buffer(device, device.CreateBuffer({(PLUTO_VSM_UPDATE_LIST_OFFSET + PLUTO_VSM_CAPACITY) * 4,
             BufferUsage::Storage, "VSM compact GPU requests"}));
         m_counters = Buffer(device, device.CreateBuffer({64, BufferUsage::Storage, "VSM asynchronous counters"}));
         m_sampler = Sampler(device, device.CreateSampler({false, false, "VSM point sampler"}));
@@ -185,6 +187,16 @@ namespace PlutoGE::render
     {
         if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
         if (!CanPrepare(receivers, casters)) return false;
+        // Epoch zero is reserved for uninitialised membership. Before wrapping,
+        // retire the pair cache and reset page metadata/feedback together.
+        if (m_frame == std::numeric_limits<std::uint32_t>::max())
+        {
+            m_frame = 0;
+            m_capacity = 0;
+            m_uploadedCasters.clear();
+            m_stats = std::make_shared<VirtualShadowStats>();
+            m_feedbackAfter = m_feedbackFrame = m_lowPressureFrames = 0;
+        }
         bool changed = m_frame == 0 || m_width != width || m_height != height;
         if (m_width != width || m_height != height)
         {
@@ -290,6 +302,24 @@ namespace PlutoGE::render
             m_casters = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(Caster), rhi::BufferUsage::Storage, "VSM caster bounds/signatures"}));
             m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * PLUTO_VSM_CAPACITY * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
             m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
+            // Zero epochs make every pair invalid until evaluated. Each record
+            // stores exact caster/page generations and conservative membership.
+            const std::vector<glm::uvec4> empty(m_capacity * PLUTO_VSM_CAPACITY, glm::uvec4(0));
+            m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec4),
+                rhi::BufferUsage::Storage, "VSM persistent caster/page membership"}, std::as_bytes(std::span(empty))));
+        }
+        for (std::size_t index = 0; index < inputs.size(); ++index)
+        {
+            auto &input = inputs[index];
+            input.identity.z = m_frame + 1;
+            if ((index + 1) * sizeof(Caster) <= m_uploadedCasters.size())
+            {
+                Caster previous;
+                std::memcpy(&previous, m_uploadedCasters.data() + index * sizeof(Caster), sizeof(Caster));
+                // Membership depends only on conservative bounds, not mesh
+                // identity. Reordering equal bounds is therefore safe as well.
+                if (m_cacheMembership && input.bounds == previous.bounds) input.identity.z = previous.identity.z;
+            }
         }
         const auto inputBytes = std::as_bytes(std::span(inputs));
         if (m_uploadedCasters.size() != inputBytes.size() ||
@@ -328,6 +358,13 @@ namespace PlutoGE::render
             }
         }
         auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionScale);
+        for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
+        {
+            const bool stable = m_frame != 0 && parameters.matrices[level] == m_previousClipmaps.matrices[level] &&
+                parameters.metrics[level] == m_previousClipmaps.metrics[level] && parameters.origins[level] == m_previousClipmaps.origins[level];
+            parameters.membershipEpochs[level / 4][level % 4] = stable
+                ? m_previousClipmaps.membershipEpochs[level / 4][level % 4] : m_frame + 1;
+        }
         m_previousClipmaps = parameters;
         parameters.viewProjection = viewProjection;
         parameters.inverseViewProjection = glm::inverse(viewProjection);
@@ -359,6 +396,7 @@ namespace PlutoGE::render
         commands.BindTexture(1, m_receiverDepth.Get(), m_sampler.Get());
         const std::array buffers{m_pages.Get(), m_casters.Get(), m_lists.Get(), m_indirect.Get(), m_requestList.Get(), m_counters.Get()};
         for (std::uint32_t index = 0; index < buffers.size(); ++index) commands.BindStorageBuffer(index + 2, buffers[index]);
+        commands.BindStorageBuffer(0, m_membership.Get());
         commands.BindStorageImage(0, m_requests.Get());
         commands.BindStorageImage(1, m_table.Get());
     }
@@ -412,7 +450,7 @@ namespace PlutoGE::render
             BindCompute(commands, pass);
             if (pass == 0) commands.Dispatch(PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES / 64, 1, 1);
             else if (pass == 1) commands.Dispatch((m_width + 7) / 8, (m_height + 7) / 8, 1);
-            else if (pass == 3) commands.Dispatch(PLUTO_VSM_CAPACITY / 64, 1, 1);
+            else if (pass == 3) commands.Dispatch(PLUTO_VSM_CAPACITY, 1, 1);
             else if (pass == 5) commands.Dispatch(static_cast<std::uint32_t>((m_casterCount + 63) / 64 + (m_casterCount == 0)), 1, 1);
             else commands.Dispatch(1, 1, 1);
             commands.ShaderMemoryBarrier();
@@ -461,7 +499,7 @@ namespace PlutoGE::render
         stats.receiverDraws = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(PLUTO_VSM_ATLAS_SIZE) * PLUTO_VSM_ATLAS_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + PLUTO_VSM_CAPACITY * 64 + sizeof(VirtualShadowParameters) + 80 +
-            m_capacity * (sizeof(Caster) + PLUTO_VSM_CAPACITY * 4 + 20) +
+            m_capacity * (sizeof(Caster) + PLUTO_VSM_CAPACITY * (4 + sizeof(glm::uvec4)) + 20) + PLUTO_VSM_CAPACITY * 4 +
             std::uint64_t(m_width) * m_height * 8;
         for (const auto &chunk : m_receiverChunks) stats.memoryBytes += chunk.uploaded.size();
         for (const auto &chunk : m_casterChunks) stats.memoryBytes += chunk.uploaded.size();

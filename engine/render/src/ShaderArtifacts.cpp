@@ -1,6 +1,8 @@
 #include "PlutoGE/render/ShaderArtifacts.h"
 
 #include <fstream>
+#include <cstdlib>
+#include <stdexcept>
 #include <iterator>
 
 namespace PlutoGE::render
@@ -125,6 +127,14 @@ namespace PlutoGE::render
 
     std::filesystem::path ShaderArtifactLibrary::DefaultRoot()
     {
+        // Allow diagnostic captures to pin their shader package as well as the
+        // executable. A bad override must fail rather than mix package versions.
+        if (const char *root = std::getenv("PLUTOGE_SHADER_ROOT"); root && *root)
+        {
+            if (!std::filesystem::is_directory(root))
+                throw std::runtime_error("PLUTOGE_SHADER_ROOT is not a directory");
+            return root;
+        }
         return PLUTO_RHI_SHADER_DIR;
     }
 }

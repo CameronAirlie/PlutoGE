@@ -491,6 +491,11 @@ namespace PlutoGE::render::rhi::opengl
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT |
                             GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
         }
+        void ComputeImageBarrier(std::span<const TextureHandle> images) override
+        {
+            if (!images.empty())
+                glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+        }
         void ClearStorageImageUint(TextureHandle textureHandle, std::uint32_t value) override
         {
             auto *texture = m_impl.textures.Get(textureHandle);

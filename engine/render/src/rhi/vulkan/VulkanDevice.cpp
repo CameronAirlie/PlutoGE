@@ -1572,6 +1572,32 @@ namespace PlutoGE::render::rhi::vulkan
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
+        void ComputeImageBarrier(std::span<const TextureHandle> images) override
+        {
+            std::array<VkImageMemoryBarrier, 16> barriers{};
+            while (!images.empty())
+            {
+                const auto count = std::min(images.size(), barriers.size());
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    auto *texture = m_impl.textures.Get(images[index]);
+                    if (!texture || !texture->descriptor.storage)
+                        throw std::invalid_argument("Invalid Vulkan compute barrier image");
+                    auto &barrier = barriers[index];
+                    barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                    barrier.oldLayout = barrier.newLayout = texture->layout;
+                    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = texture->image;
+                    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, texture->mipLevels, 0, 1};
+                }
+                vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(count), barriers.data());
+                images = images.subspan(count);
+            }
+        }
         void ClearStorageImageUint(TextureHandle textureHandle, std::uint32_t value) override
         {
             auto *texture = m_impl.textures.Get(textureHandle);

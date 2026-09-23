@@ -4,6 +4,8 @@ struct ResolveParameters
     uint destinationZOffset;
     float secondaryGain;
     uint padding;
+    uint4 regionOrigin;
+    uint4 regionExtent;
 };
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { ResolveParameters pass; };
@@ -30,7 +32,8 @@ float opacityAt(int3 coordinate, int3 size)
 [numthreads(4, 4, 4)]
 void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    const int3 coordinate = int3(dispatchThreadId);
+    if (any(dispatchThreadId >= pass.regionExtent.xyz)) return;
+    const int3 coordinate = int3(dispatchThreadId + pass.regionOrigin.xyz);
     const int3 size = int3(pass.resolution);
     if (any(coordinate >= size)) return;
     const uint weight = accumulationWeight[coordinate];

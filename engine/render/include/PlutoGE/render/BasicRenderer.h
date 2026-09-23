@@ -5,6 +5,7 @@
 #include "PlutoGE/render/OceanParameters.h"
 
 #include "PlutoGE/render/VctProbeCache.h"
+#include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/render/RenderDebugView.h"
 #include "PlutoGE/render/ShadowMethod.h"
 #include "PlutoGE/render/VirtualShadowMaps.h"
@@ -436,6 +437,7 @@ namespace PlutoGE::render
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         std::uint64_t vctVoxelizedTriangles = 0, vctRelitVoxels = 0;
         std::uint32_t vctGeometryBuilds = 0, vctRelightDispatches = 0, vctPublications = 0;
+        std::uint64_t vctPublishedVoxels = 0;
         std::uint32_t vctSecondarySlices = 0, vctSecondaryPublications = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
@@ -519,6 +521,10 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t GetOutputHeight() const noexcept { return m_outputHeight; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_device != nullptr; }
         [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
+        // Diagnostic reference: same scheduling and lighting, full-volume publication.
+        void SetIncrementalVctPublicationEnabled(bool enabled) noexcept { m_incrementalVctPublication = enabled; }
+        void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
+        { if (m_virtualShadows) m_virtualShadows->SetMembershipCachingEnabled(enabled); }
         [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
         [[nodiscard]] bool WasTemporalUpscalerEvaluated() const noexcept
         {
@@ -664,6 +670,8 @@ namespace PlutoGE::render
             std::array<rhi::Texture, 4> accumulation;
             rhi::Texture surfaceRecord, secondaryVolume, directVolume, shadowDepth, shadowColor;
             bool geometryReady = false, relightPending = false, fullRelight = true;
+            VctRelightRegion publicationDirty{};
+            bool fullPublication = true;
             bool deferredPublication = false;
             std::uint64_t lightingSignature = 0, directionalSignature = 0;
             BasicLighting publishedLighting;
@@ -695,6 +703,7 @@ namespace PlutoGE::render
             bool rebuilding = false;
         };
         std::array<VctCascade, 3> m_vctCascades;
+        bool m_incrementalVctPublication = true;
         std::array<rhi::Texture, 6> m_vctRadianceAtlases;
         std::array<rhi::Texture, 6> m_vctInjectionAtlases;
         // One immutable direct-light snapshot and scratch output are shared by

@@ -10,13 +10,14 @@ struct VirtualShadowParameters
     uint4 limits; // caster chunks, frame, page budget, triangle budget
     float4 settings; // softness, enabled, reset cache, resolution scale
     float4 camera;
+    uint4 membershipEpochs[(PLUTO_VSM_LEVELS + 3) / 4];
 };
 struct VirtualShadowPage
 {
     int4 address; // absolute page XY, level, projection epoch
     uint4 state; // current virtual key, selected frame, valid depth, scheduled dirty
     uint4 signature; // cached hash low/high, unused
-    uint4 pending; // candidate hash low/high, triangle cost, unused
+    uint4 pending; // candidate hash low/high, triangle cost, membership generation
 };
 struct VirtualShadowCaster
 {

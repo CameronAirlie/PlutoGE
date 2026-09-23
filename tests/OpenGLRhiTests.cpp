@@ -21,7 +21,9 @@
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
+#include "VsmMembershipChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
+#include "VctPublicationChecks.h"
 
 #include <array>
 #include <cassert>
@@ -290,6 +292,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--vct-publication")
+        {
+            CheckVctIncrementalPublication(basicRenderer, [&](auto texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-world-cache")
         {
             CheckVctWorldCacheRendering(basicRenderer, [&](auto texture) {
@@ -396,6 +408,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 return 1;
             }
             return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--vsm-membership")
+        {
+            CheckVsmMembership(basicRenderer, [&](auto texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string(argv[1]) == "--vsm-only")
         {

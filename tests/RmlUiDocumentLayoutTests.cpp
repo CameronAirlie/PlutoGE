@@ -122,6 +122,58 @@ int main(int argc, char** argv) try
         std::cout << "PASS: minimap square, centered, clipped and bounded at three resolutions, UI scales and sizes.\n";
         return 0;
     }
+    if (Rml::String(argv[4]) == "gameplay-hud")
+    {
+        auto fail = [](const Rml::String& message) { Rml::Shutdown(); throw std::runtime_error(message); };
+        auto set = [&](const char* id, const char* value) { document->GetElementById(id)->SetInnerRML(value); };
+        set("save-status", "SAVE FAILED: latest progress is not saved. Hover for details.");
+        document->GetElementById("save-status")->SetProperty("display", "block");
+        set("room", "The Archivist Rotunda"); set("objective", "Find the Archivist and open the descent");
+        set("experience", "LV 20"); set("skill-points", "+ 19 SKILLS");
+        set("health", "HP 9999/9999"); set("mana", "MP 9999/9999");
+        set("interaction", "RS: Pick up a legendary weapon"); set("combat-feedback", "DRAW 100% / RELEASE");
+        set("boss", "THE BRIAR KING"); document->GetElementById("boss-track")->SetProperty("display", "block");
+        document->GetElementById("minimap-panel")->SetProperty("display", "block");
+        set("minimap-floor", "Ground");
+        set("hud-notices", "<div class=\"hud-notice\">COMBAT Guard broken</div><div class=\"hud-notice\">PROGRESS Level 20! Skill points available.</div><div class=\"hud-notice\">LOOT Picked up an enchanted sword</div>");
+        for (const auto* slot : {"primary", "secondary", "special"})
+        {
+            const auto id = Rml::String("attack-") + slot;
+            document->GetElementById(id + "-name")->SetInnerRML("Piercing Arrow");
+            document->GetElementById(id + "-state")->SetInnerRML("HOLD / RELEASE");
+        }
+        for (const auto size : {Rml::Vector2i(960,540), Rml::Vector2i(1280,720), Rml::Vector2i(1920,1080)})
+            for (float scale : {.8f, 1.f, 1.25f})
+            {
+                const Rml::Vector2i logical(int(size.x/scale), int(size.y/scale));
+                context->SetDimensions(logical); context->Update(); context->Update();
+                const char* ids[] = {"header", "top-right", "boss", "vitals", "abilities", "interaction", "hud-notices", "minimap-panel", "combat-feedback", "save-status"};
+                for (int i=0;i<10;++i)
+                {
+                    auto* a=document->GetElementById(ids[i]);
+                    const auto p=a->GetAbsoluteOffset(Rml::BoxArea::Border), d=a->GetBox().GetSize(Rml::BoxArea::Border);
+                    if(p.x<0 || p.y<0 || p.x+d.x>logical.x+1 || p.y+d.y>logical.y+1)
+                        fail(Rml::String("HUD escapes viewport: ")+ids[i]);
+                    for(int j=i+1;j<10;++j)
+                    {
+                        auto* b=document->GetElementById(ids[j]);
+                        const auto q=b->GetAbsoluteOffset(Rml::BoxArea::Border), e=b->GetBox().GetSize(Rml::BoxArea::Border);
+                        if(p.x<q.x+e.x && p.x+d.x>q.x && p.y<q.y+e.y && p.y+d.y>q.y)
+                            fail(Rml::String("HUD overlaps: ")+ids[i]+" / "+ids[j]);
+                    }
+                }
+                for(const auto* slot : {"primary","secondary","special"})
+                {
+                    auto* card=document->GetElementById(Rml::String("attack-")+slot);
+                    auto* bar=document->GetElementById("abilities");
+                    if(std::abs(card->GetAbsoluteOffset(Rml::BoxArea::Border).y-bar->GetAbsoluteOffset(Rml::BoxArea::Border).y)>1)
+                        fail("Ability cards wrap outside their row");
+                }
+            }
+        Rml::Shutdown(); Rml::SetRenderInterface(nullptr);
+        std::cout << "PASS: gameplay HUD bounds and separation at three resolutions and UI scales.\n";
+        return 0;
+    }
     const bool journal = Rml::String(argv[4]) == "journal-panel";
     auto* scroll = journal ? document->GetElementById("backpack-scroll") : panel;
     for (const auto size : {Rml::Vector2i(1280, 720), Rml::Vector2i(1280, 960), Rml::Vector2i(1920, 1080)})

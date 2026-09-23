@@ -232,7 +232,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
         std::ifstream minimapFile(std::string(capturePrefix) + "minimap.rml");
         const std::string minimapMarkup((std::istreambuf_iterator<char>(minimapFile)), {});
-        for (int page=0;page<(minimapMarkup.empty() ? 4 : 5);++page)
+        for (int page=0;page<(minimapMarkup.empty() ? 4 : journal->GetElementById("gameplay-hud") ? 6 : 5);++page)
         {
             if (page==1)
             {
@@ -275,6 +275,33 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                 journal->GetElementById("minimap-panel")->SetProperty("display", "block");
                 journal->GetElementById("minimap-board")->SetInnerRML(minimapMarkup);
                 journal->GetElementById("minimap-floor")->SetInnerRML("Crypt / Ground");
+            }
+            if (page == 5)
+            {
+                journal->SetProperty("width", "960px"); journal->SetProperty("height", "720px");
+                journal->SetProperty("transform", "scale(1)");
+                auto set = [&](const char* id, const char* value) { journal->GetElementById(id)->SetInnerRML(value); };
+                set("room", "The Ossuary"); set("objective", "Find the Archivist and open the descent");
+                set("experience", "LV 7"); set("skill-points", "+ 3 SKILLS");
+                set("health", "HP 84/120"); set("mana", "MP 42/100");
+                journal->GetElementById("health-fill")->SetProperty("width", "70%");
+                journal->GetElementById("mana-fill")->SetProperty("width", "42%");
+                journal->GetElementById("experience-fill")->SetProperty("width", "65%");
+                set("interaction", "F: Open the pilgrim cache"); set("combat-feedback", "SHIFT: GUARD");
+                set("hud-notices", "<div class=\"hud-notice\"><span class=\"notice-kind\">COMBAT</span> Guard broken</div><div class=\"hud-notice\"><span class=\"notice-kind\">PROGRESS</span> Level 7! Skill points available.</div><div class=\"hud-notice\"><span class=\"notice-kind\">LOOT</span> Picked up Warden's Edge</div>");
+                const char* slots[] = {"primary", "secondary", "special"};
+                const char* names[] = {"Slash", "Cleave", "Thrust"};
+                const char* bindings[] = {"LMB", "RMB", "E"};
+                const char* states[] = {"READY", "1.4s", "LOW AETHER"};
+                for (int i=0;i<3;++i)
+                {
+                    const auto id = Rml::String("attack-") + slots[i];
+                    journal->GetElementById(id+"-name")->SetInnerRML(names[i]);
+                    journal->GetElementById(id+"-binding")->SetInnerRML(bindings[i]);
+                    journal->GetElementById(id+"-state")->SetInnerRML(states[i]);
+                    journal->GetElementById(id+"-icon")->SetInnerRML("<img sprite=\"weapon-wanderer_blade\"/>");
+                }
+                journal->GetElementById("attack-secondary-shade")->SetProperty("height", "65%");
             }
             context->Update(); context->Update();
             rhi::Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));

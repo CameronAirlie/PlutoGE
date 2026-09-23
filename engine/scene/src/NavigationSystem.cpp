@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/core/CpuTrace.h"
 
 #include <algorithm>
 #include <cmath>
@@ -175,6 +176,8 @@ namespace PlutoGE::scene
         const float distance = glm::length(horizontalDelta);
         const int samples = std::max(1, static_cast<int>(std::ceil(distance / (m_settings.cellSize * 0.25f))));
         float previousHeight = start.y;
+        int previousX = -1, previousZ = -1;
+        const auto &walkability = GetAgentWalkability(agentRadius, agentHeight);
         for (int sample = 0; sample <= samples; ++sample)
         {
             const float t = static_cast<float>(sample) / samples;
@@ -185,9 +188,15 @@ namespace PlutoGE::scene
                 return false;
             const int index = z * m_width + x;
             const auto &cell = m_cells[index];
-            if (!IsCellWalkableForAgent(index, agentRadius, agentHeight) ||
+            if (!walkability[index] ||
                 std::abs(cell.height - previousHeight) > m_settings.maxStepHeight + 0.001f)
                 return false;
+            // Match the A* diagonal rule: never shortcut through a blocked corner.
+            if (previousX >= 0 && previousX != x && previousZ != z &&
+                (!walkability[previousZ * m_width + x] || !walkability[z * m_width + previousX]))
+                return false;
+            previousX = x;
+            previousZ = z;
             previousHeight = cell.height;
         }
         return true;
@@ -196,12 +205,26 @@ namespace PlutoGE::scene
     NavigationPath NavigationSystem::FindPath(const glm::vec3 &startPoint, const glm::vec3 &endPoint,
                                                float agentRadius, float agentHeight) const
     {
+        core::CpuScope pathScope("Navigation path search", core::CpuCategory::Scripts);
         NavigationPath output;
         const int start = FindNearestCell(startPoint, agentRadius, agentHeight);
         const int goal = FindNearestCell(endPoint, agentRadius, agentHeight);
         if (start < 0 || goal < 0)
             return output;
 
+        // Use the same clearance/height checks as path simplification before
+        // allocating an A* frontier for an unobstructed route.
+        auto surfaceStart = startPoint;
+        auto surfaceEnd = endPoint;
+        surfaceStart.y = m_cells[start].height;
+        surfaceEnd.y = m_cells[goal].height;
+        if (start != goal && IsSegmentWalkable(surfaceStart, surfaceEnd, agentRadius, agentHeight))
+        {
+            output.points = {startPoint, endPoint};
+            output.complete = true;
+            return output;
+        }
+        const auto &walkability = GetAgentWalkability(agentRadius, agentHeight);
         struct OpenNode { int index; float score; bool operator<(const OpenNode &other) const { return score > other.score; } };
         std::priority_queue<OpenNode> open;
         std::vector<float> costs(m_cells.size(), std::numeric_limits<float>::max());
@@ -231,15 +254,15 @@ namespace PlutoGE::scene
                 const int next = nextZ * m_width + nextX;
                 const bool diagonal = direction[0] != 0 && direction[1] != 0;
                 const float linkDistance = m_settings.cellSize * (diagonal ? 1.41421356f : 1.0f);
-                if (!IsCellWalkableForAgent(next, agentRadius, agentHeight) ||
+                if (!walkability[next] ||
                     std::abs(m_cells[next].height - m_cells[current].height) > MaxTraversableHeightDelta(m_settings, linkDistance))
                     continue;
                 if (diagonal)
                 {
                     const int sideX = z * m_width + nextX;
                     const int sideZ = nextZ * m_width + x;
-                    if (!IsCellWalkableForAgent(sideX, agentRadius, agentHeight) ||
-                        !IsCellWalkableForAgent(sideZ, agentRadius, agentHeight))
+                    if (!walkability[sideX] ||
+                        !walkability[sideZ])
                         continue;
                 }
                 const float newCost = costs[current] + (diagonal ? 1.4142f : 1.0f);

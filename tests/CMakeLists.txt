@@ -631,3 +631,21 @@ if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEPresentationPreparationManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.PresentationPreparationTests/PlutoGE.PresentationPreparationTests.csproj --configuration Release)
 endif()
+
+add_executable(PlutoGEAudioBatchLifecycleTests AudioBatchLifecycleTests.cpp)
+target_link_libraries(PlutoGEAudioBatchLifecycleTests PRIVATE PlutoGE::Audio)
+add_test(NAME PlutoGEAudioBatchLifecycleTests COMMAND PlutoGEAudioBatchLifecycleTests)
+set_tests_properties(PlutoGEAudioBatchLifecycleTests PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null")
+add_executable(PlutoGENavigationPathTests NavigationPathTests.cpp)
+target_link_libraries(PlutoGENavigationPathTests PRIVATE PlutoGE::Scene)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGENavigationPathTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+endif()
+add_test(NAME PlutoGENavigationPathTests COMMAND PlutoGENavigationPathTests)
+if (TARGET OpenAL)
+    foreach(test_target IN ITEMS PlutoGEAudioBatchLifecycleTests PlutoGENavigationPathTests)
+        add_custom_command(TARGET ${test_target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${test_target}>/$<TARGET_FILE_NAME:OpenAL>)
+    endforeach()
+endif()

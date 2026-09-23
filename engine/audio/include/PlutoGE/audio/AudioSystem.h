@@ -104,7 +104,7 @@ namespace PlutoGE::audio
 
     private:
         bool EnsureClipLoaded(const std::string &clipPath, const AudioClip *&clip);
-        void DestroyVoice(std::uint64_t key);
+        void DestroyVoice(std::uint64_t key, bool stopPlayback = true);
         void StopInactiveEmitters(const std::vector<std::uint64_t> &activeKeys);
         void UpdateVoice(ActiveVoice &voice, const ListenerState &listener, const EmitterState &emitter, float deltaTime);
         float ComputeAttenuation(const EmitterState &emitter, float distance) const;

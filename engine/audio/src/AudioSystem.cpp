@@ -652,7 +652,7 @@ namespace PlutoGE::audio
 #endif
     }
 
-    void AudioSystem::DestroyVoice(std::uint64_t key)
+    void AudioSystem::DestroyVoice(std::uint64_t key, bool stopPlayback)
     {
         const auto it = m_activeVoices.find(key);
         if (it == m_activeVoices.end())
@@ -664,7 +664,7 @@ namespace PlutoGE::audio
         if (it->second.backendSource != 0)
         {
             const ALuint source = static_cast<ALuint>(it->second.backendSource);
-            alSourceStop(source);
+            if (stopPlayback) alSourceStop(source);
             alSourcei(source, AL_DIRECT_FILTER, 0);
             if (m_openAlEfxAvailable)
                 alSource3i(source, AL_AUXILIARY_SEND_FILTER, 0, 0, AL_FILTER_NULL);
@@ -1145,6 +1145,33 @@ namespace PlutoGE::audio
             }
 
             core::CpuScope voicesScope("Audio voice maintenance", core::CpuCategory::Audio);
+            // Retire sources in one mixer transaction. Individual stop/play calls
+            // each synchronize with OpenAL's mixer, multiplying stalls in bursts.
+            std::unordered_map<std::uint64_t, const EmitterState *> requested;
+            requested.reserve(emitters.size());
+            for (const auto &emitter : emitters) requested.emplace(emitter.key, &emitter);
+            std::vector<ALuint> stoppedSources, playingSources, pausedSources;
+            std::vector<std::uint64_t> retiredKeys;
+            for (const auto &[key, voice] : m_activeVoices)
+            {
+                const auto found = requested.find(key);
+                const auto *emitter = found != requested.end() ? found->second : nullptr;
+                if (!emitter || !mixedKeys.contains(key) || !emitter->playing || emitter->clipPath.empty() ||
+                    voice.clipPath != emitter->clipPath || voice.looping != emitter->looping ||
+                    voice.spatialized != emitter->spatialized ||
+                    voice.usingSpatialPlayback != (emitter->spatialized && listener.active) ||
+                    (emitter->restartRequested && (emitter->paused || voice.paused)))
+                {
+                    stoppedSources.push_back(static_cast<ALuint>(voice.backendSource));
+                    retiredKeys.push_back(key);
+                }
+            }
+            if (!stoppedSources.empty())
+            {
+                core::CpuScope stopScope("Audio mixer stop batch", core::CpuCategory::Audio);
+                alSourceStopv(static_cast<ALsizei>(stoppedSources.size()), stoppedSources.data());
+            }
+            for (const auto key : retiredKeys) DestroyVoice(key, false);
             std::vector<std::uint64_t> activeKeys;
             activeKeys.reserve(emitters.size());
 
@@ -1177,8 +1204,7 @@ namespace PlutoGE::audio
                                            currentVoice->second.clipPath != emitter.clipPath ||
                                            currentVoice->second.looping != emitter.looping ||
                                            currentVoice->second.spatialized != emitter.spatialized ||
-                                           currentVoice->second.usingSpatialPlayback != useSpatialVoice ||
-                                           emitter.restartRequested;
+                                           currentVoice->second.usingSpatialPlayback != useSpatialVoice;
 
                 if (needsNewVoice)
                 {
@@ -1262,29 +1288,44 @@ namespace PlutoGE::audio
 
                     if (!emitter.paused)
                     {
-                        alSourcePlay(source);
+                        playingSources.push_back(source);
                     }
                 }
                 else
                 {
                     const ALuint source = static_cast<ALuint>(currentVoice->second.backendSource);
-                    if (emitter.paused && !currentVoice->second.paused)
+                    bool queuedPlayback = false;
+                    bool queuedPause = false;
+                    if (emitter.restartRequested)
                     {
-                        alSourcePause(source);
+                        // OpenAL restarts an already-playing source from the beginning.
+                        // Reuse its clip/filter binding instead of stopping and rebuilding it.
+                        core::CpuScope restartScope("Audio voice restart", core::CpuCategory::Audio);
+                        currentVoice->second.parameterUpdateAccumulator = 1.0f / 30.0f;
+                        currentVoice->second.paused = false;
+                        playingSources.push_back(source);
+                        queuedPlayback = true;
+                    }
+                    else if (emitter.paused && !currentVoice->second.paused)
+                    {
+                        pausedSources.push_back(source);
+                        queuedPause = true;
                         currentVoice->second.paused = true;
                     }
                     else if (!emitter.paused && currentVoice->second.paused)
                     {
-                        alSourcePlay(source);
+                        playingSources.push_back(source);
+                        queuedPlayback = true;
                         currentVoice->second.paused = false;
                     }
 
-                    if (!currentVoice->second.looping)
+                    if (!currentVoice->second.looping && !queuedPlayback)
                     {
                         ALint state = AL_INITIAL;
                         alGetSourcei(source, AL_SOURCE_STATE, &state);
                         if (state == AL_STOPPED)
                         {
+                            if (queuedPause) pausedSources.pop_back();
                             DestroyVoice(emitter.key);
                             continue;
                         }
@@ -1297,6 +1338,16 @@ namespace PlutoGE::audio
                 }
             }
 
+            if (!pausedSources.empty())
+            {
+                core::CpuScope pauseScope("Audio mixer pause batch", core::CpuCategory::Audio);
+                alSourcePausev(static_cast<ALsizei>(pausedSources.size()), pausedSources.data());
+            }
+            if (!playingSources.empty())
+            {
+                core::CpuScope playScope("Audio mixer play batch", core::CpuCategory::Audio);
+                alSourcePlayv(static_cast<ALsizei>(playingSources.size()), playingSources.data());
+            }
             StopInactiveEmitters(activeKeys);
             return;
         }

@@ -1516,6 +1516,7 @@ namespace PlutoGE::scene
 
     void Scene::RefreshPhysicsQueryCache() const
     {
+        core::CpuScope scope("Physics query synchronization", core::CpuCategory::Physics);
         std::vector<Entity *> entities;
         for (auto *rootEntity : m_rootEntities)
             CollectActiveEntities(rootEntity, entities);
@@ -1561,6 +1562,7 @@ namespace PlutoGE::scene
 
         if (rebuild)
         {
+            core::CpuScope rebuildScope("Physics query world rebuild", core::CpuCategory::Physics);
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
             m_physicsQueryCache->world = BuildBulletQueryWorld(entities, m_foliageComponents);
         }
@@ -4007,6 +4009,7 @@ namespace PlutoGE::scene
 
         if (rebuildRuntimePhysics)
         {
+            core::CpuScope rebuildScope("Physics body world rebuild", core::CpuCategory::Physics);
             RebuildRuntimePhysicsState(physicsEntities, entities);
         }
 
@@ -4058,9 +4061,13 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            const btTransform transform =
-                EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset);
-            const bool transformChanged = !(stepBody.body->getWorldTransform() == transform);
+            const auto transformRevision = stepBody.entity->GetTransformRevision();
+            const bool revisionChanged = transformRevision != stepBody.synchronizedTransformRevision;
+            const btTransform transform = revisionChanged
+                ? EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset)
+                : stepBody.body->getWorldTransform();
+            stepBody.synchronizedTransformRevision = transformRevision;
+            const bool transformChanged = revisionChanged && !(stepBody.body->getWorldTransform() == transform);
             if (!transformChanged)
             {
                 // Static and stationary kinematic bodies are already present in
@@ -4253,7 +4260,10 @@ namespace PlutoGE::scene
         }
         m_pendingRigidbodyForces.clear();
 
-        runtimeWorld.dynamicsWorld.stepSimulation(step, maximumPhysicsSubstepsPerFrame, fixedPhysicsStep);
+        {
+            core::CpuScope simulationScope("Physics Bullet simulation", core::CpuCategory::Physics);
+            runtimeWorld.dynamicsWorld.stepSimulation(step, maximumPhysicsSubstepsPerFrame, fixedPhysicsStep);
+        }
 
         for (auto &ragdoll : runtimeWorld.ragdolls)
         {

@@ -129,22 +129,36 @@ namespace PlutoGE::render
         std::mutex mutex;
         std::condition_variable ready, finished;
         std::vector<std::thread> workers;
-        std::array<SkinningExtents, 4> bounds;
-        std::span<const MeshVertexData> source;
-        std::span<const glm::mat4> joints;
-        std::span<const BasicVertex> previous;
-        std::span<BasicVertex> output;
+        std::vector<std::array<SkinningExtents, 4>> bounds;
+        std::span<RhiSkinningJob> jobs;
+        std::size_t totalVertices = 0;
         unsigned count = 1, pending = 0;
         std::uint64_t generation = 0;
         bool stopping = false;
 
         void Range(unsigned index)
         {
-            const auto begin = source.size() * index / count;
-            const auto end = source.size() * (index + 1) / count;
-            bounds[index] = SkinRange(source.subspan(begin, end - begin), joints,
-                previous.size() == source.size() ? previous.subspan(begin, end - begin) : std::span<const BasicVertex>{},
-                output.subspan(begin, end - begin));
+            const auto begin = totalVertices * index / count;
+            const auto end = totalVertices * (index + 1) / count;
+            std::size_t offset = 0;
+            for (std::size_t j = 0; j < jobs.size(); ++j)
+            {
+                auto &job = jobs[j];
+                const auto first = std::max(begin, offset);
+                const auto last = std::min(end, offset + job.source.size());
+                auto &extent = bounds[j][index];
+                extent = {glm::vec3(std::numeric_limits<float>::max()),
+                          glm::vec3(std::numeric_limits<float>::lowest())};
+                if (first < last)
+                {
+                    const auto local = first - offset;
+                    const auto size = last - first;
+                    extent = SkinRange(job.source.subspan(local, size), job.joints,
+                        job.previous.size() == job.source.size() ? job.previous.subspan(local, size) : std::span<const BasicVertex>{},
+                        std::span<BasicVertex>(*job.output).subspan(local, size));
+                }
+                offset += job.source.size();
+            }
         }
         void Stop()
         {
@@ -184,17 +198,38 @@ namespace PlutoGE::render
         std::span<const glm::mat4> joints, std::span<const BasicVertex> previous,
         std::vector<BasicVertex> &result)
     {
+        RhiSkinningJob job{source, joints, previous, &result};
+        DeformBatch(std::span<RhiSkinningJob>(&job, 1));
+        return job.bounds;
+    }
+
+    void RhiSkinningExecutor::DeformBatch(std::span<RhiSkinningJob> jobs)
+    {
         stats = {};
-        if (source.size() < 32768 || impl->count == 1)
-            return SkinRhiVerticesInto(source, joints, previous, result);
+        std::size_t totalVertices = 0;
+        for (auto &job : jobs)
+        {
+            // Discard incompatible history before resizing a possibly aliased buffer.
+            if (job.previous.size() != job.source.size()) job.previous = {};
+            job.output->resize(job.source.size());
+            totalVertices += job.source.size();
+        }
+        if (totalVertices < MinimumParallelVertices || impl->count == 1)
+        {
+            for (auto &job : jobs)
+                job.bounds = SkinRhiVerticesInto(job.source, job.joints, job.previous, *job.output);
+            return;
+        }
         using Clock = std::chrono::steady_clock;
         const auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b - a).count(); };
         const auto start = Clock::now();
-        result.resize(source.size());
+        impl->bounds.resize(jobs.size());
         {
             std::lock_guard lock(impl->mutex);
-            impl->source = source; impl->joints = joints; impl->previous = previous; impl->output = result;
-            impl->pending = impl->count - 1; ++impl->generation;
+            impl->jobs = jobs;
+            impl->totalVertices = totalVertices;
+            impl->pending = impl->count - 1;
+            ++impl->generation;
         }
         impl->ready.notify_all();
         const auto dispatched = Clock::now();
@@ -205,13 +240,20 @@ namespace PlutoGE::render
             impl->finished.wait(lock, [&] { return impl->pending == 0; });
         }
         const auto waited = Clock::now();
-        auto bounds = impl->bounds[0];
-        for (unsigned i = 1; i < impl->count; ++i)
+        for (std::size_t j = 0; j < jobs.size(); ++j)
         {
-            bounds.minimum = glm::min(bounds.minimum, impl->bounds[i].minimum);
-            bounds.maximum = glm::max(bounds.maximum, impl->bounds[i].maximum);
+            if (jobs[j].source.empty()) { jobs[j].bounds = {}; continue; }
+            auto extent = impl->bounds[j][0];
+            for (unsigned i = 1; i < impl->count; ++i)
+            {
+                extent.minimum = glm::min(extent.minimum, impl->bounds[j][i].minimum);
+                extent.maximum = glm::max(extent.maximum, impl->bounds[j][i].maximum);
+            }
+            jobs[j].bounds = {(extent.minimum + extent.maximum) * .5f,
+                glm::length(extent.maximum - extent.minimum) * .5f};
         }
+        // Workers have joined this batch; retain capacity, not borrowed spans.
+        impl->jobs = {};
         stats = {impl->count, ms(start, dispatched), ms(dispatched, worked), ms(worked, waited), ms(waited, Clock::now())};
-        return {(bounds.minimum + bounds.maximum) * .5f, glm::length(bounds.maximum - bounds.minimum) * .5f};
     }
 }

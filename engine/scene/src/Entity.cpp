@@ -232,6 +232,8 @@ namespace PlutoGE::scene
             rootEntities.erase(std::remove(rootEntities.begin(), rootEntities.end(), child), rootEntities.end());
         }
 
+        if (m_scene) m_scene->InvalidateRuntimeHierarchy();
+        if (child->m_scene) child->m_scene->InvalidateRuntimeHierarchy();
         m_children.push_back(child);
         child->m_parent = this;
         if (m_scene)
@@ -262,6 +264,7 @@ namespace PlutoGE::scene
         if (m_scene)
         {
             m_scene->m_rootEntities.push_back(this);
+            m_scene->InvalidateRuntimeHierarchy();
             m_scene->InvalidateEnvironmentComponents();
         }
 
@@ -329,6 +332,7 @@ namespace PlutoGE::scene
         }
 
         AttachComponent(component);
+        if (m_scene) m_scene->RegisterRuntimeComponent(component);
         m_componentStorage.emplace_back(component);
 
         if (m_scene)
@@ -425,6 +429,7 @@ namespace PlutoGE::scene
                 m_scene->UnregisterRmlWidgetComponent(widget);
         }
 
+        if (m_scene) m_scene->UnregisterRuntimeComponent(component);
         DetachComponent(component);
 
         const auto it = std::find_if(m_componentStorage.begin(), m_componentStorage.end(),
@@ -502,7 +507,11 @@ namespace PlutoGE::scene
                 m_scene->UnregisterRmlWidgetComponent(widget);
         }
 
+        if (m_scene)
+            for (const auto &component : m_componentStorage) m_scene->UnregisterRuntimeComponent(component.get());
         m_scene = scene;
+        if (m_scene)
+            for (const auto &component : m_componentStorage) m_scene->RegisterRuntimeComponent(component.get());
 
         if (m_scene)
         {

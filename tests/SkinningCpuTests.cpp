@@ -36,6 +36,40 @@ int main() try
     };
     check(output);
     RhiSkinningExecutor executor(4);
+    // Every mesh is below the old dispatch threshold; aggregate work must still
+    // match the independent reference across uneven worker/mesh boundaries.
+    std::array<std::vector<BasicVertex>, 5> batches;
+    std::array<RhiSkinningJob, 5> jobs;
+    const std::array<std::size_t, 5> sizes{19001, 0, 21003, 17005, vertices.size() - 57009};
+    std::size_t offset = 0;
+    for (std::size_t j = 0; j < jobs.size(); ++j)
+    {
+        jobs[j] = {std::span(vertices).subspan(offset, sizes[j]), joints, {}, &batches[j]};
+        offset += sizes[j];
+    }
+    for (unsigned participants : {1u, 4u})
+    {
+        RhiSkinningExecutor batchExecutor(participants);
+        for (int frame = 0; frame < 2; ++frame)
+        {
+            for (std::size_t j = 0; j < jobs.size(); ++j) jobs[j].previous = batches[j];
+            batchExecutor.DeformBatch(jobs);
+            std::vector<BasicVertex> joined;
+            for (std::size_t j = 0; j < jobs.size(); ++j)
+            {
+                joined.insert(joined.end(), batches[j].begin(), batches[j].end());
+                for (const auto &vertex : batches[j])
+                {
+                    if (glm::length(glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]) - jobs[j].bounds.center) > jobs[j].bounds.radius + 1e-5f)
+                        throw std::runtime_error("Batched bounds exclude a vertex");
+                    for (unsigned c = 0; c < 3; ++c)
+                        if (std::abs(vertex.previousPosition[c] - vertex.position[c]) > 1e-5f)
+                            throw std::runtime_error("Batched history differs");
+                }
+            }
+            check(joined);
+        }
+    }
     executor.Deform(vertices, joints, output, output);
     check(output);
     for (std::size_t i = 0; i < output.size(); ++i)

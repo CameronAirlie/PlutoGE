@@ -20,6 +20,8 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class UISystem;
+    class Component;
+    class RuntimeComponentIndex;
     class SceneStreaming;
     class NavigationSystem;
     class Entity;
@@ -265,6 +267,11 @@ namespace PlutoGE::scene
         void UnregisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent);
 
     private:
+        // Entity lifecycle hooks own runtime discovery invalidation.
+        void RegisterRuntimeComponent(Component *component);
+        void UnregisterRuntimeComponent(Component *component);
+        void InvalidateRuntimeHierarchy();
+        std::unique_ptr<RuntimeComponentIndex> m_runtimeComponents;
         friend class SceneStreaming;
         void AdoptSectionEntities(Scene &source, std::uint64_t section);
         void InvalidateSectionNavigation();

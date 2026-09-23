@@ -1,5 +1,9 @@
 #pragma once
 #include <charconv>
+#include <array>
+#include <algorithm>
+#include <map>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -9,6 +13,29 @@
 
 namespace PlutoGE
 {
+    using ProjectBenchmarkGpuScopes = std::map<std::string, std::vector<float>>;
+
+    inline void WriteProjectBenchmarkGpuScopes(std::filesystem::path path, ProjectBenchmarkGpuScopes scopes)
+    {
+        path.replace_extension(".gpu.csv");
+        std::ofstream file(path);
+        file.exceptions(std::ios::failbit | std::ios::badbit);
+        file.imbue(std::locale::classic());
+        file << "scope,observations,mean_ms,p95_ms,max_ms\n" << std::fixed << std::setprecision(6);
+        for (auto &[name, values] : scopes)
+        {
+            if (values.empty()) continue;
+            std::sort(values.begin(), values.end());
+            double sum = 0;
+            for (float value : values) sum += value;
+            file << '"';
+            for (char c : name) { if (c == '"') file << '"'; file << c; }
+            file << "\"," << values.size() << ',' << sum / values.size() << ','
+                 << values[(values.size() * 95 + 99) / 100 - 1] << ',' << values.back() << '\n';
+        }
+        file.close();
+    }
+
     struct ProjectBenchmarkOptions
     {
         std::filesystem::path project, output;
@@ -39,6 +66,11 @@ namespace PlutoGE
 
     struct ProjectBenchmarkSample
     {
+        static constexpr std::array DetailNames{
+            "preparation_ms", "runtime_ui_ms", "components_ms", "physics_ms", "late_scripts_ms", "audio_ms", "scene_submission_ms",
+            "translation_ms", "skinning_upload_ms", "scene_setup_ms", "recording_ms", "begin_frame_ms", "shadow_recording_ms", "geometry_recording_ms", "post_recording_ms", "submit_ms",
+            "scripts_ms", "animation_components_ms", "skinning_wait_ms", "skinning_caller_ms", "hud_sync_ms", "hud_update_ms", "hud_render_ms", "skinning_vertices", "geometry_draws", "shadow_draws"};
+        std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;
         bool gpuAvailable = false;
@@ -51,13 +83,17 @@ namespace PlutoGE
         std::ofstream file(path);
         file.exceptions(std::ios::failbit | std::ios::badbit);
         file.imbue(std::locale::classic());
-        file << "sample,frame_ms,scene_update_ms,render_present_ms,scene_gpu_ms,gpu_available,skinning_ms,hud_ms,shadow_requests_gpu_ms\n";
+        file << "sample,frame_ms,scene_update_ms,render_present_ms,scene_gpu_ms,gpu_available,skinning_ms,hud_ms,shadow_requests_gpu_ms";
+        for (const auto *name : ProjectBenchmarkSample::DetailNames) file << ',' << name;
+        file << '\n';
         file << std::fixed << std::setprecision(6);
         for (std::size_t i = 0; i < samples.size(); ++i)
         {
             const auto &s = samples[i];
             file << i << ',' << s.frameMs << ',' << s.updateMs << ',' << s.renderPresentMs << ','
-                 << s.gpuMs << ',' << s.gpuAvailable << ',' << s.skinningMs << ',' << s.uiMs << ',' << s.shadowRequestMs << '\n';
+                 << s.gpuMs << ',' << s.gpuAvailable << ',' << s.skinningMs << ',' << s.uiMs << ',' << s.shadowRequestMs;
+            for (const double value : s.details) file << ',' << value;
+            file << '\n';
         }
         file.close();
     }

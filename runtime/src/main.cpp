@@ -596,6 +596,7 @@ int RunRuntime(int argc, char **argv)
     std::size_t benchmarkFrameIndex = 0;
     std::vector<double> benchmarkFrameTimes;
     std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
+    PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes;
     if (projectBenchmark) projectBenchmarkSamples.reserve(benchmarkFrameCount);
     if (benchmarkEnabled)
         benchmarkFrameTimes.reserve(benchmarkFrameCount);
@@ -808,14 +809,35 @@ int RunRuntime(int argc, char **argv)
                     sample.updateMs = frameTiming.sceneUpdateMs;
                     sample.renderPresentMs = std::chrono::duration<double, std::milli>(end - updateEnd).count();
                     sample.uiMs = PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming().TotalMs();
+                    const auto &update = scene->GetUpdateTimingStats();
+                    const auto &render = engine.GetRhiRenderService().GetTimingStats();
+                    const auto &ui = PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming();
+                    double scriptsMs = 0, animationMs = 0;
+                    for (const auto &timing : update.scriptUpdateTimings) scriptsMs += timing.totalMs;
+                    for (const auto &timing : update.componentTimings)
+                        if (timing.name.find("AnimationComponent") != std::string::npos) animationMs += timing.totalMs;
+                    sample.details = {update.preparationMs, update.runtimeUiMs, update.componentsMs, update.physicsMs,
+                        update.lateScriptsMs, update.audioMs, update.renderSubmissionMs, render.commandTranslationMs,
+                        render.skinningUploadMs, render.sceneSetupMs, render.renderRecordingMs, render.beginFrameMs,
+                        render.shadowRecordingMs, render.geometryRecordingMs, render.postProcessRecordingMs, render.submitMs,
+                        scriptsMs, animationMs, render.skinningWaitMs, render.skinningCallerMs,
+                        ui.synchronizeMs, ui.inputUpdateMs, ui.renderMs,
+                        static_cast<double>(render.skinningVertexCount), static_cast<double>(render.recordedGeometryDrawCount),
+                        static_cast<double>(render.recordedShadowDrawCount)};
                     if (useVulkanRenderer)
                     {
                         const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
                         sample.gpuAvailable = gpu.hasGpuResult;
                         sample.gpuMs = gpu.frameGpuMs;
                         sample.skinningMs = engine.GetRhiRenderService().GetTimingStats().skinningDeformationMs;
+                        std::map<std::string, float> gpuScopeTotals;
                         for (const auto &scope : gpu.gpuScopes)
+                        {
                             if (scope.name == "RHI VSM Planning / Receiver requests") sample.shadowRequestMs = scope.milliseconds;
+                            if (gpu.hasGpuResult) gpuScopeTotals[scope.name] += scope.milliseconds;
+                        }
+                        for (const auto &[name, milliseconds] : gpuScopeTotals)
+                            projectBenchmarkGpuScopes[name].push_back(milliseconds);
                     }
                     projectBenchmarkSamples.push_back(sample);
                 }
@@ -892,7 +914,11 @@ int RunRuntime(int argc, char **argv)
         benchmarkSucceeded = projectBenchmarkSamples.size() == projectBenchmark->frames;
         try
         {
-            if (benchmarkSucceeded) PlutoGE::WriteProjectBenchmark(projectBenchmark->output, projectBenchmarkSamples);
+            if (benchmarkSucceeded)
+            {
+                PlutoGE::WriteProjectBenchmark(projectBenchmark->output, projectBenchmarkSamples);
+                PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkGpuScopes));
+            }
             else std::cerr << "Benchmark ended before collecting the requested samples.\n";
         }
         catch (const std::exception &error) { std::cerr << error.what() << '\n'; benchmarkSucceeded = false; }

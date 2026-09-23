@@ -429,8 +429,116 @@ namespace PlutoGE::render
             return entry;
         };
 
+        const bool localShadows = scene
+            ? std::ranges::any_of(scene->GetLights(), [](const auto *light) {
+                return light && light->type != scene::LightType::Directional && light->castsShadows;
+            })
+            : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
+              std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
+        auto &pendingSkinning = m_pendingSkinning;
+        auto &skinningJobs = m_skinningJobs;
+        pendingSkinning.clear();
+        skinningJobs.clear();
+        const auto collectSkinning = [&](std::span<const RenderCommand> sources, bool shadowOnly)
+        {
+            for (const auto &command : sources)
+            {
+                if (!command.mesh || !command.jointMatrices || command.jointMatrices->empty() ||
+                    (shadowOnly && (!command.castsShadow ||
+                        (command.material && !prepareMaterial(command.material).draw.castsShadow)))) continue;
+                const auto &source = command.mesh->GetMeshData();
+                if (source.vertices.empty() || source.indices.empty()) continue;
+                auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
+                if (entry.lastFrame == m_skinningFrame || entry.queuedFrame == m_skinningFrame) continue;
+                entry.lifetime = command.mesh->GetLifetimeToken();
+                const bool topologyChanged = entry.vertices.size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size();
+                const bool changed = entry.pose != *command.jointMatrices || topologyChanged;
+                const bool hasHistory = entry.lastFrame + 1 == m_skinningFrame && entry.historyEpoch == m_skinningHistoryEpoch;
+                const bool deform = changed || !entry.mesh.IsValid();
+                const bool upload = deform || entry.wasMoving || !hasHistory;
+                const auto jobIndex = skinningJobs.size();
+                if (deform)
+                    skinningJobs.push_back({source.vertices, *command.jointMatrices,
+                        hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, &entry.vertices});
+                else if (upload)
+                    for (auto &vertex : entry.vertices)
+                        vertex.previousPosition = {vertex.position[0], vertex.position[1], vertex.position[2], 1};
+                pendingSkinning.push_back({&entry, command.mesh, command.jointMatrices, changed, topologyChanged, upload,
+                    deform ? jobIndex : std::numeric_limits<std::size_t>::max()});
+                // Claim this mesh/pose once across all submeshes and pass lists.
+                // No draw consumes it until flushSkinning has joined and uploaded.
+                entry.queuedFrame = m_skinningFrame;
+            }
+        };
+        const auto flushSkinning = [&]
+        {
+            if (pendingSkinning.empty()) return;
+            const auto start = std::chrono::steady_clock::now();
+            if (!skinningJobs.empty())
+            {
+                core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
+                std::size_t vertices = 0;
+                for (const auto &job : skinningJobs) vertices += job.source.size();
+                if (!m_skinningExecutor && vertices >= RhiSkinningExecutor::MinimumParallelVertices)
+                    m_skinningExecutor = std::make_unique<RhiSkinningExecutor>();
+                if (m_skinningExecutor)
+                {
+                    m_skinningExecutor->DeformBatch(skinningJobs);
+                    const auto &work = m_skinningExecutor->stats;
+                    m_timingStats.skinningParticipants = std::max(m_timingStats.skinningParticipants, work.participants);
+                    m_timingStats.skinningDispatchMs += work.dispatchMs;
+                    m_timingStats.skinningCallerMs += work.callerMs;
+                    m_timingStats.skinningWaitMs += work.waitMs;
+                    m_timingStats.skinningMergeMs += work.mergeMs;
+                }
+                else
+                    for (auto &job : skinningJobs)
+                        job.bounds = SkinRhiVerticesInto(job.source, job.joints, job.previous, *job.output);
+                m_timingStats.skinningDeformationMs += millisecondsBetween(start, std::chrono::steady_clock::now());
+            }
+            for (const auto &pending : pendingSkinning)
+            {
+                auto &entry = *pending.entry;
+                if (pending.jobIndex != std::numeric_limits<std::size_t>::max())
+                {
+                    const auto &job = skinningJobs[pending.jobIndex];
+                    entry.boundsCenter = job.bounds.center;
+                    entry.boundsRadius = job.bounds.radius;
+                    entry.pose = *pending.pose;
+                    ++m_timingStats.skinningUpdateCount;
+                    m_timingStats.skinningVertexCount += job.source.size();
+                }
+                if (pending.upload)
+                {
+                    core::CpuScope uploadScope("Skeletal vertex upload", core::CpuCategory::Rendering);
+                    const auto uploadStart = std::chrono::steady_clock::now();
+                    if (!entry.mesh.IsValid() || pending.topologyChanged)
+                    {
+                        entry.mesh = m_renderer->CreateMesh({entry.vertices, pending.mesh->GetMeshData().indices});
+                        ++m_timingStats.meshUploadCount;
+                    }
+                    else m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, pending.changed);
+                    m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
+                }
+                entry.wasMoving = pending.changed;
+                // Commit history only after a successful upload. A recoverable
+                // upload failure must force history reset on the next frame.
+                entry.lastFrame = m_skinningFrame;
+                entry.historyEpoch = m_skinningHistoryEpoch;
+            }
+            m_timingStats.meshUploadMs += millisecondsBetween(start, std::chrono::steady_clock::now());
+            pendingSkinning.clear();
+            skinningJobs.clear();
+        };
+        collectSkinning(commands, false);
+        if (lighting.shadowsEnabled || localShadows) collectSkinning(shadowCommands, true);
+        flushSkinning();
+
         const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
                                      RhiDrawPreparationCache::List &cache, bool shadowOnly, bool giOnly = false) {
+            // GI may introduce a pose absent from the visible/shadow lists.
+            collectSkinning(sourceCommands, shadowOnly);
+            flushSkinning();
             const auto materialRevision = [&](const RenderCommand &command) {
                 return command.material ? prepareMaterial(command.material).revision : std::uint64_t{0};
             };
@@ -472,68 +580,8 @@ namespace PlutoGE::render
                 if (command.jointMatrices && !command.jointMatrices->empty())
                 {
                     auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
-                    entry.lifetime = command.mesh->GetLifetimeToken();
                     deformed = &entry;
-                    if (entry.lastFrame != m_skinningFrame)
-                    {
-                        const auto &source = command.mesh->GetMeshData();
-                        if (source.vertices.empty() || source.indices.empty())
-                            continue;
-                        const auto start = std::chrono::steady_clock::now();
-                        const bool topologyChanged = entry.vertices.size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size();
-                        const bool changed = entry.pose != *command.jointMatrices || topologyChanged;
-                        const bool hasHistory = entry.lastFrame + 1 == m_skinningFrame && entry.historyEpoch == m_skinningHistoryEpoch;
-                        if (!entry.mesh.IsValid() || changed || entry.wasMoving || !hasHistory)
-                        {
-                            if (changed || !entry.mesh.IsValid())
-                            {
-                                core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
-                                const auto deformationStart = std::chrono::steady_clock::now();
-                                if (!m_skinningExecutor && source.vertices.size() >= 32768)
-                                    m_skinningExecutor = std::make_unique<RhiSkinningExecutor>();
-                                const auto bounds = m_skinningExecutor ? m_skinningExecutor->Deform(source.vertices, *command.jointMatrices,
-                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices)
-                                    : SkinRhiVerticesInto(source.vertices, *command.jointMatrices,
-                                    hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, entry.vertices);
-                                entry.boundsCenter = bounds.center;
-                                if (m_skinningExecutor)
-                                {
-                                    const auto &work = m_skinningExecutor->stats;
-                                    m_timingStats.skinningParticipants = std::max(m_timingStats.skinningParticipants, work.participants);
-                                    m_timingStats.skinningDispatchMs += work.dispatchMs;
-                                    m_timingStats.skinningCallerMs += work.callerMs;
-                                    m_timingStats.skinningWaitMs += work.waitMs;
-                                    m_timingStats.skinningMergeMs += work.mergeMs;
-                                }
-                                entry.boundsRadius = bounds.radius;
-                                m_timingStats.skinningDeformationMs += millisecondsBetween(deformationStart, std::chrono::steady_clock::now());
-                                entry.pose = *command.jointMatrices;
-                                ++m_timingStats.skinningUpdateCount;
-                                m_timingStats.skinningVertexCount += source.vertices.size();
-                            }
-                            else
-                            {
-                                // Clear limb motion on pause, and discard stale
-                                // history when a previously invisible actor returns.
-                                for (auto &v : entry.vertices)
-                                    v.previousPosition = {v.position[0], v.position[1], v.position[2], 1};
-                            }
-                            core::CpuScope uploadScope("Skeletal vertex upload", core::CpuCategory::Rendering);
-                            const auto uploadStart = std::chrono::steady_clock::now();
-                            if (!entry.mesh.IsValid() || topologyChanged)
-                            {
-                                entry.mesh = m_renderer->CreateMesh({entry.vertices, source.indices});
-                                ++m_timingStats.meshUploadCount;
-                            }
-                            else
-                                m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, changed);
-                            m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
-                        }
-                        entry.wasMoving = changed;
-                        entry.lastFrame = m_skinningFrame;
-                        entry.historyEpoch = m_skinningHistoryEpoch;
-                        m_timingStats.meshUploadMs += millisecondsBetween(start, std::chrono::steady_clock::now());
-                    }
+                    if (!entry.mesh.IsValid()) continue;
                     renderMesh = &entry.mesh;
                 }
                 else
@@ -656,12 +704,6 @@ namespace PlutoGE::render
         const auto shadowStart = std::chrono::steady_clock::now();
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
         core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
-        const bool localShadows = scene
-            ? std::ranges::any_of(scene->GetLights(), [](const auto *light) {
-                return light && light->type != scene::LightType::Directional && light->castsShadows;
-            })
-            : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
-              std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
         if (lighting.shadowsEnabled || localShadows)
             appendDraws(shadowCommands, preparation.shadows, true);
         else

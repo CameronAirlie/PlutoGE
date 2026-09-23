@@ -1,3 +1,4 @@
+#include "RuntimeComponentIndex.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
@@ -69,42 +70,6 @@ namespace PlutoGE::scene
                     return true;
             }
             return false;
-        }
-
-        void CollectRuntimeScriptComponents(Entity *entity, std::vector<ScriptComponent *> &scriptComponents)
-        {
-            if (!entity)
-            {
-                return;
-            }
-
-            if (entity->IsActive())
-            {
-                for (auto *scriptComponent : entity->GetComponents<ScriptComponent>())
-                {
-                    if (scriptComponent && scriptComponent->IsEnabled())
-                    {
-                        scriptComponents.push_back(scriptComponent);
-                    }
-                }
-            }
-
-            for (auto *child : entity->GetChildren())
-            {
-                CollectRuntimeScriptComponents(child, scriptComponents);
-            }
-        }
-
-        const std::vector<ScriptComponent *> &GatherRuntimeScriptComponents(const std::vector<Entity *> &rootEntities)
-        {
-            thread_local std::vector<ScriptComponent *> scriptComponents;
-            scriptComponents.clear();
-            for (auto *rootEntity : rootEntities)
-            {
-                CollectRuntimeScriptComponents(rootEntity, scriptComponents);
-            }
-
-            return scriptComponents;
         }
 
         void CollectActiveEntities(Entity *entity, std::vector<Entity *> &entities)
@@ -1401,10 +1366,14 @@ namespace PlutoGE::scene
     };
 
     Scene::Scene()
-        : m_uiSystem(std::make_unique<UISystem>())
+        : m_runtimeComponents(std::make_unique<RuntimeComponentIndex>()), m_uiSystem(std::make_unique<UISystem>())
     {
     }
     Scene::~Scene() = default;
+    void Scene::RegisterRuntimeComponent(Component *component) { m_runtimeComponents->Register(component); }
+    void Scene::UnregisterRuntimeComponent(Component *component) { m_runtimeComponents->Unregister(component); }
+    void Scene::InvalidateRuntimeHierarchy() { m_runtimeComponents->InvalidateHierarchy(); }
+
 
     SceneStreaming &Scene::GetStreaming()
     {
@@ -1517,18 +1486,12 @@ namespace PlutoGE::scene
     void Scene::RefreshPhysicsQueryCache() const
     {
         core::CpuScope scope("Physics query synchronization", core::CpuCategory::Physics);
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-            CollectActiveEntities(rootEntity, entities);
-
+        m_runtimeComponents->Refresh(m_rootEntities);
         std::vector<Entity *> queryEntities;
-        queryEntities.reserve(entities.size());
-        for (auto *entity : entities)
-        {
-            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger())
-                queryEntities.push_back(entity);
-        }
+        queryEntities.reserve(m_runtimeComponents->colliders.size());
+        for (auto *collider : m_runtimeComponents->colliders)
+            if (RuntimeComponentIndex::Active(collider) && !collider->IsTrigger())
+                queryEntities.push_back(collider->GetOwner());
 
         bool rebuild = !m_physicsQueryCache || !m_physicsQueryCache->world;
         if (!rebuild)
@@ -1564,7 +1527,7 @@ namespace PlutoGE::scene
         {
             core::CpuScope rebuildScope("Physics query world rebuild", core::CpuCategory::Physics);
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
-            m_physicsQueryCache->world = BuildBulletQueryWorld(entities, m_foliageComponents);
+            m_physicsQueryCache->world = BuildBulletQueryWorld(queryEntities, m_foliageComponents);
         }
 
         if (m_physicsQueryCache->world)
@@ -2192,8 +2155,11 @@ namespace PlutoGE::scene
         m_runtimeStarted = true;
         m_shaderTime=0.0f;
         render::SetShaderGraphTimeSeconds(0.0f);
-        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        m_runtimeComponents->Refresh(m_rootEntities);
+        for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
+            auto *scriptComponent = m_runtimeComponents->Resolve(handle);
+            if (!scriptComponent) continue;
             scriptComponent->Start();
         }
 
@@ -2227,8 +2193,11 @@ namespace PlutoGE::scene
             return;
         }
 
-        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        m_runtimeComponents->Refresh(m_rootEntities);
+        for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
+            auto *scriptComponent = m_runtimeComponents->Resolve(handle);
+            if (!scriptComponent) continue;
             scriptComponent->Stop();
         }
 
@@ -2807,8 +2776,10 @@ namespace PlutoGE::scene
                 for (int substep = 0; substep < physicsSubstepCount; ++substep)
                 {
                     m_inFixedScriptUpdate = true;
-                    for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+                    m_runtimeComponents->Refresh(m_rootEntities);
+                    for (const auto handle : m_runtimeComponents->SnapshotScripts())
                     {
+                        auto *scriptComponent = m_runtimeComponents->Resolve(handle);
                         if (scriptComponent && scriptComponent->IsEnabled())
                         {
                             scriptComponent->FixedUpdate(fixedPhysicsStep);
@@ -2835,16 +2806,20 @@ namespace PlutoGE::scene
         if (m_runtimeStarted)
             VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
 
-        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        m_runtimeComponents->Refresh(m_rootEntities);
+        for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
+            auto *scriptComponent = m_runtimeComponents->Resolve(handle);
+            if (!scriptComponent) continue;
             if (scriptComponent && scriptComponent->IsEnabled())
             {
                 const auto scriptStart = Clock::now();
                 scriptComponent->LateUpdate(simulationDeltaTime);
-                if (const auto *owner = scriptComponent->GetOwner())
+                if (const auto *live = m_runtimeComponents->Resolve(handle); live && live->GetOwner())
                 {
+                    const auto *owner = live->GetOwner();
                     const float elapsedMs = std::chrono::duration<float, std::milli>(Clock::now() - scriptStart).count();
-                    RecordScriptTiming(scriptComponent->GetScriptClass(), elapsedMs, *owner, true);
+                    RecordScriptTiming(live->GetScriptClass(), elapsedMs, *owner, true);
                 }
             }
         }
@@ -2865,10 +2840,13 @@ namespace PlutoGE::scene
             listeners.clear();
             environmentVolumes.clear();
             emitterStates.clear();
-            for (auto *rootEntity : m_rootEntities)
-            {
-                CollectActiveAudioComponents(rootEntity, emitters, listeners, &environmentVolumes);
-            }
+            m_runtimeComponents->Refresh(m_rootEntities);
+            for (auto *emitter : m_runtimeComponents->emitters)
+                if (RuntimeComponentIndex::Active(emitter)) emitters.push_back(emitter);
+            for (auto *listener : m_runtimeComponents->listeners)
+                if (RuntimeComponentIndex::Active(listener)) listeners.push_back(listener);
+            for (auto *volume : m_runtimeComponents->volumes)
+                if (RuntimeComponentIndex::Active(volume)) environmentVolumes.push_back(volume);
 
             audio::ListenerState listenerState;
             const auto *listenerComponent = ChoosePrimaryListener(listeners);
@@ -3891,36 +3869,20 @@ namespace PlutoGE::scene
             return;
         }
 
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-        {
-            CollectActiveEntities(rootEntity, entities);
-        }
-
+        m_runtimeComponents->Refresh(m_rootEntities);
         bool rebuildRuntimePhysics = !m_runtimePhysicsState || !m_runtimePhysicsState->world;
         std::vector<Entity *> physicsEntities;
-        physicsEntities.reserve(entities.size());
-        for (auto *entity : entities)
+        physicsEntities.reserve(m_runtimeComponents->colliders.size());
+        for (auto *collider : m_runtimeComponents->colliders)
         {
-            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-            // A ragdoll replaces the owner's ordinary rigid body hierarchy.
-            // Keeping both representations active makes the character collide
-            // with itself and creates large artificial translation impulses.
-            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger() &&
-                !FindActiveRagdollOwner(entity))
-            {
+            auto *entity = collider->GetOwner();
+            if (RuntimeComponentIndex::Active(collider) && !collider->IsTrigger() && !FindActiveRagdollOwner(entity))
                 physicsEntities.push_back(entity);
-            }
         }
-
         std::vector<AnimationComponent *> activeRagdolls;
-        for (auto *entity : entities)
-        {
-            auto *animation = entity ? entity->GetComponent<AnimationComponent>() : nullptr;
-            if (animation && animation->IsEnabled() && animation->IsRagdollEnabled() &&
-                FindRagdollMesh(entity, animation))
-                activeRagdolls.push_back(animation);
-        }
+        for (auto *animation : m_runtimeComponents->animations)
+            if (RuntimeComponentIndex::Active(animation) && animation->IsRagdollEnabled() &&
+                FindRagdollMesh(animation->GetOwner(), animation)) activeRagdolls.push_back(animation);
 
         if (!rebuildRuntimePhysics)
         {
@@ -4010,6 +3972,8 @@ namespace PlutoGE::scene
         if (rebuildRuntimePhysics)
         {
             core::CpuScope rebuildScope("Physics body world rebuild", core::CpuCategory::Physics);
+            std::vector<Entity *> entities;
+            for (auto *rootEntity : m_rootEntities) CollectActiveEntities(rootEntity, entities);
             RebuildRuntimePhysicsState(physicsEntities, entities);
         }
 

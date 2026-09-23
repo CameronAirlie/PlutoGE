@@ -19,6 +19,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::render
 {
     class RhiSkinningExecutor;
+    struct RhiSkinningJob;
     class RhiDrawPreparationCache;
     struct RhiSceneTimingStats
     {
@@ -181,11 +182,22 @@ namespace PlutoGE::render
           std::vector<BasicVertex> vertices;
           std::vector<glm::mat4> pose;
           std::uint64_t lastFrame = 0;
+          std::uint64_t queuedFrame = 0;
           std::uint64_t historyEpoch = 0;
           bool wasMoving = false;
           glm::vec3 boundsCenter{0};
           float boundsRadius = 0;
       };
+      struct PendingSkinning
+      {
+          SkinnedMesh *entry;
+          const Mesh *mesh;
+          const std::vector<glm::mat4> *pose;
+          bool changed, topologyChanged, upload;
+          std::size_t jobIndex;
+      };
+      std::vector<PendingSkinning> m_pendingSkinning;
+      std::vector<RhiSkinningJob> m_skinningJobs;
       // A shared model can have multiple independently animated owners.
       std::unordered_map<const Mesh *, std::unordered_map<const std::vector<glm::mat4> *, SkinnedMesh>> m_skinnedMeshes;
       std::uint64_t m_skinningFrame = 0;

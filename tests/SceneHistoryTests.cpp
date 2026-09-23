@@ -9,6 +9,8 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/assets/Project.h"
+#include "../engine/scene/src/RuntimeComponentIndex.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 #include <iostream>
 #include <stdexcept>
 #include <chrono>
@@ -46,6 +48,79 @@ namespace
             throw std::runtime_error("Update policy did not preserve enabled dispatch");
     }
     void Require(bool condition, const char *message) { if (!condition) throw std::runtime_error(message); }
+    void TestRuntimeComponentIndex()
+    {
+        using namespace PlutoGE::scene;
+        Entity parent, child, other;
+        parent.AddChild(&child);
+        auto *first = child.CreateComponent<ScriptComponent>();
+        auto *second = other.CreateComponent<ScriptComponent>();
+        auto *emitter = child.CreateComponent<SoundEmitterComponent>();
+        RuntimeComponentIndex index;
+        index.Register(first); index.Register(second); index.Register(emitter);
+        std::vector<Entity *> roots{&parent, &other};
+        index.Refresh(roots);
+        Require(index.scripts.size() == 2 && index.scripts[0].component == first, "Runtime script order changed");
+        const auto old = index.scripts[0];
+        parent.SetActive(false);
+        Require(!index.Resolve(old) && !RuntimeComponentIndex::Active(emitter), "Parent activation was cached");
+        parent.SetActive(true);
+        first->SetEnabled(false);
+        Require(!index.Resolve(old), "Disabled script remained active");
+        first->SetEnabled(true);
+        Require(index.Resolve(old) == first, "Enabled script missing");
+        // A registration at the same address must not revive an old phase snapshot.
+        index.Unregister(first); index.Register(first);
+        Require(!index.Resolve(old), "Stale script handle survived a new lifetime");
+        other.AddChild(&child); index.InvalidateHierarchy(); index.Refresh(roots);
+        Require(index.scripts[0].component == second, "Reparenting did not restore hierarchy order");
+        index.Unregister(first); child.RemoveComponent(first); index.Refresh(roots);
+        Require(index.scripts.size() == 1 && !index.Resolve(old), "Removed script retained in index");
+        child.SetParent(nullptr);
+    }
+    struct IndexScript final : PlutoGE::scripting::ScriptInstance
+    {
+        inline static std::vector<std::string> order;
+        inline static PlutoGE::scene::ScriptComponent *removeOnFixed = nullptr;
+        void OnFixedUpdate(float) override
+        {
+            order.push_back(GetOwner()->GetName());
+            if (auto *target = removeOnFixed)
+            {
+                removeOnFixed = nullptr;
+                target->GetOwner()->RemoveComponent(target);
+            }
+        }
+    };
+    void TestSceneRuntimeIndexHooks()
+    {
+        using namespace PlutoGE::scene;
+        PlutoGE::core::Engine::GetInstance().GetScriptEngine().RegisterNativeClass(
+            {.className = "IndexScript"}, [] { return std::make_unique<IndexScript>(); });
+        Scene scene;
+        auto *parent = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "parent"}));
+        auto *child = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "child"}), parent);
+        auto *other = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "other"}));
+        for (auto *entity : {parent, child, other}) entity->CreateComponent<ScriptComponent>(ScriptComponentConfig{.scriptClass = "IndexScript"});
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        struct RuntimeGuard
+        {
+            PlutoGE::core::Engine &engine;
+            ~RuntimeGuard() { engine.StopRuntime(); engine.SetScene(nullptr); }
+        } guard{engine};
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        IndexScript::order.clear();
+        IndexScript::removeOnFixed = child->GetComponent<ScriptComponent>();
+        scene.Update(1.0f / 60.0f);
+        Require(IndexScript::order == std::vector<std::string>{"parent", "other"}, "Removed script dispatched from phase snapshot");
+        child->CreateComponent<ScriptComponent>(ScriptComponentConfig{.scriptClass = "IndexScript"});
+        other->AddChild(child);
+        parent->SetActive(false);
+        IndexScript::order.clear();
+        scene.Update(1.0f / 60.0f);
+        Require(IndexScript::order == std::vector<std::string>{"other", "child"}, "Runtime index missed add/reparent/activation");
+    }
     std::string Snapshot(const PlutoGE::scene::Scene &scene)
     {
         std::string state, error;
@@ -114,6 +189,8 @@ int main()
         using namespace PlutoGE::scene;
         TestBuiltinMeshRestoration();
         TestComponentUpdatePolicy();
+        TestRuntimeComponentIndex();
+        TestSceneRuntimeIndexHooks();
         auto scene = std::make_unique<Scene>();
         auto *entity = scene->AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Before"}));
         const auto id = entity->GetID();

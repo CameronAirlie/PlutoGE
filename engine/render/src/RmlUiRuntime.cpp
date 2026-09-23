@@ -9,6 +9,7 @@
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/scene/Entity.h"
@@ -1453,6 +1454,8 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         if (!element) return false;
+        if (element->IsClassSet(name) == enabled)
+            return true;
         element->SetClass(name, enabled);
         MarkWorldSurfaceDirty(doc);
         return true;
@@ -1463,7 +1466,12 @@ namespace PlutoGE::render
     {
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
-        if (!element || !element->SetProperty(name, value))
+        if (!element) return false;
+        // Compare only inline properties: a matching inherited value must still
+        // be overridden so later stylesheet changes preserve script intent.
+        if (const auto *property = element->GetLocalProperty(name); property && property->ToString() == value)
+            return true;
+        if (!element->SetProperty(name, value))
             return false;
         MarkWorldSurfaceDirty(doc);
         return true;
@@ -1743,6 +1751,7 @@ namespace PlutoGE::render
                                  std::uint64_t frameSequence, const glm::mat4 &view,
                                  const glm::mat4 &projection, bool manageSubmission)
     {
+        core::CpuScope uiScope("Runtime UI render", core::CpuCategory::UI);
         using Clock = std::chrono::steady_clock;
         const auto elapsedMs = [](const auto begin, const auto end)
         {
@@ -1771,7 +1780,9 @@ namespace PlutoGE::render
         m_cpuTiming.resizeMs = elapsedMs(resizeBegin, Clock::now());
 
         const auto synchronizeBegin = Clock::now();
+        core::CpuScope synchronizeScope("Runtime UI document synchronization", core::CpuCategory::UI);
         SynchronizeDocuments(scene, view, projection);
+        synchronizeScope.End();
         m_cpuTiming.synchronizeMs = elapsedMs(synchronizeBegin, Clock::now());
         m_cpuTiming.documentCount = static_cast<int>(m_documents.size());
         m_cpuTiming.visibleDocumentCount = static_cast<int>(std::count_if(
@@ -1785,6 +1796,7 @@ namespace PlutoGE::render
         const auto inputBegin = Clock::now();
         if (frameSequence != m_lastInputFrame)
         {
+            core::CpuScope updateScope("Runtime UI input and layout", core::CpuCategory::UI);
             ProcessInput(window, scene);
             m_context->Update();
             m_lastInputFrame = frameSequence;
@@ -1799,7 +1811,9 @@ namespace PlutoGE::render
         const auto renderBegin = Clock::now();
         try
         {
+            core::CpuScope renderScope("Runtime UI draw", core::CpuCategory::UI);
             m_context->Render();
+            renderScope.End();
             m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
             const auto endFrameBegin = Clock::now();
             m_rhiRenderer->EndFrame(manageSubmission);

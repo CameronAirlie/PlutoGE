@@ -1,5 +1,6 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/audio/AudioSystem.h"
+#include "PlutoGE/core/CpuTrace.h"
 
 #include <algorithm>
 #include <cmath>
@@ -428,6 +429,8 @@ namespace PlutoGE::audio
     void AudioSystem::Shutdown()
     {
         ClearEmitters();
+        m_hasOpenAlEnvironmentState = false;
+        m_hasPreviousOpenAlListenerPosition = false;
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
         if (m_openAlEnvironmentSlot) { const ALuint slot=m_openAlEnvironmentSlot; alDeleteAuxiliaryEffectSlots(1,&slot); m_openAlEnvironmentSlot=0; }
@@ -510,6 +513,7 @@ namespace PlutoGE::audio
         }
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(PLUTOGE_USE_XAUDIO2)
+        core::CpuScope loadScope("Audio clip decode and upload", core::CpuCategory::Audio);
         DecodedClip decodedClip;
         if (!LoadWaveFile(clipPath, decodedClip))
         {
@@ -759,8 +763,12 @@ namespace PlutoGE::audio
                 return;
             }
 
-            alSourcef(source, AL_PITCH, std::clamp(emitter.pitch, 0.25f, 4.0f));
-            alSourcei(source, AL_LOOPING, emitter.looping ? AL_TRUE : AL_FALSE);
+            const float pitch = std::clamp(emitter.pitch, 0.25f, 4.0f);
+            if (voice.appliedPitch != pitch)
+            {
+                alSourcef(source, AL_PITCH, pitch);
+                voice.appliedPitch = pitch;
+            }
 
             float gain = std::max(emitter.volume, 0.0f) * listener.environmentGain;
             const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength + listener.environmentLowPass, 0.0f, 1.0f);
@@ -807,7 +815,7 @@ namespace PlutoGE::audio
                 alSource3f(source, AL_VELOCITY, 0.0f, 0.0f, 0.0f);
             }
 
-            if (voice.backendFilter != 0)
+            if (voice.backendFilter != 0 && voice.appliedFilterDamping != filterDamping)
             {
                 const ALuint filter = static_cast<ALuint>(voice.backendFilter);
                 if (filterDamping > 0.0001f)
@@ -815,8 +823,6 @@ namespace PlutoGE::audio
                     const float highFrequencyGain = std::clamp(std::exp(std::log(1.0f) + (std::log(0.035f) - std::log(1.0f)) * filterDamping),
                                                                0.035f,
                                                                1.0f);
-                    alFilteri(filter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(filter, AL_LOWPASS_GAIN, 1.0f);
                     alFilterf(filter, AL_LOWPASS_GAINHF, highFrequencyGain);
                     alSourcei(source, AL_DIRECT_FILTER, static_cast<ALint>(filter));
                 }
@@ -824,11 +830,19 @@ namespace PlutoGE::audio
                 {
                     alSourcei(source, AL_DIRECT_FILTER, 0);
                 }
+                voice.appliedFilterDamping = filterDamping;
             }
 
-            alSourcef(source, AL_GAIN, gain);
-            if (m_openAlEnvironmentSlot)
+            if (voice.appliedGain != gain)
+            {
+                alSourcef(source, AL_GAIN, gain);
+                voice.appliedGain = gain;
+            }
+            if (m_openAlEnvironmentSlot && !voice.environmentSendApplied)
+            {
                 alSource3i(source, AL_AUXILIARY_SEND_FILTER, static_cast<ALint>(m_openAlEnvironmentSlot), 0, AL_FILTER_NULL);
+                voice.environmentSendApplied = true;
+            }
             return;
         }
 #endif
@@ -1074,13 +1088,42 @@ namespace PlutoGE::audio
                 alListenerf(AL_GAIN, std::max(listener.masterVolume, 0.0f));
                 if (m_openAlEnvironmentEffect && m_openAlEnvironmentSlot)
                 {
-                    const ALuint effect=m_openAlEnvironmentEffect, slot=m_openAlEnvironmentSlot;
-                    const bool echo=listener.environmentEchoWet > listener.environmentReverbWet;
-                    alEffecti(effect, AL_EFFECT_TYPE, echo ? AL_EFFECT_ECHO : AL_EFFECT_REVERB);
-                    if (echo) { alEffectf(effect,AL_ECHO_DELAY,std::clamp(listener.environmentEchoDelay,.01f,.207f)); alEffectf(effect,AL_ECHO_FEEDBACK,std::clamp(listener.environmentEchoFeedback,0.f,1.f)); }
-                    else { alEffectf(effect,AL_REVERB_DECAY_TIME,std::clamp(listener.environmentReverbDecay,.1f,20.f)); alEffectf(effect,AL_REVERB_DENSITY,std::clamp(listener.environmentReverbDensity,0.f,1.f)); alEffectf(effect,AL_REVERB_DIFFUSION,std::clamp(listener.environmentReverbDiffusion,0.f,1.f)); }
-                    alAuxiliaryEffectSloti(slot,AL_EFFECTSLOT_EFFECT,static_cast<ALint>(effect));
-                    alAuxiliaryEffectSlotf(slot,AL_EFFECTSLOT_GAIN,std::clamp(echo?listener.environmentEchoWet:listener.environmentReverbWet,0.f,1.f));
+                    core::CpuScope environmentScope("Audio environment", core::CpuCategory::Audio);
+                    const bool echo = listener.environmentEchoWet > listener.environmentReverbWet;
+                    const std::array<float, 7> state{
+                        echo ? 1.0f : 0.0f,
+                        std::clamp(echo ? listener.environmentEchoWet : listener.environmentReverbWet, 0.0f, 1.0f),
+                        std::clamp(listener.environmentEchoDelay, .01f, .207f),
+                        std::clamp(listener.environmentEchoFeedback, 0.0f, 1.0f),
+                        std::clamp(listener.environmentReverbDecay, .1f, 20.0f),
+                        std::clamp(listener.environmentReverbDensity, 0.0f, 1.0f),
+                        std::clamp(listener.environmentReverbDiffusion, 0.0f, 1.0f)};
+                    const ALuint effect = m_openAlEnvironmentEffect, slot = m_openAlEnvironmentSlot;
+                    const bool typeChanged = !m_hasOpenAlEnvironmentState || state[0] != m_openAlEnvironmentState[0];
+                    const bool parametersChanged = typeChanged || (echo
+                        ? state[2] != m_openAlEnvironmentState[2] || state[3] != m_openAlEnvironmentState[3]
+                        : state[4] != m_openAlEnvironmentState[4] || state[5] != m_openAlEnvironmentState[5] || state[6] != m_openAlEnvironmentState[6]);
+                    if (typeChanged)
+                        alEffecti(effect, AL_EFFECT_TYPE, echo ? AL_EFFECT_ECHO : AL_EFFECT_REVERB);
+                    if (parametersChanged)
+                    {
+                        if (echo)
+                        {
+                            alEffectf(effect, AL_ECHO_DELAY, state[2]);
+                            alEffectf(effect, AL_ECHO_FEEDBACK, state[3]);
+                        }
+                        else
+                        {
+                            alEffectf(effect, AL_REVERB_DECAY_TIME, state[4]);
+                            alEffectf(effect, AL_REVERB_DENSITY, state[5]);
+                            alEffectf(effect, AL_REVERB_DIFFUSION, state[6]);
+                        }
+                        alAuxiliaryEffectSloti(slot, AL_EFFECTSLOT_EFFECT, static_cast<ALint>(effect));
+                    }
+                    if (!m_hasOpenAlEnvironmentState || state[1] != m_openAlEnvironmentState[1])
+                        alAuxiliaryEffectSlotf(slot, AL_EFFECTSLOT_GAIN, state[1]);
+                    m_openAlEnvironmentState = state;
+                    m_hasOpenAlEnvironmentState = true;
                 }
                 m_previousOpenAlListenerPosition = listener.position;
                 m_hasPreviousOpenAlListenerPosition = true;
@@ -1093,6 +1136,7 @@ namespace PlutoGE::audio
                 m_hasPreviousOpenAlListenerPosition = false;
             }
 
+            core::CpuScope voicesScope("Audio voice maintenance", core::CpuCategory::Audio);
             std::vector<std::uint64_t> activeKeys;
             activeKeys.reserve(emitters.size());
 
@@ -1130,6 +1174,7 @@ namespace PlutoGE::audio
 
                 if (needsNewVoice)
                 {
+                    core::CpuScope createScope("Audio voice creation", core::CpuCategory::Audio);
                     DestroyVoice(emitter.key);
 
                     ALuint source = 0;

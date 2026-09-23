@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
+#include <cstdlib>
 
 // Asset-driven layout regression harness; no graphics device or project code required.
 class LayoutRenderer final : public Rml::RenderInterface
@@ -33,6 +34,17 @@ public:
 int main(int argc, char** argv) try
 {
     if (argc != 5) throw std::runtime_error("Usage: document.rml font.ttf font-family panel-id");
+    // Default Win32 assertion logging opens a modal dialog, which hangs CI.
+    struct TestSystem final : Rml::SystemInterface
+    {
+        bool LogMessage(Rml::Log::Type type, const Rml::String& message) override
+        {
+            std::cerr << message << '\n';
+            if (type == Rml::Log::LT_ASSERT) std::exit(EXIT_FAILURE);
+            return true;
+        }
+    } system;
+    Rml::SetSystemInterface(&system);
     LayoutRenderer renderer;
     Rml::SetRenderInterface(&renderer);
     if (!Rml::Initialise()) throw std::runtime_error("RmlUi initialization failed");

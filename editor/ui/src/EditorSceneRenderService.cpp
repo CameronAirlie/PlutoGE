@@ -137,7 +137,11 @@ namespace PlutoGE::ui
         preparationScope.End();
         try
         {
-            if (scene) render::RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
+            if (scene)
+            {
+                core::CpuScope portraitScope("Runtime UI portrait preparation", core::CpuCategory::UI);
+                render::RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
+            }
             // Initialization creates GPU resources, so keep the first runtime
             // UI frame independent. Once initialized, append it to the active
             // scene command buffer and submit both together.

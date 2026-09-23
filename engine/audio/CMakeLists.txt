@@ -6,6 +6,7 @@ add_library(PlutoGE::Audio ALIAS PlutoGEAudio)
 
 target_include_directories(PlutoGEAudio PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../core/include # Header-only CPU trace scopes.
 )
 
 target_link_libraries(PlutoGEAudio PUBLIC

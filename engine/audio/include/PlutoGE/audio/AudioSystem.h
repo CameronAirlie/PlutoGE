@@ -79,6 +79,10 @@ namespace PlutoGE::audio
             bool hasPreviousSpatialState = false;
             glm::vec3 previousListenerPosition{0.0f};
             glm::vec3 previousEmitterPosition{0.0f};
+            float appliedPitch = -1.0f;
+            float appliedGain = -1.0f;
+            float appliedFilterDamping = -1.0f;
+            bool environmentSendApplied = false;
             float smoothedOcclusion = 0.0f;
             float smoothedAirAbsorption = 0.0f;
             float parameterUpdateAccumulator = 1.0f / 30.0f;
@@ -117,6 +121,8 @@ namespace PlutoGE::audio
         bool m_openAlEfxAvailable = false;
         unsigned int m_openAlEnvironmentEffect = 0;
         unsigned int m_openAlEnvironmentSlot = 0;
+        bool m_hasOpenAlEnvironmentState = false;
+        std::array<float, 7> m_openAlEnvironmentState{};
         bool m_hasPreviousOpenAlListenerPosition = false;
         glm::vec3 m_previousOpenAlListenerPosition{0.0f};
         std::array<std::uint8_t, 20> m_spatialAudioHandle{};

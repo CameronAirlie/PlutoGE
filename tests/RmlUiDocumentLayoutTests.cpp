@@ -32,6 +32,13 @@ public:
     }
 };
 
+class ClickProbe final : public Rml::EventListener
+{
+public:
+    int received = 0;
+    void ProcessEvent(Rml::Event&) override { ++received; }
+};
+
 int main(int argc, char** argv) try
 {
     if (argc != 5) throw std::runtime_error("Usage: document.rml font.ttf font-family panel-id");
@@ -80,6 +87,72 @@ int main(int argc, char** argv) try
     if (!panel) throw std::runtime_error("Panel missing");
     panel->SetProperty("display", "block");
     document->Show();
+    if (Rml::String(argv[4]) == "display-panel")
+    {
+        auto fail = [](const char* message) { Rml::Shutdown(); throw std::runtime_error(message); };
+        auto* tabs = document->GetElementById("settings-tabs");
+        auto* content = document->GetElementById("settings-content");
+        auto* footer = document->GetElementById("settings-footer");
+        Rml::ElementList rows; panel->GetElementsByClassName(rows, "settings-row");
+        for (auto* row : rows) row->SetProperty("display", row->GetId().find("audio-") == 0 ? "block" : "none");
+        for (const auto size : {Rml::Vector2i(960,540), Rml::Vector2i(1280,720), Rml::Vector2i(1920,1080)})
+        for (float scale : {.8f, 1.f, 1.25f})
+        {
+            context->SetDimensions({int(size.x / scale), int(size.y / scale)});
+            content->SetScrollTop(0); context->Update(); context->Update();
+            auto top = [](Rml::Element* e) { return e->GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+            auto bottom = [&](Rml::Element* e) { return top(e) + e->GetBox().GetSize(Rml::BoxArea::Border).y; };
+            if (bottom(tabs) > top(content) || bottom(content) > top(footer) || bottom(footer) > bottom(panel)) fail("Settings sections overlap");
+            Rml::ElementList buttons; tabs->GetElementsByTagName(buttons, "button");
+            auto click = [&](Rml::Element* button) {
+                button->ScrollIntoView(); context->Update();
+                ClickProbe probe;
+                button->AddEventListener(Rml::EventId::Click, &probe);
+                const auto point = button->GetAbsoluteOffset(Rml::BoxArea::Border) + button->GetBox().GetSize(Rml::BoxArea::Border) * .5f;
+                context->ProcessMouseMove(int(point.x), int(point.y), 0);
+                context->ProcessMouseButtonDown(0, 0); context->ProcessMouseButtonUp(0, 0);
+                button->RemoveEventListener(Rml::EventId::Click, &probe);
+                if (probe.received != 1) fail("Settings button did not receive a native mouse click");
+            };
+            for (auto* button : buttons)
+            {
+                if (button->GetBox().GetSize(Rml::BoxArea::Border).x < 150 || bottom(button) > bottom(tabs)) fail("Settings tabs are clipped");
+                if (std::abs(button->GetComputedValues().font_size() - 18) > .1f) fail("Settings tab typography differs between menus");
+                click(button);
+            }
+            for (const char* id : {"audio-sound", "settings-defaults", "display-apply", "display-cancel"}) click(document->GetElementById(id));
+            auto* slider = document->GetElementById("audio-master");
+            slider->SetAttribute("value", 0);
+            slider->ScrollIntoView(); context->Update(); context->Update();
+            const auto point = slider->GetAbsoluteOffset(Rml::BoxArea::Border);
+            const auto extent = slider->GetBox().GetSize(Rml::BoxArea::Border);
+            if (extent.x < 400 || extent.y < 20) fail("Slider hit area collapsed");
+            context->ProcessMouseMove(int(point.x + extent.x * .8f), int(point.y + extent.y * .5f), 0);
+            context->ProcessMouseButtonDown(0, 0); context->ProcessMouseButtonUp(0, 0); context->Update();
+            const auto value = slider->GetAttribute<float>("value", -1);
+            if (value <= 0 || value > 100 || std::fmod(value, 5.f) != 0) fail("Pointer slider did not produce a stepped value");
+            Rml::Element* thumb = nullptr;
+            for (int i = 0; i < slider->GetNumChildren(true); ++i)
+                if (slider->GetChild(i)->GetTagName() == "sliderbar") thumb = slider->GetChild(i);
+            if (!thumb) fail("Slider thumb missing");
+            const auto grip = thumb->GetAbsoluteOffset(Rml::BoxArea::Border) + thumb->GetBox().GetSize(Rml::BoxArea::Border) * .5f;
+            context->ProcessMouseMove(int(grip.x), int(grip.y), 0);
+            context->ProcessMouseButtonDown(0, 0);
+            context->ProcessMouseMove(int(grip.x - 20), int(grip.y), 0);
+            context->ProcessMouseMove(int(point.x + extent.x * .25f), int(grip.y), 0);
+            context->ProcessMouseButtonUp(0, 0); context->Update();
+            const auto dragged = slider->GetAttribute<float>("value", -1);
+            if (dragged < 0 || dragged >= value || std::fmod(dragged, 5.f) != 0) fail("Dragging the slider thumb did not adjust its value");
+            auto* detail = document->GetElementById("display-detail");
+            Rml::String help; for (int i = 0; i < 80; ++i) help += "Long help<br/>";
+            detail->SetInnerRML(help);
+            context->Update(); content->SetScrollTop(10000); context->Update();
+            if (content->GetScrollTop() <= 0 || bottom(content) > top(footer)) fail("Settings overflow hides fixed actions");
+        }
+        Rml::Shutdown(); Rml::SetRenderInterface(nullptr);
+        std::cout << "PASS: settings tabs, sliders, typography, fixed actions and scrolling at three resolutions/scales.\n";
+        return 0;
+    }
     if (Rml::String(argv[4]) == "minimap-panel")
     {
         auto* board = document->GetElementById("minimap-board");

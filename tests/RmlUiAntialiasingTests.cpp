@@ -232,7 +232,7 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
         journal->Show(); context->SetDimensions({960,720}); ui.SetViewport(960,720);
         std::ifstream minimapFile(std::string(capturePrefix) + "minimap.rml");
         const std::string minimapMarkup((std::istreambuf_iterator<char>(minimapFile)), {});
-        for (int page=0;page<(minimapMarkup.empty() ? 4 : journal->GetElementById("gameplay-hud") ? 6 : 5);++page)
+        for (int page=0;page<(minimapMarkup.empty() ? 4 : journal->GetElementById("settings-tabs") ? 8 : journal->GetElementById("gameplay-hud") ? 6 : 5);++page)
         {
             if (page==1)
             {
@@ -302,6 +302,31 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
                     journal->GetElementById(id+"-icon")->SetInnerRML("<img sprite=\"weapon-wanderer_blade\"/>");
                 }
                 journal->GetElementById("attack-secondary-shade")->SetProperty("height", "65%");
+            }
+            if (page >= 6)
+            {
+                journal->GetElementById("gameplay-hud")->SetProperty("display", "none");
+                journal->GetElementById("minimap-panel")->SetProperty("display", "none");
+                journal->GetElementById("hud-notices")->SetProperty("display", "none");
+                auto* settings = journal->GetElementById("display-panel"); settings->SetProperty("display", "block");
+                Rml::ElementList rows; settings->GetElementsByClassName(rows, "settings-row");
+                for (auto* row : rows)
+                {
+                    const auto& id = row->GetId();
+                    bool show = page == 6 ? id.find("audio-") == 0 : id == "display-scale-row" || id == "settings-hud-numbers-row" || id == "settings-text-row" || id.find("settings-minimap") == 0;
+                    row->SetProperty("display", show ? "block" : "none");
+                }
+                journal->GetElementById("settings-tab-audio")->SetClass("active-tab", page == 6);
+                journal->GetElementById("settings-tab-interface")->SetClass("active-tab", page == 7);
+                const std::pair<const char*, const char*> labels[] = {{"audio-master-label", "MASTER: 80%"}, {"audio-music-label", "MUSIC: 50%"},
+                    {"audio-ambience-label", "AMBIENCE: 65%"}, {"audio-combat-label", "COMBAT: 100%"}, {"audio-ui-label", "UI: 75%"},
+                    {"display-scale-label", "UI SCALE: 100%"}, {"settings-minimap-size-label", "MINIMAP SIZE: 200 px"}, {"settings-minimap-zoom-label", "MINIMAP ZOOM: 100%"},
+                    {"audio-sound", "SOUND: ON"}, {"settings-hud-numbers", "RESOURCE NUMBERS: ON"}, {"settings-text", "COMBAT TEXT: NORMAL"}, {"settings-minimap", "MINIMAP: ON"}};
+                for (auto [id, label] : labels) journal->GetElementById(id)->SetInnerRML(label);
+                for (auto [id, value] : {std::pair{"audio-master", 80}, {"audio-ambience", 65}, {"audio-ui", 75}}) journal->GetElementById(id)->SetAttribute("value", value);
+                journal->GetElementById("display-detail")->SetInnerRML(page == 6 ? "Drag a slider or use Left/Right to adjust. Audio changes preview immediately." : "Scale and minimap sliders preview immediately. North stays at the top.");
+                journal->GetElementById("display-status")->SetInnerRML("Unapplied changes. Apply to save; Back discards changes.");
+                journal->GetElementById("settings-content")->SetScrollTop(0);
             }
             context->Update(); context->Update();
             rhi::Texture target(device,device.CreateTexture({960,720,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Journal capture",true,1,false,1}));

@@ -186,8 +186,7 @@ namespace PlutoGE::render
             commands.SetScissor({0, 0, composite.width, composite.height});
             Parameters parameters{Rml::Matrix4f::ProjectOrtho(0, 1, 1, 0, -1, 1), {0,0},
                                   m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f, 0};
-            auto &buffer = AcquireParameterBuffer();
-            m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
+            auto &buffer = AcquireParameterBuffer(parameters);
             commands.BindPipeline(m_pipeline.Get());
             commands.BindVertexBuffer(m_compositeVertices.Get());
             commands.BindUniformBuffer(0, buffer.Get());
@@ -272,8 +271,7 @@ namespace PlutoGE::render
         parameters.flipTextureY = texture->external && texture->external->flipY ? 1.0f : 0.0f;
         parameters.inverseSize[0] = 1.0f / (m_width * m_renderScale);
         parameters.inverseSize[1] = 1.0f / (m_height * m_renderScale);
-        auto &parameterBuffer = AcquireParameterBuffer();
-        m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
+        auto &parameterBuffer = AcquireParameterBuffer(parameters);
         auto &commands = m_device->GetImmediateContext();
         commands.BindPipeline(m_maskMode != 0 ? m_clipPipeline.Get() : m_pipeline.Get());
         commands.BindVertexBuffer(geometry->vertices.Get());
@@ -469,12 +467,25 @@ namespace PlutoGE::render
         m_transform = transform ? projection * *transform : projection;
     }
 
-    rhi::Buffer &RmlUiRhiRenderer::AcquireParameterBuffer()
+    rhi::Buffer &RmlUiRhiRenderer::AcquireParameterBuffer(const Parameters &parameters)
     {
+        const bool fresh = m_parameterBuffers.size() <= m_parameterCursor;
         while (m_parameterBuffers.size() <= m_parameterCursor)
+        {
             m_parameterBuffers.emplace_back(*m_device, m_device->CreateBuffer(
                 {sizeof(Parameters), rhi::BufferUsage::Uniform, "RmlUi parameters"}));
-        return m_parameterBuffers[m_parameterCursor++];
+            m_parameterValues.emplace_back();
+        }
+        auto &buffer = m_parameterBuffers[m_parameterCursor];
+        auto &previous = m_parameterValues[m_parameterCursor++];
+        // These buffers persist across frames. Preserve unchanged GPU data;
+        // index reuse is safe because the entire parameter block is compared.
+        if (fresh || std::memcmp(&previous, &parameters, sizeof(Parameters)) != 0)
+        {
+            m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
+            previous = parameters;
+        }
+        return buffer;
     }
 
     void RmlUiRhiRenderer::ApplyScissor()

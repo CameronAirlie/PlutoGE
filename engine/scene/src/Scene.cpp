@@ -1013,6 +1013,77 @@ namespace PlutoGE::scene
             return data;
         }
 
+        // Empty shapes retain a membership record so unsupported/temporarily
+        // unavailable geometry cannot trigger endless query-world rebuilds.
+        BulletQueryBody CreateBulletQueryBody(Entity *entity)
+        {
+            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+            if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
+            {
+                return {};
+            }
+
+            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
+
+            btTransform transform;
+            transform.setIdentity();
+            transform.setOrigin(ToBullet(entity->GetWorldPosition()));
+            transform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
+
+            std::unique_ptr<btCollisionObject> object;
+            if (shapeData.shape)
+            {
+                object = std::make_unique<btCollisionObject>();
+                object->setCollisionShape(shapeData.shape.get());
+                object->setWorldTransform(transform);
+                object->setUserPointer(entity);
+            }
+
+            return BulletQueryBody{
+                .entity = entity,
+                .synchronizedWorldTransform = entity->GetWorldTransform(),
+                .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
+                .shape = std::move(shapeData.shape),
+                .childShapes = std::move(shapeData.ownedChildShapes),
+                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
+                .object = std::move(object),
+                .configurationSignature = ComputeRuntimePhysicsBodySignature(
+                    *entity, *collider, entity->GetComponent<RigidbodyComponent>()),
+            };
+        }
+
+        void SynchronizeBulletQueryBodies(BulletQueryWorld &world, const std::vector<Entity *> &entities)
+        {
+            std::unordered_map<Entity *, size_t> existing;
+            existing.reserve(world.bodies.size());
+            for (size_t index = 0; index < world.bodies.size(); ++index)
+                existing.emplace(world.bodies[index].entity, index);
+            std::vector<BulletQueryBody> next;
+            next.reserve(entities.size());
+            for (auto *entity : entities)
+            {
+                const auto signature = ComputeRuntimePhysicsBodySignature(
+                    *entity, *entity->GetComponent<ColliderComponent>(), entity->GetComponent<RigidbodyComponent>());
+                const auto found = existing.find(entity);
+                if (found != existing.end() && world.bodies[found->second].configurationSignature == signature)
+                {
+                    next.push_back(std::move(world.bodies[found->second]));
+                    existing.erase(found);
+                    continue;
+                }
+                auto body = CreateBulletQueryBody(entity);
+                if (body.object)
+                    world.collisionWorld.addCollisionObject(body.object.get());
+                next.push_back(std::move(body));
+            }
+            // Moved records have no object. Retire only deleted/changed bodies;
+            // all unchanged broadphase proxies and collision shapes survive.
+            for (auto &body : world.bodies)
+                if (body.object)
+                    world.collisionWorld.removeCollisionObject(body.object.get());
+            world.bodies = std::move(next);
+        }
+
         std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities,
                                                                 const std::vector<FoliageComponent *> &foliageComponents)
         {
@@ -1021,40 +1092,10 @@ namespace PlutoGE::scene
 
             for (auto *entity : entities)
             {
-                auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-                if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
-                {
-                    continue;
-                }
-
-                auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
-                if (!shapeData.shape)
-                {
-                    continue;
-                }
-
-                btTransform transform;
-                transform.setIdentity();
-                transform.setOrigin(ToBullet(entity->GetWorldPosition()));
-                transform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
-
-                auto object = std::make_unique<btCollisionObject>();
-                object->setCollisionShape(shapeData.shape.get());
-                object->setWorldTransform(transform);
-                object->setUserPointer(entity);
-                queryWorld->collisionWorld.addCollisionObject(object.get());
-
-                queryWorld->bodies.push_back(BulletQueryBody{
-                    .entity = entity,
-                    .synchronizedWorldTransform = entity->GetWorldTransform(),
-                    .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
-                    .shape = std::move(shapeData.shape),
-                    .childShapes = std::move(shapeData.ownedChildShapes),
-                    .heightfieldData = std::move(shapeData.ownedHeightfieldData),
-                    .object = std::move(object),
-                    .configurationSignature = ComputeRuntimePhysicsBodySignature(
-                        *entity, *collider, entity->GetComponent<RigidbodyComponent>()),
-                });
+                auto body = CreateBulletQueryBody(entity);
+                if (body.object)
+                    queryWorld->collisionWorld.addCollisionObject(body.object.get());
+                queryWorld->bodies.push_back(std::move(body));
             }
 
             for (auto *foliage : foliageComponents)
@@ -1525,9 +1566,16 @@ namespace PlutoGE::scene
 
         if (rebuild)
         {
-            core::CpuScope rebuildScope("Physics query world rebuild", core::CpuCategory::Physics);
-            m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
-            m_physicsQueryCache->world = BuildBulletQueryWorld(queryEntities, m_foliageComponents);
+            core::CpuScope membershipScope("Physics query membership update", core::CpuCategory::Physics);
+            if (m_physicsQueryCache && m_physicsQueryCache->world && m_foliageComponents.empty())
+                SynchronizeBulletQueryBodies(*m_physicsQueryCache->world, queryEntities);
+            else
+            {
+                // Foliage cells have a separate spatial membership contract.
+                core::CpuScope rebuildScope("Physics query world rebuild", core::CpuCategory::Physics);
+                m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
+                m_physicsQueryCache->world = BuildBulletQueryWorld(queryEntities, m_foliageComponents);
+            }
         }
 
         if (m_physicsQueryCache->world)
@@ -2454,8 +2502,8 @@ namespace PlutoGE::scene
         // Non-physical entities (decals, UI, audio helpers) do not change the
         // query world. In particular, invalidating here after a hit raycast
         // forced audio occlusion to rebuild the entire collision world.
-        if (EntitySubtreeContainsPhysicsCollider(entity.get()))
-            InvalidatePhysicsQueryCache();
+        if (EntitySubtreeContainsPhysicsCollider(entity.get()) && m_physicsQueryCache)
+            m_physicsQueryCache->refreshSequence = std::numeric_limits<uint64_t>::max();
 
         auto *entityPtr = entity.get();
         m_entityStorage.push_back(std::move(entity));
@@ -2563,9 +2611,10 @@ namespace PlutoGE::scene
         entity->SetActive(false);
         if (affectsPhysics)
         {
-            // Exclude inactive colliders immediately and prevent the cached
-            // Bullet world from retaining their addresses until deferred flush.
-            InvalidatePhysicsQueryCache();
+            // Force query membership synchronization now. Storage remains valid
+            // until RemoveEntity invalidates the cache before deferred deletion.
+            if (m_physicsQueryCache)
+                m_physicsQueryCache->refreshSequence = std::numeric_limits<uint64_t>::max();
         }
         m_pendingDestroyEntityIds.insert(entityId);
         m_pendingDestroyEntities.push_back(entityId);

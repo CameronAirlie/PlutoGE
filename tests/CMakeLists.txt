@@ -661,3 +661,8 @@ if (TARGET OpenAL)
             $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${test_target}>/$<TARGET_FILE_NAME:OpenAL>)
     endforeach()
 endif()
+
+add_executable(PlutoGESceneCpuCacheTests SceneCpuCacheTests.cpp)
+target_link_libraries(PlutoGESceneCpuCacheTests PRIVATE PlutoGE::Scene)
+target_include_directories(PlutoGESceneCpuCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGESceneCpuCacheTests COMMAND PlutoGESceneCpuCacheTests)

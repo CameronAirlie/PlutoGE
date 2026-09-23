@@ -537,8 +537,12 @@ namespace PlutoGE::render
         const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
                                      RhiDrawPreparationCache::List &cache, bool shadowOnly, bool giOnly = false) {
             // GI may introduce a pose absent from the visible/shadow lists.
-            collectSkinning(sourceCommands, shadowOnly);
-            flushSkinning();
+            // Visible and shadow poses were already collected together above.
+            if (giOnly)
+            {
+                collectSkinning(sourceCommands, shadowOnly);
+                flushSkinning();
+            }
             const auto materialRevision = [&](const RenderCommand &command) {
                 return command.material ? prepareMaterial(command.material).revision : std::uint64_t{0};
             };

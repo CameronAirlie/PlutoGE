@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Prefab.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
@@ -1102,12 +1103,15 @@ namespace PlutoGE::scene
                                 std::string *errorMessage)
     {
         PrefabInstantiationProfile profile;
+        core::CpuScope instantiateScope("Prefab instantiation", core::CpuCategory::Other);
         const auto totalStart = ProfileClock::now();
         bool cacheHit = false;
+        core::CpuScope loadScope("Prefab asset resolution", core::CpuCategory::Other);
         auto *prefabScene = LoadCachedPrefabScene(prefabReference, errorMessage, &cacheHit,
                                                   &profile.fileResolutionMs, &profile.parsingMs,
                                                   &profile.prefabPath);
         profile.parsedPrefabCacheMiss = !cacheHit;
+        loadScope.End();
         profile.synchronousLoadCount = cacheHit ? 0u : 1u;
         if (!prefabScene)
         {
@@ -1126,7 +1130,9 @@ namespace PlutoGE::scene
 
         g_activeProfile = &profile;
         const auto hierarchyStart = ProfileClock::now();
+        core::CpuScope hierarchyScope("Prefab hierarchy and components", core::CpuCategory::Other);
         auto *instanceRoot = CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+        hierarchyScope.End();
         profile.hierarchyAllocationMs = std::max(0.0, ElapsedMs(hierarchyStart) -
                                                        profile.componentConstructionMs -
                                                        profile.componentDeserializationMs);

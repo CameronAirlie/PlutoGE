@@ -116,6 +116,7 @@ namespace PlutoGE::scene
     void Entity::MarkTransformDirtyRecursive()
     {
         m_worldTransformDirty = true;
+        m_worldDecompositionDirty = true;
         ++m_transformRevision;
         if (m_scene && GetComponent<FoliageComponent>())
         {
@@ -619,7 +620,10 @@ namespace PlutoGE::scene
 
     bool Entity::IsActive() const
     {
-        return m_isActive && (!m_parent || m_parent->IsActive());
+        for (const Entity *entity = this; entity; entity = entity->m_parent)
+            if (!entity->m_isActive)
+                return false;
+        return true;
     }
 
     void Entity::SetPrefabLink(std::string source, EntityID prefabEntityId, bool isRoot)
@@ -704,12 +708,24 @@ namespace PlutoGE::scene
 
     glm::vec3 Entity::GetWorldRotation() const
     {
-        return DecomposeTransform(GetWorldTransform()).rotation;
+        UpdateWorldDecomposition();
+        return m_cachedWorldRotation;
     }
 
     glm::vec3 Entity::GetWorldScale() const
     {
-        return DecomposeTransform(GetWorldTransform()).scale;
+        UpdateWorldDecomposition();
+        return m_cachedWorldScale;
+    }
+
+    void Entity::UpdateWorldDecomposition() const
+    {
+        if (!m_worldDecompositionDirty)
+            return;
+        const auto decomposed = DecomposeTransform(GetWorldTransform());
+        m_cachedWorldRotation = decomposed.rotation;
+        m_cachedWorldScale = decomposed.scale;
+        m_worldDecompositionDirty = false;
     }
 
     glm::mat4 Entity::GetWorldTransform() const

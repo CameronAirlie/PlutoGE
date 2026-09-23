@@ -64,7 +64,7 @@ namespace PlutoGE::render
         struct Geometry;
         struct Texture;
         struct Parameters;
-        rhi::Buffer &AcquireParameterBuffer();
+        rhi::Buffer &AcquireParameterBuffer(const Parameters &parameters);
         void ApplyScissor();
 
         rhi::IRenderDevice *m_device = nullptr;
@@ -84,6 +84,7 @@ namespace PlutoGE::render
         std::unique_ptr<Texture> m_whiteTexture;
         std::unordered_map<std::string, std::shared_ptr<ExternalTexture>> m_externalTextures;
         std::vector<rhi::Buffer> m_parameterBuffers;
+        std::vector<Parameters> m_parameterValues;
         std::size_t m_parameterCursor = 0;
         Rml::Matrix4f m_transform;
         Rml::Rectanglei m_scissor;

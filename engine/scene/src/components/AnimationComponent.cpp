@@ -78,7 +78,14 @@ namespace PlutoGE::scene
         glm::mat4 ComposeTransform(const glm::vec3 &translation, const glm::vec4 &rotation, const glm::vec3 &scale)
         {
             const glm::quat q = glm::normalize(glm::quat(rotation.w, rotation.x, rotation.y, rotation.z));
-            return glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(q) * glm::scale(glm::mat4(1.0f), scale);
+            // TRS scales the rotation columns and writes the translation.
+            // Avoid two general matrix products for every sampled bone.
+            glm::mat4 result = glm::mat4_cast(q);
+            result[0] *= scale.x;
+            result[1] *= scale.y;
+            result[2] *= scale.z;
+            result[3] = glm::vec4(translation, 1.0f);
+            return result;
         }
 
         void DecomposeTransform(const glm::mat4 &transform, glm::vec3 &translation, glm::vec4 &rotation, glm::vec3 &scale)
@@ -3219,25 +3226,15 @@ namespace PlutoGE::scene
         const auto layersEnd = Clock::now();
         recordPhase("Node pose / Animation layers", basePoseEnd, layersEnd);
 
-        static thread_local std::vector<uint8_t> evaluated;
-        evaluated.assign(nodes.size(), 0);
-        std::function<glm::mat4(size_t)> evaluateNode = [&](size_t nodeIndex) -> glm::mat4 {
-            if (evaluated[nodeIndex])
-            {
-                return m_nodeMatrices[nodeIndex];
-            }
-
-            const int parentIndex = nodes[nodeIndex].parentNodeIndex;
-            m_nodeMatrices[nodeIndex] = parentIndex >= 0 && parentIndex < static_cast<int>(nodes.size())
-                                            ? evaluateNode(static_cast<size_t>(parentIndex)) * localTransforms[nodeIndex]
-                                            : localTransforms[nodeIndex];
-            evaluated[nodeIndex] = 1;
-            return m_nodeMatrices[nodeIndex];
-        };
-
-        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+        // The binding cache compiles an arbitrary import order into a linear
+        // parent-before-child schedule. No recursive calls or per-frame visit
+        // bitmap are needed when evaluating a pose.
+        for (const auto nodeIndex : m_nodeEvaluationOrder)
         {
-            evaluateNode(nodeIndex);
+            const int parentIndex = m_nodeEvaluationParents[nodeIndex];
+            m_nodeMatrices[nodeIndex] = parentIndex >= 0
+                ? m_nodeMatrices[static_cast<size_t>(parentIndex)] * localTransforms[nodeIndex]
+                : localTransforms[nodeIndex];
         }
         const auto hierarchyEnd = Clock::now();
         recordPhase("Node pose / Hierarchy composition", layersEnd, hierarchyEnd);
@@ -3296,6 +3293,29 @@ namespace PlutoGE::scene
                 ancestor = nodes[static_cast<size_t>(ancestor)].parentNodeIndex;
             }
         }
+
+        m_nodeEvaluationOrder.clear();
+        m_nodeEvaluationOrder.reserve(nodes.size());
+        m_nodeEvaluationParents.assign(nodes.size(), -1);
+        std::vector<uint8_t> visited(nodes.size(), 0);
+        const auto schedule = [&](auto &&self, size_t index) -> void
+        {
+            if (visited[index] == 2) return;
+            visited[index] = 1;
+            const int parent = nodes[index].parentNodeIndex;
+            if (parent >= 0 && static_cast<size_t>(parent) < nodes.size() &&
+                visited[static_cast<size_t>(parent)] != 1)
+            {
+                self(self, static_cast<size_t>(parent));
+                m_nodeEvaluationParents[index] = parent;
+            }
+            // A malformed cyclic edge is treated as a root rather than
+            // recursing indefinitely. Valid imported hierarchies are unchanged.
+            visited[index] = 2;
+            m_nodeEvaluationOrder.push_back(index);
+        };
+        for (size_t index = 0; index < nodes.size(); ++index)
+            schedule(schedule, index);
 
         m_nodeBindTranslations.resize(nodes.size());
         m_nodeBindRotations.resize(nodes.size());

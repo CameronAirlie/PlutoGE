@@ -37,10 +37,7 @@ namespace PlutoGE::scene
         ~Entity() = default;
         bool IsActiveInHierarchy() const
         {
-            for (const Entity *entity = this; entity; entity = entity->GetParent())
-                if (!entity->IsActive())
-                    return false;
-            return true;
+            return IsActive();
         }
 
         glm::mat4 GetLocalTransform() const;
@@ -242,6 +239,7 @@ namespace PlutoGE::scene
         void SetSceneRecursive(Scene *scene);
         void MarkShadowSceneDirty();
         void MarkTransformDirtyRecursive();
+        void UpdateWorldDecomposition() const;
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
         Transform m_transform;           // Local transform of the entity
@@ -249,6 +247,9 @@ namespace PlutoGE::scene
         mutable glm::mat4 m_cachedWorldTransform = glm::mat4(1.0f);
         mutable bool m_localTransformDirty = true;
         mutable bool m_worldTransformDirty = true;
+        mutable bool m_worldDecompositionDirty = true;
+        mutable glm::vec3 m_cachedWorldRotation{0.0f};
+        mutable glm::vec3 m_cachedWorldScale{1.0f};
         uint64_t m_transformRevision = 0;
         EntityID m_id;                   // Unique identifier for the entity
         std::string m_name;              // Optional name for the entity (useful for debugging and editor)

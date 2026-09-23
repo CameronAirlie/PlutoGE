@@ -295,6 +295,8 @@ namespace PlutoGE::scene
         const std::vector<render::AnimationNode> *m_nodeBindingNodes = nullptr;
         std::vector<std::vector<int>> m_nodeChannelBindings;
         std::vector<bool> m_animatedNodes;
+        std::vector<size_t> m_nodeEvaluationOrder;
+        std::vector<int> m_nodeEvaluationParents;
         std::vector<glm::vec3> m_nodeBindTranslations;
         std::vector<glm::vec4> m_nodeBindRotations;
         std::vector<glm::vec3> m_nodeBindScales;

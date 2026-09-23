@@ -73,6 +73,19 @@ namespace PlutoGE::render
 
             template<class Revision> void Reconcile(std::span<const RenderCommand> commands, Revision revision)
             {
+                // Animation invalidates individual packets every frame, but
+                // usually leaves list slots in the same order. Retain storage
+                // and cached packets in that case instead of rehashing and
+                // moving the entire scene because one actor changed pose.
+                // This is only a placement hint: Matches still validates every
+                // value before a packet is reused, including repeated meshes.
+                bool sameSlots = entries.size() == commands.size();
+                for (size_t i = 0; sameSlots && i < commands.size(); ++i)
+                    sameSlots = entries[i].input.mesh == commands[i].mesh &&
+                                entries[i].input.material == commands[i].material &&
+                                entries[i].input.submeshIndex == commands[i].submeshIndex;
+                if (sameSlots)
+                    return;
                 previous.swap(entries);
                 entries.clear();
                 entries.resize(commands.size());

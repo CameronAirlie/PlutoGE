@@ -45,6 +45,9 @@ namespace PlutoGE::scene
         virtual ~Component() = default;
         virtual void Initialize() {}
         virtual void Update(float deltaTime) = 0;
+        // Passive data components can opt out of frame dispatch and profiling.
+        // Derived components that add Update work must opt back in.
+        virtual bool RequiresFrameUpdate() const { return true; }
 
         virtual std::vector<Property> Serialize() const { return {}; }
         virtual void Deserialize(const std::vector<Property> &properties) {}

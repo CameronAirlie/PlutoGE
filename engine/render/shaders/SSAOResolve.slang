@@ -71,7 +71,15 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             if (abs(x) > blurRadius || abs(x) + abs(y) > blurRadius)
                 continue;
             const float2 offset = float2(x, y);
-            const float2 sampleUv = saturate(textureUv + offset * pass.inverseResolution);
+            // In reduced-resolution mode, evaluate depth/normal weights at the
+            // same texel centers that generated the AO, rather than mixing AO
+            // from one surface with geometry from another at silhouettes.
+            const bool halfResolution = pass.parameters[1].w > 0.5;
+            const float2 aoTexel = pass.parameters[2].zw;
+            const float2 sampleUv = halfResolution
+                ? clamp((floor(textureUv / aoTexel) + 0.5 + offset) * aoTexel,
+                        aoTexel * 0.5, 1.0 - aoTexel * 0.5)
+                : saturate(textureUv + offset * pass.inverseResolution);
             const float sampleDepth = depthTexture.Sample(sampleUv).r;
             if (sampleDepth <= 0.000001)
                 continue;
@@ -98,7 +106,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         }
     }
     const float currentAo = weightSum > 0.0001 ? aoSum / weightSum
-                                               : rawAoTexture.Sample(textureUv).r;
+        : (pass.parameters[1].w > 0.5 ? 1.0 : rawAoTexture.Sample(textureUv).r);
+    if (weightSum <= 0.0001) minAo = maxAo = currentAo;
     float resolvedAo = currentAo;
     if (pass.parameters[5].w > 0.5)
     {

@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RmlPanZoom.h"
+#include "PlutoGE/render/RmlTextUpdate.h"
 #include <RmlUi/Core/FileInterface.h>
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
@@ -1417,6 +1418,12 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = m_elementLookup.Find(doc, id);
         if (!element) return false;
+        const auto update = UpdatePlainRmlText(*element, text);
+        if (update != RmlTextUpdate::NotApplicable)
+        {
+            if (update == RmlTextUpdate::Changed) MarkWorldSurfaceDirty(doc);
+            return true;
+        }
         if (element->GetInnerRML() == text)
             return true;
         m_elementLookup.Invalidate(doc);

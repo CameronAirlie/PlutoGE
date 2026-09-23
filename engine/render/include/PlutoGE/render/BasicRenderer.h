@@ -716,6 +716,8 @@ namespace PlutoGE::render
         std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};
         rhi::Texture m_ssaoRawTarget;
+        std::uint32_t m_ssaoRawWidth = 0;
+        std::uint32_t m_ssaoRawHeight = 0;
         std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
         rhi::Texture m_ssaoCompositeTarget;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;

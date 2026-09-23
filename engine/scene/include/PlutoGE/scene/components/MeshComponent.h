@@ -46,6 +46,7 @@ namespace PlutoGE::scene
         ~MeshComponent() override = default;
 
         void Update(float deltaTime) override;
+        bool RequiresFrameUpdate() const override { return false; }
         void SubmitRenderCommands();
 
         std::vector<Property> Serialize() const override;

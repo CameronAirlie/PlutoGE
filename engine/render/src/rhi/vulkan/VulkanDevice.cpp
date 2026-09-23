@@ -32,6 +32,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <ranges>
@@ -241,6 +242,14 @@ namespace PlutoGE::render::rhi::vulkan
         public:
             StreamlineVulkan()
             {
+                // Explicit diagnostic opt-out; normal startup and DLSS support
+                // remain unchanged. No vendor module is loaded in this mode.
+                if (const char *disabled = std::getenv("PLUTOGE_DISABLE_STREAMLINE");
+                    disabled && std::string_view(disabled) == "1")
+                {
+                    m_reason = "Streamline disabled by PLUTOGE_DISABLE_STREAMLINE";
+                    return;
+                }
                 wchar_t executable[MAX_PATH]{};
                 const DWORD length = GetModuleFileNameW(nullptr, executable, MAX_PATH);
                 if (length == 0 || length == MAX_PATH)

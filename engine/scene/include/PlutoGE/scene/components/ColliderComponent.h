@@ -34,6 +34,7 @@ namespace PlutoGE::scene
         ~ColliderComponent() override = default;
 
         void Update(float deltaTime) override;
+        bool RequiresFrameUpdate() const override { return false; }
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;

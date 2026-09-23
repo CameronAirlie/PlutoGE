@@ -65,7 +65,7 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     (void)readPixels(renderer.GetColorTexture());
     for (int scenario = 0; scenario < 3; ++scenario)
     {
-        double planning = 0, pages = 0, total = 0;
+        double planning = 0, pages = 0, total = 0, receiverRequests = 0;
         std::uint64_t triangles = 0, hits = 0, deferred = 0, commands = 0;
         int samples = 0;
         for (int frame = 0; frame < 20; ++frame)
@@ -92,6 +92,7 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
                 if (scope.name.starts_with("RHI Shadow Cascade"))
                     throw std::runtime_error("VSM submitted a cascade GPU scope");
                 if (scope.name == "RHI VSM GPU Planning") planning += scope.milliseconds;
+                if (scope.name == "RHI VSM Planning / Receiver requests") receiverRequests += scope.milliseconds;
                 if (scope.name == "RHI Virtual Shadow Pages") pages += scope.milliseconds;
             }
             triangles += stats.submittedTriangles; hits += stats.cacheHits; deferred += stats.deferred;
@@ -103,7 +104,7 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
         if (scenario == 0 && (triangles != 0 || hits == 0)) throw std::runtime_error("Stationary VSM cache failed to converge");
         std::cout << "VSM performance " << (scenario == 0 ? "stationary" : scenario == 1 ? "camera movement" : "animated caster")
                   << ": GPU frame " << total / samples << " ms, planning " << planning / samples << " ms, pages " << pages / samples
-                  << " ms; " << triangles / samples << " triangles, " << hits / samples << " hits, " << deferred / samples
+                  << " ms, receiver requests " << receiverRequests / samples << " ms; " << triangles / samples << " triangles, " << hits / samples << " hits, " << deferred / samples
                   << " deferred, " << commands / samples << " total indexed commands\n";
     }
     // Isolate receiver shading from page creation using a converged static cache.

@@ -1,5 +1,6 @@
 #include <RmlUi/Core.h>
 #include "PlutoGE/render/RmlElementLookup.h"
+#include "PlutoGE/render/RmlTextUpdate.h"
 #include <fstream>
 #include <cmath>
 #include <iostream>
@@ -63,6 +64,23 @@ int main(int argc, char** argv) try
     auto* context = Rml::CreateContext("Document layout", {1280, 720});
     auto* document = context->LoadDocument(argv[1]);
     if (!document) throw std::runtime_error("Document load failed");
+    {
+        using namespace PlutoGE::render;
+        auto element = document->CreateElement("div");
+        element->SetInnerRML("HP 100/100");
+        auto *node = element->GetChild(0);
+        if (UpdatePlainRmlText(*element, "HP 90/100") != RmlTextUpdate::Changed ||
+            element->GetChild(0) != node || element->GetInnerRML() != "HP 90/100")
+            throw std::runtime_error("Plain text update must retain its text node");
+        if (UpdatePlainRmlText(*element, "HP 90/100") != RmlTextUpdate::Unchanged)
+            throw std::runtime_error("Unchanged text should not dirty layout");
+        for (const auto *markup : {"", "<b>HP</b>", "A &amp; B", "{{health}}"})
+            if (UpdatePlainRmlText(*element, markup) != RmlTextUpdate::NotApplicable)
+                throw std::runtime_error("Markup must retain parser semantics");
+        element->SetInnerRML("<span>HP</span>");
+        if (UpdatePlainRmlText(*element, "HP") != RmlTextUpdate::NotApplicable)
+            throw std::runtime_error("Element subtree must not be treated as text");
+    }
     // Exercise stable IDs, destruction, rename, replacement and a missing ID
     // becoming available, without retaining ownership through the lookup cache.
     {

@@ -39,6 +39,9 @@ float3 reconstruct(uint2 pixel, float depth)
     float4 world = mul(vsm.inverseViewProjection, float4(uv * 2.0 - 1.0, z, 1));
     return world.xyz / world.w;
 }
+// Direct-mapped workgroup cache: collisions fall back to the global atomic,
+// never discard coverage. Entries are immutable after the first insertion.
+groupshared uint localRequests[128];
 void requestFootprint(float3 world, int level)
 {
     float2 uv = virtualCoordinate(vsm, level, world).xy;
@@ -48,6 +51,10 @@ void requestFootprint(float3 world, int level)
     for (int y = lo.y; y <= hi.y; ++y)
         for (int x = lo.x; x <= hi.x; ++x)
         {
+            uint key = 1u + uint(level) * PLUTO_VSM_LEVEL_PAGES + uint(y) * PLUTO_VSM_GRID + uint(x);
+            uint cached;
+            InterlockedCompareExchange(localRequests[(key * 2654435761u) >> 25], 0u, key, cached);
+            if (cached == key) continue;
             uint previous;
             InterlockedOr(requestMask[uint2(x, y + level * PLUTO_VSM_GRID)], 1u, previous);
             if (previous == 0)
@@ -59,8 +66,11 @@ void requestFootprint(float3 world, int level)
         }
 }
 [shader("compute")][numthreads(8, 8, 1)]
-void requestMain(uint3 id : SV_DispatchThreadID)
+void requestMain(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
 {
+    localRequests[lane] = 0;
+    localRequests[lane + 64] = 0;
+    GroupMemoryBarrierWithGroupSync();
     if (any(id.xy >= vsm.viewport.xy)) return;
     float depth = receiverDepth.SampleLevel((float2(id.xy) + 0.5) / float2(vsm.viewport.xy), 0).r;
     if (depth <= 0.0) return;
@@ -111,6 +121,9 @@ void allocateMain(uint3 id : SV_DispatchThreadID)
     }
     // Borrow unused shares, but guarantee coverage to newly visible levels
     // rather than allowing an old near-level working set to starve them.
+    // Allocation only marks slots occupied during this pass. Keep the search
+    // cursor across requests so each slot is examined at most once.
+    uint nextFreeSlot = 0;
         for (uint level = 0; level < PLUTO_VSM_LEVELS && available > 0; ++level)
             for (uint index = 0; index < requests[level] && available > 0; ++index)
             {
@@ -119,8 +132,8 @@ void allocateMain(uint3 id : SV_DispatchThreadID)
                 uint2 local = virtualPageCoordinate(key);
                 uint2 at = local + uint2(0, level * PLUTO_VSM_GRID);
                 if (requestMask[at] != 1) continue;
-                uint slot = 0;
-                while (pages[slot].state.y == vsm.limits.y) ++slot;
+                while (pages[nextFreeSlot].state.y == vsm.limits.y) ++nextFreeSlot;
+                uint slot = nextFreeSlot++;
                 VirtualShadowPage p = pages[slot];
                 if (p.state.y != 0) ++stats[4];
                 p.address = int4(vsm.origins[level].xy + int2(local), int(level), vsm.origins[level].z);

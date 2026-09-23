@@ -1418,6 +1418,8 @@ namespace PlutoGE::render
         m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                                                       {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
                                                        "SSAO raw", true}));
+        m_ssaoRawWidth = width;
+        m_ssaoRawHeight = height;
         m_ssaoCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
             {width, height, rhi::Format::R16G16B16A16Float,
              rhi::TextureUsage::ColorAttachment, "SSAO composite", true}));
@@ -3900,7 +3902,21 @@ namespace PlutoGE::render
                                 { return !pipeline; }))
             return source;
 
+        const auto divisor = effect.parameters[1].w > 0.5f ? 2u : 1u;
+        const auto rawWidth = (m_width + divisor - 1u) / divisor;
+        const auto rawHeight = (m_height + divisor - 1u) / divisor;
+        if (m_ssaoRawWidth != rawWidth || m_ssaoRawHeight != rawHeight)
+        {
+            m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                {rawWidth, rawHeight, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                 "SSAO raw", true}));
+            m_ssaoRawWidth = rawWidth;
+            m_ssaoRawHeight = rawHeight;
+            m_ssaoHistoryValid = false;
+        }
         auto parameters = effect.parameters;
+        parameters[2].z = 1.0f / static_cast<float>(rawWidth);
+        parameters[2].w = 1.0f / static_cast<float>(rawHeight);
         parameters[5].w = m_ssaoHistoryValid ? 1.0f : 0.0f;
         const BasicPostProcessParameters block{
             effect.exposure, std::max(effect.gamma, 0.001f),
@@ -3915,8 +3931,8 @@ namespace PlutoGE::render
         m_device->UpdateBuffer(rawBuffer.Get(), 0, Bytes(block));
         rhi::RenderingInfo rawInfo;
         rawInfo.colorAttachments = {m_ssaoRawTarget.Get()};
-        rawInfo.width = m_width;
-        rawInfo.height = m_height;
+        rawInfo.width = rawWidth;
+        rawInfo.height = rawHeight;
         rawInfo.clearDepth = false;
         commands.BeginRendering(rawInfo);
         commands.BindPipeline(m_ssaoPipelines[0].Get());

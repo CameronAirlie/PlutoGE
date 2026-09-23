@@ -3,6 +3,16 @@ if (NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
 endif()
 
 file(READ "${INPUT}" shader_source)
+# A workgroup execution barrier for shared memory is core GLSL functionality.
+# Slang emits the optional memory-scope extension spelling for this operation;
+# translate only this exact scope/storage combination, leaving other semantics
+# untouched. Core barrier() includes visibility of preceding shared writes.
+string(REPLACE
+    "controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsAcquireRelease)"
+    "barrier()" shader_source "${shader_source}")
+if (NOT shader_source MATCHES "gl_Scope|gl_StorageSemantics|gl_Semantics|controlBarrier\\(")
+    string(REPLACE "#extension GL_KHR_memory_scope_semantics : require" "" shader_source "${shader_source}")
+endif()
 # Loop hints are optional optimisations, not shader semantics. Slang emits
 # EXT_control_flow_attributes for [unroll]/[loop], but desktop OpenGL drivers
 # need not support that extension. Leave these loops to the OpenGL optimiser;

@@ -5,7 +5,9 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/assets/Project.h"
 #include <iostream>
 #include <stdexcept>
@@ -14,6 +16,35 @@
 
 namespace
 {
+    class UpdatingCollider final : public PlutoGE::scene::ColliderComponent
+    {
+    public:
+        int updates = 0;
+        bool RequiresFrameUpdate() const override { return true; }
+        void Update(float) override { ++updates; }
+    };
+
+    void TestComponentUpdatePolicy()
+    {
+        using namespace PlutoGE::scene;
+        Entity entity(EntityConfig{.name = "Update policy"});
+        auto *collider = entity.CreateComponent<ColliderComponent>();
+        auto *mesh = entity.CreateComponent<MeshComponent>(MeshComponentConfig{});
+        if (collider->RequiresFrameUpdate() || mesh->RequiresFrameUpdate())
+            throw std::runtime_error("Passive components requested frame dispatch");
+        {
+            PlutoGE::core::CpuTrace trace(true);
+            entity.Update(0.016f);
+            if (!trace.TakeSamples().empty())
+                throw std::runtime_error("Passive components generated trace samples");
+        }
+        auto *active = entity.CreateComponent<UpdatingCollider>();
+        entity.Update(0.016f);
+        active->SetEnabled(false);
+        entity.Update(0.016f);
+        if (active->updates != 1)
+            throw std::runtime_error("Update policy did not preserve enabled dispatch");
+    }
     void Require(bool condition, const char *message) { if (!condition) throw std::runtime_error(message); }
     std::string Snapshot(const PlutoGE::scene::Scene &scene)
     {
@@ -82,6 +113,7 @@ int main()
         using namespace PlutoGE::ui;
         using namespace PlutoGE::scene;
         TestBuiltinMeshRestoration();
+        TestComponentUpdatePolicy();
         auto scene = std::make_unique<Scene>();
         auto *entity = scene->AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Before"}));
         const auto id = entity->GetID();

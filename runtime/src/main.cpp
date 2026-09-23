@@ -1,4 +1,6 @@
 #include "RuntimeProfiler.h"
+#include "ProjectBenchmark.h"
+#include <optional>
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
@@ -355,12 +357,19 @@ int RunRuntime(int argc, char **argv)
         return importedMeshAsset.mesh ? 0 : 1;
     }
 
-    constexpr std::size_t benchmarkWarmupFrames = 120;
+    const bool projectBenchmarkEnabled = argc > 1 && std::string_view(argv[1]) == "--benchmark-project";
+    std::optional<PlutoGE::ProjectBenchmarkOptions> projectBenchmark;
+    if (projectBenchmarkEnabled)
+    {
+        try { projectBenchmark = PlutoGE::ProjectBenchmarkOptions::Parse({argv + 2, static_cast<std::size_t>(argc - 2)}); }
+        catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 2; }
+    }
+    const std::size_t benchmarkWarmupFrames = projectBenchmark ? projectBenchmark->warmup : 120;
     constexpr std::size_t defaultBenchmarkFrames = 600;
     const bool profilerEnabled = argc > 1 && std::string_view(argv[1]) == "--profiler";
-    const bool benchmarkEnabled = argc > 1 && std::string_view(argv[1]) == "--benchmark";
-    std::size_t benchmarkFrameCount = defaultBenchmarkFrames;
-    if (benchmarkEnabled && argc > 2)
+    const bool benchmarkEnabled = projectBenchmarkEnabled || (argc > 1 && std::string_view(argv[1]) == "--benchmark");
+    std::size_t benchmarkFrameCount = projectBenchmark ? projectBenchmark->frames : defaultBenchmarkFrames;
+    if (benchmarkEnabled && !projectBenchmark && argc > 2)
     {
         try
         {
@@ -375,11 +384,11 @@ int RunRuntime(int argc, char **argv)
 
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
     PlutoGE::TemporaryContentDirectory temporaryContent;
-    auto manifestPath = argc > 1 && !benchmarkEnabled && !profilerEnabled
+    auto manifestPath = projectBenchmark ? projectBenchmark->project : argc > 1 && !benchmarkEnabled && !profilerEnabled
                             ? std::filesystem::path(argv[1])
                             : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
 
-    if (argc <= 1 || benchmarkEnabled || profilerEnabled)
+    if (!projectBenchmark && (argc <= 1 || benchmarkEnabled || profilerEnabled))
     {
         const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
         if (std::filesystem::exists(contentPackPath))
@@ -464,10 +473,10 @@ int RunRuntime(int argc, char **argv)
             .width = project->GetManifest().windowWidth,
             .height = project->GetManifest().windowHeight,
             .resizable = true,
-            .visible = true,
+            .visible = !projectBenchmarkEnabled,
             .fullscreen = false,
         }};
-    config.vSync = project->GetManifest().vSyncEnabled;
+    config.vSync = projectBenchmark ? false : project->GetManifest().vSyncEnabled;
     config.enableProfiling = profilerEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
     config.temporalUpscaler = project->GetManifest().GetTemporalUpscalerOptions();
@@ -482,7 +491,9 @@ int RunRuntime(int argc, char **argv)
     }
 
     if (config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::OpenGL)
-        engine.GetRenderer().SetVSyncEnabled(project->GetManifest().vSyncEnabled);
+        engine.GetRenderer().SetVSyncEnabled(config.vSync);
+    if (projectBenchmark && engine.GetRenderDevice())
+        engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
 
     if (!project->GetManifest().scriptAssembly.empty())
     {
@@ -584,6 +595,8 @@ int RunRuntime(int argc, char **argv)
     bool hasLoggedFirstFrameDiagnostics = false;
     std::size_t benchmarkFrameIndex = 0;
     std::vector<double> benchmarkFrameTimes;
+    std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
+    if (projectBenchmark) projectBenchmarkSamples.reserve(benchmarkFrameCount);
     if (benchmarkEnabled)
         benchmarkFrameTimes.reserve(benchmarkFrameCount);
 
@@ -608,7 +621,7 @@ int RunRuntime(int argc, char **argv)
         const auto frameStart = std::chrono::high_resolution_clock::now();
         window.PollEvents();
         const auto currentFrameTime = std::chrono::high_resolution_clock::now();
-        const float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+        const float deltaTime = projectBenchmark ? PlutoGE::ProjectBenchmarkOptions::FixedDelta : std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
 
 #ifdef _WIN32
@@ -787,6 +800,25 @@ int RunRuntime(int argc, char **argv)
         {
             if (benchmarkFrameIndex >= benchmarkWarmupFrames)
             {
+                if (projectBenchmark)
+                {
+                    const auto end = std::chrono::high_resolution_clock::now();
+                    PlutoGE::ProjectBenchmarkSample sample;
+                    sample.frameMs = std::chrono::duration<double, std::milli>(end - frameStart).count();
+                    sample.updateMs = frameTiming.sceneUpdateMs;
+                    sample.renderPresentMs = std::chrono::duration<double, std::milli>(end - updateEnd).count();
+                    sample.uiMs = PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming().TotalMs();
+                    if (useVulkanRenderer)
+                    {
+                        const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
+                        sample.gpuAvailable = gpu.hasGpuResult;
+                        sample.gpuMs = gpu.frameGpuMs;
+                        sample.skinningMs = engine.GetRhiRenderService().GetTimingStats().skinningDeformationMs;
+                        for (const auto &scope : gpu.gpuScopes)
+                            if (scope.name == "RHI VSM Planning / Receiver requests") sample.shadowRequestMs = scope.milliseconds;
+                    }
+                    projectBenchmarkSamples.push_back(sample);
+                }
                 benchmarkFrameTimes.push_back(
                     std::chrono::duration<double, std::milli>(
                         std::chrono::high_resolution_clock::now() - currentFrameTime).count());
@@ -820,7 +852,7 @@ int RunRuntime(int argc, char **argv)
         runtimeRenderTarget.reset();
     }
 
-    if (benchmarkEnabled && !benchmarkFrameTimes.empty())
+    if (benchmarkEnabled && !projectBenchmark && !benchmarkFrameTimes.empty())
     {
         std::sort(benchmarkFrameTimes.begin(), benchmarkFrameTimes.end());
         double totalMilliseconds = 0.0;
@@ -854,15 +886,30 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.currentPhase = "shutdown";
     PlutoGE::g_runtimeDiagnostics.Log("Window requested close");
 #endif
+    bool benchmarkSucceeded = true;
+    if (projectBenchmark)
+    {
+        benchmarkSucceeded = projectBenchmarkSamples.size() == projectBenchmark->frames;
+        try
+        {
+            if (benchmarkSucceeded) PlutoGE::WriteProjectBenchmark(projectBenchmark->output, projectBenchmarkSamples);
+            else std::cerr << "Benchmark ended before collecting the requested samples.\n";
+        }
+        catch (const std::exception &error) { std::cerr << error.what() << '\n'; benchmarkSucceeded = false; }
+    }
+    if (projectBenchmark) std::cerr << "Benchmark: stopping gameplay\n";
     engine.StopRuntime();
+    if (projectBenchmark) std::cerr << "Benchmark: releasing scene\n";
     engine.SetScene(nullptr);
     scene.reset();
+    if (projectBenchmark) std::cerr << "Benchmark: shutting down engine\n";
     engine.Shutdown();
+    if (projectBenchmark) std::cerr << "Benchmark: shutdown complete\n";
 
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.Log("Runtime shutdown complete");
 #endif
-    return 0;
+    return benchmarkSucceeded ? 0 : 1;
 }
 
 #if defined(_WIN32)

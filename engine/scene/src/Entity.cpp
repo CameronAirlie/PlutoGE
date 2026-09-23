@@ -566,15 +566,10 @@ namespace PlutoGE::scene
     {
         for (const auto &component : m_componentStorage)
         {
-            // Mesh components are passive render data. Calling and profiling
-            // their empty Update once per instance dominated large static
-            // scenes, while rendering already visits them through Scene's
-            // dedicated mesh registry.
-            if (component->IsEnabled() &&
-                component->GetTypeID() != GetComponentTypeID<MeshComponent>())
+            if (component->IsEnabled() && component->RequiresFrameUpdate())
             {
                 const auto start = std::chrono::high_resolution_clock::now();
-                core::CpuScope componentScope(core::CpuTrace::current ? ComponentTraceName(*component) : std::string_view{}, core::CpuCategory::Other, core::CpuTrace::current ? GetName() : std::string{});
+                core::CpuScope componentScope(core::CpuTrace::current ? ComponentTraceName(*component) : std::string_view{}, core::CpuCategory::Other, core::CpuTrace::current ? std::string_view(GetName()) : std::string_view{});
                 component->Update(deltaTime);
                 componentScope.End();
                 if (m_scene)

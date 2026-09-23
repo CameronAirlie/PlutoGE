@@ -586,21 +586,34 @@ int main(int argc, char **argv)
         ssao.parameters[0] = {1.5f, 0.02f, 3.0f, 1.0f};
         ssao.parameters[1] = {1.0f, 1.0f, 0.0f, 0.0f};
         ssao.parameters[2] = {0.02f, 0.85f, 0.0f, 0.0f};
-        renderer.Render(projection * view, neutralLighting, draws, std::span(&ssao, 1));
-        const auto aoPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
-        std::size_t occludedPixels = 0;
-        for (std::size_t i = 0; i + 3 < aoPixels.size(); i += 4)
+        // Exercise resolution changes, odd extents, and switching back with
+        // temporal history enabled, where stale AO resources can survive.
+        for (const auto extent : {rhi::Extent2D{96, 64}, rhi::Extent2D{95, 63}})
         {
-            const auto value = std::to_integer<unsigned char>(aoPixels[i]);
-            if (value < 254)
-                ++occludedPixels;
+            renderer.Resize(extent.width, extent.height);
+            for (float halfResolution : {0.0f, 1.0f, 0.0f})
+            {
+                ssao.parameters[1].w = halfResolution;
+                ssao.parameters[1].z = 0.9f;
+                for (int frame = 0; frame < 2; ++frame)
+                    renderer.Render(projection * view, neutralLighting, draws, std::span(&ssao, 1));
+                const auto aoPixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+                if (aoPixels.size() != std::size_t(extent.width) * extent.height * 4)
+                    throw std::runtime_error("Vulkan SSAO changed output resolution");
+                std::size_t occludedPixels = 0;
+                for (std::size_t i = 0; i + 3 < aoPixels.size(); i += 4)
+                    if (std::to_integer<unsigned char>(aoPixels[i]) < 254)
+                        ++occludedPixels;
+                if (occludedPixels < 10)
+                {
+                    std::cerr << "Vulkan SSAO produced an all-white AO diagnostic ("
+                              << occludedPixels << " occluded pixels, half resolution "
+                              << halfResolution << ")\n";
+                    return 8;
+                }
+            }
         }
-        if (occludedPixels < 10)
-        {
-            std::cerr << "Vulkan SSAO produced an all-white AO diagnostic ("
-                      << occludedPixels << " occluded pixels)\n";
-            return 8;
-        }
+        renderer.Resize(96, 64);
         auto fog = BasicPostProcessEffect{BasicPostProcessEffectType::VolumetricFog};
         fog.quality = 16;
         fog.parameters[0] = {0.8f, 0.85f, 0.9f, 0.02f};

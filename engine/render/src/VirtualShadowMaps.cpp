@@ -402,8 +402,13 @@ namespace PlutoGE::render
         commands.EndRendering(); commands.EndGpuScope();
         commands.BeginGpuScope("RHI VSM GPU Planning");
         commands.ShaderMemoryBarrier();
+        static constexpr std::array planningScopes{
+            "RHI VSM Planning / Reset", "RHI VSM Planning / Receiver requests",
+            "RHI VSM Planning / Page allocation", "RHI VSM Planning / Caster signatures",
+            "RHI VSM Planning / Update budget", "RHI VSM Planning / Caster binning"};
         for (std::size_t pass = 0; pass < 6; ++pass)
         {
+            commands.BeginGpuScope(planningScopes[pass]);
             BindCompute(commands, pass);
             if (pass == 0) commands.Dispatch(PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES / 64, 1, 1);
             else if (pass == 1) commands.Dispatch((m_width + 7) / 8, (m_height + 7) / 8, 1);
@@ -411,6 +416,7 @@ namespace PlutoGE::render
             else if (pass == 5) commands.Dispatch(static_cast<std::uint32_t>((m_casterCount + 63) / 64 + (m_casterCount == 0)), 1, 1);
             else commands.Dispatch(1, 1, 1);
             commands.ShaderMemoryBarrier();
+            commands.EndGpuScope();
         }
         commands.EndGpuScope();
         commands.BeginGpuScope("RHI Virtual Shadow Pages");

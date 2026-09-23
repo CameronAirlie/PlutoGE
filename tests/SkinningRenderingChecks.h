@@ -41,6 +41,8 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     CameraData camera{glm::mat4(1),glm::mat4(1),.1f,4};
     BasicLighting light; light.ambientIntensity=light.directionalIntensity=0;
     light.shadowsEnabled=true; light.shadowDistance=2; light.shadowResolution=128;
+    // This fixture checks cascade-cache counters; do not inherit the VSM default.
+    light.shadowMethod = ShadowMethod::Cascaded;
     light.shadowCascadeCount=1;
     RhiSceneRenderer renderer;
     require(renderer.Initialize(device,shaders),"Skinning renderer initialization failed");

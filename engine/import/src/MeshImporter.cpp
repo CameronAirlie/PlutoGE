@@ -419,11 +419,14 @@ namespace PlutoGE::assetimport
 
         glm::vec4 ReadVec4(std::istream &input)
         {
-            return glm::vec4(
-                ReadPod<float>(input),
-                ReadPod<float>(input),
-                ReadPod<float>(input),
-                ReadPod<float>(input));
+            // Function arguments have no left-to-right evaluation guarantee.
+            // MSVC read these in reverse order, turning cached RGBA into ABGR.
+            glm::vec4 value;
+            value.x = ReadPod<float>(input);
+            value.y = ReadPod<float>(input);
+            value.z = ReadPod<float>(input);
+            value.w = ReadPod<float>(input);
+            return value;
         }
 
         void WriteMat4(std::ostream &output, const glm::mat4 &value)
@@ -4941,8 +4944,9 @@ namespace PlutoGE::assetimport
 
     ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options)
     {
-        // LRU cache for meshes
-        constexpr size_t kMaxMeshCacheSize = 32;
+        // Meshes and animation arrays are borrowed by scenes and prefab templates.
+        // Keep them alive until this importer is destroyed, including superseded
+        // generations. A fixed-size retirement queue leaves dangling scene pointers.
         const auto normalizedPath = NormalizePath(filePath);
         const auto cookOptions = ResolveMeshCookOptions(options);
         const auto cacheKey = normalizedPath + "|" + std::to_string(cookOptions.ToFlags());
@@ -4950,20 +4954,7 @@ namespace PlutoGE::assetimport
         if (cachedMesh != m_meshCache.end())
         {
             auto retiredNode = m_meshCache.extract(cachedMesh);
-            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
-            if (m_retiredMeshCache.size() > kMaxMeshCacheSize)
-            {
-                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
-            }
-        }
-        if (m_meshCache.size() >= kMaxMeshCacheSize)
-        {
-            auto retiredNode = m_meshCache.extract(m_meshCache.begin());
-            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
-            if (m_retiredMeshCache.size() > kMaxMeshCacheSize)
-            {
-                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
-            }
+            m_retiredMeshCache.push_back(std::move(retiredNode));
         }
         CachedImportedMeshAsset cachedImportedMeshAsset;
         const bool hasMeshGeometry = !meshSourceAsset.meshData.vertices.empty() && !meshSourceAsset.meshData.indices.empty();
@@ -5014,11 +5005,7 @@ namespace PlutoGE::assetimport
             }
 
             auto retiredNode = m_meshCache.extract(cachedMesh);
-            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
-            if (m_retiredMeshCache.size() > 32)
-            {
-                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
-            }
+            m_retiredMeshCache.push_back(std::move(retiredNode));
         }
 
         try

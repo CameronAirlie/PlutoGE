@@ -129,7 +129,10 @@ namespace PlutoGE::assetimport
             }
         };
 
-        std::unordered_map<std::string, CachedImportedMeshAsset> m_meshCache;
-        std::vector<CachedImportedMeshAsset> m_retiredMeshCache;
+        using MeshCache = std::unordered_map<std::string, CachedImportedMeshAsset>;
+        MeshCache m_meshCache;
+        // Preserve the cache node itself: callers also borrow pointers to its
+        // animation/material vectors, not just the separately allocated mesh.
+        std::vector<MeshCache::node_type> m_retiredMeshCache;
     };
 }

@@ -4,22 +4,24 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <unordered_set>
 #include <limits>
 
 namespace PlutoGE::render
 {
-    bool ScenePortrait::Render(rhi::IRenderDevice &device, const scene::Scene &scene, std::uint32_t rootId,
-                              std::span<const std::uint32_t> attachments, int width, int height)
+    ScenePortraitSnapshot BuildScenePortraitSnapshot(const scene::Scene &scene, std::uint32_t rootId,
+                                                     std::span<const std::uint32_t> attachments)
     {
+        ScenePortraitSnapshot snapshot;
         auto *root = scene.FindEntityByID(rootId);
-        if (!root || !root->IsActiveInHierarchy() || width < 32 || height < 32 || width > 1024 || height > 1024)
-            return false;
+        if (!root || !root->IsActiveInHierarchy()) return snapshot;
         const auto rootWorld = root->GetWorldTransform();
-        if (std::abs(glm::determinant(rootWorld)) < 0.000001f) return false;
+        if (std::abs(glm::determinant(rootWorld)) < 0.000001f) return snapshot;
         const auto inverseRoot = glm::inverse(rootWorld);
-        std::vector<RenderCommand> draws;
+        auto &draws = snapshot.draws;
+        std::unordered_map<Mesh *, const std::vector<glm::mat4> *> poses;
         std::unordered_set<std::uint32_t> visited;
         const auto collect = [&](const auto &self, scene::Entity *entity) -> void
         {
@@ -28,6 +30,28 @@ namespace PlutoGE::render
                 component && component->IsEnabled() && component->IsVisible() && component->GetMesh())
             {
                 auto *mesh = component->GetMesh();
+                const std::vector<glm::mat4> *pose = nullptr;
+                if (mesh->HasSkeleton())
+                {
+                    if (auto found = poses.find(mesh); found != poses.end()) pose = found->second;
+                    else
+                    {
+                        scene::AnimationComponent *source = nullptr;
+                        for (auto *ancestor = entity; ancestor && !source; ancestor = ancestor->GetParent())
+                            source = ancestor->GetComponent<scene::AnimationComponent>();
+                        // Detached wearables may contain the rig but no clips.
+                        if (!source && mesh->GetAnimations().empty()) source = root->GetComponent<scene::AnimationComponent>();
+                        // Sampling a separate controller leaves gameplay, pause state,
+                        // attack timing and the live player's pose untouched.
+                        scene::AnimationComponent preview;
+                        preview.SetClipsFromImportedAnimations(source ? source->GetClips() : mesh->GetAnimations());
+                        if (!preview.Play("Idle") && preview.GetClipCount() > 0) preview.SetCurrentClipIndex(0);
+                        preview.SetTime(0);
+                        snapshot.poses.push_back(preview.GetJointMatrices(mesh->GetSkeleton(), mesh->GetAnimationNodes()));
+                        pose = &snapshot.poses.back();
+                        poses.emplace(mesh, pose);
+                    }
+                }
                 const auto begin = component->GetSubmeshIndex() < 0 ? 0u : unsigned(component->GetSubmeshIndex());
                 const auto end = component->GetSubmeshIndex() < 0 ? mesh->GetSubmeshCount()
                     : std::min(mesh->GetSubmeshCount(), size_t(begin + component->GetSubmeshRangeCount()));
@@ -35,6 +59,7 @@ namespace PlutoGE::render
                 {
                     RenderCommand command;
                     command.mesh = mesh;
+                    command.jointMatrices = pose;
                     command.material = component->GetMaterialForSubmesh(i);
                     command.submeshIndex = static_cast<std::uint32_t>(i);
                     command.model = inverseRoot * entity->GetWorldTransform() * component->GetMeshOffsetTransform()
@@ -50,9 +75,18 @@ namespace PlutoGE::render
         for (auto id : attachments)
         {
             auto *entity = scene.FindEntityByID(id);
-            if (!entity) return false; // Equipment may still be replacing its visual this frame.
+            if (!entity) return {}; // Equipment may still be replacing its visual this frame.
             collect(collect, entity);
         }
+        return snapshot;
+    }
+
+    bool ScenePortrait::Render(rhi::IRenderDevice &device, const scene::Scene &scene, std::uint32_t rootId,
+                              std::span<const std::uint32_t> attachments, int width, int height)
+    {
+        if (width < 32 || height < 32 || width > 1024 || height > 1024) return false;
+        auto snapshot = BuildScenePortraitSnapshot(scene, rootId, attachments);
+        const auto &draws = snapshot.draws;
         if (draws.empty()) return false;
 
         CameraData camera;
@@ -61,9 +95,25 @@ namespace PlutoGE::render
         for (const auto &draw : draws)
         {
             const auto transform = camera.view * draw.model;
-            for (const auto &vertex : draw.mesh->GetMeshData().vertices)
+            const auto &data = draw.mesh->GetMeshData();
+            const auto &submesh = draw.mesh->GetSubmesh(draw.submeshIndex);
+            for (size_t i = submesh.indexOffset; i < size_t(submesh.indexOffset) + submesh.indexCount; ++i)
             {
-                const auto p = glm::vec3(transform * glm::vec4(vertex.position[0], vertex.position[1], vertex.position[2], 1));
+                const auto &vertex = data.vertices[data.indices[i]];
+                auto position = glm::vec4(vertex.position[0], vertex.position[1], vertex.position[2], 1);
+                if (draw.jointMatrices)
+                {
+                    glm::vec4 skinned(0);
+                    float weight = 0;
+                    for (int j = 0; j < 4; ++j)
+                        if (vertex.weights[j] > 0 && vertex.joints[j] >= 0 && size_t(vertex.joints[j]) < draw.jointMatrices->size())
+                        {
+                            skinned += (*draw.jointMatrices)[vertex.joints[j]] * position * vertex.weights[j];
+                            weight += vertex.weights[j];
+                        }
+                    if (weight > 0) position = skinned / weight;
+                }
+                const auto p = glm::vec3(transform * position);
                 low = glm::min(low, p); high = glm::max(high, p);
             }
         }

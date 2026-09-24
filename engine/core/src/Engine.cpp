@@ -328,33 +328,20 @@ namespace PlutoGE::core
             return importedRenderMeshAsset;
         }
 
-        // LRU cache for imported materials
-        constexpr size_t kMaxMaterialCacheSize = 8;
+        // Scene components and prefab templates retain non-owning material pointers.
+        // Keep each asset resident, and retain replaced generations, for the engine
+        // lifetime. A count-based eviction cannot determine whether they are in use.
         const uint64_t materialFingerprint = BuildImportedMaterialFingerprint(importedMeshAsset);
         auto cachedMaterials = m_importedMaterialCache.find(normalizedPath);
         if (cachedMaterials != m_importedMaterialCache.end() && cachedMaterials->second.fingerprint != materialFingerprint)
         {
             auto retiredNode = m_importedMaterialCache.extract(cachedMaterials);
             m_retiredImportedMaterialCache.push_back(std::move(retiredNode.mapped()));
-            if (m_retiredImportedMaterialCache.size() > kMaxMaterialCacheSize)
-            {
-                m_retiredImportedMaterialCache.erase(m_retiredImportedMaterialCache.begin());
-            }
             cachedMaterials = m_importedMaterialCache.end();
         }
 
         if (cachedMaterials == m_importedMaterialCache.end())
         {
-            // Evict oldest if over limit
-            if (m_importedMaterialCache.size() >= kMaxMaterialCacheSize)
-            {
-                auto retiredNode = m_importedMaterialCache.extract(m_importedMaterialCache.begin());
-                m_retiredImportedMaterialCache.push_back(std::move(retiredNode.mapped()));
-                if (m_retiredImportedMaterialCache.size() > kMaxMaterialCacheSize)
-                {
-                    m_retiredImportedMaterialCache.erase(m_retiredImportedMaterialCache.begin());
-                }
-            }
             std::vector<std::unique_ptr<render::Material>> importedMaterials;
             importedMaterials.reserve(importedMeshAsset.materials ? importedMeshAsset.materials->size() : 0);
 

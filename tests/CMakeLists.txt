@@ -270,6 +270,14 @@ endif()
 
 add_test(NAME PlutoGEPrefabMeshExporterTests COMMAND PlutoGEPrefabMeshExporterTests)
 
+add_executable(PlutoGEImportedAssetLifetimeTests ImportedAssetLifetimeTests.cpp)
+target_link_libraries(PlutoGEImportedAssetLifetimeTests PRIVATE "$<TARGET_PROPERTY:PlutoGEPrefabMeshExporterTests,LINK_LIBRARIES>")
+add_test(NAME PlutoGEImportedAssetLifetimeTests COMMAND PlutoGEImportedAssetLifetimeTests)
+
+add_executable(PlutoGEScenePortraitPoseTests ScenePortraitPoseTests.cpp)
+target_link_libraries(PlutoGEScenePortraitPoseTests PRIVATE "$<TARGET_PROPERTY:PlutoGEPrefabMeshExporterTests,LINK_LIBRARIES>")
+add_test(NAME PlutoGEScenePortraitPoseTests COMMAND PlutoGEScenePortraitPoseTests)
+
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

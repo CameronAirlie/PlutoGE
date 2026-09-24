@@ -43,6 +43,13 @@ int main(int argc, char **argv)
         std::cout << "world_bounds=" << low.x << ',' << low.y << ',' << low.z << " to " << high.x << ',' << high.y << ',' << high.z << '\n';
         for (const auto &t : asset.textures)
             std::cout << "texture exists=" << std::filesystem::exists(t.sourcePath) << " " << t.sourcePath << '\n';
+        for (size_t i = 0; i < asset.materials.size(); ++i)
+        {
+            const auto &material = asset.materials[i];
+            std::cout << "material=" << i << " rgba=" << material.color.r << ',' << material.color.g << ','
+                      << material.color.b << ',' << material.color.a << " metallic=" << material.metallic
+                      << " roughness=" << material.roughness << '\n';
+        }
         return 0;
     }
     catch (const std::exception &e)

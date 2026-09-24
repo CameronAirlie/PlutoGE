@@ -32,6 +32,10 @@ namespace PlutoGE::render
         // Presents the persistent host target without recording another scene.
         // The target is initialized lazily and refreshed only after a resize.
         [[nodiscard]] bool Present();
+        // Asset-independent host UI, available before any scene is constructed.
+        [[nodiscard]] bool PresentLoading(float elapsedSeconds, unsigned stage);
+        [[nodiscard]] rhi::TextureHandle GetHostColorTexture() const noexcept
+        { return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{}; }
         [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  std::span<const RenderCommand> commands,
@@ -58,5 +62,7 @@ namespace PlutoGE::render
         std::uint64_t m_frameSequence = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;
         bool m_hostFrameReady = false;
+        std::unique_ptr<BasicMesh> m_loadingQuad;
+        std::unique_ptr<BasicMesh> m_loadingLabel;
     };
 }

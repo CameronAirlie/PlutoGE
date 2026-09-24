@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "RuntimeComponentIndex.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
@@ -2189,6 +2190,7 @@ namespace PlutoGE::scene
             if (auto *navigationMesh = entity->GetComponent<NavigationMeshComponent>();
                 navigationMesh && navigationMesh->IsEnabled() && navigationMesh->ShouldHaveBake())
             {
+                platform::LoadingWork::Checkpoint();
                 navigationMesh->InvalidateBake();
                 navigationMesh->Update(0);
             }
@@ -2208,6 +2210,7 @@ namespace PlutoGE::scene
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
             if (!scriptComponent) continue;
+            platform::LoadingWork::Checkpoint();
             scriptComponent->Start();
         }
 
@@ -2246,6 +2249,7 @@ namespace PlutoGE::scene
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
             if (!scriptComponent) continue;
+            platform::LoadingWork::Checkpoint();
             scriptComponent->Stop();
         }
 

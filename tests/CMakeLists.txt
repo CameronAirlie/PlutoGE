@@ -567,6 +567,17 @@ add_test(NAME PlutoGETimelineTests COMMAND PlutoGETimelineTests)
 
 add_executable(PlutoGESequencerTests SequencerTests.cpp)
 add_executable(PlutoGESceneStreamingTests SceneStreamingTests.cpp)
+add_executable(PlutoGESceneLoadingTests SceneLoadingTests.cpp)
+target_link_libraries(PlutoGESceneLoadingTests PRIVATE PlutoGE::Scene)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESceneLoadingTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+endif()
+add_test(NAME PlutoGESceneLoadingTests COMMAND PlutoGESceneLoadingTests)
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGESceneLoadingTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneLoadingTests>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
 add_executable(PlutoGESplineRoadTests SplineRoadTests.cpp)
 target_link_libraries(PlutoGESplineRoadTests PRIVATE PlutoGE::Scene)
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)

@@ -545,30 +545,23 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.currentPhase = "load startup scene";
 #endif
 
-    auto scene = PlutoGE::scene::SceneSerializer::Load(
-        startupScenePath,
-        &errorMessage,
-#ifdef _WIN32
-        [](std::string_view message)
+    std::unique_ptr<PlutoGE::scene::Scene> scene;
+    const auto presentLoading = [&engine](const PlutoGE::core::SceneLoadStatus &status)
+    { engine.PresentLoadingScreen(status); };
+    if (!engine.GetSceneLoading().Load(startupScenePath, [&](auto loaded)
         {
-            PlutoGE::g_runtimeDiagnostics.Log(std::string(message));
-        }
-#else
-        {}
-#endif
-    );
-    if (!scene)
+            scene = std::move(loaded);
+            engine.SetScene(scene.get());
+            engine.StartRuntime();
+        }, presentLoading))
     {
-#ifdef _WIN32
-        PlutoGE::g_runtimeDiagnostics.Log("Failed to load startup scene: " + errorMessage);
-#endif
-        std::cerr << (errorMessage.empty() ? "Failed to load startup scene." : errorMessage) << std::endl;
+        std::cerr << engine.GetSceneLoading().Status().error << std::endl;
+        engine.StopRuntime();
+        engine.SetScene(nullptr);
+        scene.reset();
         engine.Shutdown();
         return 1;
     }
-
-    engine.SetScene(scene.get());
-    engine.StartRuntime();
 
 #ifdef _WIN32
     std::vector<PlutoGE::scene::Entity *> loadedEntities;
@@ -642,24 +635,19 @@ int RunRuntime(int argc, char **argv)
         {
             const std::string reference = project->FindSceneAssetReference(*requestedScene);
             const std::string requestedPath = reference.empty() ? std::string{} : engine.GetAssetManager().ResolveAssetPath(reference);
-            std::string sceneLoadError;
-            auto nextScene = requestedPath.empty() ? nullptr : PlutoGE::scene::SceneSerializer::Load(requestedPath, &sceneLoadError);
-            if (nextScene)
-            {
-                engine.SetScene(nextScene.get());
-                scene = std::move(nextScene);
-#ifdef _WIN32
-                PlutoGE::g_runtimeDiagnostics.Log("Loaded scene from script: " + requestedPath);
-#endif
-            }
-            else
-            {
-                const std::string detail = sceneLoadError.empty() ? "scene asset was not found" : sceneLoadError;
-                std::cerr << "Failed to load scene '" << *requestedScene << "': " << detail << std::endl;
-#ifdef _WIN32
-                PlutoGE::g_runtimeDiagnostics.Log("Failed scripted scene load '" + *requestedScene + "': " + detail);
-#endif
-            }
+            if (!engine.GetSceneLoading().Load(requestedPath, [&](auto nextScene)
+                {
+                    auto previousScene = std::move(scene);
+                    scene = std::move(nextScene);
+                    engine.SetScene(scene.get());
+                }, presentLoading))
+                std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << std::endl;
+            // Loading uses wall time; do not feed that time into the next physics step.
+            lastFrameTime = std::chrono::high_resolution_clock::now();
+            renderer.ClearRenderCommands();
+            // Keep the loading frame visible until the new scene has submitted
+            // its first frame's commands; never present an empty transition frame.
+            continue;
         }
 
 #ifdef _WIN32

@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
@@ -712,6 +713,7 @@ namespace PlutoGE::scene
             std::size_t lineNumber = 0;
             while (std::getline(input, line))
             {
+                platform::LoadingWork::Checkpoint();
                 ++lineNumber;
                 // LoadFromString also accepts bytes read asynchronously in binary
                 // mode, where Windows CRLF has not been translated by ifstream.
@@ -920,6 +922,7 @@ namespace PlutoGE::scene
 
             for (const auto &pendingParent : pendingParents)
             {
+                platform::LoadingWork::Checkpoint();
                 if (pendingParent.parentId == 0)
                 {
                     continue;

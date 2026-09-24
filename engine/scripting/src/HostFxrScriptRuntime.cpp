@@ -1264,6 +1264,15 @@ namespace PlutoGE::scripting
             request->error = nullptr;
             try
             {
+                // Full transitions outlive the outgoing scene generation.
+                if (request->operation == 7)
+                {
+                    const auto &status = core::Engine::GetInstance().GetSceneLoading().Status();
+                    request->state = static_cast<std::int32_t>(status.stage);
+                    error = status.error;
+                    request->error = error.c_str();
+                    return 1;
+                }
                 auto *scene = core::Engine::GetInstance().GetScene();
                 if (!scene || !scene->IsRuntimeStarted()) throw std::runtime_error("Scene streaming requires runtime");
                 auto &streaming = scene->GetStreaming();

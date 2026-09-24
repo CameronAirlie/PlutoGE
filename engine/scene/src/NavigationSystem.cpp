@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
@@ -41,6 +42,7 @@ namespace PlutoGE::scene
         const float minimumNormalY = std::cos(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
         for (int z = 0; z < m_depth; ++z)
         {
+            platform::LoadingWork::Checkpoint();
             for (int x = 0; x < m_width; ++x)
             {
                 const glm::vec3 origin{settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize,

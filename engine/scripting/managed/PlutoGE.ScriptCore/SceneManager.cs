@@ -5,6 +5,18 @@ namespace PlutoGE.ScriptCore;
 /// <summary>Loads project scenes during Play mode or in a standalone game.</summary>
 public static class SceneManager
 {
+    /// <summary>Last full scene transition, including errors after a rejected load.
+    /// Loading progress is stage based; percentages would not represent asset cost.</summary>
+    public static SceneLoadStatus LoadingStatus
+    {
+        get
+        {
+            var request = new ScriptBridge.NativeSceneStreamingRequest { Operation = 7 };
+            return ScriptBridge.SceneStreaming(ref request, null, out var error)
+                ? new((SceneLoadStage)request.State, error)
+                : new(SceneLoadStage.Failed, error);
+        }
+    }
     /// <summary>Opaque runtime scene generation; zero outside runtime.</summary>
     public static ulong RuntimeGeneration
     {
@@ -30,7 +42,8 @@ public static class SceneManager
     }
 
     /// <summary>
-    /// Requests a scene transition at the end of the current frame.
+    /// Requests a scene transition with the engine loading screen at the end of the current frame.
+    /// Gameplay is suspended while the engine prepares and activates the scene.
     /// Accepts a scene name ("Game"), project-relative path ("Scenes/Game.plutoscene"),
     /// or full project asset reference ("project://Scenes/Game.plutoscene").
     /// </summary>
@@ -39,6 +52,9 @@ public static class SceneManager
         return ScriptBridge.LoadScene(sceneAssetReference);
     }
 }
+
+public enum SceneLoadStage { Idle, Reading, Constructing, Activating, Complete, Failed }
+public readonly record struct SceneLoadStatus(SceneLoadStage Stage, string Error);
 
 /// <summary>A lightweight descriptor for a project scene.</summary>
 public sealed class Scene

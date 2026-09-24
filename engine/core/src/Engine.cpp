@@ -8,6 +8,8 @@
 #include "PlutoGE/render/rhi/RenderDeviceFactory.h"
 
 #include <chrono>
+#include <cmath>
+#include <stdexcept>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -635,13 +637,28 @@ namespace PlutoGE::core
 
     bool Engine::RequestSceneLoad(std::string sceneAssetReference)
     {
-        if (!m_isRuntimeRunning || sceneAssetReference.empty())
+        if (!m_isRuntimeRunning || sceneAssetReference.empty() || m_sceneLoading.IsLoading() || m_pendingSceneLoadRequest)
         {
             return false;
         }
 
         m_pendingSceneLoadRequest = std::move(sceneAssetReference);
         return true;
+    }
+
+    void Engine::PresentLoadingScreen(const SceneLoadStatus &status)
+    {
+        m_window.PollEvents();
+        if (m_window.ShouldClose()) return;
+        const auto extents = m_window.GetExtents();
+        if (extents.width <= 0 || extents.height <= 0) return;
+        if (m_swapchain->GetWidth() != static_cast<unsigned>(extents.width) ||
+            m_swapchain->GetHeight() != static_cast<unsigned>(extents.height))
+            static_cast<void>(m_rhiRenderService.Resize(static_cast<unsigned>(extents.width), static_cast<unsigned>(extents.height)));
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const float elapsed = static_cast<float>(std::fmod(seconds, 1000.0));
+        if (!m_rhiRenderService.PresentLoading(elapsed, static_cast<unsigned>(status.stage)))
+            throw std::runtime_error("Could not present loading screen");
     }
 
     std::optional<std::string> Engine::ConsumeSceneLoadRequest()

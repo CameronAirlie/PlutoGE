@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/import/MeshImporter.h"
 
@@ -5010,7 +5011,12 @@ namespace PlutoGE::assetimport
 
         try
         {
-            return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, ResolveMeshCookOptions(options)), options);
+            auto source = platform::LoadingWork::Prepare([normalizedPath, cookOptions]
+            {
+                return ParseMeshAsset(normalizedPath, cookOptions);
+            });
+            platform::LoadingWork::Checkpoint();
+            return FinalizeImportedMeshAsset(normalizedPath, std::move(source), options);
         }
         catch (const std::exception &exception)
         {

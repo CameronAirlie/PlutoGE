@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/core/CpuTrace.h"
@@ -514,36 +515,47 @@ namespace PlutoGE::audio
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT) || defined(PLUTOGE_USE_XAUDIO2)
         core::CpuScope loadScope("Audio clip decode and upload", core::CpuCategory::Audio);
-        DecodedClip decodedClip;
-        if (!LoadWaveFile(clipPath, decodedClip))
+        struct PreparedClip
         {
-            return false;
-        }
-
-        const auto [it, _] = m_clipCache.emplace(clipPath, AudioClip{
-                                                               .channels = decodedClip.channels,
-                                                               .sampleRate = decodedClip.sampleRate,
-                                                               .samples = std::move(decodedClip.samples),
-                                                           });
-        if (it->second.channels <= 1)
+            AudioClip clip;
+            std::vector<std::int16_t> samples16, mono16;
+            bool valid = false;
+        };
+        // Decode, downmix and convert independently of the device/context. Only
+        // cache publication and backend buffer creation run on the audio owner.
+        auto prepared = platform::LoadingWork::Prepare([clipPath]
         {
-            it->second.monoSamples = it->second.samples;
-        }
-        else
-        {
-            const std::size_t frameCount = it->second.samples.size() / static_cast<std::size_t>(it->second.channels);
-            it->second.monoSamples.resize(frameCount);
-            for (std::size_t frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+            PreparedClip result;
+            DecodedClip decoded;
+            if (!LoadWaveFile(clipPath, decoded)) return result;
+            result.clip.channels = decoded.channels;
+            result.clip.sampleRate = decoded.sampleRate;
+            result.clip.samples = std::move(decoded.samples);
+            auto &clip = result.clip;
+            if (clip.channels <= 1) clip.monoSamples = clip.samples;
+            else
             {
-                float mixedSample = 0.0f;
-                for (int channelIndex = 0; channelIndex < it->second.channels; ++channelIndex)
+                const auto frameCount = clip.samples.size() / static_cast<std::size_t>(clip.channels);
+                clip.monoSamples.resize(frameCount);
+                for (std::size_t frame = 0; frame < frameCount; ++frame)
                 {
-                    mixedSample += it->second.samples[frameIndex * static_cast<std::size_t>(it->second.channels) + static_cast<std::size_t>(channelIndex)];
+                    float mixed = 0;
+                    for (int channel = 0; channel < clip.channels; ++channel)
+                        mixed += clip.samples[frame * static_cast<std::size_t>(clip.channels) + channel];
+                    clip.monoSamples[frame] = mixed / static_cast<float>(clip.channels);
                 }
-
-                it->second.monoSamples[frameIndex] = mixedSample / static_cast<float>(it->second.channels);
             }
-        }
+#if defined(PLUTOGE_USE_OPENAL_SOFT)
+            result.samples16 = clip.channels <= 1 ? ConvertMonoToInt16(clip.samples)
+                                                  : ConvertToStereoInt16(clip.samples, clip.channels);
+            result.mono16 = ConvertMonoToInt16(clip.monoSamples);
+#endif
+            result.valid = true;
+            return result;
+        });
+        if (!prepared.valid) return false;
+        platform::LoadingWork::Checkpoint();
+        const auto [it, _] = m_clipCache.emplace(clipPath, std::move(prepared.clip));
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
         ALuint buffer = 0;
@@ -564,19 +576,13 @@ namespace PlutoGE::audio
             return false;
         }
 
-        const auto monoOrOriginalSamples = ConvertMonoToInt16(it->second.samples);
-        const auto stereoSamples = ConvertToStereoInt16(it->second.samples, it->second.channels);
         alBufferData(buffer,
                      it->second.channels <= 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16,
-                     it->second.channels <= 1 ? static_cast<const void *>(monoOrOriginalSamples.data()) : static_cast<const void *>(stereoSamples.data()),
-                     it->second.channels <= 1 ? static_cast<ALsizei>(monoOrOriginalSamples.size() * sizeof(std::int16_t)) : static_cast<ALsizei>(stereoSamples.size() * sizeof(std::int16_t)),
+                     prepared.samples16.data(),
+                     static_cast<ALsizei>(prepared.samples16.size() * sizeof(std::int16_t)),
                      it->second.sampleRate);
-
-        const auto monoSamples = ConvertMonoToInt16(it->second.monoSamples);
-        alBufferData(monoBuffer,
-                     AL_FORMAT_MONO16,
-                     monoSamples.data(),
-                     static_cast<ALsizei>(monoSamples.size() * sizeof(std::int16_t)),
+        alBufferData(monoBuffer, AL_FORMAT_MONO16, prepared.mono16.data(),
+                     static_cast<ALsizei>(prepared.mono16.size() * sizeof(std::int16_t)),
                      it->second.sampleRate);
 
         if (alGetError() != AL_NO_ERROR)
@@ -601,6 +607,7 @@ namespace PlutoGE::audio
 
     bool AudioSystem::PreloadClip(const std::string &clipPath)
     {
+        platform::LoadingWork::Checkpoint();
         if (!m_initialized || clipPath.empty())
             return false;
         const AudioClip *clip = nullptr;

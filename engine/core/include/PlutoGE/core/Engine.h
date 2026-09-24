@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/audio/AudioSystem.h"
+#include "PlutoGE/core/SceneLoading.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/import/MeshImporter.h"
@@ -99,6 +100,8 @@ namespace PlutoGE::core
         [[nodiscard]] MeshImportStatus GetMeshImportStatus(scene::EntityID entityId) const;
         void SetScene(scene::Scene *scene);
         bool RequestSceneLoad(std::string sceneAssetReference);
+        SceneLoading &GetSceneLoading() noexcept { return m_sceneLoading; }
+        void PresentLoadingScreen(const SceneLoadStatus &status);
         std::optional<std::string> ConsumeSceneLoadRequest();
         void RequestApplicationQuit();
         [[nodiscard]] bool ConsumeApplicationQuitRequest();
@@ -139,6 +142,7 @@ namespace PlutoGE::core
 
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;
+        SceneLoading m_sceneLoading;
         std::optional<std::string> m_pendingSceneLoadRequest;
         bool m_pendingApplicationQuitRequest = false;
     };

@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 
@@ -263,11 +264,12 @@ namespace PlutoGE::ui
                 }
                 swapchain.SetOverlayRecorder([this](void *commandContext)
                                              {
-                    if (m_drawData)
+                    if (m_drawData && !platform::LoadingWork::IsActive())
                         ImGui_ImplVulkan_RenderDrawData(m_drawData, static_cast<VkCommandBuffer>(commandContext));
                     m_drawData = nullptr; });
                 swapchain.SetOverlayPreparation([this](void *commandContext)
                                                 {
+                    if (platform::LoadingWork::IsActive()) return;
                     for (const auto &entry : m_textures)
                         if (entry.inUse)
                             m_device->PrepareTextureForEditorSampling(commandContext, entry.texture); });

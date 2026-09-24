@@ -1,5 +1,6 @@
 add_library(PlutoGECore
     src/Engine.cpp
+    src/SceneLoading.cpp
 )
 
 add_library(PlutoGE::Core ALIAS PlutoGECore)

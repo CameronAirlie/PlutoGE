@@ -1528,7 +1528,13 @@ namespace PlutoGE::ui
         m_runtimeSceneWasDirty = m_sceneDirty;
         m_runtimeSceneSnapshotPath = m_scene ? m_scene->GetFilePath() : std::string{};
         m_engine.GetWindow().SetCursorLockOverride(false);
-        m_engine.StartRuntime();
+        if (!m_engine.GetSceneLoading().Activate([this] { m_engine.StartRuntime(); },
+            [this](const core::SceneLoadStatus &status) { m_engine.PresentLoadingScreen(status); }))
+        {
+            StopEditorRuntime(false);
+            m_statusMessage = "Runtime start failed: " + m_engine.GetSceneLoading().Status().error;
+            return false;
+        }
         m_statusMessage = "Runtime started.";
         return true;
     }
@@ -1596,16 +1602,13 @@ namespace PlutoGE::ui
 
         const std::string reference = m_project->FindSceneAssetReference(*request);
         const std::string path = reference.empty() ? std::string{} : m_engine.GetAssetManager().ResolveAssetPath(reference);
-        std::string errorMessage;
-        auto loadedScene = path.empty() ? nullptr : scene::SceneSerializer::Load(path, &errorMessage);
-        if (!loadedScene)
+        if (!m_engine.GetSceneLoading().Load(path,
+            [this](auto loadedScene) { SetScene(std::move(loadedScene)); },
+            [this](const core::SceneLoadStatus &status) { m_engine.PresentLoadingScreen(status); }))
         {
-            const std::string detail = errorMessage.empty() ? "scene asset was not found" : errorMessage;
-            Log(ConsoleSeverity::Error, "Failed to load scene '" + *request + "': " + detail);
+            Log(ConsoleSeverity::Error, "Scene transition failed: " + m_engine.GetSceneLoading().Status().error);
             return;
         }
-
-        SetScene(std::move(loadedScene));
         m_statusMessage = "Runtime loaded scene: " + std::filesystem::path(path).filename().string();
     }
 
@@ -3055,6 +3058,7 @@ namespace PlutoGE::ui
             }
             core::CpuScope frameScope("EditorLoop");
             auto currentTime = std::chrono::high_resolution_clock::now();
+            const auto loadingSequence = m_engine.GetSceneLoading().Sequence();
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
@@ -4450,7 +4454,8 @@ namespace PlutoGE::ui
                 }
             }
 
-            lastTime = currentTime;
+            lastTime = loadingSequence == m_engine.GetSceneLoading().Sequence()
+                ? currentTime : std::chrono::high_resolution_clock::now();
         }
 
         if (isEditorCameraLookActive)

@@ -1,0 +1,104 @@
+{
+  "hardware": "AMD Ryzen 7 5700G / AMD Radeon(TM) Graphics",
+  "groups": {
+    "baseline": {
+      "runs": [
+        {
+          "id": "20260924-105206-83de280f",
+          "mean_ms": 39.76222094444447,
+          "p95_ms": 42.3625,
+          "geometry_ms": 13.009117,
+          "gpu_ms": 38.83065874555553,
+          "runtime_sha256": "05267D51B8DF20260C82CF5D2EA60D8E5E19A8A0B3E5188CFBE2261D089A30E7",
+          "shader_sha256": "CCED6CC1E172375A456982CA992E09D694CD18663AB0406C326F8B34C55F8478",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        },
+        {
+          "id": "20260924-105651-80d43689",
+          "mean_ms": 39.982570388888924,
+          "p95_ms": 42.8013,
+          "geometry_ms": 12.985432,
+          "gpu_ms": 38.984620631666694,
+          "runtime_sha256": "05267D51B8DF20260C82CF5D2EA60D8E5E19A8A0B3E5188CFBE2261D089A30E7",
+          "shader_sha256": "CCED6CC1E172375A456982CA992E09D694CD18663AB0406C326F8B34C55F8478",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        },
+        {
+          "id": "20260924-110154-985e7a22",
+          "mean_ms": 42.80928461111117,
+          "p95_ms": 46.1099,
+          "geometry_ms": 13.034464,
+          "gpu_ms": 39.11598652833334,
+          "runtime_sha256": "05267D51B8DF20260C82CF5D2EA60D8E5E19A8A0B3E5188CFBE2261D089A30E7",
+          "shader_sha256": "CCED6CC1E172375A456982CA992E09D694CD18663AB0406C326F8B34C55F8478",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        }
+      ],
+      "frames": 5400,
+      "mean_ms": 40.85135864814815,
+      "fps": 24.478990004052935,
+      "median_run_mean_ms": 39.982570388888924,
+      "p95_ms": 44.9312,
+      "p99_ms": 46.7405,
+      "geometry_ms": 13.009670999999999,
+      "gpu_ms": 38.97708863518519
+    },
+    "candidate": {
+      "runs": [
+        {
+          "id": "20260924-104937-e50e0cbb",
+          "mean_ms": 39.63274144444443,
+          "p95_ms": 42.3573,
+          "geometry_ms": 12.623312,
+          "gpu_ms": 38.55598695222218,
+          "runtime_sha256": "9BAFEC118F61428C450B32EA17D367A80D86A45481DAE084D4458AB584EE76D0",
+          "shader_sha256": "8223AB0C2B1B138A9BB6B83974D1DEDC36A77622051E637399D5B6E81623F610",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        },
+        {
+          "id": "20260924-105431-3fa1ea2a",
+          "mean_ms": 39.426082944444374,
+          "p95_ms": 42.0114,
+          "geometry_ms": 12.64746,
+          "gpu_ms": 38.5097510655556,
+          "runtime_sha256": "9BAFEC118F61428C450B32EA17D367A80D86A45481DAE084D4458AB584EE76D0",
+          "shader_sha256": "8223AB0C2B1B138A9BB6B83974D1DEDC36A77622051E637399D5B6E81623F610",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        },
+        {
+          "id": "20260924-105918-611fe76d",
+          "mean_ms": 39.7926736666667,
+          "p95_ms": 42.2691,
+          "geometry_ms": 12.659324,
+          "gpu_ms": 38.65960435999998,
+          "runtime_sha256": "9BAFEC118F61428C450B32EA17D367A80D86A45481DAE084D4458AB584EE76D0",
+          "shader_sha256": "8223AB0C2B1B138A9BB6B83974D1DEDC36A77622051E637399D5B6E81623F610",
+          "skinned_vertices": 60548.804444444446,
+          "geometry_draws": 107.12722222222222,
+          "shadow_draws": 431.1272222222222
+        }
+      ],
+      "frames": 5400,
+      "mean_ms": 39.61716601851852,
+      "fps": 25.24158339676703,
+      "median_run_mean_ms": 39.63274144444443,
+      "p95_ms": 42.2319,
+      "p99_ms": 43.5812,
+      "geometry_ms": 12.643365333333334,
+      "gpu_ms": 38.57511412592592
+    }
+  },
+  "geometry_change_percent": -2.8156412769136607,
+  "frame_change_percent": -3.0211789043779524,
+  "note": "Final baseline has extra CPU/presentation overhead; whole-frame gain is less certain than the repeatable geometry reduction. GPU observations are asynchronous and scopes overlap."
+}

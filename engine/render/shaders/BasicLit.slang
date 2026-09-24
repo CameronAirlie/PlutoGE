@@ -757,10 +757,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     const float3 graphInputNormal=normal;
     const float graphInputMetallic=materialMetallic, graphInputRoughness=materialRoughness;
     const float3 graphInputEmission=surfaceEmission;
+#ifdef PLUTO_STANDARD_MATERIAL
+    // The renderer selects this variant only for materials without a graph.
+    // Keep the interpreter's temporary register array out of that shader.
+    const bool customLighting = false;
+#else
     const bool customLighting=shaderGraph.outputs1.w!=0 && !glass;
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
+#endif
     if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
     if (alphaMode == 2 && glassParameters.x < 0.5 && shaderGraphFrame.z < 0.5)
     {

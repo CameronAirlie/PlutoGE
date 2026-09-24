@@ -42,6 +42,7 @@ namespace PlutoGE::render
             .vertex = Load("BasicLit", "vertex"),
             .instancedVertex = Load("BasicLitInstanced", "vertex"),
             .fragment = Load("BasicLit", "fragment"),
+            .standardFragment = Load("BasicLitStandard", "fragment"),
             .transparentFragment = Load("Glass", "fragment"),
             .glassSceneCopy = {.vertex = Load("GlassSceneCopy", "vertex"),
                                .fragment = Load("GlassSceneCopy", "fragment")},

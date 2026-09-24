@@ -186,6 +186,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode instancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode standardFragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage skyQuadrature;
@@ -580,6 +581,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_instancedPipeline;
         rhi::GraphicsPipeline m_outlinePipeline, m_outlineInstancedPipeline;
         rhi::GraphicsPipeline m_opaqueNoDebugPipeline, m_instancedNoDebugPipeline;
+        std::array<rhi::GraphicsPipeline, 4> m_standardOpaquePipelines;
         rhi::GraphicsPipeline m_outlineNoDebugPipeline, m_outlineInstancedNoDebugPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;

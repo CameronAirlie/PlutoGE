@@ -626,6 +626,16 @@ namespace PlutoGE::render
             noDebug.cullMode = rhi::CullMode::Front;
             noDebug.debugName = "Outline without diagnostics";
             m_outlineNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
+
+            if (!shaders.standardFragment.glsl.empty() || !shaders.standardFragment.spirv.empty())
+                for (std::size_t index = 0; index < m_standardOpaquePipelines.size(); ++index)
+                {
+                    auto standard = index % 2 ? instancedDescriptor : descriptor;
+                    standard.fragmentShader = shaders.standardFragment;
+                    if (index >= 2) standard.colorFormats.pop_back();
+                    standard.debugName = "Opaque material without shader graph";
+                    m_standardOpaquePipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(standard));
+                }
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1283,6 +1293,7 @@ namespace PlutoGE::render
         m_pipeline.Reset();
         m_outlinePipeline.Reset();
         m_opaqueNoDebugPipeline.Reset();
+        for (auto &pipeline : m_standardOpaquePipelines) pipeline.Reset();
         m_instancedNoDebugPipeline.Reset();
         m_outlineNoDebugPipeline.Reset();
         m_outlineInstancedNoDebugPipeline.Reset();
@@ -2144,9 +2155,12 @@ namespace PlutoGE::render
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
-            const auto pipeline = transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
+            auto pipeline = transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
                                   (draw.outlinePass ? (instanced ? outlineInstancedPipeline : outlinePipeline) :
                                    (instanced ? instancedPipeline : opaquePipeline));
+            const auto standardIndex = (geometryDebug ? 0u : 2u) + (instanced ? 1u : 0u);
+            if (!transparent && !draw.outlinePass && !draw.shaderGraphProgram && m_standardOpaquePipelines[standardIndex])
+                pipeline = m_standardOpaquePipelines[standardIndex].Get();
             if (boundDrawPipeline != pipeline)
             {
                 commands.BindPipeline(pipeline);

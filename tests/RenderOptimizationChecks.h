@@ -14,6 +14,7 @@ inline void LoadRenderOptimizationShaders(PlutoGE::render::BasicRendererShaderPa
     using namespace PlutoGE::render;
     const auto additions = ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).LoadBasicRendererPackage();
     shaders.particleInstancedVertex = additions.particleInstancedVertex;
+    shaders.standardFragment = additions.standardFragment;
     shaders.volumetricTrace = additions.volumetricTrace;
     shaders.volumetricComposite = additions.volumetricComposite;
     shaders.fusedColor = additions.fusedColor;
@@ -40,6 +41,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     // A second renderer without the optional pipelines provides a standalone
     // pass reference without changing global settings or production behavior.
     shaders.fusedColor = {};
+    shaders.standardFragment = {};
     shaders.volumetricTrace = {};
     shaders.volumetricComposite = {};
     BasicRenderer reference;
@@ -75,6 +77,37 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     draw.emission = {0.23f, 0.51f, 0.82f};
     BasicLighting lighting;
     lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    // Compare the interpreter-free material variant against the full shader,
+    // including instancing and both alpha coverage paths.
+    for (int scenario = 0; scenario < 18; ++scenario)
+    {
+        auto materialDraw = draw;
+        materialDraw.baseColor = {.2f, .4f, .6f, scenario % 2 ? .4f : 1.0f};
+        materialDraw.alphaMode = scenario % 3;
+        materialDraw.metallic = (scenario % 3) * .5f;
+        materialDraw.roughness = .1f + (scenario % 3) * .45f;
+        if (scenario >= 9)
+        {
+            auto instances = std::make_shared<std::vector<glm::mat4>>();
+            for (float x : {-.4f, .4f})
+                instances->push_back(glm::translate(glm::mat4(1), glm::vec3(x, 0, 0)) *
+                                     glm::scale(glm::mat4(1), glm::vec3(.45f)));
+            materialDraw.instanceModels = instances;
+            materialDraw.previousInstanceModels = instances;
+        }
+        auto materialLighting = lighting;
+        materialLighting.ambientIntensity = .2f;
+        materialLighting.directionalIntensity = 1;
+        materialLighting.directionalDirection = {-.2f, -.4f, -1};
+        materialLighting.shadowsEnabled = false;
+        materialLighting.cameraPosition = {0, 0, 3};
+        materialLighting.pointLights = {{{.5f, .5f, 2}, 5, {1, .5f, .25f}, 2}};
+        reference.Render(glm::mat4(1), materialLighting, {&materialDraw, 1});
+        const auto original = readPixels(reference.GetColorTexture());
+        renderer.Render(glm::mat4(1), materialLighting, {&materialDraw, 1});
+        compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
+                "Standard material variant differs from interpreter shader");
+    }
     BasicPostProcessEffect tone{BasicPostProcessEffectType::ToneMapping};
     tone.exposure = 1.3f;
     BasicPostProcessEffect grade{BasicPostProcessEffectType::ColorGrading};

@@ -17,9 +17,9 @@ int main() try
     {
         std::ofstream file(path, std::ios::binary);
         const auto write = [&](std::uint32_t value, int bytes) { for (int i = 0; i < bytes; ++i) file.put(static_cast<char>((value >> (i * 8)) & 255)); };
-        file.write("RIFF", 4); write(36 + 960, 4); file.write("WAVEfmt ", 8);
+        file.write("RIFF", 4); write(36 + 96000, 4); file.write("WAVEfmt ", 8);
         write(16, 4); write(1, 2); write(1, 2); write(48000, 4); write(96000, 4); write(2, 2); write(16, 2);
-        file.write("data", 4); write(960, 4); for (int i = 0; i < 480; ++i) write(0, 2);
+        file.write("data", 4); write(96000, 4); for (int i = 0; i < 48000; ++i) write(0, 2);
     }
     AudioSystem audio;
     Check(audio.Initialize(), "Null audio device initialization failed");
@@ -44,14 +44,20 @@ int main() try
     Check(!audio.IsEmitterActive(4) && !audio.IsEmitterActive(16), "Retired voices retained");
     Check(audio.IsEmitterActive(1) && audio.IsEmitterActive(2), "Restart/spatial transition failed");
     emitters[0].restartRequested = false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Simulate very slow frames and a clamped simulation delta. Playback must
+    // follow the audio device clock, not accumulated game Update time.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    audio.Update(listener, emitters, .001f);
+    Check(audio.IsEmitterActive(3), "One-shot completed before its audio duration");
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
     emitters[2].paused = true; // Completion and pause in the same update must not leave a queued stale handle.
     audio.Update(listener, emitters, .016f);
     Check(!audio.IsEmitterActive(3), "Completed one-shot retained");
+    Check(audio.IsEmitterActive(1) && audio.IsEmitterActive(2), "Loop stopped during slow frames");
     Check(alGetError() == AL_NO_ERROR, "Invalid OpenAL batch lifecycle operation");
     audio.Update(listener, {}, .016f);
     Check(!audio.IsEmitterActive(1), "Empty snapshot did not retire playback");
     Check(alGetError() == AL_NO_ERROR, "Audio cleanup error");
-    std::cout << "PASS: burst start, pause/resume, restart, spatial/loop changes, retirement and one-shot completion\n";
+    std::cout << "PASS: burst start, pause/resume, restart, spatial/loop changes, retirement and device-clock playback across slow frames\n";
 }
 catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }

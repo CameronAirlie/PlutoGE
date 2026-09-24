@@ -2135,6 +2135,12 @@ namespace PlutoGE::ui
 
     bool EditorShell::SaveSceneToPath(const std::filesystem::path &scenePath)
     {
+        if (m_engine.IsRuntimeRunning())
+        {
+            m_statusMessage = "Stop Play before saving the scene. Use Keep Play Mode Changes to retain selected edits.";
+            Log(ConsoleSeverity::Warning, m_statusMessage);
+            return false;
+        }
         if (!m_scene)
         {
             m_statusMessage = "No scene to save.";
@@ -3171,7 +3177,7 @@ namespace PlutoGE::ui
                 m_statusMessage = bakeResult.message;
                 std::cout << bakeResult.message << std::endl;
 
-                if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
+                if (bakeResult.succeeded && !m_engine.IsRuntimeRunning() && !m_scene->GetFilePath().empty())
                 {
                     std::string errorMessage;
                     if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))

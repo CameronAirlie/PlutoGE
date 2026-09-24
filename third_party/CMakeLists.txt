@@ -335,7 +335,21 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/kcat/openal-soft.git
     GIT_TAG        1.25.2
 )
-FetchContent_MakeAvailable(openal_soft)
+# Audio mixing must meet device deadlines even when the editor is a Debug
+# build. Unoptimised HRTF mixing can take longer than the audio it produces,
+# starving every sound. Scope these flags to the dependency and its helpers;
+# retain debug symbols and the Debug CRT without changing engine build flags.
+function(pluto_make_realtime_audio_available)
+    if (MSVC)
+        string(REGEX REPLACE "/Od|/Ob0|/RTC[1su]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+        string(APPEND CMAKE_CXX_FLAGS_DEBUG " /O2 /Ob2")
+    else()
+        string(APPEND CMAKE_CXX_FLAGS_DEBUG " -O2")
+    endif()
+    FetchContent_MakeAvailable(openal_soft)
+endfunction()
+pluto_make_realtime_audio_available()
+FetchContent_GetProperties(openal_soft)
 add_library(PlutoGE_openal_soft INTERFACE)
 add_library(PlutoGE::openal_soft ALIAS PlutoGE_openal_soft)
 if (TARGET OpenAL)

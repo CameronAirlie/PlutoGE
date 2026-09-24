@@ -40,6 +40,7 @@ namespace PlutoGE::render
         class IRenderDevice;
     }
     class RmlUiRhiRenderer;
+    class RmlLoadingDocument;
     class ScenePortrait;
     struct RmlUiCpuTiming
     {
@@ -78,6 +79,10 @@ namespace PlutoGE::render
 
         bool Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice = nullptr);
         void ResetRuntimeState();
+        std::shared_ptr<RmlLoadingDocument> CreateLoadingDocument(const std::string &reference,
+            platform::Window &window, rhi::IRenderDevice &device);
+        // Scoped by the loading session around controller callbacks only.
+        Rml::ElementDocument *SetLoadingDocumentTarget(Rml::ElementDocument *document);
         // Run before the host begins scene recording; cached previews submit only when dirty.
         void PrepareScenePortraits(const scene::Scene &scene, rhi::IRenderDevice &device);
         void Shutdown();
@@ -113,6 +118,9 @@ namespace PlutoGE::render
         void NotifyEventListenerDetached(const std::string &key, Rml::Element *element);
 
     private:
+        friend class RmlLoadingDocument;
+        std::vector<std::weak_ptr<RmlLoadingDocument>> m_loadingDocuments;
+        Rml::ElementDocument *m_loadingDocumentTarget = nullptr;
         RmlUiRuntime() = default;
         void ClearScenePortraits();
         struct PortraitEntry

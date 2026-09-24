@@ -1,5 +1,8 @@
 #pragma once
 
+#include "PlutoGE/ui/EditorViewportOverlay.h"
+#include <functional>
+#include <filesystem>
 #include <string>
 #include <memory>
 #include <vector>
@@ -64,7 +67,12 @@ namespace PlutoGE::ui
         void BeginPanelUpdate();
 
         void EndPanelUpdate();
+        // Replays the completed editor frame with one viewport overlay. No panel
+        // updates, ImGui NewFrame, scene access or input handling occur here.
+        void PresentViewportOverlay(const EditorViewportRegion &region, EditorTextureHandle texture,
+                                    bool bottomUp, const std::function<void()> &presentHost);
 
+        static std::filesystem::path GetEditorFontPath(const char *fontFileName);
         void SetEditorFontSize(float fontSize);
         [[nodiscard]] float GetEditorFontSize() const { return m_editorFontSize; }
         void SetEditorFont(const std::string &fontName);

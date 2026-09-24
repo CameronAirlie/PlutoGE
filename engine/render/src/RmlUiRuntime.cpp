@@ -3,6 +3,7 @@
 #include <RmlUi/Core/FileInterface.h>
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
+#include "PlutoGE/render/RmlLoadingDocument.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
@@ -39,6 +40,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <utility>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -616,11 +618,47 @@ namespace PlutoGE::render
         return true;
     }
 
+
+    Rml::ElementDocument *RmlUiRuntime::SetLoadingDocumentTarget(Rml::ElementDocument *document)
+    {
+        return std::exchange(m_loadingDocumentTarget, document);
+    }
+
+    std::shared_ptr<RmlLoadingDocument> RmlUiRuntime::CreateLoadingDocument(
+        const std::string &reference, platform::Window &window, rhi::IRenderDevice &device)
+    {
+        if (!m_context && !Initialize(window, &device)) return {};
+        const auto path = ResolveDocumentPath(core::Engine::GetInstance().GetAssetManager(), reference);
+        if (path.empty()) return {};
+        LoadDocumentFonts(path);
+        Rml::Factory::ClearStyleSheetCache();
+        Rml::Factory::ClearTemplateCache();
+        const ShaderArtifactLibrary shaders;
+        auto result = std::shared_ptr<RmlLoadingDocument>(new RmlLoadingDocument);
+        result->m_renderer = std::make_unique<RmlUiRhiRenderer>(device,
+            shaders.Load("RmlUi", "vertex"), shaders.Load("RmlUi", "fragment"));
+        if (!static_cast<bool>(*result->m_renderer)) return {};
+        static std::uint64_t serial = 0;
+        result->m_context = Rml::CreateContext("PlutoGE.Loading." + std::to_string(++serial),
+            {1, 1}, result->m_renderer.get());
+        if (!result->m_context) return {};
+        result->m_document = result->m_context->LoadDocument(path);
+        if (!result->m_document) return {};
+        result->m_document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        std::erase_if(m_loadingDocuments, [](const auto &weak) { return weak.expired(); });
+        m_loadingDocuments.push_back(result);
+        return result;
+    }
+
     void RmlUiRuntime::Shutdown()
     {
         if (!m_context && !m_renderer && !m_rhiRenderer && !m_system)
             return;
 
+        for (auto &weak : m_loadingDocuments)
+            if (auto document = weak.lock()) document->Shutdown();
+        m_loadingDocuments.clear();
+        m_loadingDocumentTarget = nullptr;
         ResetRuntimeState();
         m_loadedFontFaces.clear();
         m_fontData.clear();
@@ -1296,6 +1334,7 @@ namespace PlutoGE::render
 
     Rml::ElementDocument *RmlUiRuntime::FindDocument(const std::string &document) const
     {
+        if (document == "loading://active") return m_loadingDocumentTarget;
         const auto found = m_documents.find(document);
         if (found != m_documents.end())
             return found->second;
@@ -1347,7 +1386,7 @@ namespace PlutoGE::render
         }
         else if (target->IsVisible())
         {
-            m_context->UnfocusDocument(target);
+            target->GetContext()->UnfocusDocument(target);
             target->Hide();
         }
         return true;

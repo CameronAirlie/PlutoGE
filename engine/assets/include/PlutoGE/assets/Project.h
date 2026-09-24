@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/render/LoadingScreenStyle.h"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -32,6 +33,7 @@ namespace PlutoGE::assets
         RmlDocument,
         InputMapping,
         SurfaceResponse,
+        LoadingScreen,
         Count,
     };
 
@@ -82,6 +84,7 @@ namespace PlutoGE::assets
         std::string name = "UntitledProject";
         std::string assetDirectory = "Assets";
         std::string startupScene;
+        render::LoadingScreenStyle loadingScreen;
         std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";
         int windowWidth = 1280;

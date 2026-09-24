@@ -5,6 +5,7 @@
 #include "PlutoGE/render/rhi/Types.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/EditorCompositor.h"
+#include "PlutoGE/ui/EditorViewportOverlay.h"
 
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
@@ -73,6 +74,11 @@ namespace PlutoGE::ui
         bool IsGridVisible() const { return m_showGrid; }
         glm::vec2 GetViewportMin() const { return m_viewportMin; }
         glm::vec2 GetViewportSize() const { return m_viewportSize; }
+        EditorViewportRegion GetPresentationRegion() const
+        {
+            if (!IsOpen() || !WasVisibleLastFrame()) return {};
+            return {m_platformViewport, {m_viewportMin.x, m_viewportMin.y}, {m_viewportSize.x, m_viewportSize.y}};
+        }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
         void SetEditorMovementEnabled(bool enabled) { m_editorMovementEnabled = enabled; }
         void SetEditorCameraData(const render::CameraData &cameraData);
@@ -140,6 +146,7 @@ namespace PlutoGE::ui
         bool m_editorMovementEnabled = false;
         bool m_hasEditorCameraData = false;
         render::CameraData m_editorCameraData{};
+        ImGuiID m_platformViewport = 0;
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
         float m_settingsOverlayBottom = 0.0f;

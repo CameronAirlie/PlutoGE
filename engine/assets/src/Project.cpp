@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cctype>
 #include <cstdlib>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -677,6 +678,26 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "LOADING_SCREEN" && tokens.size() >= 2)
+            {
+                manifest.loadingScreen.assetReference = tokens[1];
+                continue;
+            }
+            if (tokens[0] == "LOADING_TITLE" && tokens.size() >= 2)
+            {
+                manifest.loadingScreen.title = tokens[1];
+                continue;
+            }
+            if (tokens[0] == "LOADING_ACCENT" && tokens.size() >= 4)
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    float value = 0.65f;
+                    ParseFloat(tokens[i + 1], value);
+                    manifest.loadingScreen.accent[i] = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.65f;
+                }
+                continue;
+            }
             if (tokens[0] == "WINDOW_TITLE" && tokens.size() >= 2)
             {
                 manifest.windowTitle = tokens[1];
@@ -921,6 +942,7 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Assembly;
         }
+        if (EndsWithInsensitive(reference, ".plutoloading")) return ProjectAssetType::LoadingScreen;
         if (EndsWithInsensitive(reference, ".rml"))
             return ProjectAssetType::RmlDocument;
         if (EndsWithInsensitive(reference, ".plutomaterial") || EndsWithInsensitive(reference, ".mat"))
@@ -1014,6 +1036,7 @@ namespace PlutoGE::assets
             return "Assembly";
         case ProjectAssetType::ScriptableObject:
             return "Scriptable Object";
+        case ProjectAssetType::LoadingScreen: return "Loading Screen";
         case ProjectAssetType::RmlDocument:
             return "RML Document";
         case ProjectAssetType::InputMapping:
@@ -1060,6 +1083,7 @@ namespace PlutoGE::assets
             return ProjectAssetType::Assembly;
         if (typeName == "Scriptable Object" || typeName == "ScriptableObject")
             return ProjectAssetType::ScriptableObject;
+        if (typeName == "Loading Screen" || typeName == "LoadingScreen") return ProjectAssetType::LoadingScreen;
         if (typeName == "RML Document" || typeName == "RmlDocument")
             return ProjectAssetType::RmlDocument;
         if (typeName == "Input Mapping" || typeName == "InputMapping")
@@ -1081,6 +1105,12 @@ namespace PlutoGE::assets
         output << "ASSET_DIR\t" << EscapeText(m_manifest.assetDirectory) << '\n';
         output << "STARTUP_SCENE\t" << EscapeText(m_manifest.startupScene) << '\n';
         output << "SCRIPT_ASSEMBLY\t" << EscapeText(m_manifest.scriptAssembly) << '\n';
+        if (!m_manifest.loadingScreen.assetReference.empty())
+            output << "LOADING_SCREEN\t" << EscapeText(m_manifest.loadingScreen.assetReference) << '\n';
+        if (!m_manifest.loadingScreen.title.empty())
+            output << "LOADING_TITLE\t" << EscapeText(m_manifest.loadingScreen.title) << '\n';
+        output << "LOADING_ACCENT\t" << m_manifest.loadingScreen.accent.r << '\t'
+               << m_manifest.loadingScreen.accent.g << '\t' << m_manifest.loadingScreen.accent.b << '\n';
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';

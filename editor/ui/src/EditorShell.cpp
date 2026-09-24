@@ -1,3 +1,4 @@
+#include "PlutoGE/ui/EditorLoadingPresenter.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
@@ -10,6 +11,7 @@
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
+#include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
@@ -1501,7 +1503,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::StartEditorRuntime()
+    bool EditorShell::StartEditorRuntime(ViewportPanel &gameViewport)
     {
         if (m_engine.IsRuntimeRunning())
         {
@@ -1528,8 +1530,10 @@ namespace PlutoGE::ui
         m_runtimeSceneWasDirty = m_sceneDirty;
         m_runtimeSceneSnapshotPath = m_scene ? m_scene->GetFilePath() : std::string{};
         m_engine.GetWindow().SetCursorLockOverride(false);
+        EditorLoadingPresenter presenter(m_engine, m_panelManager, gameViewport.GetPresentationRegion(),
+            m_project ? m_project->GetManifest().loadingScreen : render::LoadingScreenStyle{});
         if (!m_engine.GetSceneLoading().Activate([this] { m_engine.StartRuntime(); },
-            [this](const core::SceneLoadStatus &status) { m_engine.PresentLoadingScreen(status); }))
+            [&presenter](const core::SceneLoadStatus &status) { presenter.Present(status); }))
         {
             StopEditorRuntime(false);
             m_statusMessage = "Runtime start failed: " + m_engine.GetSceneLoading().Status().error;
@@ -1589,7 +1593,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    void EditorShell::HandleRuntimeSceneLoadRequest()
+    void EditorShell::HandleRuntimeSceneLoadRequest(ViewportPanel &gameViewport)
     {
         const auto request = m_engine.ConsumeSceneLoadRequest();
         if (!request)
@@ -1602,9 +1606,11 @@ namespace PlutoGE::ui
 
         const std::string reference = m_project->FindSceneAssetReference(*request);
         const std::string path = reference.empty() ? std::string{} : m_engine.GetAssetManager().ResolveAssetPath(reference);
+        EditorLoadingPresenter presenter(m_engine, m_panelManager, gameViewport.GetPresentationRegion(),
+            m_project->GetManifest().loadingScreen);
         if (!m_engine.GetSceneLoading().Load(path,
             [this](auto loadedScene) { SetScene(std::move(loadedScene)); },
-            [this](const core::SceneLoadStatus &status) { m_engine.PresentLoadingScreen(status); }))
+            [&presenter](const core::SceneLoadStatus &status) { presenter.Present(status); }))
         {
             Log(ConsoleSeverity::Error, "Scene transition failed: " + m_engine.GetSceneLoading().Status().error);
             return;
@@ -1929,7 +1935,7 @@ namespace PlutoGE::ui
             if (isRuntimeRunning && io.KeyShift)
                 StopEditorRuntime();
             else if (!isRuntimeRunning && !io.KeyShift)
-                StartEditorRuntime();
+                m_pendingRuntimeStart = true;
             return;
         }
         const bool command = io.KeyCtrl || io.KeySuper;
@@ -2349,6 +2355,8 @@ namespace PlutoGE::ui
 
         m_project = std::move(loadedProject);
         m_activeMaterialAssetReference.clear();
+        m_activeLoadingScreenAssetReference.clear();
+        m_openLoadingScreenEditorRequested = false;
         m_panelManager.OnProjectChanged();
         ClearCachedMaterialPreviews();
         m_undoStack.clear();
@@ -2451,6 +2459,8 @@ namespace PlutoGE::ui
         createdProject->GetManifest().graphicsApi = m_engine.GetConfig().graphicsApi;
         m_project = std::move(createdProject);
         m_activeMaterialAssetReference.clear();
+        m_activeLoadingScreenAssetReference.clear();
+        m_openLoadingScreenEditorRequested = false;
         m_panelManager.OnProjectChanged();
         ClearCachedMaterialPreviews();
         ApplyProjectContext();
@@ -2959,6 +2969,9 @@ namespace PlutoGE::ui
         particleSystemEditorPanel->Initialize();
         m_panelManager.AddPanel(particleSystemEditorPanel);
 
+        auto loadingScreenEditorPanel = new LoadingScreenEditorPanel(PanelConfig{"Loading Screen Editor", false});
+        m_panelManager.AddPanel(loadingScreenEditorPanel);
+
         auto inputMappingEditorPanel = new InputMappingEditorPanel(PanelConfig{"Input Mapping Editor", false});
         inputMappingEditorPanel->Initialize();
         m_panelManager.AddPanel(inputMappingEditorPanel);
@@ -2980,6 +2993,7 @@ namespace PlutoGE::ui
         std::array<char, 256> projectWindowTitleBuffer{};
         std::array<char, 512> projectScriptAssemblyBuffer{};
         std::string projectStartupScene;
+        std::string projectLoadingScreen;
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
@@ -3003,6 +3017,7 @@ namespace PlutoGE::ui
             m_project->RefreshAssetRegistry();
             const auto &manifest = m_project->GetManifest();
             projectStartupScene = manifest.startupScene;
+            projectLoadingScreen = manifest.loadingScreen.assetReference;
             std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
             std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
             std::memset(projectScriptAssemblyBuffer.data(), 0, projectScriptAssemblyBuffer.size());
@@ -3286,10 +3301,6 @@ namespace PlutoGE::ui
                     {
                         StopEditorRuntime();
                     }
-                    else
-                    {
-                        HandleRuntimeSceneLoadRequest();
-                    }
                 }
             }
             sceneScope.End();
@@ -3441,6 +3452,7 @@ namespace PlutoGE::ui
 
             // UI
 
+            loadingScreenEditorPanel->PreparePreview();
             core::CpuScope rendererScope("Renderer.BeginFrame", core::CpuCategory::Rendering);
             const auto beginFrameStart = std::chrono::high_resolution_clock::now();
             renderer.BeginFrame();
@@ -3526,6 +3538,8 @@ namespace PlutoGE::ui
                 {
                     particleSystemEditorPanel->SetOpen(true);
                 }
+                if (m_openLoadingScreenEditorRequested)
+                { loadingScreenEditorPanel->SetOpen(true); m_openLoadingScreenEditorRequested = false; }
                 if (ConsumeInputMappingEditorOpenRequest())
                     inputMappingEditorPanel->SetOpen(true);
 
@@ -3866,12 +3880,7 @@ namespace PlutoGE::ui
                     ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
                     if (ImGui::MenuItem("Play", "F5"))
                     {
-                        if (StartEditorRuntime())
-                        {
-                            forceEditorCursorVisible = false;
-                            window.SetCursorLockOverride(false);
-                            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
-                        }
+                        m_pendingRuntimeStart = true;
                     }
                     ImGui::EndDisabled();
 
@@ -3991,6 +4000,15 @@ namespace PlutoGE::ui
 
                     ImGui::InputText("Project Name", projectNameBuffer.data(), projectNameBuffer.size());
                     ImGui::InputText("Window Title", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
+                    if (ImGui::BeginCombo("Loading Screen", projectLoadingScreen.empty() ? "Engine default" : projectLoadingScreen.c_str()))
+                    {
+                        if (ImGui::Selectable("Engine default", projectLoadingScreen.empty())) projectLoadingScreen.clear();
+                        for (const auto &asset : manifest.assetEntries)
+                            if (asset.type == assets::ProjectAssetType::LoadingScreen &&
+                                ImGui::Selectable(asset.reference.c_str(), projectLoadingScreen == asset.reference))
+                                projectLoadingScreen = asset.reference;
+                        ImGui::EndCombo();
+                    }
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
@@ -4138,6 +4156,7 @@ namespace PlutoGE::ui
                         manifest.name = projectNameBuffer.data();
                         manifest.startupScene = projectStartupScene;
                         manifest.windowTitle = projectWindowTitleBuffer.data();
+                        manifest.loadingScreen.assetReference = projectLoadingScreen;
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
@@ -4347,6 +4366,20 @@ namespace PlutoGE::ui
                                      frameTimingStats, m_panelManager.GetTimingStats(), renderer,
                                      render::RmlUiRuntime::Get().GetCpuTiming(), cpuTrace.TakeSamples(), cpuTrace.GetDroppedCount());
 
+            // Scene transitions may pump loading frames. Defer them until all UI
+            // and scene commands have been submitted, so the presenter can replay
+            // this completed frame without re-entering panels or gameplay.
+            if (!window.ShouldClose())
+            {
+                if (std::exchange(m_pendingRuntimeStart, false) && StartEditorRuntime(*viewportPanel2))
+                {
+                    forceEditorCursorVisible = false;
+                    window.SetCursorLockOverride(false);
+                    window.SetScriptInputEnabled(shouldEnableRuntimeInput());
+                }
+                if (m_engine.IsRuntimeRunning()) HandleRuntimeSceneLoadRequest(*viewportPanel2);
+            }
+
             if (m_pendingGraphicsApi)
             {
                 const auto requestedApi = *m_pendingGraphicsApi;
@@ -4356,6 +4389,7 @@ namespace PlutoGE::ui
 
                 // Release every resource tied to the old device/context before
                 // Engine::Shutdown destroys the native window.
+                loadingScreenEditorPanel->Shutdown();
                 viewportPanel->Shutdown();
                 viewportPanel2->Shutdown();
                 m_editorSceneRenderService->Shutdown();

@@ -323,6 +323,9 @@ namespace PlutoGE::ui
         return m_compositor ? m_compositor->GetImGuiTextureId(texture) : 0;
     }
 
+    std::filesystem::path PanelManager::GetEditorFontPath(const char *fontFileName)
+    { return ResolveEditorFontPath(fontFileName); }
+
     void PanelManager::SetEditorFontSize(float fontSize)
     {
         m_editorFontSize = std::clamp(fontSize, kMinEditorFontSize, kMaxEditorFontSize);
@@ -438,12 +441,20 @@ namespace PlutoGE::ui
         m_timingStats.beginPanelUpdateMs = DurationMs(beginPanelUpdateStart, std::chrono::high_resolution_clock::now());
     }
 
+    void PanelManager::PresentViewportOverlay(const EditorViewportRegion &region, EditorTextureHandle texture,
+                                               bool bottomUp, const std::function<void()> &presentHost)
+    {
+        const auto extents = m_window->GetExtents();
+        PresentEditorViewportOverlay(*m_compositor, region, static_cast<ImTextureID>(GetImGuiTextureId(texture)),
+                                     bottomUp, extents.width, extents.height, presentHost);
+    }
+
     void PanelManager::EndPanelUpdate()
     {
         const auto endPanelUpdateStart = std::chrono::high_resolution_clock::now();
         const auto imguiRenderStart = std::chrono::high_resolution_clock::now();
         ImGui::Render();
-        m_compositor->RenderDrawData();
+        m_compositor->RenderDrawData(ImGui::GetDrawData());
         const auto imguiRenderEnd = std::chrono::high_resolution_clock::now();
         m_timingStats.imguiRenderMs = DurationMs(imguiRenderStart, imguiRenderEnd);
         m_timingStats.platformViewportCount = ImGui::GetPlatformIO().Viewports.Size;

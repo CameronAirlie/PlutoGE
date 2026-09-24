@@ -1985,6 +1985,7 @@ namespace PlutoGE::ui
                 ImVec2(viewportMin.x + 12, viewportMin.y + 12), IM_COL32(255, 130, 110, 255),
                 error.c_str(), nullptr, std::max(80.0f, imageSize.x - 24));
         }
+        m_platformViewport = ImGui::GetWindowViewport()->ID;
         m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
         m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
         const ImVec2 mousePosition = ImGui::GetIO().MousePos;

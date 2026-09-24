@@ -646,8 +646,10 @@ namespace PlutoGE::core
         return true;
     }
 
-    void Engine::PresentLoadingScreen(const SceneLoadStatus &status)
+    void Engine::PresentLoadingScreen(const SceneLoadStatus &status, const render::LoadingScreenStyle &style)
     {
+        if (m_config.isEditorHost)
+            throw std::logic_error("Editor loading must use a viewport presenter");
         m_window.PollEvents();
         if (m_window.ShouldClose()) return;
         const auto extents = m_window.GetExtents();
@@ -657,7 +659,7 @@ namespace PlutoGE::core
             static_cast<void>(m_rhiRenderService.Resize(static_cast<unsigned>(extents.width), static_cast<unsigned>(extents.height)));
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const float elapsed = static_cast<float>(std::fmod(seconds, 1000.0));
-        if (!m_rhiRenderService.PresentLoading(elapsed, static_cast<unsigned>(status.stage)))
+        if (!m_rhiRenderService.PresentLoading(elapsed, static_cast<unsigned>(status.stage), style))
             throw std::runtime_error("Could not present loading screen");
     }
 

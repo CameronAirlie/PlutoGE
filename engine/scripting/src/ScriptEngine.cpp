@@ -357,7 +357,9 @@ namespace PlutoGE::scripting
 
         for (const auto &[fullName, registeredClass] : m_classes)
         {
-            if (registeredClass.definition.kind == ScriptClassKind::Behaviour)
+            if (registeredClass.definition.kind == ScriptClassKind::Behaviour &&
+                std::find(registeredClass.definition.assignableTypeNames.begin(), registeredClass.definition.assignableTypeNames.end(),
+                    "PlutoGE.ScriptCore.LoadingScreenController") == registeredClass.definition.assignableTypeNames.end())
             {
                 classNames.push_back(fullName);
             }
@@ -365,6 +367,16 @@ namespace PlutoGE::scripting
 
         std::sort(classNames.begin(), classNames.end());
         return classNames;
+    }
+
+    std::vector<std::string> ScriptEngine::GetLoadingScreenClassNames() const
+    {
+        std::vector<std::string> result;
+        for (const auto &[name, item] : m_classes)
+            if (std::find(item.definition.assignableTypeNames.begin(), item.definition.assignableTypeNames.end(),
+                "PlutoGE.ScriptCore.LoadingScreenController") != item.definition.assignableTypeNames.end()) result.push_back(name);
+        std::sort(result.begin(), result.end());
+        return result;
     }
 
     std::vector<std::string> ScriptEngine::GetScriptableObjectClassNames() const

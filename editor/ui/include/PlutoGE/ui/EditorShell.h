@@ -44,6 +44,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::ui
 {
     class ProfilerPanel;
+    class ViewportPanel;
     class EditorSceneRenderService;
 
     class EditorShell
@@ -199,6 +200,9 @@ namespace PlutoGE::ui
         void OpenAnimationClipAsset(std::string animationClipAssetReference);
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         void OpenInputMappingAsset(std::string inputMappingAssetReference);
+        void OpenLoadingScreenAsset(std::string reference)
+        { m_activeLoadingScreenAssetReference = std::move(reference); m_openLoadingScreenEditorRequested = true; }
+        const std::string &GetActiveLoadingScreenAssetReference() const { return m_activeLoadingScreenAssetReference; }
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
         const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         const std::string &GetActiveShaderGraphAssetReference() const { return m_activeShaderGraphAssetReference; }
@@ -317,13 +321,13 @@ namespace PlutoGE::ui
         void RenderProjectValidation(const std::function<void(const std::string &)> &reveal);
         void SaveRecoveryBackup();
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
-        bool StartEditorRuntime();
+        bool StartEditorRuntime(ViewportPanel &gameViewport);
         bool StopEditorRuntime(bool reviewChanges = false);
         void RenderPlayModeChanges();
         bool ApplyPlayModeChanges();
         void RenderViewportBookmarks();
         void RenderGroundPlacement();
-        void HandleRuntimeSceneLoadRequest();
+        void HandleRuntimeSceneLoadRequest(ViewportPanel &gameViewport);
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
         void MarkProjectClean();
@@ -336,6 +340,7 @@ namespace PlutoGE::ui
         PanelManager m_panelManager;
         std::unique_ptr<EditorSceneRenderService> m_editorSceneRenderService;
         std::unique_ptr<EditorSceneRenderService> m_gameSceneRenderService;
+        bool m_pendingRuntimeStart = false;
         EditorProfiler m_profiler;
 
         EntitySelection m_entitySelection;
@@ -387,6 +392,8 @@ namespace PlutoGE::ui
         std::string m_activeAnimationClipAssetReference;
         std::string m_activeParticleSystemAssetReference;
         std::string m_activeInputMappingAssetReference;
+        std::string m_activeLoadingScreenAssetReference;
+        bool m_openLoadingScreenEditorRequested = false;
         TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;

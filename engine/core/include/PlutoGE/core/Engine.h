@@ -101,7 +101,8 @@ namespace PlutoGE::core
         void SetScene(scene::Scene *scene);
         bool RequestSceneLoad(std::string sceneAssetReference);
         SceneLoading &GetSceneLoading() noexcept { return m_sceneLoading; }
-        void PresentLoadingScreen(const SceneLoadStatus &status);
+        // Built-in standalone fallback. Use LoadingScreenSession for project assets/controllers.
+        void PresentLoadingScreen(const SceneLoadStatus &status, const render::LoadingScreenStyle &style = {});
         std::optional<std::string> ConsumeSceneLoadRequest();
         void RequestApplicationQuit();
         [[nodiscard]] bool ConsumeApplicationQuitRequest();

@@ -4025,7 +4025,10 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnCreate)
                 {
-                    m_impl->invokeOnCreate(m_instanceHandle);
+                    const auto result = m_impl->invokeOnCreate(m_instanceHandle);
+                    if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
+                        throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
                 }
             }
 
@@ -4033,7 +4036,10 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnUpdate)
                 {
-                    m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
+                    const auto result = m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
+                    if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
+                        throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
                 }
             }
 
@@ -4057,7 +4063,10 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnDestroy)
                 {
-                    m_impl->invokeOnDestroy(m_instanceHandle);
+                    const auto result = m_impl->invokeOnDestroy(m_instanceHandle);
+                    if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
+                        throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
                 }
             }
 

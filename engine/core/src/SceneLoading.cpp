@@ -53,6 +53,8 @@ namespace PlutoGE::core
             m_status.stage = SceneLoadStage::Failed;
             m_status.error = "Unexpected scene loading failure";
         }
+        if (m_status.stage == SceneLoadStage::Failed && presentationError.empty())
+            platform::LoadingWork::Checkpoint(true);
         std::clog << "Scene loading: " << m_status.path << "; frames=" << m_status.presentedFrames
                   << "; longest interval=" << m_status.longestFrameMs << " ms"
                   << (m_status.error.empty() ? "" : "; error=" + m_status.error) << '\n';

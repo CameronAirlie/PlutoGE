@@ -1574,10 +1574,13 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            var uiUpdateSequence = GetUIUpdateSequence();
-            UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
-            RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
-            RefreshScriptableObjectReferences(instance);
+            if (instance is not LoadingScreenController)
+            {
+                var uiUpdateSequence = GetUIUpdateSequence();
+                UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
+                RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
+                RefreshScriptableObjectReferences(instance);
+            }
             instance.OnUpdate(deltaTime);
             return 1;
         }

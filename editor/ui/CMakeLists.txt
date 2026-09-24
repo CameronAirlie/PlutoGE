@@ -14,6 +14,8 @@ add_library(PlutoGEEditorUI
     src/AssetReferenceSearchPanel.cpp
     src/EditorProfiler.cpp
     src/EditorCompositor.cpp
+    src/EditorViewportOverlay.cpp
+    src/EditorLoadingPresenter.cpp
     src/EditorSceneRenderService.cpp
     src/panels/Panel.cpp
     src/panels/ConsolePanel.cpp
@@ -25,6 +27,7 @@ add_library(PlutoGEEditorUI
     src/panels/MeshEditorPanel.cpp
     src/panels/ParticleSystemEditorPanel.cpp
     src/panels/InputMappingEditorPanel.cpp
+    src/panels/LoadingScreenEditorPanel.cpp
     src/panels/ShaderGraphEditorPanel.cpp
     src/panels/ProfilerTimeline.cpp
     src/panels/ProfilerPanel.cpp

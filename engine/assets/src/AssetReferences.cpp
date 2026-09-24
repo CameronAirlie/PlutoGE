@@ -222,7 +222,7 @@ namespace PlutoGE::assets
         return e == ".plutoscene" || e == ".plutoprefab" || e == ".plutomaterial" || e == ".mat" ||
                e == ".plutomesh" || e == ".plutoanim" || e == ".plutoclip" || e == ".plutomodel" ||
                e == ".plutoanimgraph" || e == ".plutoshadergraph" || e == ".plutoparticles" ||
-               e == ".plutosurface" || e == ".plutopostprocess" || e == ".plutoscriptable" || e == ".plutoinput" ||
+               e == ".plutoloading" || e == ".plutosurface" || e == ".plutopostprocess" || e == ".plutoscriptable" || e == ".plutoinput" ||
                e == ".cs" || e == ".rml" || e == ".rcss" || e == ".gltf";
     }
 

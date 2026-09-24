@@ -554,6 +554,17 @@ add_test(NAME PlutoGEVulkanUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests)
 add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests --opengl)
 
 if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEEditorLoadingScreenTests EditorLoadingScreenTests.cpp)
+    target_link_libraries(PlutoGEEditorLoadingScreenTests PRIVATE PlutoGE::EditorUI)
+    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        target_link_libraries(PlutoGEEditorLoadingScreenTests PRIVATE
+            "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+    endif()
+    if (TARGET OpenAL)
+        add_custom_command(TARGET PlutoGEEditorLoadingScreenTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorLoadingScreenTests>/$<TARGET_FILE_NAME:OpenAL>)
+    endif()
+    add_test(NAME PlutoGEEditorLoadingScreenTests COMMAND PlutoGEEditorLoadingScreenTests)
     add_executable(PlutoGEEditorVulkanTextureTests EditorVulkanTextureTests.cpp)
     target_link_libraries(PlutoGEEditorVulkanTextureTests PRIVATE PlutoGE::EditorUI)
     add_test(NAME PlutoGEEditorVulkanTextureTests COMMAND PlutoGEEditorVulkanTextureTests)

@@ -1,3 +1,4 @@
+#include "PlutoGE/core/LoadingScreenSession.h"
 #include "RuntimeProfiler.h"
 #include "ProjectBenchmark.h"
 #include <optional>
@@ -546,14 +547,18 @@ int RunRuntime(int argc, char **argv)
 #endif
 
     std::unique_ptr<PlutoGE::scene::Scene> scene;
-    const auto presentLoading = [&engine](const PlutoGE::core::SceneLoadStatus &status)
-    { engine.PresentLoadingScreen(status); };
-    if (!engine.GetSceneLoading().Load(startupScenePath, [&](auto loaded)
+    const auto loadWithScreen = [&](const std::string &path, const PlutoGE::core::SceneLoading::Activation &activate)
+    {
+        PlutoGE::core::LoadingScreenSession loading(engine, project->GetManifest().loadingScreen);
+        return engine.GetSceneLoading().Load(path, activate,
+            [&](const PlutoGE::core::SceneLoadStatus &status) { loading.Present(status); });
+    };
+    if (!loadWithScreen(startupScenePath, [&](auto loaded)
         {
             scene = std::move(loaded);
             engine.SetScene(scene.get());
             engine.StartRuntime();
-        }, presentLoading))
+        }))
     {
         std::cerr << engine.GetSceneLoading().Status().error << std::endl;
         engine.StopRuntime();
@@ -635,12 +640,12 @@ int RunRuntime(int argc, char **argv)
         {
             const std::string reference = project->FindSceneAssetReference(*requestedScene);
             const std::string requestedPath = reference.empty() ? std::string{} : engine.GetAssetManager().ResolveAssetPath(reference);
-            if (!engine.GetSceneLoading().Load(requestedPath, [&](auto nextScene)
+            if (!loadWithScreen(requestedPath, [&](auto nextScene)
                 {
                     auto previousScene = std::move(scene);
                     scene = std::move(nextScene);
                     engine.SetScene(scene.get());
-                }, presentLoading))
+                }))
                 std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << std::endl;
             // Loading uses wall time; do not feed that time into the next physics step.
             lastFrameTime = std::chrono::high_resolution_clock::now();

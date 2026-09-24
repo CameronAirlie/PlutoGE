@@ -777,6 +777,10 @@ namespace PlutoGE::ui
             {
                 editorShell.OpenParticleSystemAsset(asset.reference);
             }
+            else if (asset.type == assets::ProjectAssetType::LoadingScreen)
+            {
+                editorShell.OpenLoadingScreenAsset(asset.reference);
+            }
             else if (asset.type == assets::ProjectAssetType::InputMapping)
             {
                 editorShell.OpenInputMappingAsset(asset.reference);
@@ -2026,6 +2030,7 @@ namespace PlutoGE::ui
                 m_newScriptableObjectClassIndex = 0;
                 m_pendingMenuAction = PendingMenuAction::CreateScriptableObject;
             }
+            if (ImGui::MenuItem("Loading Screen")) editorShell.OpenLoadingScreenAsset({});
             if (ImGui::MenuItem("RmlUi Document"))
             {
                 m_newRmlDocumentNameBuffer.fill('\0');
@@ -3647,6 +3652,10 @@ namespace PlutoGE::ui
                 {
                     editorShell.OpenParticleSystemAsset(asset.reference);
                 }
+            }
+            else if (asset.type == assets::ProjectAssetType::LoadingScreen)
+            {
+                editorShell.OpenLoadingScreenAsset(asset.reference);
             }
             else if (asset.type == assets::ProjectAssetType::InputMapping)
             {

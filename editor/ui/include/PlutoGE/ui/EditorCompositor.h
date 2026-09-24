@@ -5,6 +5,8 @@
 #include <memory>
 #include <cstdint>
 
+struct ImDrawData;
+
 namespace PlutoGE::platform { class Window; }
 
 namespace PlutoGE::ui
@@ -37,8 +39,8 @@ namespace PlutoGE::ui
                                 render::rhi::ISwapchain &swapchain) = 0;
         virtual void Shutdown() = 0;
         virtual void BeginFrame() = 0;
-        virtual void RenderDrawData() = 0;
-        virtual void RenderPlatformWindows() = 0;
+        virtual void RenderDrawData(ImDrawData *drawData) = 0;
+        virtual void RenderPlatformWindows(bool updateWindows = true) = 0;
         [[nodiscard]] virtual EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) = 0;
         virtual void UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor) = 0;
         virtual void UnregisterTexture(EditorTextureHandle texture) = 0;

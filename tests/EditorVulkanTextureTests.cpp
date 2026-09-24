@@ -44,7 +44,7 @@ int main()
                 compositor->UnregisterTexture(handle);
                 if(compositor->GetImGuiTextureId(handle)!=0) throw std::runtime_error("Stale registration still exposed");
             }
-            ImGui::End(); ImGui::Render(); compositor->RenderDrawData();
+            ImGui::End(); ImGui::Render(); compositor->RenderDrawData(ImGui::GetDrawData());
             if(!swapchain->Present(color)) throw std::runtime_error("Presentation failed");
         }
         compositor->UnregisterTexture(keepColor); compositor->UnregisterTexture(keepAlternate);

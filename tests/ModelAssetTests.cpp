@@ -57,9 +57,14 @@ int main()
     project.GetManifest().graphicsApi = PlutoGE::render::rhi::GraphicsApi::Vulkan;
     project.GetManifest().runtimeRenderScale = 0.75f;
     project.GetManifest().runtimeUpscaleSharpness = 0.4f;
+    project.GetManifest().loadingScreen = {"EMBERVAULT", {.95f, .48f, .12f}, "project://UI/loading.plutoloading"};
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);
     assert(reloadedProject);
+    assert(reloadedProject->GetManifest().loadingScreen.title == "EMBERVAULT");
+    assert(reloadedProject->GetManifest().loadingScreen.assetReference == "project://UI/loading.plutoloading");
+    assert(Project::GetAssetTypeForReference("project://UI/loading.plutoloading") == ProjectAssetType::LoadingScreen);
+    assert(reloadedProject->GetManifest().loadingScreen.accent == project.GetManifest().loadingScreen.accent);
     assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Fsr2);
     assert(reloadedProject->GetManifest().runtimeUpscalerQuality == PlutoGE::render::rhi::UpscalerQuality::Balanced);
     assert(reloadedProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan);
@@ -76,6 +81,8 @@ int main()
     legacyProject.close();
     auto reloadedLegacyProject = Project::Load(legacyProjectPath, &error);
     assert(reloadedLegacyProject);
+    assert(reloadedLegacyProject->GetManifest().loadingScreen.title.empty());
+    assert(reloadedLegacyProject->GetManifest().loadingScreen.assetReference.empty());
     assert(reloadedLegacyProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::OpenGL);
     const std::string sourceReference = "project://SourceModels/Robot/Robot.fbx";
     assert(GetModelArtifactDirectory(project, sourceReference) == packageRoot);

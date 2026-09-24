@@ -1,4 +1,3 @@
-#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 
@@ -57,15 +56,15 @@ namespace PlutoGE::ui
                 { core::CpuScope scope("ImGui GLFW new frame", core::CpuCategory::UI); ImGui_ImplGlfw_NewFrame(); }
             }
 
-            void RenderDrawData() override
+            void RenderDrawData(ImDrawData *drawData) override
             {
-                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                if (drawData) ImGui_ImplOpenGL3_RenderDrawData(drawData);
             }
 
-            void RenderPlatformWindows() override
+            void RenderPlatformWindows(bool updateWindows) override
             {
                 GLFWwindow *previousContext = glfwGetCurrentContext();
-                ImGui::UpdatePlatformWindows();
+                if (updateWindows) ImGui::UpdatePlatformWindows();
                 ImGui::RenderPlatformWindowsDefault();
                 glfwMakeContextCurrent(previousContext);
             }
@@ -264,12 +263,11 @@ namespace PlutoGE::ui
                 }
                 swapchain.SetOverlayRecorder([this](void *commandContext)
                                              {
-                    if (m_drawData && !platform::LoadingWork::IsActive())
+                    if (m_drawData)
                         ImGui_ImplVulkan_RenderDrawData(m_drawData, static_cast<VkCommandBuffer>(commandContext));
                     m_drawData = nullptr; });
                 swapchain.SetOverlayPreparation([this](void *commandContext)
                                                 {
-                    if (platform::LoadingWork::IsActive()) return;
                     for (const auto &entry : m_textures)
                         if (entry.inUse)
                             m_device->PrepareTextureForEditorSampling(commandContext, entry.texture); });
@@ -313,11 +311,11 @@ namespace PlutoGE::ui
                 { core::CpuScope scope("ImGui GLFW new frame", core::CpuCategory::UI); ImGui_ImplGlfw_NewFrame(); }
             }
 
-            void RenderDrawData() override { m_drawData = ImGui::GetDrawData(); }
+            void RenderDrawData(ImDrawData *drawData) override { m_drawData = drawData; }
 
-            void RenderPlatformWindows() override
+            void RenderPlatformWindows(bool updateWindows) override
             {
-                ImGui::UpdatePlatformWindows();
+                if (updateWindows) ImGui::UpdatePlatformWindows();
                 ImGui::RenderPlatformWindowsDefault();
             }
 

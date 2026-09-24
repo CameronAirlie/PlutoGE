@@ -5,6 +5,7 @@ add_library(PlutoGEAssets
     src/ModelAsset.cpp
     src/AssetManager.cpp
     src/SurfaceResponseAsset.cpp
+    src/LoadingScreenAsset.cpp
     src/ParticleSystemAsset.cpp
     src/PostProcessPresetAsset.cpp
     src/Project.cpp

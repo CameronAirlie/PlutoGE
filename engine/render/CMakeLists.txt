@@ -18,6 +18,8 @@ add_library(PlutoGERender
     src/OcclusionCulling.cpp
     src/SceneEnvironment.cpp
     src/RhiRenderService.cpp
+    src/LoadingScreenRenderer.cpp
+    src/RmlLoadingDocument.cpp
     src/RhiSkinning.cpp
     src/RhiSceneRenderer.cpp
     src/ScenePortrait.cpp
@@ -205,6 +207,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(DirectionalShadowInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadowMasked "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain maskedFragmentMain)
     pluto_add_slang_graphics_shader(DisplayOutput "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DisplayOutput.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(LoadingScreen "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LoadingScreen.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(RmlUi "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RmlUi.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ToneMapping "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ToneMapping.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorOperations.slang")
     pluto_add_slang_graphics_shader(GammaCorrection "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GammaCorrection.slang" vertexMain fragmentMain)

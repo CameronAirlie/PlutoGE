@@ -82,6 +82,7 @@ namespace PlutoGE::platform
         GLFWwindow *m_window = nullptr;
         int m_clientWidth = 0;
         int m_clientHeight = 0;
+        bool m_resizePending = false;
         int m_windowedX = 0, m_windowedY = 0, m_windowedWidth = 800, m_windowedHeight = 600;
         bool m_windowedMaximized = false;
         bool m_isCursorLocked = false;

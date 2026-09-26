@@ -51,6 +51,7 @@ add_test(NAME PlutoGEPostProcessResourcePoolTests COMMAND PlutoGEPostProcessReso
 add_executable(PlutoGEWindowClientApiTests WindowClientApiTests.cpp)
 target_link_libraries(PlutoGEWindowClientApiTests PRIVATE PlutoGE::Platform)
 add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)
+add_test(NAME PlutoGEWindowResizeTests COMMAND PlutoGEWindowClientApiTests --resize-only)
 
 add_executable(PlutoGEEngineGraphicsApiTests EngineGraphicsApiTests.cpp)
 target_link_libraries(PlutoGEEngineGraphicsApiTests PRIVATE PlutoGE::Core)
@@ -145,19 +146,22 @@ endif()
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
 add_test(NAME PlutoGEMeshLodGenerationTests COMMAND PlutoGELargeMeshOptimizationTests --lod-only)
 
+# Copy at configure time so nested LINK_GROUP expressions are evaluated normally.
+get_target_property(pluto_import_test_libraries PlutoGELargeMeshOptimizationTests LINK_LIBRARIES)
+
 add_executable(PlutoGEInspectMeshImport EXCLUDE_FROM_ALL ../tools/InspectMeshImport.cpp)
 add_executable(PlutoGEMaterialReloadTests MaterialReloadTests.cpp)
-target_link_libraries(PlutoGEMaterialReloadTests PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGEMaterialReloadTests PRIVATE ${pluto_import_test_libraries})
 add_test(NAME PlutoGEMaterialReloadTests COMMAND PlutoGEMaterialReloadTests)
-target_link_libraries(PlutoGEInspectMeshImport PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGEInspectMeshImport PRIVATE ${pluto_import_test_libraries})
 add_executable(PlutoGERecookMesh EXCLUDE_FROM_ALL ../tools/RecookMesh.cpp)
-target_link_libraries(PlutoGERecookMesh PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGERecookMesh PRIVATE ${pluto_import_test_libraries})
 add_executable(PlutoGEDdsImageTests DdsImageTests.cpp)
 target_include_directories(PlutoGEDdsImageTests PRIVATE ../engine/render/include)
 target_compile_features(PlutoGEDdsImageTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEDdsImageTests COMMAND PlutoGEDdsImageTests)
 add_executable(PlutoGEFbxImportTests FbxImportTests.cpp)
-target_link_libraries(PlutoGEFbxImportTests PRIVATE "$<TARGET_PROPERTY:PlutoGELargeMeshOptimizationTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGEFbxImportTests PRIVATE ${pluto_import_test_libraries})
 add_test(NAME PlutoGEFbxImportTests COMMAND PlutoGEFbxImportTests)
 set_tests_properties(PlutoGEFbxImportTests PROPERTIES ENVIRONMENT "PLUTOGE_DISABLE_MESH_DISK_CACHE=1")
 
@@ -270,12 +274,14 @@ endif()
 
 add_test(NAME PlutoGEPrefabMeshExporterTests COMMAND PlutoGEPrefabMeshExporterTests)
 
+get_target_property(pluto_scene_test_libraries PlutoGEPrefabMeshExporterTests LINK_LIBRARIES)
+
 add_executable(PlutoGEImportedAssetLifetimeTests ImportedAssetLifetimeTests.cpp)
-target_link_libraries(PlutoGEImportedAssetLifetimeTests PRIVATE "$<TARGET_PROPERTY:PlutoGEPrefabMeshExporterTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGEImportedAssetLifetimeTests PRIVATE ${pluto_scene_test_libraries})
 add_test(NAME PlutoGEImportedAssetLifetimeTests COMMAND PlutoGEImportedAssetLifetimeTests)
 
 add_executable(PlutoGEScenePortraitPoseTests ScenePortraitPoseTests.cpp)
-target_link_libraries(PlutoGEScenePortraitPoseTests PRIVATE "$<TARGET_PROPERTY:PlutoGEPrefabMeshExporterTests,LINK_LIBRARIES>")
+target_link_libraries(PlutoGEScenePortraitPoseTests PRIVATE ${pluto_scene_test_libraries})
 add_test(NAME PlutoGEScenePortraitPoseTests COMMAND PlutoGEScenePortraitPoseTests)
 
 if (TARGET OpenAL)

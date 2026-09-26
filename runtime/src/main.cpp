@@ -1,6 +1,7 @@
 #include "PlutoGE/core/LoadingScreenSession.h"
 #include "RuntimeProfiler.h"
 #include "ProjectBenchmark.h"
+#include "RuntimeViewportInput.h"
 #include <optional>
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/SceneEnvironment.h"
@@ -630,6 +631,16 @@ int RunRuntime(int argc, char **argv)
         if (scene)
         {
             PlutoGE::core::CpuScope scope("Runtime.SceneUpdate", PlutoGE::core::CpuCategory::Other);
+            auto *nativeWindow = static_cast<GLFWwindow *>(window.GetWindow());
+            int logicalWidth = 0, logicalHeight = 0;
+            glfwGetWindowSize(nativeWindow, &logicalWidth, &logicalHeight);
+            const auto framebuffer = window.GetExtents();
+            const auto &mouse = window.GetInputState().mouseState;
+            const auto viewportInput = PlutoGE::MapRuntimeViewportInput(
+                {framebuffer.width, framebuffer.height}, {logicalWidth, logicalHeight},
+                {mouse.x, mouse.y}, glfwGetWindowAttrib(nativeWindow, GLFW_FOCUSED) != 0);
+            scene->SetRuntimeUIInputOverride(viewportInput.canvasSize, viewportInput.canvasPointer,
+                                             viewportInput.pointerInside, viewportInput.logicalViewport);
             scene->Update(deltaTime);
         }
         const auto updateEnd = std::chrono::high_resolution_clock::now();

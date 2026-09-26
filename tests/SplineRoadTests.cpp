@@ -113,7 +113,7 @@ int main()
         config.points.back().position.z = 10000;
         SplineComponent longRoad(config);
         Check(SampleRoadsidePlacements(longRoad, 0.1f, 1, true).empty(), "Placement budget exceeded");
-        PlutoGE::render::Material roadMaterial({});
+        PlutoGE::render::Material roadMaterial(PlutoGE::render::MaterialConfig{});
         Scene scene;
         auto *prop = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Roadside prop"}));
         Check(Prefab::SaveFromEntity(*prop, prefabPath, &error), error.c_str());

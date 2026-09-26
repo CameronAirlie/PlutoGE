@@ -70,10 +70,7 @@ namespace PlutoGE::platform
         instance->m_clientWidth = width;
         instance->m_clientHeight = height;
 
-        if (auto callback = instance->GetResizeCallback())
-        {
-            callback(width, height);
-        }
+        instance->m_resizePending = true;
     }
 
     bool Window::Create(const WindowConfig &config)
@@ -81,6 +78,7 @@ namespace PlutoGE::platform
         m_config = config;
         m_clientWidth = config.width;
         m_clientHeight = config.height;
+        m_resizePending = false;
 
         if (!glfwInit())
         {
@@ -228,6 +226,14 @@ namespace PlutoGE::platform
     {
         m_inputState.BeginFrame();
         glfwPollEvents();
+        // A drag can deliver many sizes in one poll. Rebuild GPU resources only
+        // for the latest size, outside GLFW's C callback stack.
+        if (m_resizePending)
+        {
+            m_resizePending = false;
+            if (auto callback = GetResizeCallback())
+                callback(m_clientWidth, m_clientHeight);
+        }
         // Present a compact logical list to scripts. GLFW joystick IDs are physical
         // slots and commonly contain gaps (or virtual/non-gamepad devices), so JID 0
         // is not reliably the player's first controller on Windows.

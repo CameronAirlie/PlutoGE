@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/ui/SceneHistory.h"
+#include "../runtime/src/RuntimeViewportInput.h"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -218,8 +219,32 @@ void ViewportPointerBounds()
     Require(!scene.GetRuntimePointerViewport(viewport), "Leaving editor play mode must clear live bounds");
 }
 
+void StandaloneViewportInput()
+{
+    for (const float scale : {1.0f, 1.2f, 2.0f})
+        for (const glm::dvec2 pointer : {glm::dvec2(0, 0), glm::dvec2(450, 320), glm::dvec2(1599, 899)})
+        {
+            const auto input = PlutoGE::MapRuntimeViewportInput({1600 * scale, 900 * scale}, {1600, 900}, pointer, true);
+            Require(input.pointerInside, "Logical pointer must stay inside at all display scales");
+            Require(input.logicalViewport == glm::vec4(0, 0, 1600, 900), "Aiming bounds must remain logical pixels");
+            Near(glm::vec3(input.canvasPointer, 0), {pointer.x * scale, (900 - pointer.y) * scale, 0});
+            // UI and world-ray input must describe the same normalized point.
+            const glm::vec2 normalizedUi(input.canvasPointer.x / input.canvasSize.x,
+                                         1 - input.canvasPointer.y / input.canvasSize.y);
+            Near(glm::vec3(normalizedUi, 0), {pointer.x / 1600, pointer.y / 900, 0});
+        }
+    Require(!PlutoGE::MapRuntimeViewportInput({1920,1080}, {1600,900}, {800,450}, false).pointerInside,
+            "Unfocused runtime must not accept pointer input");
+    for (const glm::dvec2 pointer : {glm::dvec2(-1, 0), glm::dvec2(1600, 450), glm::dvec2(800, 900)})
+        Require(!PlutoGE::MapRuntimeViewportInput({1920,1080}, {1600,900}, pointer, true).pointerInside,
+                "Outside pointer must not hit runtime UI");
+    const auto minimized = PlutoGE::MapRuntimeViewportInput({0,0}, {0,0}, {0,0}, true);
+    Require(!minimized.pointerInside && minimized.logicalViewport == glm::vec4(0),
+            "Minimized window must not produce a usable viewport");
+}
+
 int main()
 {
-    try { ViewportPointerBounds(); OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
+    try { StandaloneViewportInput(); ViewportPointerBounds(); OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

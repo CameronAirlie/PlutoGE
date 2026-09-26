@@ -146,6 +146,23 @@ else()
     message(WARNING "dotnet was not found; the installable ScriptCore SDK cannot be built")
 endif()
 
+# Check for missing targets to avoid packaging a broken runtime or SDK.
+foreach(target
+    PlutoGE::Import
+    PlutoGE::Render
+    PlutoGE::Assets
+    PlutoGE::Core
+    PlutoGE::Scene
+    PlutoGE::Scripting
+)
+    if(TARGET ${target})
+        message(STATUS "FOUND TARGET: ${target}")
+    else()
+        message(WARNING "MISSING TARGET: ${target}")
+    endif()
+endforeach()
+
+
 install(DIRECTORY
     "${CMAKE_SOURCE_DIR}/engine/scripting/managed/PlutoGE.ScriptCore/"
     DESTINATION "SDK/PlutoGE.ScriptCore"

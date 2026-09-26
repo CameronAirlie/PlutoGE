@@ -34,6 +34,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
@@ -2009,7 +2010,8 @@ namespace PlutoGE::render::rhi::vulkan
                 fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(presentation)");
             }
-            Recreate();
+            if (!Recreate())
+                throw std::runtime_error("Could not create initial Vulkan swapchain");
         }
 
         ~VulkanSwapchain() override
@@ -2040,7 +2042,11 @@ namespace PlutoGE::render::rhi::vulkan
             m_vSync = enabled;
             try
             {
-                Recreate();
+                if (!Recreate())
+                {
+                    m_vSync = previous;
+                    return false;
+                }
             }
             catch (...)
             {
@@ -2067,17 +2073,22 @@ namespace PlutoGE::render::rhi::vulkan
         {
             if (width == 0 || height == 0)
                 return false;
+            if (m_swapchain && width == m_width && height == m_height)
+                return true;
             m_width = width;
             m_height = height;
-            Recreate();
-            return true;
+            return Recreate();
         }
 
         bool Present(TextureHandle sourceHandle, bool flipY = false) override
         {
             auto *source = m_impl.textures.Get(sourceHandle);
-            if (!source || source->descriptor.usage != TextureUsage::ColorAttachment || !m_swapchain)
+            if (!source || source->descriptor.usage != TextureUsage::ColorAttachment)
                 return false;
+            // Resize allocation failures retire the old swapchain. Skip this
+            // frame and retry once on the next frame instead of ending the game.
+            if (!m_swapchain && !Recreate())
+                return true;
 
             using Clock = std::chrono::steady_clock;
             const auto elapsedMs = [](const auto start, const auto end)
@@ -2105,7 +2116,7 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 Recreate();
                 timing.presentTotalMs = elapsedMs(totalStart, Clock::now());
-                return false;
+                return true;
             }
             if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
                 Check(acquired, "vkAcquireNextImageKHR");
@@ -2237,9 +2248,13 @@ namespace PlutoGE::render::rhi::vulkan
             m_presented.clear();
         }
 
-        void Recreate()
+        bool Recreate()
         {
-            vkDeviceWaitIdle(m_impl.device);
+            Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(swapchain)");
+            m_impl.completedSubmission = m_impl.lastSubmittedSubmission;
+            // Resizing can retire many large render targets between command
+            // submissions. They are safe to free after the idle wait.
+            m_impl.CollectDeferredResources(m_impl.completedSubmission);
             VkSurfaceCapabilitiesKHR capabilities{};
             Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_impl.physicalDevice, m_impl.surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
             std::uint32_t formatCount = 0;
@@ -2276,6 +2291,8 @@ namespace PlutoGE::render::rhi::vulkan
                 extent.width = std::clamp(m_width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
                 extent.height = std::clamp(m_height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
             }
+            if (extent.width == 0 || extent.height == 0)
+                return false;
             m_width = extent.width;
             m_height = extent.height;
             std::uint32_t presentModeCount = 0;
@@ -2325,7 +2342,27 @@ namespace PlutoGE::render::rhi::vulkan
             info.clipped = VK_TRUE;
             info.oldSwapchain = m_swapchain;
             VkSwapchainKHR replacement = VK_NULL_HANDLE;
-            Check(vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement), "vkCreateSwapchainKHR");
+            VkResult created = vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement);
+            if (created == VK_ERROR_OUT_OF_DEVICE_MEMORY && m_swapchain)
+            {
+                // Even a failed creation retires oldSwapchain. Release its
+                // allocations before retrying to avoid the old/new memory peak.
+                DestroySwapchain();
+                info.oldSwapchain = VK_NULL_HANDLE;
+                created = vkCreateSwapchainKHR(m_impl.device, &info, nullptr, &replacement);
+            }
+            if (created != VK_SUCCESS)
+            {
+                DestroySwapchain();
+                if (created == VK_ERROR_OUT_OF_DEVICE_MEMORY || created == VK_ERROR_OUT_OF_DATE_KHR)
+                {
+                    if (!m_recreateFailureReported)
+                        std::cerr << "Vulkan swapchain recreation deferred (VkResult " << created << ")\n";
+                    m_recreateFailureReported = true;
+                    return false;
+                }
+                Check(created, "vkCreateSwapchainKHR");
+            }
             // Retire all image-owned resources, including views. Merely
             // replacing their vector entries leaked views on every recreation.
             DestroySwapchain();
@@ -2349,6 +2386,8 @@ namespace PlutoGE::render::rhi::vulkan
                 Check(vkCreateImageView(m_impl.device, &view, nullptr, &m_imageViews[index]), "vkCreateImageView(swapchain)");
             }
             m_presented.assign(actualImageCount, false);
+            m_recreateFailureReported = false;
+            return true;
         }
 
         VulkanDevice::Impl &m_impl;
@@ -2374,6 +2413,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::uint32_t m_width = 0;
         std::uint32_t m_height = 0;
         bool m_vSync = true;
+        bool m_recreateFailureReported = false;
     };
 
     VulkanDevice::VulkanDevice() : VulkanDevice(SwapchainDescriptor{}) {}

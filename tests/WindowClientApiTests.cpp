@@ -1,8 +1,9 @@
 #include "PlutoGE/platform/Window.h"
 
 #include <GLFW/glfw3.h>
+#include <string_view>
 
-int main()
+int main(int argc, char **argv)
 {
     using namespace PlutoGE::platform;
 
@@ -25,6 +26,31 @@ int main()
         return 5;
 
     auto *native = static_cast<GLFWwindow *>(window.GetWindow());
+    int resizeCount = 0, resizedWidth = 0, resizedHeight = 0;
+    window.SetResizeCallback([&](int width, int height)
+    {
+        ++resizeCount;
+        resizedWidth = width;
+        resizedHeight = height;
+    });
+    window.PollEvents();
+    resizeCount = 0;
+    const auto resizeCallback = glfwSetFramebufferSizeCallback(native, nullptr);
+    glfwSetFramebufferSizeCallback(native, resizeCallback);
+    resizeCallback(native, 80, 70);
+    resizeCallback(native, 90, 75);
+    resizeCallback(native, 100, 80);
+    if (resizeCount != 0) return 19;
+    window.PollEvents();
+    if (resizeCount != 1 || resizedWidth != 100 || resizedHeight != 80) return 20;
+    window.PollEvents();
+    if (resizeCount != 1) return 21;
+    window.SetResizeCallback(nullptr);
+    if (argc > 1 && std::string_view(argv[1]) == "--resize-only")
+    {
+        window.Close();
+        return 0;
+    }
     const auto limit = window.GetWindowedSizeLimit();
     if (limit.width <= 0 || limit.height <= 0) return 14;
     if (window.SetWindowedSize(0, 720) || window.SetWindowedSize(limit.width + 1, 540)) return 15;

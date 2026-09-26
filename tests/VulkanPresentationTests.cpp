@@ -9,6 +9,50 @@
 
 namespace
 {
+    // Inject allocation failures without exhausting the test machine's GPU.
+    struct SwapchainCreationProbe
+    {
+        static inline PFN_vkCreateSwapchainKHR original = nullptr;
+        static inline unsigned calls = 0;
+        static inline unsigned failuresRemaining = 0;
+        static inline VkSwapchainKHR lastOldSwapchain = VK_NULL_HANDLE;
+        static inline PFN_vkAcquireNextImageKHR originalAcquire = nullptr;
+
+        SwapchainCreationProbe()
+        {
+            original = vkCreateSwapchainKHR;
+            originalAcquire = vkAcquireNextImageKHR;
+            calls = failuresRemaining = 0;
+            vkCreateSwapchainKHR = Create;
+        }
+        ~SwapchainCreationProbe()
+        {
+            vkCreateSwapchainKHR = original;
+            vkAcquireNextImageKHR = originalAcquire;
+        }
+
+        static VKAPI_ATTR VkResult VKAPI_CALL AcquireOutOfDate(VkDevice, VkSwapchainKHR, std::uint64_t,
+                                                              VkSemaphore, VkFence, std::uint32_t *)
+        {
+            vkAcquireNextImageKHR = originalAcquire;
+            return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+
+        static VKAPI_ATTR VkResult VKAPI_CALL Create(VkDevice device, const VkSwapchainCreateInfoKHR *info,
+                                                     const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
+        {
+            ++calls;
+            lastOldSwapchain = info->oldSwapchain;
+            if (failuresRemaining != 0)
+            {
+                --failuresRemaining;
+                *swapchain = VK_NULL_HANDLE;
+                return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            }
+            return original(device, info, allocator, swapchain);
+        }
+    };
+
     std::vector<std::uint32_t> ReadSpirv(const char *name)
     {
         std::ifstream input(std::filesystem::path(PLUTO_RHI_TEST_SHADER_DIR) / name, std::ios::binary | std::ios::ate);
@@ -69,13 +113,42 @@ int main(int argc, char **argv)
             if (!renderer.Initialize(device, shaders) ||
                 !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))
                 return 3;
+            {
+                SwapchainCreationProbe probe;
+                if (!swapchain->Resize(swapchain->GetWidth(), swapchain->GetHeight()) || probe.calls != 0)
+                    return 9;
+                probe.failuresRemaining = 1;
+                if (!swapchain->SetVSyncEnabled(true) || probe.calls != 2 ||
+                    probe.lastOldSwapchain != VK_NULL_HANDLE)
+                    return 10;
+                // Both attempts fail; presentation must skip a frame while memory
+                // is unavailable, then recover without acquiring a retired chain.
+                probe.failuresRemaining = 3;
+                if (swapchain->SetVSyncEnabled(false)) return 11;
+                renderer.Render(glm::mat4(1.0f), {});
+                if (!swapchain->Present(renderer.GetColorTexture()) || probe.failuresRemaining != 0)
+                    return 12;
+                if (!swapchain->Present(renderer.GetColorTexture())) return 13;
+                vkAcquireNextImageKHR = probe.AcquireOutOfDate;
+                if (!swapchain->Present(renderer.GetColorTexture()) ||
+                    !swapchain->Present(renderer.GetColorTexture())) return 15;
+            }
+            if (!swapchain->SetVSyncEnabled(false)) return 14;
             // Exercise many uncapped frame-slot/image-index reuse cycles,
             // including resource recreation while presentation is active.
             const int frameCount = argc > 1 && std::string_view(argv[1]) == "--stress" ? 60000 : 1000;
             for (int frame = 0; frame < frameCount; ++frame)
             {
-                if (frame != 0 && frame % 100 == 0 && !swapchain->Resize(64, 64))
-                    return 5;
+                if (frame != 0 && frame % 100 == 0)
+                {
+                    const int size = (frame / 100) % 2 == 0 ? 64 : 80;
+                    glfwSetWindowSize(static_cast<GLFWwindow *>(window.GetWindow()), size, size);
+                    window.PollEvents();
+                    const auto extent = window.GetExtents();
+                    if (!swapchain->Resize(extent.width, extent.height) ||
+                        !renderer.Resize(swapchain->GetWidth(), swapchain->GetHeight()))
+                        return 5;
+                }
                 window.PollEvents();
                 renderer.Render(glm::mat4(1.0f), {});
                 if (!swapchain->Present(renderer.GetColorTexture()))

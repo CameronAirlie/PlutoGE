@@ -17,6 +17,7 @@ namespace PlutoGE::scene
         lighting.virtualShadowCoarseMinCasterTexels = std::clamp(settings.virtualCoarseMinCasterTexels, 0.0f, 4.0f);
         lighting.virtualShadowPageBudget = static_cast<std::uint32_t>(std::clamp(settings.virtualPageBudget, 1, PLUTO_VSM_CAPACITY));
         lighting.virtualShadowTriangleBudget = static_cast<std::uint32_t>(std::clamp(settings.virtualTriangleBudget, 1, 16000000));
+        lighting.virtualShadowAdaptiveBudget = settings.virtualAdaptiveBudget;
         lighting.shadowResolution = static_cast<std::uint32_t>(std::clamp(
             settings.resolution, 256, 8192));
         lighting.shadowCascadeCount = static_cast<std::uint32_t>(std::clamp(

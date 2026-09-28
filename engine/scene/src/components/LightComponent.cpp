@@ -265,6 +265,7 @@ namespace PlutoGE::scene
             properties.push_back({"VSM Coarse Minimum Caster Texels", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.virtualCoarseMinCasterTexels)});
             properties.push_back({"VSM Page Updates per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualPageBudget)});
             properties.push_back({"VSM Triangle Budget per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualTriangleBudget)});
+            properties.push_back({"VSM Adaptive Triangle Budget", PropertyType::Bool, m_config.directionalShadowSettings.virtualAdaptiveBudget ? "true" : "false"});
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
             properties.push_back({"Shadow Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.resolution)});
             properties.push_back({"Shadow Cascade Resolution Falloff", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeResolutionFalloff)});
@@ -363,6 +364,8 @@ namespace PlutoGE::scene
             {
                 m_config.directionalShadowSettings.virtualTriangleBudget = std::clamp(std::stoi(property.value), 1, 16000000);
             }
+            else if (property.name == "VSM Adaptive Triangle Budget")
+                m_config.directionalShadowSettings.virtualAdaptiveBudget = property.value == "true";
             else if (property.name == "Shadow Cascade Count")
             {
                 m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(std::stoi(property.value));

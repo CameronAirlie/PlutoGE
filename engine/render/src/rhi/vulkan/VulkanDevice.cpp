@@ -891,6 +891,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<UniformArena, 3> uniformArenas;
         VkDeviceSize uniformAlignment = 256;
         float maxSamplerAnisotropy = 1.0f;
+        std::uint32_t maxIndexedIndirectBatchSize = 0;
         static constexpr VkDeviceSize UniformArenaSize = 32ull * 1024ull * 1024ull;
         std::string deviceName;
         float timestampPeriodNs = 1.0f;
@@ -1328,10 +1329,12 @@ namespace PlutoGE::render::rhi::vulkan
             auto &published = m_impl.timingStatsBySubmission[frame.submissionLabel];
             const float resolvedGpuMs = published.frameGpuMs;
             const bool hasResolvedGpu = published.hasGpuResult;
+            const auto resolvedObservation = published.gpuObservationId;
             auto resolvedGpuScopes = std::move(published.gpuScopes);
             published = m_impl.timingStats;
             published.frameGpuMs = frame.profilingEnabled ? resolvedGpuMs : 0.0f;
             published.hasGpuResult = frame.profilingEnabled && hasResolvedGpu;
+            published.gpuObservationId = published.hasGpuResult ? resolvedObservation : 0;
             published.gpuScopes = frame.profilingEnabled ? std::move(resolvedGpuScopes) : std::vector<RenderDeviceTimingStats::GpuScope>{};
             m_recording = false;
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
@@ -1365,6 +1368,18 @@ namespace PlutoGE::render::rhi::vulkan
             VkClearAttachment attachment{};
             attachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
             attachment.clearValue.depthStencil.depth = depth;
+            VkClearRect rect{{{region.x, region.y}, {region.width, region.height}}, 0, 1};
+            vkCmdClearAttachments(CommandBuffer(), 1, &attachment, 1, &rect);
+        }
+
+        bool SupportsColorRegionClear() const noexcept override { return true; }
+        void ClearColorRegion(const Scissor &region, std::uint32_t index, const std::array<float, 4> &color) override
+        {
+            if (!m_rendering || index >= m_colors.size()) throw std::logic_error("Color region clear requires an active color attachment");
+            VkClearAttachment attachment{};
+            attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            attachment.colorAttachment = index;
+            std::copy(color.begin(), color.end(), attachment.clearValue.color.float32);
             VkClearRect rect{{{region.x, region.y}, {region.width, region.height}}, 0, 1};
             vkCmdClearAttachments(CommandBuffer(), 1, &attachment, 1, &rect);
         }
@@ -1520,6 +1535,20 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::invalid_argument("Invalid Vulkan indexed indirect draw");
             PrepareDraw();
             vkCmdDrawIndexedIndirect(CommandBuffer(), buffer->buffer, offset, 1, sizeof(VkDrawIndexedIndirectCommand));
+            ++m_impl.timingStats.indexedDrawCalls;
+        }
+
+        std::uint32_t MaxIndexedIndirectBatchSize() const noexcept override
+        { return m_impl.maxIndexedIndirectBatchSize; }
+
+        void DrawIndexedIndirectBatch(BufferHandle handle, std::size_t offset, std::uint32_t count) override
+        {
+            auto *buffer = m_impl.buffers.Get(handle);
+            if (!count || count > MaxIndexedIndirectBatchSize() || !buffer || buffer->usage != BufferUsage::Storage ||
+                offset % 4 || offset > buffer->size || count > (buffer->size - offset) / sizeof(VkDrawIndexedIndirectCommand))
+                throw std::invalid_argument("Invalid Vulkan indexed indirect batch");
+            PrepareDraw();
+            vkCmdDrawIndexedIndirect(CommandBuffer(), buffer->buffer, offset, count, sizeof(VkDrawIndexedIndirectCommand));
             ++m_impl.timingStats.indexedDrawCalls;
         }
 
@@ -1940,6 +1969,7 @@ namespace PlutoGE::render::rhi::vulkan
             for (const auto &scope : frame.scopes)
                 timing.gpuScopes.push_back({scope.name, milliseconds(scope.start, scope.end), scope.cpuMs});
             timing.hasGpuResult = true;
+            timing.gpuObservationId = frame.submissionSerial;
         }
         [[nodiscard]] VkCommandBuffer CommandBuffer() const { return m_frames[m_frameIndex].commandBuffer; }
         [[nodiscard]] VkDescriptorPool DescriptorPool() const { return m_frames[m_frameIndex].descriptorPool; }
@@ -2562,6 +2592,10 @@ namespace PlutoGE::render::rhi::vulkan
         VkPhysicalDeviceFeatures enabledFeatures{};
         enabledFeatures.samplerAnisotropy = supported.features.samplerAnisotropy;
         enabledFeatures.shaderClipDistance = supported.features.shaderClipDistance;
+        enabledFeatures.multiDrawIndirect = supported.features.multiDrawIndirect;
+        enabledFeatures.drawIndirectFirstInstance = supported.features.drawIndirectFirstInstance;
+        m_impl->maxIndexedIndirectBatchSize = enabledFeatures.multiDrawIndirect && enabledFeatures.drawIndirectFirstInstance
+            ? properties.limits.maxDrawIndirectCount : 0;
         m_impl->maxSamplerAnisotropy = enabledFeatures.samplerAnisotropy
             ? properties.limits.maxSamplerAnisotropy : 1.0f;
 #if PLUTO_HAS_STREAMLINE

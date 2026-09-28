@@ -161,3 +161,11 @@ outer angle also changes the VSM projection and invalidates its cached pages.
 ## Quality and freshness controls
 
 See [VSM quality and freshness](vsm-quality-and-freshness.md) for pool tiers, update-policy guarantees, geometry clustering, spotlight refinement, diagnostics, and regression coverage.
+
+For immutable CPU preparation reuse, per-level budget diagnostics, and the
+continuous/historical dirty-age distinction, see
+[shadow face caching and diagnostics](shadow-face-caching-and-diagnostics.md).
+
+See [renderer structural review](renderer-structural-review.md) for incremental
+packet preparation, Vulkan indirect batching, tighter page bounds, optional
+adaptive budgeting, and the remaining architectural priorities.

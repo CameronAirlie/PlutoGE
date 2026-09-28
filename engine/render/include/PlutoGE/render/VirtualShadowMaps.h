@@ -15,8 +15,8 @@ namespace PlutoGE::render
     struct VirtualShadowShaders
     {
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 7> compute;
-        // Receiver, page, clear, rigid receiver, and rigid page shader pairs.
-        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 10> raster;
+        // Receiver, page, clear, rigid receiver/page, and batched rigid page pairs.
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 12> raster;
         [[nodiscard]] bool Complete() const;
     };
     struct alignas(16) VirtualShadowParameters
@@ -45,6 +45,7 @@ namespace PlutoGE::render
             std::uint32_t indexCount = 0, firstIndex = 0, instances = 0;
             rhi::BufferHandle indirect;
             std::size_t indirectOffset = 0;
+            std::uint32_t commandCount = 1;
         };
         // Bind vertex/index buffers and issue the draw only. Pipeline and
         // resource bindings are owned by Record's pass-local state cache.
@@ -73,14 +74,19 @@ namespace PlutoGE::render
           std::vector<std::byte> uploaded;
           const void *mesh = nullptr;
           std::uint64_t meshRevision = 0, preparationRevision = 0;
-          std::size_t firstInstance = 0;
+          std::size_t firstInstance = 0, sourceIndex = 0;
           glm::vec4 bounds{0, 0, 0, -1};
+          glm::vec4 extents{-1, -1, -1, 0};
           bool clustered = false;
       };
         void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
-        std::array<rhi::GraphicsPipeline, 5> m_raster;
+        std::array<rhi::GraphicsPipeline, 6> m_raster;
+        rhi::Buffer m_rigidDraws;
+        std::vector<std::byte> m_uploadedRigidDraws;
+        std::size_t m_rigidDrawCapacity = 0;
+        bool m_batchRigid = false;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_receiverColor, m_white;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
@@ -95,15 +101,26 @@ namespace PlutoGE::render
             bool coalesce = false;
         };
         std::vector<ClusterPlan> m_clusterPlans;
+        struct PreparedPacket
+        {
+            const void *mesh = nullptr;
+            std::uint64_t revision = 0, meshRevision = 0;
+            std::size_t first = 0, count = 0;
+            bool clustered = false, coalesced = false;
+        };
+        std::vector<PreparedPacket> m_receiverPackets, m_casterPackets;
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;
         VirtualShadowParameters m_previousClipmaps{}, m_previousInputs{};
         std::vector<std::byte> m_uploadedCasters;
+        std::vector<std::uint64_t> m_preparationKey, m_preparationScratch;
+        VirtualShadowParameters m_preparationProjection{};
         std::uint32_t m_inputChangeFrame = 0;
         bool m_reuseFrame = false;
         bool m_cacheMembership = true;
         VirtualShadowResolutionPolicy m_resolutionPolicy;
+        VirtualShadowBudgetPolicy m_budgetPolicy;
         std::uint32_t m_poolTiles = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();
     };

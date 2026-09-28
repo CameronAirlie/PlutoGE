@@ -1,5 +1,6 @@
 #include "PlutoGE/render/VirtualShadowMaps.h"
 #include "PlutoGE/render/BasicRenderer.h"
+#include "ChangedBufferRecords.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -25,26 +26,8 @@ namespace PlutoGE::render
             glm::vec4 alpha{};
         };
         static_assert(sizeof(RigidDrawParameters) == 96);
-        struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; };
-        static_assert(sizeof(Caster) == 48 && sizeof(DrawParameters) == 4128);
-        ShadowGeometryCluster MergeShadowClusters(std::span<const ShadowGeometryCluster> clusters)
-        {
-            ShadowGeometryCluster result;
-            glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
-            for (const auto &cluster : clusters)
-            {
-                if (cluster.extents.x < 0) return result;
-                lo = glm::min(lo, cluster.center - cluster.extents);
-                hi = glm::max(hi, cluster.center + cluster.extents);
-            }
-            if (!clusters.empty())
-            {
-                result.firstIndex = clusters.front().firstIndex;
-                result.indexCount = clusters.back().firstIndex + clusters.back().indexCount - result.firstIndex;
-                result.center = (lo + hi) * 0.5f; result.extents = (hi - lo) * 0.5f;
-            }
-            return result;
-        }
+        struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; };
+        static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128);
         // Subdivision buys little when the entire mesh fits within one page's
         // width. Coalesce those ranges to avoid multiplying CPU submissions.
         bool FitsShadowPage(const VirtualShadowParameters &parameters, glm::vec4 sphere)
@@ -184,7 +167,7 @@ namespace PlutoGE::render
         const auto meshLayout = descriptor.vertexLayout;
         for (std::size_t index = 0; index < m_raster.size(); ++index)
         {
-            const auto role = index < 3 ? index : index - 3;
+            const auto role = index == 5 ? 1 : index < 3 ? index : index - 3;
             descriptor.vertexLayout = role == 2 ? decltype(meshLayout){} : meshLayout;
             descriptor.vertexShader = shaders.raster[index * 2];
             descriptor.fragmentShader = shaders.raster[index * 2 + 1];
@@ -193,7 +176,9 @@ namespace PlutoGE::render
             descriptor.resourceBindings = {{0, 0, 0, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics}};
             if (role != 2)
             {
-                descriptor.resourceBindings.push_back({1, 0, 1, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics});
+                if (index == 5)
+                    descriptor.resourceBindings.push_back({5, 0, 5, ResourceBindingType::StorageBuffer, ShaderStageMask::AllGraphics});
+                else descriptor.resourceBindings.push_back({1, 0, 1, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics});
                 descriptor.resourceBindings.push_back({9, 1, 1, ResourceBindingType::SampledTexture, ShaderStageMask::Fragment});
             }
             if (role != 0) descriptor.resourceBindings.push_back({2, 0, 2, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
@@ -225,13 +210,14 @@ namespace PlutoGE::render
             TextureUsage::DepthStencilAttachment, "VSM physical depth", true}));
         Texture color(device, device.CreateTexture({pixels, pixels, Format::R32Float,
             TextureUsage::ColorAttachment, "VSM physical color", false}));
-        Buffer pages(device, device.CreateBuffer({tiles * tiles * 64, BufferUsage::Storage, "VSM persistent physical metadata"}));
+        Buffer pages(device, device.CreateBuffer({tiles * tiles * PLUTO_VSM_PAGE_METADATA_BYTES, BufferUsage::Storage, "VSM persistent physical metadata"}));
         m_depth = std::move(depth); m_color = std::move(color); m_pages = std::move(pages);
         m_poolTiles = tiles;
         m_frame = 0; m_capacity = 0;
         m_uploadedCasters.clear();
         m_stats = std::make_shared<VirtualShadowStats>();
         m_resolutionPolicy = {};
+        m_budgetPolicy = {};
     }
     bool VirtualShadowMaps::CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters)
     {
@@ -261,6 +247,7 @@ namespace PlutoGE::render
             m_uploadedCasters.clear();
             m_stats = std::make_shared<VirtualShadowStats>();
             m_resolutionPolicy = {};
+            m_budgetPolicy = {};
         }
         bool changed = m_frame == 0 || m_width != width || m_height != height;
         if (m_width != width || m_height != height)
@@ -279,186 +266,280 @@ namespace PlutoGE::render
                 // Do not create another refinement backlog while existing updates are deferred.
                 m_stats->deferred == 0 ? m_stats->directionalFineCapacity : 0u);
         auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionPolicy.Scale());
-        std::vector<Caster> inputs;
-        inputs.reserve(m_casterCount);
-        // Preserve the draw-capacity contract: exceptionally fragmented scenes
-        // retain whole-draw submission instead of disabling shadows.
-        std::size_t clusteredCount = 0;
-        m_clusterPlans.resize(casters.size());
-        m_stats->clusterBoundsBuilds = m_stats->clusterBoundsCacheHits = 0;
-        for (std::size_t index = 0; lighting.virtualShadowClusterCulling && index < casters.size(); ++index)
+        m_batchRigid = lighting.virtualShadowBatching && device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 0;
+        parameters.scheduling.z = m_batchRigid ? 1u : 0u;
+        auto preparationProjection = parameters;
+        preparationProjection.camera.x = preparationProjection.camera.y = preparationProjection.camera.z = 0;
+        m_preparationScratch.clear();
+        m_preparationScratch.push_back(lighting.virtualShadowClusterCulling);
+        bool immutable = m_frame != 0 && m_cacheMembership && !changed;
+        const auto appendKey = [&](std::span<const BasicDraw> draws, bool shadow)
         {
-            const auto &draw = casters[index];
-            auto &plan = m_clusterPlans[index];
-            plan.coalesce = false;
-            if (!draw.mesh || !draw.castsShadow || draw.alphaMode == 2 || draw.surfaceType == 1) continue;
-            const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
-            const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
-            const auto ranges = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, count);
-            const auto models = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
-            auto rangeCount = std::max<std::size_t>(1, ranges.size());
-            if (models == 1 && ranges.size() > 1)
-            {
-                if (!draw.preparationRevision || plan.packetRevision != draw.preparationRevision ||
-                    plan.mesh != draw.mesh || plan.meshRevision != draw.mesh->GetRevision() ||
-                    plan.firstIndex != draw.firstIndex || plan.indexCount != count)
-                {
-                    ++m_stats->clusterBoundsBuilds;
-                    plan.mesh = draw.mesh;
-                    plan.meshRevision = draw.mesh->GetRevision();
-                    plan.packetRevision = draw.preparationRevision;
-                    plan.firstIndex = draw.firstIndex;
-                    plan.indexCount = count;
-                    plan.merged = MergeShadowClusters(ranges);
-                    const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->front() : draw.model;
-                    plan.worldBounds = ShadowClusterWorldSphere(plan.merged, std::span<const glm::mat4>(&model, 1));
-                }
-                else ++m_stats->clusterBoundsCacheHits;
-                // Reevaluate projection-dependent fit when lights or clipmaps move.
-                plan.coalesce = FitsShadowPage(parameters, plan.worldBounds);
-                if (plan.coalesce) rangeCount = 1;
-            }
-            clusteredCount += draw.firstIndex % 3 == 0 ? rangeCount * ((models + 15) / 16) : (models + 63) / 64;
-        }
-        const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
-        const auto prepare = [&](std::span<const BasicDraw> draws, std::vector<Chunk> &chunks, bool shadow)
-        {
-            std::size_t cursor = 0;
+            m_preparationScratch.push_back(draws.size());
             for (std::size_t index = 0; index < draws.size(); ++index)
             {
                 const auto &draw = draws[index];
-                if (!draw.mesh || !draw.mesh->IsValid() || draw.alphaMode == 2 || draw.surfaceType == 1 || (shadow && !draw.castsShadow)) continue;
-                const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
-                const auto drawCount = std::min(draw.indexCount ? draw.indexCount : available, available);
-                if (drawCount == 0) continue;
-                const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
-                auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
-                const bool subdivide = shadow && useClusters && draw.firstIndex % 3 == 0 && !clusters.empty();
-                if (subdivide && m_clusterPlans[index].coalesce)
-                    clusters = std::span<const ShadowGeometryCluster>(&m_clusterPlans[index].merged, 1);
-                const auto rangeCount = subdivide ? clusters.size() : 1;
-                const std::size_t instanceLimit = subdivide ? 16 : 64;
-                for (std::size_t range = 0; range < rangeCount; ++range)
+                const bool eligible = draw.mesh && draw.mesh->IsValid() && draw.alphaMode != 2 && draw.surfaceType != 1 && (!shadow || draw.castsShadow);
+                // Fixed-width entries preserve section boundaries even when
+                // filtering changes without changing the packet array sizes.
+                if (!eligible)
                 {
-                    const auto firstIndex = subdivide ? std::max(draw.firstIndex, clusters[range].firstIndex) : draw.firstIndex;
-                    const auto endIndex = subdivide ? std::min(draw.firstIndex + drawCount, clusters[range].firstIndex + clusters[range].indexCount) : draw.firstIndex + drawCount;
-                    if (endIndex <= firstIndex) continue;
-                    const auto count = endIndex - firstIndex;
-                    for (std::size_t first = 0; first < modelCount; first += instanceLimit)
+                    m_preparationScratch.insert(m_preparationScratch.end(), {index, 0, 0, 0, 0, 0});
+                    continue;
+                }
+                immutable &= draw.preparationRevision != 0;
+                m_preparationScratch.insert(m_preparationScratch.end(), {index, 1, draw.preparationRevision,
+                    reinterpret_cast<std::uintptr_t>(draw.mesh), draw.mesh->GetRevision(), shadow ? signatures[index] : 0});
+            }
+        };
+        appendKey(receivers, false); appendKey(casters, true);
+        const bool reusePreparation = immutable && m_capacity != 0 && m_preparationScratch == m_preparationKey &&
+            std::memcmp(&preparationProjection, &m_preparationProjection, sizeof(preparationProjection)) == 0;
+        m_stats->reusedPreparation = reusePreparation;
+        m_stats->reusedPackets = m_stats->rebuiltPackets = 0;
+        const bool sameProjection = std::memcmp(&preparationProjection, &m_preparationProjection, sizeof(preparationProjection)) == 0;
+        m_stats->clusterBoundsBuilds = m_stats->clusterBoundsCacheHits = 0;
+        if (!reusePreparation)
+        {
+            std::vector<Caster> inputs;
+            inputs.reserve(m_casterCount);
+            // Preserve the draw-capacity contract: exceptionally fragmented scenes
+            // retain whole-draw submission instead of disabling shadows.
+            std::size_t clusteredCount = 0;
+            m_clusterPlans.resize(casters.size());
+            m_stats->clusterBoundsBuilds = m_stats->clusterBoundsCacheHits = 0;
+            for (std::size_t index = 0; lighting.virtualShadowClusterCulling && index < casters.size(); ++index)
+            {
+                const auto &draw = casters[index];
+                auto &plan = m_clusterPlans[index];
+                if (!draw.mesh || !draw.castsShadow || draw.alphaMode == 2 || draw.surfaceType == 1) continue;
+                const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
+                const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
+                const auto ranges = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, count);
+                const auto models = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
+                auto rangeCount = std::max<std::size_t>(1, ranges.size());
+                if (models == 1 && ranges.size() > 1)
+                {
+                    bool rebuilt = false;
+                    if (!draw.preparationRevision || plan.packetRevision != draw.preparationRevision ||
+                        plan.mesh != draw.mesh || plan.meshRevision != draw.mesh->GetRevision() ||
+                        plan.firstIndex != draw.firstIndex || plan.indexCount != count)
                     {
-                        if (cursor == chunks.size()) chunks.emplace_back();
-                        auto &chunk = chunks[cursor];
-                        const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
-                        if (draw.preparationRevision && chunk.preparationRevision == draw.preparationRevision &&
-                            chunk.mesh == draw.mesh && chunk.meshRevision == draw.mesh->GetRevision() &&
-                            chunk.firstInstance == first && chunk.submission.instances == models &&
-                            chunk.submission.firstIndex == firstIndex && chunk.submission.indexCount == count && chunk.clustered == subdivide)
+                        ++m_stats->clusterBoundsBuilds;
+                        rebuilt = true;
+                        plan.mesh = draw.mesh;
+                        plan.meshRevision = draw.mesh->GetRevision();
+                        plan.packetRevision = draw.preparationRevision;
+                        plan.firstIndex = draw.firstIndex;
+                        plan.indexCount = count;
+                        plan.merged = MergeShadowGeometryClusters(ranges);
+                        const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->front() : draw.model;
+                        plan.worldBounds = ShadowClusterWorldSphere(plan.merged, std::span<const glm::mat4>(&model, 1));
+                    }
+                    else ++m_stats->clusterBoundsCacheHits;
+                    // Reevaluate projection-dependent fit when lights or clipmaps move.
+                    if (rebuilt || !sameProjection) plan.coalesce = FitsShadowPage(parameters, plan.worldBounds);
+                    if (plan.coalesce) rangeCount = 1;
+                }
+                else plan.coalesce = false;
+                clusteredCount += draw.firstIndex % 3 == 0 ? rangeCount * ((models + 15) / 16) : (models + 63) / 64;
+            }
+            const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
+            const auto prepare = [&](std::span<const BasicDraw> draws, std::vector<Chunk> &chunks, bool shadow)
+            {
+                std::size_t cursor = 0;
+                auto &packets = shadow ? m_casterPackets : m_receiverPackets;
+                packets.resize(draws.size());
+                for (std::size_t index = 0; index < draws.size(); ++index)
+                {
+                    const auto &draw = draws[index];
+                    if (!draw.mesh || !draw.mesh->IsValid() || draw.alphaMode == 2 || draw.surfaceType == 1 || (shadow && !draw.castsShadow)) continue;
+                    auto &packet = packets[index];
+                    const bool clustered = shadow && useClusters;
+                    const bool coalesced = clustered && m_clusterPlans[index].coalesce;
+                    if (draw.preparationRevision && packet.revision == draw.preparationRevision &&
+                        packet.mesh == draw.mesh && packet.meshRevision == draw.mesh->GetRevision() &&
+                        packet.first == cursor && packet.clustered == clustered && packet.coalesced == coalesced &&
+                        (!shadow || (cursor + packet.count) * sizeof(Caster) <= m_uploadedCasters.size()))
+                    {
+                        ++m_stats->reusedPackets;
+                        for (std::size_t part = 0; part < packet.count; ++part)
                         {
-                            // Refresh the borrowed packet address even on a hit.
-                            // Clipmap/camera/lighting feedback is still processed
-                            // below; only immutable caster/receiver preparation skips.
+                            auto &chunk = chunks[cursor++];
                             chunk.submission.draw = &draw;
                             if (shadow)
                             {
+                                Caster input;
+                                std::memcpy(&input, m_uploadedCasters.data() + (cursor - 1) * sizeof(Caster), sizeof(Caster));
+                                const auto signature = signatures[index] ^ (std::uint64_t(chunk.submission.firstIndex) * 0x9e3779b97f4a7c15ull);
+                                input.identity.x = std::uint32_t(signature);
+                                input.identity.y = std::uint32_t(signature >> 32) ^ std::uint32_t(chunk.firstInstance);
+                                inputs.push_back(input);
+                            }
+                        }
+                        continue;
+                    }
+                    const auto packetFirst = cursor;
+                    ++m_stats->rebuiltPackets;
+                    const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
+                    const auto drawCount = std::min(draw.indexCount ? draw.indexCount : available, available);
+                    if (drawCount == 0) continue;
+                    const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
+                    auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
+                    const bool subdivide = shadow && useClusters && draw.firstIndex % 3 == 0 && !clusters.empty();
+                    if (subdivide && m_clusterPlans[index].coalesce)
+                        clusters = std::span<const ShadowGeometryCluster>(&m_clusterPlans[index].merged, 1);
+                    const auto rangeCount = subdivide ? clusters.size() : 1;
+                    const std::size_t instanceLimit = subdivide ? 16 : 64;
+                    for (std::size_t range = 0; range < rangeCount; ++range)
+                    {
+                        const auto firstIndex = subdivide ? std::max(draw.firstIndex, clusters[range].firstIndex) : draw.firstIndex;
+                        const auto endIndex = subdivide ? std::min(draw.firstIndex + drawCount, clusters[range].firstIndex + clusters[range].indexCount) : draw.firstIndex + drawCount;
+                        if (endIndex <= firstIndex) continue;
+                        const auto count = endIndex - firstIndex;
+                        for (std::size_t first = 0; first < modelCount; first += instanceLimit)
+                        {
+                            if (cursor == chunks.size()) chunks.emplace_back();
+                            auto &chunk = chunks[cursor];
+                            const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
+                            if (draw.preparationRevision && chunk.preparationRevision == draw.preparationRevision &&
+                                chunk.mesh == draw.mesh && chunk.meshRevision == draw.mesh->GetRevision() &&
+                                chunk.firstInstance == first && chunk.submission.instances == models &&
+                                chunk.submission.firstIndex == firstIndex && chunk.submission.indexCount == count && chunk.clustered == subdivide)
+                            {
+                                // Refresh the borrowed packet address even on a hit.
+                                // Clipmap/camera/lighting feedback is still processed
+                                // below; only immutable caster/receiver preparation skips.
+                                chunk.submission.draw = &draw;
+                                chunk.sourceIndex = index;
+                                if (shadow)
+                                {
+                                    const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
+                                    inputs.push_back({chunk.bounds,
+                                                      {count, firstIndex, models, index},
+                                                      {std::uint32_t(signature),
+                                                       std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
+                                }
+                                ++cursor;
+                                continue;
+                            }
+                            chunk.preparationRevision = draw.preparationRevision;
+                            chunk.clustered = subdivide;
+                            chunk.firstInstance = first;
+                            chunk.sourceIndex = index;
+                            const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
+                            const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
+                            const auto upload = [&](const auto &parameters)
+                            {
+                                const auto bytes = Bytes(parameters);
+                                if (!chunk.uniform || chunk.uploaded.size() != bytes.size())
+                                    chunk.uniform = rhi::Buffer(device, device.CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
+                                if (chunk.uploaded.size() != bytes.size() || std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
+                                {
+                                    device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
+                                    chunk.uploaded.assign(bytes.begin(), bytes.end());
+                                    changed = true;
+                                }
+                            };
+                            if (models == 1)
+                            {
+                                const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
+                                upload(RigidDrawParameters{model, drawParameters, alpha});
+                            }
+                            else
+                            {
+                                DrawParameters parameters;
+                                std::copy_n(draw.instanceModels->begin() + first, models, parameters.models.begin());
+                                parameters.draw = drawParameters; parameters.alpha = alpha;
+                                upload(parameters);
+                            }
+                            const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
+                            changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
+                                chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != firstIndex;
+                            chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
+                            chunk.submission = {&draw, count, firstIndex, models, {}, cursor * 20};
+                            chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
+                            if (shadow)
+                            {
                                 const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
-                                inputs.push_back({chunk.bounds,
-                                                  {count, firstIndex, models, index},
-                                                  {std::uint32_t(signature),
-                                                   std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}});
+                                const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
+                                const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
+                                    ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
+                                const auto bounds = subdivide ? ShadowClusterWorldBounds(clusters[range], transforms) : ShadowWorldBounds{};
+                                chunk.bounds = subdivide ? bounds.sphere : glm::vec4(draw.shadowBoundsCenter, radius);
+                                chunk.extents = bounds.extents;
+                                inputs.push_back({chunk.bounds, {count, firstIndex, models, index},
+                                    {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
                             }
                             ++cursor;
-                            continue;
                         }
-                        chunk.preparationRevision = draw.preparationRevision;
-                        chunk.clustered = subdivide;
-                        chunk.firstInstance = first;
-                        const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
-                        const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
-                        const auto upload = [&](const auto &parameters)
-                        {
-                            const auto bytes = Bytes(parameters);
-                            if (!chunk.uniform || chunk.uploaded.size() != bytes.size())
-                                chunk.uniform = rhi::Buffer(device, device.CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
-                            if (chunk.uploaded.size() != bytes.size() || std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
-                            {
-                                device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
-                                chunk.uploaded.assign(bytes.begin(), bytes.end());
-                                changed = true;
-                            }
-                        };
-                        if (models == 1)
-                        {
-                            const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
-                            upload(RigidDrawParameters{model, drawParameters, alpha});
-                        }
-                        else
-                        {
-                            DrawParameters parameters;
-                            std::copy_n(draw.instanceModels->begin() + first, models, parameters.models.begin());
-                            parameters.draw = drawParameters; parameters.alpha = alpha;
-                            upload(parameters);
-                        }
-                        const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
-                        changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
-                            chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != firstIndex;
-                        chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
-                        chunk.submission = {&draw, count, firstIndex, models, {}, cursor * 20};
-                        chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
-                        if (shadow)
-                        {
-                            const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
-                            const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
-                            const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
-                                ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
-                            chunk.bounds = subdivide ? ShadowClusterWorldSphere(clusters[range], transforms) : glm::vec4(draw.shadowBoundsCenter, radius);
-                            inputs.push_back({chunk.bounds, {count, firstIndex, models, index},
-                                {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}});
-                        }
-                        ++cursor;
                     }
+                    packet = {draw.mesh, draw.preparationRevision, draw.mesh->GetRevision(), packetFirst,
+                        cursor - packetFirst, clustered, coalesced};
+                }
+                return cursor;
+            };
+            const auto receiverCount = prepare(receivers, m_receiverChunks, false);
+            const auto casterCount = prepare(casters, m_casterChunks, true);
+            changed |= receiverCount != m_receiverCount || casterCount != m_casterCount;
+            m_receiverCount = receiverCount; m_casterCount = casterCount;
+            if (m_capacity < std::max(m_casterCount, std::size_t{1}))
+            {
+                m_capacity = 1;
+                while (m_capacity < m_casterCount) m_capacity *= 2;
+                m_casters = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(Caster), rhi::BufferUsage::Storage, "VSM caster bounds/signatures"}));
+                m_uploadedCasters.clear();
+                m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * poolCapacity * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
+                m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
+                // Zero epochs make every pair invalid until evaluated. Each record
+                // stores exact caster/page generations and conservative membership.
+                const std::vector<glm::uvec4> empty(m_capacity * poolCapacity, glm::uvec4(0));
+                m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec4),
+                    rhi::BufferUsage::Storage, "VSM persistent caster/page membership"}, std::as_bytes(std::span(empty))));
+            }
+            for (std::size_t index = 0; index < inputs.size(); ++index)
+            {
+                auto &input = inputs[index];
+                input.identity.z = m_frame + 1;
+                if ((index + 1) * sizeof(Caster) <= m_uploadedCasters.size())
+                {
+                    Caster previous;
+                    std::memcpy(&previous, m_uploadedCasters.data() + index * sizeof(Caster), sizeof(Caster));
+                    // Membership depends only on conservative bounds, not mesh
+                    // identity. Reordering equal bounds is therefore safe as well.
+                    if (m_cacheMembership && input.bounds == previous.bounds && input.extents == previous.extents) input.identity.z = previous.identity.z;
                 }
             }
-            return cursor;
-        };
-        const auto receiverCount = prepare(receivers, m_receiverChunks, false);
-        const auto casterCount = prepare(casters, m_casterChunks, true);
-        changed |= receiverCount != m_receiverCount || casterCount != m_casterCount;
-        m_receiverCount = receiverCount; m_casterCount = casterCount;
-        if (m_capacity < std::max(m_casterCount, std::size_t{1}))
-        {
-            m_capacity = 1;
-            while (m_capacity < m_casterCount) m_capacity *= 2;
-            m_casters = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(Caster), rhi::BufferUsage::Storage, "VSM caster bounds/signatures"}));
-            m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * poolCapacity * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
-            m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
-            // Zero epochs make every pair invalid until evaluated. Each record
-            // stores exact caster/page generations and conservative membership.
-            const std::vector<glm::uvec4> empty(m_capacity * poolCapacity, glm::uvec4(0));
-            m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec4),
-                rhi::BufferUsage::Storage, "VSM persistent caster/page membership"}, std::as_bytes(std::span(empty))));
+            const auto inputBytes = std::as_bytes(std::span(inputs));
+            changed |= UploadChangedRecords(device, m_casters.Get(), inputBytes, sizeof(Caster), m_uploadedCasters);
+            for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
         }
-        for (std::size_t index = 0; index < inputs.size(); ++index)
+        else
         {
-            auto &input = inputs[index];
-            input.identity.z = m_frame + 1;
-            if ((index + 1) * sizeof(Caster) <= m_uploadedCasters.size())
+            m_stats->reusedPackets = static_cast<std::uint32_t>(receivers.size() + casters.size());
+            // Borrowed packet addresses change even when immutable content does not.
+            for (std::size_t index = 0; index < m_receiverCount; ++index)
+                m_receiverChunks[index].submission.draw = &receivers[m_receiverChunks[index].sourceIndex];
+            for (std::size_t index = 0; index < m_casterCount; ++index)
+                m_casterChunks[index].submission.draw = &casters[m_casterChunks[index].sourceIndex];
+        }
+        m_preparationKey.swap(m_preparationScratch);
+        m_preparationProjection = preparationProjection;
+        if (m_batchRigid && !reusePreparation)
+        {
+            std::vector<RigidDrawParameters> records(m_casterCount);
+            for (std::size_t index = 0; index < m_casterCount; ++index)
+                if (m_casterChunks[index].submission.instances == 1)
+                    std::memcpy(&records[index], m_casterChunks[index].uploaded.data(), sizeof(RigidDrawParameters));
+            const auto bytes = std::as_bytes(std::span(records));
+            if (m_rigidDrawCapacity < std::max<std::size_t>(1, bytes.size()))
             {
-                Caster previous;
-                std::memcpy(&previous, m_uploadedCasters.data() + index * sizeof(Caster), sizeof(Caster));
-                // Membership depends only on conservative bounds, not mesh
-                // identity. Reordering equal bounds is therefore safe as well.
-                if (m_cacheMembership && input.bounds == previous.bounds) input.identity.z = previous.identity.z;
+                m_rigidDrawCapacity = std::max<std::size_t>(sizeof(RigidDrawParameters), bytes.size() * 2);
+                m_rigidDraws = rhi::Buffer(device, device.CreateBuffer({m_rigidDrawCapacity, rhi::BufferUsage::Storage, "VSM rigid draw table"}));
+                m_uploadedRigidDraws.clear();
             }
+            UploadChangedRecords(device, m_rigidDraws.Get(), bytes, sizeof(RigidDrawParameters), m_uploadedRigidDraws);
         }
-        const auto inputBytes = std::as_bytes(std::span(inputs));
-        if (m_uploadedCasters.size() != inputBytes.size() ||
-            (!inputBytes.empty() && std::memcmp(m_uploadedCasters.data(), inputBytes.data(), inputBytes.size()) != 0))
-        {
-            if (!inputBytes.empty()) device.UpdateBuffer(m_casters.Get(), 0, inputBytes);
-            m_uploadedCasters.assign(inputBytes.begin(), inputBytes.end());
-            changed = true;
-        }
-        for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
         for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
             const bool stable = m_frame != 0 && parameters.matrices[level] == m_previousClipmaps.matrices[level] &&
@@ -472,8 +553,19 @@ namespace PlutoGE::render
         parameters.viewport = {width, height, device.GetApi() == rhi::GraphicsApi::Vulkan ? 1 : 0, device.UsesZeroToOneClipDepth() ? 1 : 0};
         ++m_frame;
         if (m_frame == 0) ++m_frame;
+        if (lighting.virtualShadowAdaptiveBudget)
+        {
+            const auto timing = device.GetTimingStats("Scene");
+            if (!timing.hasGpuResult || !timing.gpuObservationId) m_budgetPolicy = {};
+            else
+                for (const auto &scope : timing.gpuScopes)
+                    if (scope.name == "RHI Virtual Shadow Pages")
+                        m_budgetPolicy.Observe(timing.gpuObservationId, scope.milliseconds, timing.frameGpuMs);
+        }
+        else m_budgetPolicy = {};
+        m_stats->effectiveTriangleBudget = m_budgetPolicy.Budget(std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u));
         parameters.limits = {m_casterCount, m_frame, std::clamp(lighting.virtualShadowPageBudget, 1u, poolCapacity),
-                             std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u)};
+                             m_stats->effectiveTriangleBudget};
         parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, m_resolutionPolicy.Scale()};
         auto inputKey = parameters;
         inputKey.limits.y = 0; inputKey.settings.z = 0;
@@ -502,6 +594,7 @@ namespace PlutoGE::render
     }
     void VirtualShadowMaps::Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
     {
+        m_stats->pageDrawBatches = 0;
         if (m_reuseFrame) return;
         // Submission callbacks only bind mesh buffers and issue the draw.
         // Retain pass-local state rather than repeating backend handle lookups
@@ -514,19 +607,35 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < count; ++index)
             {
                 const auto &chunk = chunks[index];
-                const auto pipeline = chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
+                const bool batch = m_batchRigid && instancedPipeline == 1 && chunk.submission.instances == 1;
+                const auto pipeline = batch ? 5 : chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
                 if (pipeline != boundPipeline)
                 {
                     commands.BindPipeline(m_raster[pipeline].Get());
                     boundPipeline = pipeline;
                 }
-                commands.BindUniformBuffer(1, chunk.uniform.Get());
-                if (chunk.texture != boundTexture)
+                if (batch) commands.BindStorageBuffer(5, m_rigidDraws.Get());
+                else commands.BindUniformBuffer(1, chunk.uniform.Get());
+                if (!boundTexture || (chunk.submission.draw->alphaMode == 1 && chunk.texture != boundTexture))
                 {
                     commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
                     boundTexture = chunk.texture;
                 }
-                submit(chunk.submission);
+                auto submission = chunk.submission;
+                if (batch)
+                {
+                    const auto limit = std::min(count - index, std::size_t(commands.MaxIndexedIndirectBatchSize()));
+                    while (submission.commandCount < limit)
+                    {
+                        const auto &next = chunks[index + submission.commandCount];
+                        if (next.submission.instances != 1 || next.mesh != chunk.mesh ||
+                            (next.submission.draw->alphaMode == 1 && next.texture != boundTexture)) break;
+                        ++submission.commandCount;
+                    }
+                }
+                submit(submission);
+                if (instancedPipeline == 1) ++m_stats->pageDrawBatches;
+                index += submission.commandCount - 1;
             }
         };
         commands.BeginGpuScope("RHI VSM Receiver Depth");
@@ -589,6 +698,14 @@ namespace PlutoGE::render
                 stats->directionalFineRequested = values[11]; stats->directionalFineResident = values[12]; stats->directionalFineCapacity = values[13];
                 stats->localFineRequested = values[14]; stats->coarseRequested = values[15];
                 stats->oldestDirtyAge = values[16]; stats->oversizedUpdates = values[17];
+                stats->historicalDirtyAge = values[PLUTO_VSM_STATS_HISTORICAL_AGE];
+                for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
+                {
+                    stats->updatedTrianglesByLevel[level] = values[PLUTO_VSM_STATS_UPDATED_TRIANGLES_BASE + level];
+                    stats->dirtyTrianglesByLevel[level] = values[PLUTO_VSM_STATS_DIRTY_TRIANGLES_BASE + level];
+                }
+                stats->maxDirtyPageTriangles = values[PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES];
+                stats->triangleBudgetDeferred = values[PLUTO_VSM_STATS_TRIANGLE_DEFERRED]; stats->pageBudgetDeferred = values[PLUTO_VSM_STATS_PAGE_DEFERRED];
                 stats->gpuFrame = frame; stats->gpuCountersAvailable = true;
             }
         });
@@ -603,9 +720,9 @@ namespace PlutoGE::render
         stats.submittedIndirectCommands = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_casterCount);
         stats.receiverDraws = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 8 +
-            PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * 64 + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
+            PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * PLUTO_VSM_PAGE_METADATA_BYTES + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
             m_capacity * (sizeof(Caster) + poolCapacity * (4 + sizeof(glm::uvec4)) + 20) + PLUTO_VSM_CAPACITY * 4 +
-            std::uint64_t(m_width) * m_height * 8;
+            std::uint64_t(m_width) * m_height * 8 + m_rigidDrawCapacity + m_uploadedRigidDraws.size();
         for (const auto &chunk : m_receiverChunks) stats.memoryBytes += chunk.uploaded.size();
         for (const auto &chunk : m_casterChunks) stats.memoryBytes += chunk.uploaded.size();
         return stats;

@@ -12,6 +12,15 @@
 [[vk::binding(2, 0)]] StructuredBuffer<VirtualShadowPage> pages : register(t2, space0);
 [[vk::binding(4, 0)]] StructuredBuffer<uint> pageLists : register(t4, space0);
 [[vk::binding(1, 1)]] Sampler2D baseTexture : register(t1, space1);
+#ifdef VSM_BATCHED
+struct RigidDraw
+{
+    column_major float4x4 model;
+    uint4 parameters;
+    float4 alpha;
+};
+[[vk::binding(5, 0)]] StructuredBuffer<RigidDraw> rigidDraws : register(t5, space0);
+#endif
 struct VertexInput { float3 position : POSITION; float2 uv : TEXCOORD0; };
 struct ReceiverOutput { float4 position : SV_Position; float2 uv : TEXCOORD0; };
 struct PageOutput
@@ -19,6 +28,7 @@ struct PageOutput
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
     float pageClip[4] : SV_ClipDistance;
+    nointerpolation uint chunk : TEXCOORD1;
 };
 [shader("vertex")]
 ReceiverOutput receiverVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
@@ -37,9 +47,18 @@ float receiverFragment(ReceiverOutput input) : SV_Target
 [shader("vertex")]
 PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 {
-    uint slot = pageLists[drawParameters.x * vsm.pool.x + instance / drawParameters.y];
+    uint localInstance = instance % PLUTO_VSM_INSTANCE_STRIDE;
+#ifdef VSM_BATCHED
+    uint chunk = instance / PLUTO_VSM_INSTANCE_STRIDE;
+    uint4 parameters = rigidDraws[chunk].parameters;
+    float3 world = mul(rigidDraws[chunk].model, float4(input.position, 1)).xyz;
+#else
+    uint chunk = drawParameters.x;
+    uint4 parameters = drawParameters;
+    float3 world = mul(models[localInstance % parameters.y], float4(input.position, 1)).xyz;
+#endif
+    uint slot = pageLists[chunk * vsm.pool.x + localInstance / parameters.y];
     VirtualShadowPage page = pages[slot];
-    float3 world = mul(models[instance % drawParameters.y], float4(input.position, 1)).xyz;
     float4 projected = mul(vsm.matrices[page.address.z], float4(world, 1));
     // Keep the page transform homogeneous: vertices on/behind the light
     // plane must reach hardware clipping without a divide by zero.
@@ -47,6 +66,7 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
         float2(virtualPageCoordinate(page.state.x)) * projected.w;
     float2 atlas = (float2(slot % vsm.pool.y, slot / vsm.pool.y) * projected.w + local) / vsm.pool.y;
     PageOutput output;
+    output.chunk = chunk;
     output.position = float4(atlas * 2.0 - projected.w, projected.z, projected.w);
     if (vsm.viewport.z != 0) output.position.y = -output.position.y;
     if (vsm.viewport.w == 0) output.position.z = output.position.z * 2.0 - output.position.w;
@@ -59,6 +79,10 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 [shader("fragment")]
 float pageFragment(PageOutput input) : SV_Target
 {
+#ifdef VSM_BATCHED
+    uint4 drawParameters = rigidDraws[input.chunk].parameters;
+    float4 alpha = rigidDraws[input.chunk].alpha;
+#endif
     if (drawParameters.z == 1 && baseTexture.Sample(input.uv * alpha.xy).a * alpha.w < alpha.z) discard;
     return input.position.z;
 }

@@ -283,7 +283,7 @@ float2 pointShadowUv(uint face, float3 ray)
     if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
     return uv;
 }
-float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 receiverNormal)
+float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 receiverNormal, float2 depthTransform)
 {
     float3 ray = world - lightPosition;
     if (dot(ray, ray) < 1.e-12) return 1.0;
@@ -314,7 +314,7 @@ float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 r
             float4 clip = mul(pointShadowMatrices[row * 6 + tapFace], float4(tapWorld, 1));
             float depth = pointShadowAtlas.SampleLevel((tapUv + float2(tapFace,row)) / float2(6,4), 0).r;
             // Only floating-point/raster precision bias remains necessary.
-            visibility += clip.z / clip.w - 0.000001 <= depth ? 1.0 / 9.0 : 0.0;
+            visibility += (clip.z / clip.w) * depthTransform.x + depthTransform.y - 0.000001 <= depth ? 1.0 / 9.0 : 0.0;
         }
     return visibility;
 }
@@ -836,7 +836,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         if (pointSettings[light].x >= 0.0)
         {
             const uint row = uint(pointSettings[light].x);
-            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal);
+            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal, pointSettings[light].yz);
         }
         float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
         if (pointDirectionSpot[light].w > 0.5)

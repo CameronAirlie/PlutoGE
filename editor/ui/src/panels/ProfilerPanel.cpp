@@ -299,6 +299,15 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.pointShadowAtlasCacheHits),
                     static_cast<unsigned long long>(rhiScene.pointShadowAtlasUpdates),
                     static_cast<unsigned long long>(rhiScene.pointShadowDraws));
+        ImGui::Text("  Point faces: %llu hits / %llu updates; %llu object / %llu material uploads",
+                    static_cast<unsigned long long>(rhiScene.pointShadowFaceHits), static_cast<unsigned long long>(rhiScene.pointShadowFaceUpdates),
+                    static_cast<unsigned long long>(rhiScene.pointShadowObjectUploads), static_cast<unsigned long long>(rhiScene.pointShadowMaterialUploads));
+        ImGui::Text("  Point invalidation: %llu initial / %llu projection / %llu caster set / %llu content",
+                    static_cast<unsigned long long>(rhiScene.pointShadowInvalidations[0]), static_cast<unsigned long long>(rhiScene.pointShadowInvalidations[1]),
+                    static_cast<unsigned long long>(rhiScene.pointShadowInvalidations[2]), static_cast<unsigned long long>(rhiScene.pointShadowInvalidations[3]));
+        ImGui::Text("  Glass: %llu full footprints; %llu raster / %llu sample overlaps; %.2f M copied pixels",
+                    static_cast<unsigned long long>(rhiScene.glassFullFootprints), static_cast<unsigned long long>(rhiScene.glassGroupBoundaries[1]),
+                    static_cast<unsigned long long>(rhiScene.glassGroupBoundaries[2]), double(rhiScene.glassSnapshotPixels) / 1000000.0);
         ImGui::TextWrapped("  Directional shadows: %s", rhiScene.directionalShadowStatus.c_str());
         if (rhiScene.virtualShadowsActive)
         {
@@ -312,7 +321,11 @@ namespace PlutoGE::ui
                 ImGui::Text("  VSM resolution scale: %.0fx; pool %u pages", pages.resolutionScale, pages.physicalCapacity);
                 ImGui::Text("  VSM directional fine: %u requested / %u resident / %u available; local fine %u, coarse %u",
                     pages.directionalFineRequested, pages.directionalFineResident, pages.directionalFineCapacity, pages.localFineRequested, pages.coarseRequested);
-                ImGui::Text("  VSM oldest dirty page: %u frames; oversized updates: %u", pages.oldestDirtyAge, pages.oversizedUpdates);
+                ImGui::Text("  VSM dirty age: %u continuous / %u historical frames; oversized updates: %u", pages.oldestDirtyAge, pages.historicalDirtyAge, pages.oversizedUpdates);
+                ImGui::Text("  VSM CPU batches: %u; packets: %u reused / %u rebuilt; triangle budget: %u",
+                    pages.pageDrawBatches, pages.reusedPackets, pages.rebuiltPackets, pages.effectiveTriangleBudget);
+                ImGui::Text("  VSM preparation: %s; budget deferrals: %u triangle / %u page; max page: %u triangles",
+                            pages.reusedPreparation ? "reused" : "evaluated", pages.triangleBudgetDeferred, pages.pageBudgetDeferred, pages.maxDirtyPageTriangles);
                 ImGui::Text("  VSM updates: %u dirty, %u rendered, %u deferred; %u evicted, %u overflow",
                     pages.dirty, pages.updated, pages.deferred, pages.evicted, pages.overflow);
                 ImGui::Text("  VSM GPU: %u non-empty draws, %llu caster/page pairs, %llu triangles",

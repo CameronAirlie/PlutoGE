@@ -30,6 +30,25 @@ namespace PlutoGE::render
         return {first, last};
     }
 
+    inline ShadowGeometryCluster MergeShadowGeometryClusters(std::span<const ShadowGeometryCluster> clusters)
+    {
+        ShadowGeometryCluster result;
+        glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+        for (const auto &cluster : clusters)
+        {
+            if (cluster.extents.x < 0) return result;
+            lo = glm::min(lo, cluster.center - cluster.extents);
+            hi = glm::max(hi, cluster.center + cluster.extents);
+        }
+        if (!clusters.empty())
+        {
+            result.firstIndex = clusters.front().firstIndex;
+            result.indexCount = clusters.back().firstIndex + clusters.back().indexCount - result.firstIndex;
+            result.center = (lo + hi) * 0.5f; result.extents = (hi - lo) * 0.5f;
+        }
+        return result;
+    }
+
     template<class Vertex>
     std::vector<ShadowGeometryCluster> BuildShadowGeometryClusters(
         std::span<const Vertex> vertices, std::span<const std::uint32_t> indices)
@@ -56,10 +75,16 @@ namespace PlutoGE::render
         return result;
     }
 
-    inline glm::vec4 ShadowClusterWorldSphere(const ShadowGeometryCluster &cluster,
-                                             std::span<const glm::mat4> models)
+    struct ShadowWorldBounds
     {
-        if (cluster.extents.x < 0 || models.empty()) return {0, 0, 0, -1};
+        glm::vec4 sphere{0, 0, 0, -1};
+        glm::vec4 extents{-1, -1, -1, 0};
+    };
+
+    inline ShadowWorldBounds ShadowClusterWorldBounds(const ShadowGeometryCluster &cluster,
+                                                      std::span<const glm::mat4> models)
+    {
+        if (cluster.extents.x < 0 || models.empty()) return {};
         glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
         for (const auto &model : models)
         {
@@ -70,7 +95,13 @@ namespace PlutoGE::render
         }
         const auto center = (lo + hi) * 0.5f;
         const float radius = glm::length((hi - lo) * 0.5f);
-        if (!std::isfinite(radius)) return {0, 0, 0, -1};
-        return {center, radius};
+        if (!std::isfinite(radius)) return {};
+        return {{center, radius}, glm::vec4((hi - lo) * 0.5f, 0)};
+    }
+
+    inline glm::vec4 ShadowClusterWorldSphere(const ShadowGeometryCluster &cluster,
+                                             std::span<const glm::mat4> models)
+    {
+        return ShadowClusterWorldBounds(cluster, models).sphere;
     }
 }

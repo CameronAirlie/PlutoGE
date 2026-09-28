@@ -245,6 +245,55 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     dependentReads[2] = {10, 0, 80, 20};
     require(PlanGlassSnapshotGroup(gapPanes, dependentReads, 0, writes).end == 2,
             "Glass read-after-write dependency was incorrectly grouped");
+    require(PlanGlassSnapshotGroup(gapPanes, dependentReads, 0, writes).boundary == GlassGroupBoundary::SampleOverlap,
+            "Glass diagnostics did not identify sampling expansion as the dependency");
+    GlassBoundsReason boundsReason;
+    auto unknownPane = groupedPane; unknownPane.shadowBoundsRadius = -1;
+    GlassSnapshotBounds(unknownPane, glm::mat4(1), {}, 320, 180, false, true, &boundsReason);
+    require(boundsReason == GlassBoundsReason::Unknown, "Glass diagnostics lost unknown bounds");
+    GlassSnapshotBounds(groupedPane, eyePlane, {}, 320, 180, false, true, &boundsReason);
+    require(boundsReason == GlassBoundsReason::NearPlane, "Glass diagnostics lost eye-plane fallback");
+    // An eye-plane crossing box entirely on the right must not copy the left
+    // half of the viewport. Sample densely across the box to check containment
+    // through both pieces of the shader's clamped-W projection.
+    auto crossing = groupedPane;
+    crossing.thickness = 0;
+    crossing.occlusionBoundsCenter = {2, 0, 0};
+    crossing.occlusionBoundsExtents = {.1f, .1f, 1};
+    auto crossingProjection = glm::mat4(1);
+    crossingProjection[2][3] = 1;
+    crossingProjection[3][3] = .5f;
+    const auto clipped = GlassSnapshotBounds(crossing, crossingProjection, {}, 320, 180, false, true, &boundsReason);
+    require(boundsReason == GlassBoundsReason::Bounded && clipped.width < 160,
+        "Known eye-plane crossing glass retained a full-screen footprint");
+    for (int z = 0; z <= 100; ++z)
+        for (int x = 0; x <= 10; ++x)
+        {
+            auto clip = crossingProjection * glm::vec4(1.9f + .02f * x, 0, -1.0f + .02f * z, 1);
+            if (clip.w < 0) continue;
+            const auto pixel = std::clamp((clip.x / std::max(clip.w, .0001f) * .5f + .5f) * 320, 0.0f, 320.0f);
+            require(pixel >= clipped.x && pixel <= clipped.x + clipped.width,
+                "Clipped glass bounds lost a possible sample");
+        }
+    auto clippedPane = groupedPane;
+    clippedPane.thickness = .005f;
+    clippedPane.model = glm::translate(glm::mat4(1), glm::vec3(.5f, 0, .3f)) *
+        glm::rotate(glm::mat4(1), glm::radians(80.0f), glm::vec3(0, 1, 0));
+    clippedPane.shadowBoundsRadius = -1;
+    std::array clippedScene{background, clippedPane};
+    renderer.Render(crossingProjection, lighting, clippedScene);
+    const auto clippedReference = readPixels(renderer.GetColorTexture());
+    clippedScene[1].shadowBoundsCenter = clippedScene[1].occlusionBoundsCenter = {.5f, 0, .3f};
+    clippedScene[1].shadowBoundsRadius = 1.3f;
+    clippedScene[1].occlusionBoundsExtents = .9f * (glm::abs(glm::vec3(clippedPane.model[0])) + glm::abs(glm::vec3(clippedPane.model[1])));
+    const auto crossingBounds = GlassSnapshotBounds(clippedScene[1], crossingProjection, {}, 320, 180, false);
+    require(crossingBounds.width < 320, "Clipped visible glass still copied the entire viewport");
+    renderer.Render(crossingProjection, lighting, clippedScene);
+    const auto clippedImage = readPixels(renderer.GetColorTexture());
+    require(clippedImage.size() == clippedReference.size(), "Clipped glass readback size mismatch");
+    for (std::size_t i = 0; i < clippedImage.size(); ++i)
+        require(std::abs(int(clippedImage[i]) - int(clippedReference[i])) <= 1,
+            "Clipped eye-plane footprint changed refracted glass pixels");
     auto overlappingBounds = gapBounds;
     overlappingBounds[2] = {10, 10, 20, 20};
     require(PlanGlassSnapshotGroup(gapPanes, overlappingBounds, 0).end == 2,

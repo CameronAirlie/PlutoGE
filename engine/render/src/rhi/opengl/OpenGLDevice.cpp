@@ -325,6 +325,24 @@ namespace PlutoGE::render::rhi::opengl
             if (!scissorEnabled) glDisable(GL_SCISSOR_TEST);
         }
 
+        bool SupportsColorRegionClear() const noexcept override { return true; }
+        void ClearColorRegion(const Scissor &region, std::uint32_t index, const std::array<float, 4> &color) override
+        {
+            if (!m_rendering || index >= m_activeColorAttachmentCount)
+                throw std::logic_error("Color region clear requires an active color attachment");
+            GLint oldScissor[4];
+            glGetIntegerv(GL_SCISSOR_BOX, oldScissor);
+            const auto scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+            GLboolean mask[4];
+            glGetBooleani_v(GL_COLOR_WRITEMASK, index, mask);
+            SetScissor(region);
+            glColorMaski(index, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glClearBufferfv(GL_COLOR, static_cast<GLint>(index), color.data());
+            glColorMaski(index, mask[0], mask[1], mask[2], mask[3]);
+            glScissor(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]);
+            if (!scissorEnabled) glDisable(GL_SCISSOR_TEST);
+        }
+
         void BindPipeline(PipelineHandle handle) override
         {
             auto *pipeline = m_impl.pipelines.Get(handle);

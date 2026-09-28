@@ -19,14 +19,16 @@ struct VirtualShadowPage
 {
     int4 address; // absolute page XY, level, projection epoch
     uint4 state; // current virtual key, selected frame, valid depth, scheduled dirty
-    uint4 signature; // cached hash low/high, unused
+    uint4 signature; // cached hash low/high, historical dirty start, last publish
     uint4 pending; // candidate hash low/high, triangle cost, membership generation
+    uint4 freshness; // continuously requested dirty start, reserved
 };
 struct VirtualShadowCaster
 {
     float4 bounds;
     uint4 draw; // index count, first index, model count, original draw index
     uint4 identity;
+    float4 extents; // conservative world AABB around bounds.xyz; negative = unknown
 };
 uint2 virtualPageCoordinate(uint key) { return uint2(key % PLUTO_VSM_GRID, key / PLUTO_VSM_GRID); }
 uint virtualGrid(VirtualShadowParameters p, uint level)

@@ -77,7 +77,7 @@ int main(int argc, char **argv)
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].spirv = ReadSpirv((std::string(vsmCompute[index]) + ".compute.spv").c_str());
-        const std::array<const char *, 5> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid"};
+        const std::array<const char *, 6> vsmRaster{"VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid", "VSMPageBatch"};
         for (std::size_t index = 0; index < vsmRaster.size(); ++index)
         {
             shaders.virtualShadows.raster[index * 2].spirv = ReadSpirv((std::string(vsmRaster[index]) + ".vertex.spv").c_str());

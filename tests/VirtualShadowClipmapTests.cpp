@@ -13,6 +13,18 @@ int main()
         Require(VirtualShadowPoolTiles(256) == 16 && VirtualShadowPoolTiles(300) == 24 && VirtualShadowPoolTiles(1024) == 32,
                 "Physical pool tiers are inconsistent");
         VirtualShadowResolutionPolicy policy;
+        VirtualShadowBudgetPolicy budget;
+        for (int repeat = 0; repeat < 32; ++repeat) budget.Observe(1, .1f, 10);
+        Require(budget.Budget(1000000) == 1000000, "Repeated GPU observations grew the budget");
+        for (std::uint64_t sample = 2; sample <= 8; ++sample) budget.Observe(sample, .1f, 10);
+        Require(budget.Budget(1000000) == 1250000, "Sustained GPU headroom did not grow the budget");
+        budget.Observe(9, .8f, 10);
+        Require(budget.Budget(1000000) == 1000000, "GPU pressure did not back off to the authored budget");
+        for (std::uint64_t sample = 10; sample < 200; ++sample) budget.Observe(sample, .1f, 10);
+        Require(budget.Budget(1000000) == 4000000 && budget.Budget(8000000) == 16000000,
+            "Adaptive budget exceeded its hard limits");
+        budget.Observe(201, .1f, 20);
+        Require(budget.Budget(1000000) == 3000000, "Scene GPU pressure did not reduce shadow work");
         Require(policy.Observe(1, 1, 300, 192, 192) && policy.Scale() == 2, "Pressure must reduce resolution");
         Require(!policy.Observe(2, 2, 0, 0, 192), "Stale feedback bypassed settle period");
         for (std::uint32_t frame = 33; frame < 65; ++frame) policy.Observe(frame, frame, 20, 20, 128);

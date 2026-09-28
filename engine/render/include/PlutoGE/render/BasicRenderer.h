@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/ShadowGeometry.h"
+#include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -399,6 +400,8 @@ namespace PlutoGE::render
         bool virtualShadowClusterCulling = true;
         std::uint32_t virtualShadowPageBudget = 64;
         std::uint32_t virtualShadowTriangleBudget = 1000000;
+        bool virtualShadowBatching = true;
+        bool virtualShadowAdaptiveBudget = false;
         std::array<glm::mat4, 4> shadowMatrices{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         glm::vec4 shadowCascadeSplits{0.0f};
@@ -454,6 +457,9 @@ namespace PlutoGE::render
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t glassFullFootprints = 0;
+        std::uint64_t glassSnapshotPixels = 0;
+        std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
         std::size_t materialPreparations = 0, materialPreparationHits = 0;
         // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
         std::array<std::uint64_t, 4> geometryTriangles{};
@@ -468,6 +474,8 @@ namespace PlutoGE::render
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
         std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
+        std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
+        std::array<std::size_t, 4> pointShadowInvalidations{}; // initial, projection, caster set/range, content
         std::size_t shadowCascadeTargets = 0;
         std::array<std::size_t, 4> shadowDrawsByCascade{};
 
@@ -768,8 +776,16 @@ namespace PlutoGE::render
         rhi::Texture m_pointShadowColor;
         rhi::Texture m_pointShadowDepth;
         std::array<rhi::Buffer, 24> m_pointShadowCameras;
-        std::vector<rhi::Buffer> m_pointShadowObjects;
-        std::vector<rhi::Buffer> m_pointShadowMaterials;
+        std::array<ShadowFaceCache, 24> m_pointShadowFaces;
+        std::array<std::vector<std::size_t>, 24> m_pointShadowFaceDraws;
+        struct PointShadowResources
+        {
+            rhi::Buffer material;
+            std::vector<std::byte> materialBytes;
+            std::vector<rhi::Buffer> objects;
+            std::vector<glm::mat4> models;
+        };
+        std::vector<PointShadowResources> m_pointShadowResources;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
         std::array<std::uint32_t, 4> m_shadowResolutions{};

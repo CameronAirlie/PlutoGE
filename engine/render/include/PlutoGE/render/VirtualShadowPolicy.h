@@ -2,9 +2,39 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 
 namespace PlutoGE::render
 {
+    // Optional throughput controller. Fixed budgets remain the default. Only
+    // distinct completed GPU samples count; absent timings never cause growth.
+    class VirtualShadowBudgetPolicy
+    {
+    public:
+        std::uint32_t Budget(std::uint32_t baseline) const noexcept
+        { return static_cast<std::uint32_t>(std::min(16000000.0, baseline * double(m_scale))); }
+        void Observe(std::uint64_t sample, float pageMs, float sceneMs)
+        {
+            if (!sample || sample <= m_lastSample || !std::isfinite(pageMs) || !std::isfinite(sceneMs) || pageMs <= 0 || sceneMs <= 0) return;
+            m_lastSample = sample;
+            // Rapid backoff, slow recovery. Never go below the authored budget.
+            if (pageMs > TargetPageMs || sceneMs > TargetSceneMs)
+            {
+                m_scale = std::max(1.0f, m_scale * 0.75f);
+                m_headroom = 0;
+            }
+            else if (pageMs < TargetPageMs * 0.7f && sceneMs < TargetSceneMs * 0.9f)
+            {
+                if (++m_headroom >= 8) { m_scale = std::min(4.0f, m_scale * 1.25f); m_headroom = 0; }
+            }
+            else m_headroom = 0;
+        }
+        static constexpr float TargetPageMs = 0.5f, TargetSceneMs = 16.6f;
+    private:
+        std::uint64_t m_lastSample = 0;
+        std::uint32_t m_headroom = 0;
+        float m_scale = 1;
+    };
     // Square atlases keep addressing cheap. The public setting is a page count;
     // round up to a supported tier, with a hard cross-backend shader limit.
     constexpr std::uint32_t VirtualShadowPoolTiles(std::uint32_t pages) noexcept

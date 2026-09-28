@@ -104,7 +104,7 @@ namespace PlutoGE::render
             "VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < virtualCompute.size(); ++index)
             result.virtualShadows.compute[index] = Load(virtualCompute[index], "compute");
-        constexpr std::array<std::string_view, 5> virtualRaster{"VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid"};
+        constexpr std::array<std::string_view, 6> virtualRaster{"VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid", "VSMPageBatch"};
         for (std::size_t index = 0; index < virtualRaster.size(); ++index)
         {
             result.virtualShadows.raster[index * 2] = Load(virtualRaster[index], "vertex");

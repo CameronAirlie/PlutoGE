@@ -43,6 +43,9 @@ namespace PlutoGE::render::rhi
         float presentTotalMs = 0.0f;
         std::vector<GpuScope> gpuScopes;
         bool hasGpuResult = false;
+        // Identity of the completed submission that produced the GPU values.
+        // Zero means no provenance; repeated observations retain the same ID.
+        std::uint64_t gpuObservationId = 0;
     };
 
     struct RenderingInfo
@@ -83,6 +86,10 @@ namespace PlutoGE::render::rhi
         // used by cached atlases without discarding neighbouring tiles.
         virtual void ClearDepthRegion(const Scissor &, float)
         { throw std::logic_error("Depth region clear is unsupported"); }
+        [[nodiscard]] virtual bool SupportsColorRegionClear() const noexcept { return false; }
+        // Clears one active color attachment, preserving every neighbouring tile.
+        virtual void ClearColorRegion(const Scissor &, std::uint32_t, const std::array<float, 4> &)
+        { throw std::logic_error("Color region clear is unsupported"); }
         virtual void BindPipeline(PipelineHandle pipeline) = 0;
         virtual void BindVertexBuffer(BufferHandle buffer, std::size_t offset = 0) = 0;
         virtual void BindIndexBuffer(BufferHandle buffer, Format indexFormat = Format::R32Uint, std::size_t offset = 0) = 0;
@@ -97,6 +104,14 @@ namespace PlutoGE::render::rhi
         // vertexOffset, firstInstance. Byte offset must be four-byte aligned.
         virtual void DrawIndexedIndirect(BufferHandle, std::size_t)
         { throw std::logic_error("Indexed indirect drawing is unsupported"); }
+        // Nonzero only when multi-draw and nonzero indirect firstInstance are
+        // supported, with the latter included in the shader instance index.
+        [[nodiscard]] virtual std::uint32_t MaxIndexedIndirectBatchSize() const noexcept { return 0; }
+        virtual void DrawIndexedIndirectBatch(BufferHandle buffer, std::size_t offset, std::uint32_t count)
+        {
+            for (std::uint32_t index = 0; index < count; ++index)
+                DrawIndexedIndirect(buffer, offset + index * 20);
+        }
         // Diagnostic snapshots only. Delivery occurs at a later completed frame;
         // this must never add a fence wait or participate in rendering decisions.
         using BufferReadbackCallback = std::function<void(std::span<const std::byte>)>;

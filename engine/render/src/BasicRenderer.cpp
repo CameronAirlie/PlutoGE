@@ -460,31 +460,19 @@ namespace PlutoGE::render
             return hash;
         }
 
-        std::uint64_t PointShadowAtlasSignature(std::span<const glm::mat4> matrices,
-            std::span<const BasicDraw> draws, std::span<const std::uint64_t> drawSignatures,
-            glm::vec3 camera, float graphTime)
+        std::uint64_t PointShadowCasterSignature(const BasicDraw &draw, std::uint64_t signature,
+                                                  glm::vec3 camera, float graphTime)
         {
-            std::uint64_t signature = 14695981039346656037ull;
-            HashVctValue(signature, matrices.size());
-            for (std::size_t face = 0; face < matrices.size(); ++face)
-                HashVctValue(signature, matrices[face]);
-            for (std::size_t index = 0; index < draws.size(); ++index)
+            if (draw.shaderGraphProgram)
             {
-                const auto &draw = draws[index];
-                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
-                    continue;
-                HashVctValue(signature, drawSignatures[index]);
-                if (draw.shaderGraphProgram)
-                {
-                    const auto &graph = *draw.shaderGraphProgram;
-                    HashVctValue(signature, ShadowMaterial(draw,
-                        graph.usesViewDirection ? camera : glm::vec3(0), graph.usesTime ? graphTime : 0));
-                    HashVctValue(signature, draw.normalTexture);
-                    HashVctValue(signature, draw.metallicTexture);
-                    HashVctValue(signature, draw.roughnessTexture);
-                    HashVctValue(signature, draw.graphTextures);
-                    HashVctValue(signature, draw.graphSamplers);
-                }
+                const auto &graph = *draw.shaderGraphProgram;
+                HashVctValue(signature, ShadowMaterial(draw,
+                    graph.usesViewDirection ? camera : glm::vec3(0), graph.usesTime ? graphTime : 0));
+                HashVctValue(signature, draw.normalTexture);
+                HashVctValue(signature, draw.metallicTexture);
+                HashVctValue(signature, draw.roughnessTexture);
+                HashVctValue(signature, draw.graphTextures);
+                HashVctValue(signature, draw.graphSamplers);
             }
             return signature;
         }
@@ -1248,8 +1236,9 @@ namespace PlutoGE::render
         m_pointShadowDepth.Reset();
         for (auto &buffer : m_pointShadowCameras)
             buffer.Reset();
-        m_pointShadowObjects.clear();
-        m_pointShadowMaterials.clear();
+        m_pointShadowResources.clear();
+        for (auto &face : m_pointShadowFaces) face.Reset();
+        for (auto &draws : m_pointShadowFaceDraws) draws.clear();
         m_colorTarget.Reset();
         m_normalTarget.Reset();
         m_materialTarget.Reset();
@@ -1777,7 +1766,10 @@ namespace PlutoGE::render
             const auto &light = lighting.pointLights[index];
             frameParameters.pointPositionRange[index] = {light.position, light.range};
             frameParameters.pointColorIntensity[index] = {light.color, light.intensity};
-            frameParameters.pointSettings[index].x = -1.0f;
+            // Point matrices use ZO clip depth; legacy OpenGL rasterization
+            // maps that depth to [.5, 1] when clip-control is unavailable.
+            frameParameters.pointSettings[index] = {-1.0f, m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f,
+                m_device->UsesZeroToOneClipDepth() ? 0.0f : 0.5f, 0.0f};
             if (!light.castsShadows || light.range <= 0.02f || pointShadowCount == 4)
                 continue;
             frameParameters.pointSettings[index].x = static_cast<float>(pointShadowCount);
@@ -1838,7 +1830,11 @@ namespace PlutoGE::render
                     boundShadowMesh = &mesh;
                 }
                 if (submission.indirect)
-                    commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
+                {
+                    if (submission.commandCount > 1)
+                        commands.DrawIndexedIndirectBatch(submission.indirect, submission.indirectOffset, submission.commandCount);
+                    else commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
+                }
                 else
                     commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
             });
@@ -2013,20 +2009,63 @@ namespace PlutoGE::render
                 m_shadowCacheValid[cascade] = true;
             }
         }
-        // Cache the atlas as one unit because BeginRendering clears the whole
-        // attachment. Per-face updates require an explicit regional-clear path.
+        // A global key skips face culling for fully unchanged scenes. On a
+        // miss, independently validate only the casters intersecting each face.
         std::uint64_t pointSignature = 14695981039346656037ull;
+        std::array<ShadowFaceKey, 24> pointFaceKeys{};
+        std::array<bool, 24> pointFaceUpdates{};
+        std::vector<std::uint64_t> pointCasterSignatures(shadowDraws.size());
+        const bool regionalPointClear = commands.SupportsDepthRegionClear() && commands.SupportsColorRegionClear();
         if (pointShadowCount > 0)
         {
             core::CpuScope cacheScope("Point shadow cache validation", core::CpuCategory::Rendering);
-            pointSignature = PointShadowAtlasSignature(
-                std::span(frameParameters.pointShadowMatrices).first(pointShadowCount * 6),
-                shadowDraws, m_shadowDrawSignatures, lighting.cameraPosition, graphTime);
+            HashVctValue(pointSignature, pointShadowCount);
+            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+            {
+                const auto &draw = shadowDraws[index];
+                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2) continue;
+                pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime);
+                pointSignature += MixShadowMember(pointCasterSignatures[index]);
+            }
+            for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                HashVctValue(pointSignature, frameParameters.pointShadowMatrices[face]);
+            if (!m_pointShadowCacheValid || m_pointShadowSignature != pointSignature)
+            {
+                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                {
+                    auto &key = pointFaceKeys[face];
+                    key = {14695981039346656037ull, 14695981039346656037ull, 14695981039346656037ull};
+                    HashVctValue(key.projection, frameParameters.pointShadowMatrices[face]);
+                    const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
+                    auto &indices = m_pointShadowFaceDraws[face];
+                    indices.clear();
+                    for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+                    {
+                        const auto &draw = shadowDraws[index];
+                        if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 ||
+                            draw.alphaMode == 2 || !frustum.Intersects(draw)) continue;
+                        indices.push_back(index);
+                        std::uint64_t member = 14695981039346656037ull;
+                        HashVctValue(member, draw.mesh);
+                        HashVctValue(member, draw.firstIndex);
+                        HashVctValue(member, draw.indexCount);
+                        key.casters += MixShadowMember(member);
+                        key.content += MixShadowMember(pointCasterSignatures[index]);
+                    }
+                    HashVctValue(key.casters, indices.size());
+                    const auto reasons = m_pointShadowFaces[face].Invalidation(key);
+                    pointFaceUpdates[face] = reasons != 0;
+                    for (std::size_t reason = 0; reason < 4; ++reason)
+                        if (reasons & (1u << reason)) ++m_frameStats.pointShadowInvalidations[reason];
+                }
+                if (!regionalPointClear && std::any_of(pointFaceUpdates.begin(), pointFaceUpdates.end(), [](bool dirty) { return dirty; }))
+                    std::fill_n(pointFaceUpdates.begin(), pointShadowCount * 6, true);
+            }
+            m_frameStats.pointShadowFaceUpdates = std::count(pointFaceUpdates.begin(), pointFaceUpdates.end(), true);
+            m_frameStats.pointShadowFaceHits = pointShadowCount * 6 - m_frameStats.pointShadowFaceUpdates;
+            if (m_frameStats.pointShadowFaceUpdates == 0) ++m_frameStats.pointShadowAtlasCacheHits;
         }
-        const bool reusePointShadows = m_pointShadowCacheValid && m_pointShadowSignature == pointSignature;
-        if (pointShadowCount > 0 && reusePointShadows)
-            ++m_frameStats.pointShadowAtlasCacheHits;
-        if (pointShadowCount > 0 && !reusePointShadows)
+        if (m_frameStats.pointShadowFaceUpdates > 0)
         {
             core::CpuScope pointScope("Point shadow recording", core::CpuCategory::Rendering);
             commands.BeginGpuScope("RHI Point Shadows");
@@ -2049,10 +2088,23 @@ namespace PlutoGE::render
             info.height = 2048;
             info.clearColorValue[0] = 1;
             info.clearDepthValue = 1;
+            info.clearColor = info.clearDepth = !regionalPointClear;
+            if (!regionalPointClear)
+                for (std::size_t face = pointShadowCount * 6; face < m_pointShadowFaces.size(); ++face)
+                    m_pointShadowFaces[face].Reset();
             commands.BeginRendering(info);
-            std::size_t objectIndex = 0;
+            m_pointShadowResources.resize(shadowDraws.size());
+            std::vector<bool> prepared(shadowDraws.size(), false);
             for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
             {
+                if (!pointFaceUpdates[face]) continue;
+                if (regionalPointClear)
+                {
+                    const rhi::Scissor region{static_cast<std::int32_t>((face % 6) * 512),
+                        static_cast<std::int32_t>((face / 6) * 512), 512, 512};
+                    commands.ClearDepthRegion(region, 1.0f);
+                    commands.ClearColorRegion(region, 0, {1, 1, 1, 1});
+                }
                 if (!m_pointShadowCameras[face])
                     m_pointShadowCameras[face] = rhi::Buffer(
                         *m_device,
@@ -2063,59 +2115,101 @@ namespace PlutoGE::render
                     {static_cast<float>((face % 6) * 512), static_cast<float>((face / 6) * 512), 512, 512});
                 commands.SetScissor({static_cast<std::int32_t>((face % 6) * 512),
                                      static_cast<std::int32_t>((face / 6) * 512), 512, 512});
-                const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
-                for (const auto &draw : shadowDraws)
+                rhi::PipelineHandle boundPointPipeline;
+                const BasicMesh *boundPointMesh = nullptr;
+                std::array<rhi::TextureHandle, 8> boundPointTextures{};
+                std::array<rhi::SamplerHandle, 8> boundPointSamplers{};
+                const auto bindPointTexture = [&](std::size_t index, std::uint32_t slot,
+                    rhi::TextureHandle texture, rhi::SamplerHandle sampler)
                 {
-                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 ||
-                        draw.alphaMode == 2 || !frustum.Intersects(draw))
-                        continue;
+                    if (boundPointTextures[index] != texture || boundPointSamplers[index] != sampler)
+                    {
+                        commands.BindTexture(slot, texture, sampler);
+                        boundPointTextures[index] = texture; boundPointSamplers[index] = sampler;
+                    }
+                };
+                for (const auto drawIndex : m_pointShadowFaceDraws[face])
+                {
+                    const auto &draw = shadowDraws[drawIndex];
                     const auto available =
                         draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
                     if (!count)
                         continue;
                     const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline;
-                    commands.BindPipeline(masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
-                    commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
-                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                    const auto record = [&](const glm::mat4 &model) {
-                        if (objectIndex == m_pointShadowObjects.size())
+                    const auto pipeline = masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get();
+                    if (pipeline != boundPointPipeline)
+                    {
+                        commands.BindPipeline(pipeline);
+                        commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
+                        boundPointPipeline = pipeline;
+                        boundPointMesh = nullptr; // OpenGL VAOs are pipeline-owned.
+                        boundPointTextures.fill({}); boundPointSamplers.fill({});
+                    }
+                    if (boundPointMesh != draw.mesh)
+                    {
+                        commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                        commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                        boundPointMesh = draw.mesh;
+                    }
+                    auto &resources = m_pointShadowResources[drawIndex];
+                    const auto models = draw.instanceModels && !draw.instanceModels->empty()
+                        ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
+                    if (!prepared[drawIndex])
+                    {
+                        prepared[drawIndex] = true;
+                        const auto material = ShadowMaterial(draw,
+                            draw.shaderGraphProgram && draw.shaderGraphProgram->usesViewDirection ? lighting.cameraPosition : glm::vec3(0),
+                            draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime ? graphTime : 0);
+                        const auto bytes = Bytes(material);
+                        if (!resources.material)
+                            resources.material = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                {sizeof(material), rhi::BufferUsage::Uniform, "Point shadow material"}));
+                        if (resources.materialBytes.size() != bytes.size() ||
+                            std::memcmp(resources.materialBytes.data(), bytes.data(), bytes.size()) != 0)
                         {
-                            m_pointShadowObjects.emplace_back(
-                                *m_device, m_device->CreateBuffer(
-                                               {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
-                            m_pointShadowMaterials.emplace_back(
-                                *m_device, m_device->CreateBuffer(
-                                               {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Point shadow graph"}));
+                            m_device->UpdateBuffer(resources.material.Get(), 0, bytes);
+                            resources.materialBytes.assign(bytes.begin(), bytes.end());
+                            ++m_frameStats.pointShadowMaterialUploads;
                         }
-                        m_device->UpdateBuffer(m_pointShadowObjects[objectIndex].Get(), 0, Bytes(model));
-                        commands.BindUniformBuffer(16, m_pointShadowObjects[objectIndex].Get());
+                        const auto previousCount = resources.models.size();
+                        resources.objects.resize(models.size());
+                        resources.models.resize(models.size());
+                        for (std::size_t model = 0; model < models.size(); ++model)
                         {
-                            m_device->UpdateBuffer(m_pointShadowMaterials[objectIndex].Get(), 0,
-                                                   Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
-                            commands.BindUniformBuffer(8, m_pointShadowMaterials[objectIndex].Get());
-                            commands.BindTexture(
-                                9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
-                                m_fallbackSampler.Get());
-                    commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
-                    commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
+                            const bool newObject = !resources.objects[model];
+                            if (newObject)
+                                resources.objects[model] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
+                            if (newObject || model >= previousCount || resources.models[model] != models[model])
+                            {
+                                m_device->UpdateBuffer(resources.objects[model].Get(), 0, Bytes(models[model]));
+                                resources.models[model] = models[model];
+                                ++m_frameStats.pointShadowObjectUploads;
+                            }
                         }
+                    }
+                    commands.BindUniformBuffer(8, resources.material.Get());
+                    bindPointTexture(0, 9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                    bindPointTexture(1, 10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
+                    bindPointTexture(2, 11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
+                    bindPointTexture(3, 12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
+                    for (unsigned i = 0; i < 4; ++i)
+                        bindPointTexture(4 + i, 22 + i, draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get(), m_graphSamplers[draw.graphSamplers[i] & 3].Get());
+                    for (const auto &object : resources.objects)
+                    {
+                        commands.BindUniformBuffer(16, object.Get());
                         commands.DrawIndexed(count, draw.firstIndex);
-                        ++objectIndex;
                         ++m_frameStats.pointShadowDraws;
-                    };
-                    if (draw.instanceModels && !draw.instanceModels->empty())
-                        for (const auto &model : *draw.instanceModels)
-                            record(model);
-                    else
-                        record(draw.model);
+                    }
                 }
+                m_pointShadowFaces[face].Publish(pointFaceKeys[face]);
             }
             commands.EndRendering();
             commands.EndGpuScope();
+        }
+        if (pointShadowCount > 0)
+        {
             m_pointShadowSignature = pointSignature;
             m_pointShadowCacheValid = true;
         }
@@ -2564,8 +2658,12 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < transparentDraws.size(); ++index)
                 if (transparentDraws[index].surfaceType == 1u)
                 {
+                    GlassBoundsReason reason;
                     glassFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
-                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
+                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, true, &reason);
+                    ++m_frameStats.glassBoundsReasons[static_cast<std::size_t>(reason)];
+                    if (glassFootprints[index].width == m_width && glassFootprints[index].height == m_height)
+                        ++m_frameStats.glassFullFootprints;
                     glassRasterFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
                         glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, false);
                 }
@@ -2582,6 +2680,8 @@ namespace PlutoGE::render
                 {
                     const auto group = PlanGlassSnapshotGroup(transparentDraws, glassFootprints, paneIndex, glassRasterFootprints);
                     snapshotGroupEnd = group.end;
+                    ++m_frameStats.glassGroupBoundaries[static_cast<std::size_t>(group.boundary)];
+                    m_frameStats.glassSnapshotPixels += std::uint64_t(group.bounds.width) * group.bounds.height;
                     ++m_frameStats.glassSnapshots;
                     if (rendering)
                     {

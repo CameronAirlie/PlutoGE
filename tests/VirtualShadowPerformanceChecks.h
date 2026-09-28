@@ -112,7 +112,50 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     render(0);
     if (renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds != 1)
         throw std::runtime_error("VSM packet revision did not rebuild its cluster bounds");
+    receivers[0].preparationRevision = 10000;
+    render(0); render(0);
+    if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
+        throw std::runtime_error("Immutable VSM scene did not reuse prepared chunks");
+    ++casters.front().preparationRevision;
+    render(0);
+    if (renderer.GetFrameStats().virtualShadows.reusedPreparation)
+        throw std::runtime_error("Changed VSM packet incorrectly reused preparation");
+    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1 ||
+        renderer.GetFrameStats().virtualShadows.reusedPackets != casters.size())
+        throw std::runtime_error("A changed VSM packet rebuilt unaffected packets");
+    receivers[0].preparationRevision = 0;
     for (auto &draw : casters) draw.preparationRevision = 0;
+    // The shared draw table must preserve output and reduce CPU calls. Force
+    // live recording by changing one caster before each warmup sequence.
+    std::vector<std::byte> batchReference;
+    for (int variant = 0; variant < 3; ++variant)
+    {
+        casters.front().alphaMode = variant ? 1 : 0;
+        casters.front().baseColor.a = variant ? 0.0f : 1.0f;
+        if (variant == 2)
+            casters.back().instanceModels = std::make_shared<std::vector<glm::mat4>>(
+                std::initializer_list<glm::mat4>{casters.back().model,
+                    glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0)) * casters.back().model});
+        for (bool batched : {false, true})
+        {
+            lighting.virtualShadowBatching = batched;
+            for (int frame = 0; frame < 80; ++frame) render(0);
+            const auto image = readPixels(renderer.GetColorTexture());
+            if (!batched) batchReference.assign(reinterpret_cast<const std::byte *>(image.data()), reinterpret_cast<const std::byte *>(image.data()) + image.size());
+            else if (image.size() != batchReference.size() || std::memcmp(image.data(), batchReference.data(), image.size()) != 0)
+                throw std::runtime_error("Batched VSM pages differ from individual submissions");
+            casters.front().model[3].x += .001f; render(0);
+            const auto stats = renderer.GetFrameStats().virtualShadows;
+            if (batched && device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 1 && stats.pageDrawBatches >= stats.submittedIndirectCommands)
+                throw std::runtime_error("Compatible VSM chunks were not batched");
+            std::cout << "VSM submission variant " << variant << (batched ? " batched: " : " individual: ")
+                      << stats.pageDrawBatches << " API calls / " << stats.submittedIndirectCommands << " indirect commands\n";
+            casters.front().model[3].x -= .001f;
+        }
+    }
+    casters.front().alphaMode = 0;
+    casters.front().baseColor.a = 1;
+    casters.back().instanceModels.reset();
     for (int scenario = 0; scenario < 3; ++scenario)
     {
         double planning = 0, pages = 0, total = 0, receiverRequests = 0;
@@ -123,6 +166,12 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
             if (scenario == 2) casters.front().model[3].x += .01f;
             render(scenario == 0 ? 0.0f : float(frame) * .005f);
             const auto stats = renderer.GetFrameStats().virtualShadows;
+            std::uint64_t levelTriangles = 0;
+            for (auto cost : stats.updatedTrianglesByLevel) levelTriangles += cost;
+            if (levelTriangles != stats.submittedTriangles ||
+                stats.triangleBudgetDeferred + stats.pageBudgetDeferred != stats.deferred ||
+                stats.oldestDirtyAge > stats.historicalDirtyAge)
+                throw std::runtime_error("VSM diagnostic counters are inconsistent");
             if (scenario > 0 && frame > 0 && stats.reusedFrame)
                 throw std::runtime_error("Changing VSM inputs reused a stale completed frame");
             if (!renderer.GetFrameStats().virtualShadowsActive) throw std::runtime_error("GPU VSM performance path unavailable");

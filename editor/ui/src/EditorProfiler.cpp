@@ -393,6 +393,7 @@ namespace PlutoGE::ui
         report << "Rendered viewport pixels: " << frameTimingStats.renderedViewportPixels << "\n";
         const auto &rhi = frameTimingStats.rhiTimingStats;
         report << "RHI scene GPU frame: " << (rhi.hasGpuResult ? std::to_string(rhi.frameGpuMs) + " ms" : "pending") << "\n";
+        report << "RHI GPU observation ID: " << rhi.gpuObservationId << " (0 = unavailable)\n";
         report << "RHI frame fence wait: " << rhi.frameFenceWaitMs << " ms\n";
         report << "RHI descriptor allocation calls: " << rhi.descriptorAllocationCalls << "\n";
         report << "RHI descriptor sets allocated: " << rhi.descriptorSetsAllocated << "\n";
@@ -432,6 +433,19 @@ namespace PlutoGE::ui
                << rhiScene.virtualShadows.clusterBoundsCacheHits << " hits\n";
         report << "RHI point shadow atlas: " << rhiScene.pointShadowAtlasUpdates << " updates / "
                << rhiScene.pointShadowAtlasCacheHits << " hits / " << rhiScene.pointShadowDraws << " draws\n";
+        report << "RHI point shadow faces: " << rhiScene.pointShadowFaceUpdates << " updates / "
+               << rhiScene.pointShadowFaceHits << " hits; uploads " << rhiScene.pointShadowObjectUploads << " objects / "
+               << rhiScene.pointShadowMaterialUploads << " materials\n";
+        report << "RHI point face invalidation reasons (may overlap): initial " << rhiScene.pointShadowInvalidations[0]
+               << ", projection " << rhiScene.pointShadowInvalidations[1] << ", caster set/range " << rhiScene.pointShadowInvalidations[2]
+               << ", content " << rhiScene.pointShadowInvalidations[3] << "\n";
+        report << "VSM immutable preparation: " << (rhiScene.virtualShadows.reusedPreparation ? "reused" : "evaluated") << "\n";
+        report << "RHI glass footprint fallback: unknown " << rhiScene.glassBoundsReasons[1]
+               << ", deformed " << rhiScene.glassBoundsReasons[2] << ", near plane " << rhiScene.glassBoundsReasons[3]
+               << ", nonfinite " << rhiScene.glassBoundsReasons[4] << "; full screen " << rhiScene.glassFullFootprints << "\n";
+        report << "RHI glass group boundaries: raster overlap " << rhiScene.glassGroupBoundaries[1]
+               << ", sample expansion " << rhiScene.glassGroupBoundaries[2] << ", group limit " << rhiScene.glassGroupBoundaries[3]
+               << ", other surface " << rhiScene.glassGroupBoundaries[4] << "; copied pixels " << rhiScene.glassSnapshotPixels << "\n";
         report << "RHI glass snapshots: " << rhiScene.glassSnapshots << " copies / "
                << rhiScene.glassPanes << " panes\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
@@ -477,6 +491,8 @@ namespace PlutoGE::ui
             const auto &pages = rhiScene.virtualShadows;
             report << "VSM submissions: " << pages.submittedIndirectCommands << " indirect commands, " << pages.receiverDraws
                    << " receiver draws; " << pages.memoryBytes << " bytes allocated\n";
+            report << "VSM CPU batches: " << pages.pageDrawBatches << "; packets " << pages.reusedPackets << " reused / "
+                   << pages.rebuiltPackets << " rebuilt; effective triangle budget " << pages.effectiveTriangleBudget << "\n";
             if (pages.reusedFrame) report << "VSM frame reused: unchanged inputs and confirmed clean pages\n";
             if (pages.gpuCountersAvailable)
                 report << "VSM GPU frame " << pages.gpuFrame << " (delayed): " << pages.requested << " requested, " << pages.resident
@@ -488,8 +504,15 @@ namespace PlutoGE::ui
             report << "VSM current resolution scale: " << pages.resolutionScale << "; pool " << pages.physicalCapacity << " pages\n";
             report << "VSM directional fine: " << pages.directionalFineRequested << " requested, " << pages.directionalFineResident
                    << " resident, " << pages.directionalFineCapacity << " available; local fine " << pages.localFineRequested
-                   << ", coarse " << pages.coarseRequested << "; oldest dirty " << pages.oldestDirtyAge
+                   << ", coarse " << pages.coarseRequested << "; oldest continuously requested dirty " << pages.oldestDirtyAge
                    << " frames, oversized updates " << pages.oversizedUpdates << "\n";
+            report << "VSM historical dirty age: " << pages.historicalDirtyAge << " frames (includes unrequested intervals); max dirty page "
+                   << pages.maxDirtyPageTriangles << " triangles; budget deferrals " << pages.triangleBudgetDeferred
+                   << " triangle / " << pages.pageBudgetDeferred << " page\n";
+            for (std::size_t level = 0; level < pages.updatedTrianglesByLevel.size(); ++level)
+                if (pages.dirtyTrianglesByLevel[level] || pages.updatedTrianglesByLevel[level])
+                    report << "VSM level " << level << ": " << pages.dirtyTrianglesByLevel[level] << " dirty triangles / "
+                           << pages.updatedTrianglesByLevel[level] << " updated triangles\n";
         }
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";

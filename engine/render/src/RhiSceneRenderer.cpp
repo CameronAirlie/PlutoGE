@@ -654,6 +654,17 @@ namespace PlutoGE::render
                     const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
                     if (submesh.hasBoundsExtents)
                         OcclusionCulling::SetRigidBounds(draw, submesh.boundsMin, submesh.boundsMax);
+                    else
+                    {
+                        // Imported ranges lacking an AABB can still use the
+                        // conservative CPU geometry bounds retained by BasicMesh.
+                        const auto available = firstIndex < renderMesh->GetIndexCount() ? renderMesh->GetIndexCount() - firstIndex : 0;
+                        const auto ranges = SelectShadowGeometryClusters(renderMesh->GetShadowClusters(), firstIndex,
+                            std::min(indexCount ? indexCount : available, available));
+                        const auto bounds = MergeShadowGeometryClusters(ranges);
+                        if (!ranges.empty() && glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))))
+                            OcclusionCulling::SetRigidBounds(draw, bounds.center - bounds.extents, bounds.center + bounds.extents);
+                    }
                 }
                 if (deformed)
                 {
@@ -1231,6 +1242,15 @@ namespace PlutoGE::render
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
         m_timingStats.glassPanes = frameStats.glassPanes;
         m_timingStats.glassSnapshots = frameStats.glassSnapshots;
+        m_timingStats.glassFullFootprints = frameStats.glassFullFootprints;
+        m_timingStats.glassSnapshotPixels = frameStats.glassSnapshotPixels;
+        m_timingStats.glassBoundsReasons = frameStats.glassBoundsReasons;
+        m_timingStats.glassGroupBoundaries = frameStats.glassGroupBoundaries;
+        m_timingStats.pointShadowFaceUpdates = frameStats.pointShadowFaceUpdates;
+        m_timingStats.pointShadowFaceHits = frameStats.pointShadowFaceHits;
+        m_timingStats.pointShadowObjectUploads = frameStats.pointShadowObjectUploads;
+        m_timingStats.pointShadowMaterialUploads = frameStats.pointShadowMaterialUploads;
+        m_timingStats.pointShadowInvalidations = frameStats.pointShadowInvalidations;
         m_timingStats.pointShadowAtlasUpdates = frameStats.pointShadowAtlasUpdates;
         m_timingStats.pointShadowAtlasCacheHits = frameStats.pointShadowAtlasCacheHits;
         m_timingStats.pointShadowDraws = frameStats.pointShadowDraws;

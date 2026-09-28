@@ -34,6 +34,7 @@ namespace PlutoGE::scene
         bool virtualClusterCulling = true;
         int virtualPageBudget = 64;
         int virtualTriangleBudget = 1000000;
+        bool virtualAdaptiveBudget = false;
         int cascadeCount = kDefaultDirectionalShadowCascades;
         int resolution = 2048;
         // 0.5 reduces a 2048 base map to 256 pixels by cascade four.

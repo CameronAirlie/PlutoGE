@@ -11,6 +11,21 @@
 [[vk::binding(9, 0)]] RWTexture2D<float> pageTable : register(u9, space0);
 [[vk::binding(10, 0)]] RWStructuredBuffer<uint4> membership : register(u10, space0);
 
+// Diagnostics must not wrap when very expensive pages share a level.
+void addDirtyTriangleCost(uint level, uint cost)
+{
+    uint index = PLUTO_VSM_STATS_DIRTY_TRIANGLES_BASE + level;
+    uint previous = stats[index];
+    for (;;)
+    {
+        uint next = previous + min(cost, 0xffffffffu - previous);
+        uint observed;
+        InterlockedCompareExchange(stats[index], previous, next, observed);
+        if (observed == previous) break;
+        previous = observed;
+    }
+}
+
 [shader("compute")][numthreads(64, 1, 1)]
 void resetMain(uint3 id : SV_DispatchThreadID)
 {
@@ -153,7 +168,7 @@ void allocateMain(uint lane : SV_GroupIndex)
         // Leave unused contents eligible for reuse if they are requested again
         // before this physical slot is reassigned. Its old frame excludes it
         // from this frame's signature/render/publish passes.
-        else planFree[freeCount++] = slot;
+        else { planFree[freeCount++] = slot; p.freshness.x = 0; }
         pages[slot] = p;
     }
     uint nextFree = 0;
@@ -170,6 +185,7 @@ void allocateMain(uint lane : SV_GroupIndex)
             p.address = int4(vsm.origins[level].xy + int2(local), int(level), vsm.origins[level].z);
             p.state = uint4(key, vsm.limits.y, 0, 0);
             p.signature = 0;
+            p.freshness = 0;
             p.pending.w = vsm.limits.y;
             pages[slot] = p;
             requestMask[at] = 2;
@@ -192,28 +208,23 @@ bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
     if (caster.bounds.w < 0) return true;
     uint level = page.address.z;
     if (level == PLUTO_VSM_ROOT_LEVEL && caster.bounds.w < vsm.metrics[level].x * vsm.culling.x) return false;
-    if (level >= PLUTO_VSM_DIRECTIONAL_LEVELS)
+    // Homogeneous page planes support both orthographic and perspective
+    // projections. The AABB support function is tighter than a sphere for
+    // architectural surfaces, while remaining conservative under clipping.
+    float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(vsm, level) * 2.0 - 1.0;
+    float2 hi = lo + 2.0 / virtualGrid(vsm, level);
+    float4 planes[6] = {float4(1,0,0,-lo.x), float4(-1,0,0,hi.x),
+        float4(0,1,0,-lo.y), float4(0,-1,0,hi.y), float4(0,0,1,0), float4(0,0,-1,1)};
+    for (int i = 0; i < 6; ++i)
     {
-        // Test the world sphere against homogeneous page-frustum planes. This
-        // stays conservative even when the sphere crosses the light plane.
-        float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(vsm, level) * 2.0 - 1.0;
-        float2 hi = lo + 2.0 / virtualGrid(vsm, level);
-        float4 planes[6] = {float4(1,0,0,-lo.x), float4(-1,0,0,hi.x),
-            float4(0,1,0,-lo.y), float4(0,-1,0,hi.y), float4(0,0,1,0), float4(0,0,-1,1)};
-        for (int i = 0; i < 6; ++i)
-        {
-            float4 plane = mul(planes[i], vsm.matrices[level]);
-            if (dot(plane, float4(caster.bounds.xyz, 1)) < -caster.bounds.w * length(plane.xyz)) return false;
-        }
-        return true;
+        float4 plane = mul(planes[i], vsm.matrices[level]);
+        float radius = caster.extents.x >= 0 ? dot(abs(plane.xyz), caster.extents.xyz)
+            : caster.bounds.w * length(plane.xyz);
+        float distance = dot(plane, float4(caster.bounds.xyz, 1));
+        float tolerance = 1.e-5 * (1.0 + abs(distance) + radius);
+        if (distance < -radius - tolerance) return false;
     }
-    float3 uv = virtualCoordinate(vsm, level, caster.bounds.xyz);
-    float2 radius = caster.bounds.w / vsm.metrics[level].w;
-    float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(vsm, level);
-    float2 hi = lo + 1.0 / virtualGrid(vsm, level);
-    float depthRadius = caster.bounds.w / vsm.metrics[level].y;
-    return all(uv.xy + radius >= lo) && all(uv.xy - radius <= hi) &&
-        uv.z + depthRadius >= 0 && uv.z - depthRadius <= 1;
+    return true;
 }
 uint mixHash(uint hash, uint value) { return (hash ^ value) * 16777619u; }
 groupshared uint4 signatureItems[64];
@@ -285,11 +296,16 @@ void budgetMain(uint lane : SV_GroupIndex)
                 {
                     InterlockedAdd(stats[3], 1);
                     p.signature.z = 0;
+                    p.freshness.x = 0;
                 }
                 else
                 {
                     if (p.signature.z == 0) p.signature.z = vsm.limits.y;
-                    uint age = vsm.limits.y - p.signature.z;
+                    if (p.freshness.x == 0) p.freshness.x = vsm.limits.y;
+                    uint age = vsm.limits.y - p.freshness.x;
+                    InterlockedMax(stats[PLUTO_VSM_STATS_HISTORICAL_AGE], vsm.limits.y - p.signature.z);
+                    addDirtyTriangleCost(p.address.z, p.pending.z);
+                    InterlockedMax(stats[PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES], p.pending.z);
                     uint priority = age >= vsm.scheduling.x ? 4u :
                         (p.state.z == 0 && virtualCoarseLevel(p.address.z) ? 3u : p.state.z != 0 ? 2u : 1u);
                     candidate = uint4(priority, age, p.pending.z, index);
@@ -334,10 +350,16 @@ void budgetMain(uint lane : SV_GroupIndex)
             pages[slot].state.w = 1;
             remaining = oversized ? 0 : remaining - candidate.z;
             triangles += min(candidate.z, 0xffffffffu - triangles);
+            stats[PLUTO_VSM_STATS_UPDATED_TRIANGLES_BASE + pages[slot].address.z] += candidate.z;
             requests[PLUTO_VSM_UPDATE_LIST_OFFSET + updates++] = slot;
             if (oversized) ++stats[17];
         }
-        else ++stats[8];
+        else
+        {
+            ++stats[8];
+            if (updates >= vsm.limits.z) ++stats[PLUTO_VSM_STATS_PAGE_DEFERRED];
+            else ++stats[PLUTO_VSM_STATS_TRIANGLE_DEFERRED];
+        }
     }
     stats[7] = triangles;
     stats[9] = updates;
@@ -360,7 +382,7 @@ void binMain(uint3 id : SV_DispatchThreadID)
     indirectCommands[command + 1] = count * caster.draw.z;
     indirectCommands[command + 2] = caster.draw.y;
     indirectCommands[command + 3] = 0;
-    indirectCommands[command + 4] = 0;
+    indirectCommands[command + 4] = vsm.scheduling.z != 0 ? index * PLUTO_VSM_INSTANCE_STRIDE : 0;
     InterlockedAdd(stats[6], count);
     if (count != 0) InterlockedAdd(stats[10], 1u);
 }
@@ -370,7 +392,7 @@ void publishMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= vsm.pool.x) return;
     VirtualShadowPage p = pages[id.x];
     if (p.state.y != vsm.limits.y) return;
-    if (p.state.w != 0) { p.signature = uint4(p.pending.xy, 0, vsm.limits.y); p.state.z = 1; }
+    if (p.state.w != 0) { p.signature = uint4(p.pending.xy, 0, vsm.limits.y); p.state.z = 1; p.freshness.x = 0; }
     if (p.state.z != 0)
         pageTable[virtualPageCoordinate(p.state.x) + uint2(0, p.address.z * PLUTO_VSM_GRID)] = float(id.x + 1);
     pages[id.x] = p;

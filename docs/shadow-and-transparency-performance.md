@@ -1,5 +1,9 @@
 # Shadow and transparency performance phase
 
+This records the first performance phase. The subsequent
+[face caching and diagnostics phase](shadow-face-caching-and-diagnostics.md)
+replaces whole-atlas point caching with per-face caching and adds further diagnostics.
+
 ## Plan and capture baseline
 
 The 240-frame editor capture averaged 22.11 ms CPU and 11.73 ms scene GPU.

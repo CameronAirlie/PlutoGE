@@ -55,7 +55,12 @@ namespace PlutoGE::render
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t glassFullFootprints = 0;
+        std::uint64_t glassSnapshotPixels = 0;
+        std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
         std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
+        std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
+        std::array<std::size_t, 4> pointShadowInvalidations{};
         std::size_t materialPreparations = 0, materialPreparationHits = 0;
         std::array<std::uint64_t, 4> geometryTriangles{};
         rhi::Extent2D renderSize{}, outputSize{};

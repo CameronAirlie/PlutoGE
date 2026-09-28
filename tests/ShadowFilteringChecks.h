@@ -374,6 +374,69 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     pointFrame();
     if (renderer.GetFrameStats().pointShadowAtlasCacheHits != 1)
         throw std::runtime_error("Empty point atlas was not cached");
+    // Update one cube face while retaining an independently populated opposite
+    // face. Compare both retained and updated content with a full refresh.
+    lighting = BasicLighting{};
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    lighting.cameraPosition = {0, 0, 4};
+    lighting.pointLights.push_back({{0, 0, 4}, 20, {1, 1, 1}, 16, true});
+    receiver = BasicDraw{}; receiver.mesh = &mesh;
+    receiver.model[3].z = .2f;
+    std::array<BasicDraw, 2> faceCasters{receiver, receiver};
+    faceCasters[0].model[3].z = .7f; faceCasters[1].model[3].z = 7.3f;
+    for (auto &draw : faceCasters)
+    {
+        draw.shadowBoundsCenter = glm::vec3(draw.model[3]);
+        draw.shadowBoundsRadius = 1.3f;
+    }
+    const auto faceFrame = [&](glm::mat4 projection = glm::mat4(1)) {
+        renderer.Render(projection, lighting, std::span(&receiver, 1), {}, faceCasters);
+        return readPixels(renderer.GetColorTexture());
+    };
+    faceFrame(); faceFrame();
+    std::swap(faceCasters[0], faceCasters[1]);
+    faceFrame();
+    if (renderer.GetFrameStats().pointShadowFaceUpdates != 0)
+        throw std::runtime_error("Reordering point-shadow packets invalidated cached faces");
+    std::swap(faceCasters[0], faceCasters[1]);
+    faceCasters[0].model[3].x += .2f;
+    faceCasters[0].shadowBoundsCenter.x += .2f;
+    const auto partial = faceFrame();
+    if (renderer.GetFrameStats().pointShadowFaceUpdates != 1 || renderer.GetFrameStats().pointShadowFaceHits != 5 ||
+        renderer.GetFrameStats().pointShadowObjectUploads != 1 || renderer.GetFrameStats().pointShadowMaterialUploads != 0)
+        throw std::runtime_error("Point face update invalidated unrelated faces or repeated uploads");
+    lighting.pointLights[0].position.x += .1f; faceFrame();
+    lighting.pointLights[0].position.x -= .1f;
+    if (faceFrame() != partial || renderer.GetFrameStats().pointShadowFaceUpdates != 6)
+        throw std::runtime_error("Partial point-face image differs from a complete refresh");
+    // Update the first face once more, then inspect the opposite cached face.
+    faceCasters[0].model[3].x += .1f; faceCasters[0].shadowBoundsCenter.x += .1f; faceFrame();
+    receiver.model = glm::translate(glm::mat4(1), glm::vec3(0, 0, 7.8f)) *
+        glm::rotate(glm::mat4(1), glm::radians(180.f), glm::vec3(0, 1, 0));
+    lighting.cameraPosition = {0, 0, 6};
+    const auto oppositeProjection = glm::translate(glm::mat4(1), glm::vec3(0, 0, .2f)) *
+        glm::scale(glm::mat4(1), glm::vec3(1, 1, -1)) * glm::translate(glm::mat4(1), glm::vec3(0, 0, -7.8f));
+    const auto retained = faceFrame(oppositeProjection);
+    if (renderer.GetFrameStats().pointShadowFaceUpdates != 0)
+        throw std::runtime_error("Camera-only movement invalidated rigid point shadows");
+    lighting.pointLights[0].castsShadows = false;
+    const auto unshadowedOpposite = faceFrame(oppositeProjection);
+    lighting.pointLights[0].castsShadows = true;
+    const auto oppositeCenter = (128 * 256 + 128) * 4;
+    if (int(unshadowedOpposite[oppositeCenter]) < int(retained[oppositeCenter]) + 20)
+    {
+        std::cout << "Opposite face: retained=" << int(retained[oppositeCenter]) << ", unshadowed="
+                  << int(unshadowedOpposite[oppositeCenter]) << std::endl;
+        throw std::runtime_error("Opposite-face preservation fixture has no visible occlusion");
+    }
+    lighting.pointLights[0].position.x += .1f; faceFrame(oppositeProjection);
+    lighting.pointLights[0].position.x -= .1f;
+    if (faceFrame(oppositeProjection) != retained)
+        throw std::runtime_error("Regional clear damaged the opposite cached point face");
+    faceCasters[0].castsShadow = false;
+    faceFrame(oppositeProjection);
+    if (renderer.GetFrameStats().pointShadowFaceUpdates != 1 || renderer.GetFrameStats().pointShadowDraws != 0)
+        throw std::runtime_error("Removing a caster did not clear only its previously occupied face");
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

@@ -279,6 +279,7 @@ namespace PlutoGE::render
         if (!m_drawPreparation)
             m_drawPreparation = std::make_unique<RhiDrawPreparationCache>();
         auto &preparation = *m_drawPreparation;
+        preparation.BeginFrame(m_skinningFrame);
         if (std::erase_if(m_meshes, [](const auto &entry) { return entry.second.lifetime.expired(); }) != 0)
             preparation.Reset();
         std::erase_if(preparation.materials,
@@ -578,8 +579,18 @@ namespace PlutoGE::render
                     entry.Store(command, revision, nullptr);
                     continue;
                 }
+                const bool emissiveGi = giOnly && command.lodIndex != 0 && command.material &&
+                    glm::any(glm::greaterThan(command.material->GetConfig().emission, glm::vec3(0.0f)));
+                if (const auto *shared = preparation.FindRetained(command, revision, emissiveGi, m_skinningFrame))
+                {
+                    entry = *shared;
+                    destination.push_back(entry.draw);
+                    ++m_timingStats.reusedDrawPackets;
+                    ++m_timingStats.sharedDrawPacketHits;
+                    continue;
+                }
                 BasicMesh *renderMesh = nullptr;
-                const CachedMesh *rigidMesh = nullptr;
+                CachedMesh *rigidMesh = nullptr;
                 SkinnedMesh *deformed = nullptr;
                 if (command.jointMatrices && !command.jointMatrices->empty())
                 {
@@ -630,8 +641,6 @@ namespace PlutoGE::render
                 {
                     // Small emissive submeshes must not disappear from the GI
                     // source when the camera selects simplified geometry.
-                    const bool emissiveGi = giOnly && command.material &&
-                        glm::any(glm::greaterThan(command.material->GetConfig().emission, glm::vec3(0.0f)));
                     const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, emissiveGi ? 0u : command.lodIndex);
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
@@ -659,10 +668,12 @@ namespace PlutoGE::render
                         // Imported ranges lacking an AABB can still use the
                         // conservative CPU geometry bounds retained by BasicMesh.
                         const auto available = firstIndex < renderMesh->GetIndexCount() ? renderMesh->GetIndexCount() - firstIndex : 0;
-                        const auto ranges = SelectShadowGeometryClusters(renderMesh->GetShadowClusters(), firstIndex,
-                            std::min(indexCount ? indexCount : available, available));
-                        const auto bounds = MergeShadowGeometryClusters(ranges);
-                        if (!ranges.empty() && glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))))
+                        const auto count = std::min(indexCount ? indexCount : available, available);
+                        auto [cached, inserted] = rigidMesh->localBounds.try_emplace(GeometryRangeKey({firstIndex, count}));
+                        if (inserted)
+                            cached->second = MergeShadowGeometryClusters(SelectShadowGeometryClusters(renderMesh->GetShadowClusters(), firstIndex, count));
+                        const auto &bounds = cached->second;
+                        if (glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))))
                             OcclusionCulling::SetRigidBounds(draw, bounds.center - bounds.extents, bounds.center + bounds.extents);
                     }
                 }
@@ -695,6 +706,7 @@ namespace PlutoGE::render
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
                 entry.Store(command, revision, &draw);
+                preparation.Retain(entry, emissiveGi, m_skinningFrame);
                 destination.push_back(std::move(draw));
                 ++m_timingStats.rebuiltDrawPackets;
             }
@@ -1242,6 +1254,13 @@ namespace PlutoGE::render
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
         m_timingStats.glassPanes = frameStats.glassPanes;
         m_timingStats.glassSnapshots = frameStats.glassSnapshots;
+        m_timingStats.glassDepthSnapshots = frameStats.glassDepthSnapshots;
+        m_timingStats.glassSnapshotReuseHits = frameStats.glassSnapshotReuseHits;
+        m_timingStats.glassBoundsCpuMs = frameStats.glassBoundsCpuMs;
+        m_timingStats.glassGroupingCpuMs = frameStats.glassGroupingCpuMs;
+        m_timingStats.glassDamageCpuMs = frameStats.glassDamageCpuMs;
+        m_timingStats.glassCopyRecordingCpuMs = frameStats.glassCopyRecordingCpuMs;
+        m_timingStats.glassDrawRecordingCpuMs = frameStats.glassDrawRecordingCpuMs;
         m_timingStats.glassFullFootprints = frameStats.glassFullFootprints;
         m_timingStats.glassSnapshotPixels = frameStats.glassSnapshotPixels;
         m_timingStats.glassBoundsReasons = frameStats.glassBoundsReasons;

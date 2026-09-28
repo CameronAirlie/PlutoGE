@@ -191,6 +191,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode standardFragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
+        BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage skyQuadrature;
         std::array<BasicPostProcessShaderPackage, 2> ssrStages; // Trace and resolve.
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
@@ -457,6 +458,9 @@ namespace PlutoGE::render
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
+        float glassBoundsCpuMs = 0, glassGroupingCpuMs = 0, glassDamageCpuMs = 0;
+        float glassCopyRecordingCpuMs = 0, glassDrawRecordingCpuMs = 0;
         std::size_t glassFullFootprints = 0;
         std::uint64_t glassSnapshotPixels = 0;
         std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
@@ -592,6 +596,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_transparentPipeline;
         rhi::GraphicsPipeline m_transparentTwoSidedPipeline;
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
+        rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
         std::array<rhi::GraphicsPipeline, 2> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;

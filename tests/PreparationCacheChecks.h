@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
@@ -121,7 +122,7 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     const std::array<IPostProcessEffect *, 1> effects{&gi};
     const auto renderGi = [&] {
         require(renderer.Render(64, 64, camera, lighting, commands, commands, effects), "GI preparation failed");
-        device.ReadTextureRgba8(renderer.GetColorTexture());
+        (void)device.ReadTextureRgba8(renderer.GetColorTexture());
     };
     renderGi();
     renderGi();
@@ -163,4 +164,36 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     require(renderReordered() == cachedOrder, "Reordered cache differs from freshly prepared rendering");
     require(renderer.Render(64, 64, camera, lighting, {}, {}), "Empty list render failed");
     require(renderer.GetDrawCount() == 0, "Removed commands survived in the cache");
+    RenderObjectIdentity producer;
+    const RenderObjectIdentity clone = producer;
+    require(clone.Value() != producer.Value(), "Cloned render producers share a cache identity");
+    commands[0].sourceObject = producer.Value();
+    commands[0].sourceRevision = 1;
+    renderer.InvalidateAssetCache();
+    const auto retainedImage = render();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 1 && renderer.GetTimingStats().sharedDrawPacketHits == 1,
+        "Rigid visible/shadow passes did not share retained preparation");
+    require(renderer.Render(64, 64, camera, lighting, {}, commands), "Retained visibility removal failed");
+    (void)device.ReadTextureRgba8(renderer.GetColorTexture());
+    require(render() == retainedImage && renderer.GetTimingStats().rebuiltDrawPackets == 0 &&
+        renderer.GetTimingStats().sharedDrawPacketHits == 1, "Returning visible object lost its retained packet");
+    commands[0].model[3].x -= .3f;
+    ++commands[0].sourceRevision;
+    require(render() != retainedImage && renderer.GetTimingStats().rebuiltDrawPackets == 1 &&
+        renderer.GetTimingStats().sharedDrawPacketHits == 1, "Retained object revision was not shared across passes");
+    commands[0].sourceObject = clone.Value();
+    render();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 1, "A new producer reused a previous object's identity");
+    renderGi();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 0 && renderer.GetTimingStats().sharedDrawPacketHits == 1,
+        "GI did not reuse the retained rigid packet");
+    mutableConfig.emission = {0, 1, 0};
+    renderGi();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 1 && renderer.GetTimingStats().sharedDrawPacketHits == 2,
+        "Retained material invalidation was not shared across all passes");
+    commands[0].instanceModels = instances;
+    render();
+    (*instances)[0][3].x += .2f;
+    render();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 2, "Producer IDs hid mutable instance changes");
 }

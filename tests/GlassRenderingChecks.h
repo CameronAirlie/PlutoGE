@@ -1,9 +1,11 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
 #include "../engine/render/src/GlassSnapshotBounds.h"
+#include "../engine/render/src/SnapshotDamageTracker.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -343,6 +345,7 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     require(renderer.GetFrameStats().glassSnapshots == 1 && renderer.GetFrameStats().glassPanes == 2,
             "Disjoint glass did not reduce recorded snapshot copies");
     const auto groupedPixels = readPixels(renderer.GetColorTexture());
+    require(renderer.GetFrameStats().glassDepthSnapshots == 1, "Glass copied immutable depth more than once");
     require(renderer.GetFrameStats().materialPreparations == 3 &&
             renderer.GetFrameStats().materialPreparationHits == 1,
             "Repeated glass material was prepared more than once");
@@ -369,6 +372,59 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     require(renderer.GetFrameStats().glassSnapshots == 2, "Full snapshot reference unexpectedly grouped panes");
     const auto referencePixels = readPixels(renderer.GetColorTexture());
     require(referencePixels == groupedPixels, "Shared glass snapshot changed rendered pixels");
+    // Large read footprints with small overlapping writes used to recopy the
+    // whole screen per pane. Compare dirty-tile refresh against unknown bounds,
+    // which conservatively force full writes and reads after every pane.
+    std::vector<BasicDraw> layeredScene{left, right};
+    for (int index = 0; index < 12; ++index)
+    {
+        auto layer = groupedPane;
+        const glm::vec3 position(.01f * index, 0, .35f + .025f * index);
+        layer.model = glm::translate(glm::mat4(1), position) * glm::scale(glm::mat4(1), glm::vec3(.12f));
+        layer.shadowBoundsCenter = layer.occlusionBoundsCenter = position;
+        layer.shadowBoundsRadius = .18f;
+        layer.occlusionBoundsExtents = {.12f, .12f, 0};
+        layer.thickness = .2f;
+        layeredScene.push_back(layer);
+    }
+    render(layeredScene);
+    const auto incrementalPixels = readPixels(renderer.GetColorTexture());
+    const auto incrementalCopies = renderer.GetFrameStats().glassSnapshotPixels;
+    require(renderer.GetFrameStats().glassDepthSnapshots == 1, "Layered glass repeatedly copied depth");
+    for (std::size_t i = 2; i < layeredScene.size(); ++i) layeredScene[i].shadowBoundsRadius = -1;
+    render(layeredScene);
+    require(readPixels(renderer.GetColorTexture()) == incrementalPixels,
+        "Incremental glass snapshots differ from full-copy layering");
+    require(incrementalCopies * 3 < renderer.GetFrameStats().glassSnapshotPixels,
+        "Small translucent writes did not substantially reduce snapshot traffic");
+    std::cout << "Layered glass color copies: " << incrementalCopies << " incremental / "
+              << renderer.GetFrameStats().glassSnapshotPixels << " full-reference pixels; depth copies "
+              << renderer.GetFrameStats().glassDepthSnapshots << '\n';
+    // The planner never marks a region valid before the GPU copy is recorded.
+    SnapshotDamageTracker damage;
+    damage.Reset(130, 70);
+    const rhi::Scissor smallRead{5, 5, 2, 2};
+    auto copies = damage.PlanCopies(smallRead);
+    require(copies.size() == 1 && copies[0].width == 32 && copies[0].height == 32,
+        "Snapshot planner did not cover whole tiles");
+    require(!damage.PlanCopies(smallRead).empty(), "Planning prematurely published a snapshot");
+    damage.CommitCopy(copies[0]);
+    require(damage.PlanCopies({0, 0, 32, 32}).empty(), "Copied tile was not reusable");
+    require(!damage.PlanCopies({32, 0, 1, 1}).empty(), "Uncopied tile was incorrectly clean");
+    damage.MarkWritten({31, 31, 2, 2});
+    require(!damage.PlanCopies(smallRead).empty(), "Cross-tile write failed to invalidate a snapshot");
+    damage.Reset(640, 64);
+    damage.CommitCopy({0, 0, 640, 64});
+    for (int index = 0; index < 10; ++index) damage.MarkWritten({index * 64, 0, 1, 1});
+    copies = damage.PlanCopies({0, 0, 640, 64});
+    require(copies.size() == 1 && copies[0].x == 0 && copies[0].width == 608,
+        "Fragmented snapshot damage did not bound submission overhead");
+    damage.Reset(130, 70);
+    copies = damage.PlanCopies({129, 69, 1, 1});
+    require(copies.size() == 1 && copies[0].width == 2 && copies[0].height == 6,
+        "Snapshot edge tiles exceeded attachment bounds");
+    damage.CommitCopy(copies[0]);
+    require(damage.PlanCopies({129, 69, 1, 1}).empty(), "Clipped edge tile could not be reused");
     disjoint = {groupedPane, groupedPane};
     require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 1,
             "Overlapping glass lost its ordered snapshot");

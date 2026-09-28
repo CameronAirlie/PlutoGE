@@ -46,6 +46,8 @@ namespace PlutoGE::render
             .transparentFragment = Load("Glass", "fragment"),
             .glassSceneCopy = {.vertex = Load("GlassSceneCopy", "vertex"),
                                .fragment = Load("GlassSceneCopy", "fragment")},
+            .glassColorCopy = {.vertex = Load("GlassColorCopy", "vertex"), .fragment = Load("GlassColorCopy", "fragment")},
+            .glassDepthCopy = {.vertex = Load("GlassDepthCopy", "vertex"), .fragment = Load("GlassDepthCopy", "fragment")},
             .shadowVertex = Load("DirectionalShadow", "vertex"),
             .shadowInstancedVertex = Load("DirectionalShadowInstanced", "vertex"),
             .shadowFragment = Load("DirectionalShadow", "fragment"),

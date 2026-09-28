@@ -55,6 +55,10 @@ namespace PlutoGE::render
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
+        std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
+        float glassBoundsCpuMs = 0, glassGroupingCpuMs = 0, glassDamageCpuMs = 0;
+        float glassCopyRecordingCpuMs = 0, glassDrawRecordingCpuMs = 0;
+        std::size_t sharedDrawPacketHits = 0;
         std::size_t glassFullFootprints = 0;
         std::uint64_t glassSnapshotPixels = 0;
         std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
@@ -179,6 +183,7 @@ namespace PlutoGE::render
           std::weak_ptr<const void> lifetime;
           BasicMesh mesh;
           std::unordered_map<std::uint64_t, std::uint32_t> canonicalGeometry;
+          std::unordered_map<std::uint64_t, ShadowGeometryCluster> localBounds;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh

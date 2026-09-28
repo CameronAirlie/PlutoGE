@@ -71,10 +71,13 @@ namespace PlutoGE::render
         bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;
         bool terrainGeomorph = false;
+        // Optional producer-owned identity/revision for immutable rigid object
+        // state (including motion history and bounds). Zero retains value-based
+        // validation for procedural callers and mutable pose/instance arrays.
+        std::uint64_t sourceObject = 0, sourceRevision = 0;
 
         // LOD transition state is transient and packed into the otherwise
-        // unused high bits of minLodIndex. Keeping RenderCommand's original
-        // layout avoids invalidating cached commands containing shared_ptrs.
+        // unused high bits of minLodIndex.
         uint32_t GetMinLodIndex() const { return minLodIndex & 0xffu; }
         uint32_t GetLodTransitionIndex() const { return (minLodIndex >> 8u) & 0xffu; }
         float GetLodTransitionFade() const
@@ -372,6 +375,9 @@ namespace PlutoGE::render
         bool m_allShadowCastersStatic = true;
         std::vector<std::uint64_t> m_cachedSubmissionSortIdentities;
         std::vector<std::size_t> m_cachedSubmissionSortPermutation;
+        std::vector<std::uint64_t> m_submissionSortIdentityScratch;
+        std::vector<RenderCommand> m_submissionSortCommandScratch;
+        std::vector<std::uint8_t> m_submissionSortFlagScratch;
         std::vector<DecalCommand> m_decalCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
         std::vector<std::pair<std::size_t, bool>> m_visibilityCandidates;

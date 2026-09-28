@@ -1139,7 +1139,8 @@ namespace PlutoGE::render
             return;
         }
 
-        std::vector<std::uint64_t> identities;
+        auto &identities = m_submissionSortIdentityScratch;
+        identities.clear();
         identities.reserve(m_renderCommands.size());
         for (const auto &command : m_renderCommands)
         {
@@ -1149,8 +1150,9 @@ namespace PlutoGE::render
         if (identities == m_cachedSubmissionSortIdentities &&
             m_cachedSubmissionSortPermutation.size() == m_renderCommands.size())
         {
-            std::vector<RenderCommand> reordered;
-            std::vector<std::uint8_t> reorderedShadowFlags;
+            auto &reordered = m_submissionSortCommandScratch;
+            auto &reorderedShadowFlags = m_submissionSortFlagScratch;
+            reordered.clear(); reorderedShadowFlags.clear();
             reordered.reserve(m_renderCommands.size());
             reorderedShadowFlags.reserve(m_shadowCasterSubmissionFlags.size());
             for (const std::size_t sourceIndex : m_cachedSubmissionSortPermutation)
@@ -1165,8 +1167,9 @@ namespace PlutoGE::render
         {
             auto permutation = RenderCommandPermutation(m_renderCommands);
 
-            std::vector<RenderCommand> reordered;
-            std::vector<std::uint8_t> reorderedShadowFlags;
+            auto &reordered = m_submissionSortCommandScratch;
+            auto &reorderedShadowFlags = m_submissionSortFlagScratch;
+            reordered.clear(); reorderedShadowFlags.clear();
             reordered.reserve(m_renderCommands.size());
             reorderedShadowFlags.reserve(m_shadowCasterSubmissionFlags.size());
             for (const std::size_t sourceIndex : permutation)
@@ -1176,7 +1179,7 @@ namespace PlutoGE::render
             }
             m_renderCommands.swap(reordered);
             m_shadowCasterSubmissionFlags.swap(reorderedShadowFlags);
-            m_cachedSubmissionSortIdentities = std::move(identities);
+            m_cachedSubmissionSortIdentities = identities;
             m_cachedSubmissionSortPermutation = std::move(permutation);
             ++m_cpuFrameStats.renderCommandSortCount;
         }

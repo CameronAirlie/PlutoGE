@@ -66,6 +66,11 @@ int main(int argc, char **argv)
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
         shaders.glassSceneCopy.vertex.spirv = ReadSpirv("GlassSceneCopy.vertex.spv");
         shaders.glassSceneCopy.fragment.spirv = ReadSpirv("GlassSceneCopy.fragment.spv");
+        shaders.glassColorCopy.vertex.spirv = ReadSpirv("GlassColorCopy.vertex.spv");
+        shaders.glassColorCopy.fragment.spirv = ReadSpirv("GlassColorCopy.fragment.spv");
+        shaders.glassDepthCopy.vertex.spirv = ReadSpirv("GlassDepthCopy.vertex.spv");
+        shaders.glassDepthCopy.fragment.spirv = ReadSpirv("GlassDepthCopy.fragment.spv");
+
         shaders.shadowVertex.spirv = ReadSpirv("DirectionalShadow.vertex.spv");
         shaders.shadowInstancedVertex.spirv = ReadSpirv("DirectionalShadowInstanced.vertex.spv");
         shaders.shadowFragment.spirv = ReadSpirv("DirectionalShadow.fragment.spv");

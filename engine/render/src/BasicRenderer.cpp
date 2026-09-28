@@ -5,6 +5,7 @@
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
 #include "PlutoGE/render/PostProcessResourcePool.h"
 #include "GlassSnapshotBounds.h"
+#include "SnapshotDamageTracker.h"
 #include "BasicDrawBatching.h"
 
 #include <cstddef>
@@ -681,6 +682,18 @@ namespace PlutoGE::render
                     {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
                 copy.debugName = "Glass scene snapshot";
                 m_glassSceneCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
+                copy.vertexShader = shaders.glassColorCopy.vertex;
+                copy.fragmentShader = shaders.glassColorCopy.fragment;
+                copy.colorFormats = {rhi::Format::R16G16B16A16Float};
+                copy.resourceBindings = {{1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                copy.debugName = "Glass color snapshot refresh";
+                m_glassColorCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
+                copy.vertexShader = shaders.glassDepthCopy.vertex;
+                copy.fragmentShader = shaders.glassDepthCopy.fragment;
+                copy.colorFormats = {rhi::Format::R32Float};
+                copy.resourceBindings = {{2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                copy.debugName = "Glass immutable depth snapshot";
+                m_glassDepthCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
             }
             if (!shaders.particles.vertexShader.spirv.empty() || !shaders.particles.vertexShader.glsl.empty())
             {
@@ -1304,6 +1317,8 @@ namespace PlutoGE::render
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
+        m_glassColorCopyPipeline.Reset();
+        m_glassDepthCopyPipeline.Reset();
         m_skyQuadraturePipeline.Reset();
         for (auto &pipeline : m_ssrStagePipelines) pipeline.Reset();
         m_skyQuadratureBuffer.Reset();
@@ -2625,7 +2640,7 @@ namespace PlutoGE::render
             transparencyPending = false;
             core::CpuScope transparencyScope("Transparency", core::CpuCategory::Rendering);
             ScopedGpuTiming transparencyTiming(commands, "RHI Transparency");
-            if (!m_transparentPipeline || !m_glassSceneCopyPipeline)
+            if (!m_transparentPipeline || !m_glassSceneCopyPipeline || !m_glassColorCopyPipeline || !m_glassDepthCopyPipeline)
                 throw std::runtime_error("Transparent RHI materials require the Glass shader artifacts");
             rhi::TextureHandle snapshot;
             rhi::TextureHandle graphSnapshot;
@@ -2653,9 +2668,31 @@ namespace PlutoGE::render
                 commands.Draw(3);
                 commands.EndRendering();
             }
+            const bool hasGlass = std::any_of(transparentDraws.begin(), transparentDraws.end(), [](const auto &draw) { return draw.surfaceType == 1u; });
+            if (graphReadsScene) ++m_frameStats.glassDepthSnapshots;
+            if (hasGlass && !graphReadsScene)
+            {
+                if (!m_glassDepthCopy)
+                    m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                         "Glass immutable opaque depth", true}));
+                rhi::RenderingInfo depthCopy;
+                depthCopy.colorAttachments = {m_glassDepthCopy.Get()};
+                depthCopy.width = m_width; depthCopy.height = m_height;
+                commands.BeginRendering(depthCopy);
+                commands.BindPipeline(m_glassDepthCopyPipeline.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+                ++m_frameStats.glassDepthSnapshots;
+            }
+            const auto boundsStart = std::chrono::steady_clock::now();
+            SnapshotDamageTracker damage;
+            damage.Reset(m_width, m_height);
             std::vector<rhi::Scissor> glassFootprints(transparentDraws.size());
             std::vector<rhi::Scissor> glassRasterFootprints(transparentDraws.size());
-            for (std::size_t index = 0; index < transparentDraws.size(); ++index)
+            for (std::size_t index = 0; hasGlass && index < transparentDraws.size(); ++index)
+            {
                 if (transparentDraws[index].surfaceType == 1u)
                 {
                     GlassBoundsReason reason;
@@ -2664,9 +2701,11 @@ namespace PlutoGE::render
                     ++m_frameStats.glassBoundsReasons[static_cast<std::size_t>(reason)];
                     if (glassFootprints[index].width == m_width && glassFootprints[index].height == m_height)
                         ++m_frameStats.glassFullFootprints;
-                    glassRasterFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
-                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, false);
                 }
+                glassRasterFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
+                    glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, false);
+            }
+            m_frameStats.glassBoundsCpuMs += elapsedMs(boundsStart, std::chrono::steady_clock::now());
             geometryResourcesBound = false;
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
@@ -2678,42 +2717,44 @@ namespace PlutoGE::render
                 if (pane.surfaceType == 1u) ++m_frameStats.glassPanes;
                 if (pane.surfaceType == 1u && paneIndex >= snapshotGroupEnd)
                 {
+                    const auto groupingStart = std::chrono::steady_clock::now();
                     const auto group = PlanGlassSnapshotGroup(transparentDraws, glassFootprints, paneIndex, glassRasterFootprints);
                     snapshotGroupEnd = group.end;
                     ++m_frameStats.glassGroupBoundaries[static_cast<std::size_t>(group.boundary)];
-                    m_frameStats.glassSnapshotPixels += std::uint64_t(group.bounds.width) * group.bounds.height;
-                    ++m_frameStats.glassSnapshots;
-                    if (rendering)
+                    const auto planningStart = std::chrono::steady_clock::now();
+                    m_frameStats.glassGroupingCpuMs += elapsedMs(groupingStart, planningStart);
+                    const auto copies = damage.PlanCopies(group.bounds);
+                    const auto copyStart = std::chrono::steady_clock::now();
+                    m_frameStats.glassDamageCpuMs += elapsedMs(planningStart, copyStart);
+                    if (copies.empty()) ++m_frameStats.glassSnapshotReuseHits;
+                    else
                     {
+                        if (rendering) { commands.EndRendering(); rendering = false; }
+                        if (!snapshot) snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
+                        rhi::RenderingInfo copyInfo;
+                        copyInfo.colorAttachments = {snapshot};
+                        copyInfo.width = m_width; copyInfo.height = m_height;
+                        copyInfo.clearColor = false;
+                        commands.BeginRendering(copyInfo);
+                        skyTextureBound = false;
+                        boundDrawPipeline = {};
+                        commands.BindPipeline(m_glassColorCopyPipeline.Get());
+                        commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                        for (const auto &region : copies)
+                        {
+                            commands.SetScissor(region);
+                            commands.Draw(3);
+                            ++m_frameStats.glassSnapshots;
+                            m_frameStats.glassSnapshotPixels += std::uint64_t(region.width) * region.height;
+                        }
                         commands.EndRendering();
-                        rendering = false;
                     }
-                    // Refraction retains exact back-to-front dependencies. The
-                    // same scratch image can be overwritten after the preceding
-                    // pane consumed it; RHI barriers order those reads/writes.
-                    if (!snapshot)
-                        snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
-                    if (!m_glassDepthCopy)
-                        m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
-                            {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
-                             "Glass opaque depth snapshot", true}));
-                    rhi::RenderingInfo copyInfo;
-                    copyInfo.colorAttachments = {snapshot, m_glassDepthCopy.Get()};
-                    copyInfo.width = m_width;
-                    copyInfo.height = m_height;
-                    copyInfo.clearColor = false;
-                    commands.BeginRendering(copyInfo);
-                    // The snapshot overwrites texture slots 1 and 2 only;
-                    // draw materials, camera uniforms and shadow bindings survive.
-                    skyTextureBound = false;
-                    boundDrawPipeline = {};
-                    commands.SetScissor(group.bounds);
-                    commands.BindPipeline(m_glassSceneCopyPipeline.Get());
-                    commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
-                    commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
-                    commands.Draw(3);
-                    commands.EndRendering();
+                    const auto commitStart = std::chrono::steady_clock::now();
+                    m_frameStats.glassCopyRecordingCpuMs += elapsedMs(copyStart, commitStart);
+                    for (const auto &region : copies) damage.CommitCopy(region);
+                    m_frameStats.glassDamageCpuMs += elapsedMs(commitStart, std::chrono::steady_clock::now());
                 }
+                const auto drawStart = std::chrono::steady_clock::now();
                 if (!rendering)
                 {
                     rhi::RenderingInfo transparentInfo;
@@ -2730,6 +2771,10 @@ namespace PlutoGE::render
                 commands.BindTexture(17, sceneColor ? sceneColor : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 commands.BindTexture(18, sceneColor ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 recordDraw(pane, true, m_previousModels.size());
+                const auto damageStart = std::chrono::steady_clock::now();
+                m_frameStats.glassDrawRecordingCpuMs += elapsedMs(drawStart, damageStart);
+                if (hasGlass) damage.MarkWritten(glassRasterFootprints[paneIndex]);
+                m_frameStats.glassDamageCpuMs += elapsedMs(damageStart, std::chrono::steady_clock::now());
             }
             if (rendering)
                 commands.EndRendering();

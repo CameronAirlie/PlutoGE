@@ -309,6 +309,13 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.glassFullFootprints), static_cast<unsigned long long>(rhiScene.glassGroupBoundaries[1]),
                     static_cast<unsigned long long>(rhiScene.glassGroupBoundaries[2]), double(rhiScene.glassSnapshotPixels) / 1000000.0);
         ImGui::TextWrapped("  Directional shadows: %s", rhiScene.directionalShadowStatus.c_str());
+        ImGui::Text("  Transparency CPU: bounds %.2f, grouping %.2f, damage %.2f, copies %.2f, surfaces %.2f ms",
+                    rhiScene.glassBoundsCpuMs, rhiScene.glassGroupingCpuMs, rhiScene.glassDamageCpuMs,
+                    rhiScene.glassCopyRecordingCpuMs, rhiScene.glassDrawRecordingCpuMs);
+        ImGui::Text("  Glass depth copies: %llu; clean color reuses: %llu; shared rigid packets: %llu",
+                    static_cast<unsigned long long>(rhiScene.glassDepthSnapshots),
+                    static_cast<unsigned long long>(rhiScene.glassSnapshotReuseHits),
+                    static_cast<unsigned long long>(rhiScene.sharedDrawPacketHits));
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;

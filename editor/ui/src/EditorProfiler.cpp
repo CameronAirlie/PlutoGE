@@ -448,6 +448,13 @@ namespace PlutoGE::ui
                << ", other surface " << rhiScene.glassGroupBoundaries[4] << "; copied pixels " << rhiScene.glassSnapshotPixels << "\n";
         report << "RHI glass snapshots: " << rhiScene.glassSnapshots << " copies / "
                << rhiScene.glassPanes << " panes\n";
+        report << "RHI glass immutable depth copies: " << rhiScene.glassDepthSnapshots
+               << "; clean snapshot reuses: " << rhiScene.glassSnapshotReuseHits << "\n";
+        report << "RHI transparency CPU detail: bounds " << rhiScene.glassBoundsCpuMs
+               << " ms, grouping " << rhiScene.glassGroupingCpuMs << " ms, damage " << rhiScene.glassDamageCpuMs
+               << " ms, color copy recording " << rhiScene.glassCopyRecordingCpuMs
+               << " ms, surface recording " << rhiScene.glassDrawRecordingCpuMs << " ms\n";
+        report << "RHI retained packets: " << rhiScene.sharedDrawPacketHits << " shared across pass/list changes\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
                << rhiScene.materialPreparationHits << " reused\n";
         report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)

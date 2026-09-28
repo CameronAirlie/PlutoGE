@@ -2,6 +2,9 @@
 
 ## Scope and evidence
 
+The next implementation phase is documented in
+[Retained packets and incremental glass snapshots](retained-packets-and-glass-snapshots.md).
+
 This review follows the 240-frame capture covering sequences 4339–4578. Its mean
 CPU frame was 21.516 ms, scene GPU 11.659 ms, transparency GPU 5.580 ms, and shadow
 CPU 5.556 ms. These are observations from that workload, not a controlled before/

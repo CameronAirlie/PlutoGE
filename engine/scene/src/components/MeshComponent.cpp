@@ -529,6 +529,8 @@ namespace PlutoGE::scene
     {
         for (auto &command : m_cachedRenderCommands)
         {
+            if (command.previousModel != command.model)
+                command.sourceRevision = ++m_renderSourceRevision;
             command.previousModel = command.model;
             command.previousWorldBounds = command.worldBounds;
         }
@@ -1375,6 +1377,8 @@ namespace PlutoGE::scene
                 m_renderCommandCacheDirty = true;
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
+            if (!m_cachedRenderCommands.empty() && m_cachedRenderCommands.front().sourceObject != m_renderObjectIdentity.Value())
+                m_renderCommandCacheDirty = true;
             const auto *offsetSource = FindMeshOffsetSource();
             const auto transformRevision = entity->GetTransformRevision();
             // Entity revisions include ancestor movement and reparenting. Mesh
@@ -1402,6 +1406,7 @@ namespace PlutoGE::scene
             }
 
             std::vector<render::RenderCommand> rebuiltCommands;
+            const auto sourceRevision = ++m_renderSourceRevision;
             if (canCacheRenderCommands)
             {
                 rebuiltCommands.reserve(submeshEnd - submeshBegin);
@@ -1425,6 +1430,11 @@ namespace PlutoGE::scene
                 }
 
                 render::RenderCommand command;
+                if (canCacheRenderCommands)
+                {
+                    command.sourceObject = m_renderObjectIdentity.Value();
+                    command.sourceRevision = sourceRevision;
+                }
                 command.model = submeshModelMatrix;
                 const auto previous = m_previousSubmeshModels.find(submeshIndex);
                 command.previousModel = previous != m_previousSubmeshModels.end()

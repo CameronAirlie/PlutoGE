@@ -169,6 +169,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.transparentFragment.glsl = ReadText("Glass.fragment.glsl");
         shaders.glassSceneCopy.vertex.glsl = ReadText("GlassSceneCopy.vertex.glsl");
         shaders.glassSceneCopy.fragment.glsl = ReadText("GlassSceneCopy.fragment.glsl");
+        shaders.glassColorCopy.vertex.glsl = ReadText("GlassColorCopy.vertex.glsl");
+        shaders.glassColorCopy.fragment.glsl = ReadText("GlassColorCopy.fragment.glsl");
+        shaders.glassDepthCopy.vertex.glsl = ReadText("GlassDepthCopy.vertex.glsl");
+        shaders.glassDepthCopy.fragment.glsl = ReadText("GlassDepthCopy.fragment.glsl");
+
         shaders.shadowVertex.glsl = ReadText("DirectionalShadow.vertex.glsl");
         shaders.shadowInstancedVertex.glsl = ReadText("DirectionalShadowInstanced.vertex.glsl");
         shaders.shadowFragment.glsl = ReadText("DirectionalShadow.fragment.glsl");

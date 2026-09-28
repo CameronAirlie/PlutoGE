@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
@@ -257,6 +258,8 @@ namespace PlutoGE::scene
         std::unordered_map<size_t, glm::mat4> m_previousSubmeshModels;
         bool m_isStatic = false;
         bool m_renderCommandCacheDirty = true;
+        render::RenderObjectIdentity m_renderObjectIdentity;
+        std::uint64_t m_renderSourceRevision = 0;
         bool m_hasCachedRenderCommandModel = false;
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
         std::uint64_t m_cachedOwnerTransformRevision = 0;

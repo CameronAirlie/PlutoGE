@@ -5,9 +5,10 @@
 
 namespace PlutoGE::render
 {
-    // Lists belong to one RhiSceneRenderer/viewport. Slot validation deliberately
-    // uses source values, not owner addresses or the Static flag: callers also
-    // submit procedural commands, and material configs support direct editing.
+    // Lists belong to one RhiSceneRenderer/viewport. Authoritative producer
+    // revisions share immutable rigid packets across passes; procedural callers
+    // retain value validation. Neither path treats addresses or Static as proof
+    // of immutability, and material configs still support direct editing.
     class RhiDrawPreparationCache
     {
       public:
@@ -30,10 +31,14 @@ namespace PlutoGE::render
             {
                 // Array contents can mutate behind const shared_ptrs. Do not
                 // infer pose/instance revisions from pointer equality.
-                return valid && !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels &&
+                const bool common = valid && !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels &&
                        materialRevision == revision && input.mesh == command.mesh &&
                        input.material == command.material && input.submeshIndex == command.submeshIndex &&
-                       input.lodIndex == command.lodIndex && input.castsShadow == command.castsShadow &&
+                       input.lodIndex == command.lodIndex && input.castsShadow == command.castsShadow;
+                if (!common) return false;
+                if (command.sourceObject && command.sourceRevision)
+                    return input.sourceObject == command.sourceObject && input.sourceRevision == command.sourceRevision;
+                return input.sourceObject == command.sourceObject &&
                        input.worldBounds.center == command.worldBounds.center &&
                        input.worldBounds.radius == command.worldBounds.radius &&
                        std::memcmp(&input.model[0][0], &command.model[0][0], sizeof(float) * 16) == 0 &&
@@ -49,6 +54,58 @@ namespace PlutoGE::render
                 valid = !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels;
             }
         };
+        struct RetainedKey
+        {
+            std::uint64_t object;
+            const Material *material;
+            std::uint32_t submesh, lod;
+            bool emissiveGi;
+            bool operator==(const RetainedKey &) const = default;
+        };
+        struct RetainedHash
+        {
+            std::size_t operator()(const RetainedKey &key) const
+            {
+                std::size_t hash = 0;
+                HashBatchValue(hash, key.object); HashBatchValue(hash, key.material);
+                HashBatchValue(hash, key.submesh); HashBatchValue(hash, key.lod); HashBatchValue(hash, key.emissiveGi);
+                return hash;
+            }
+        };
+        struct RetainedEntry { Entry packet; std::uint64_t lastUse = 0; };
+        static bool CanRetain(const RenderCommand &command)
+        {
+            return command.sourceObject && command.sourceRevision && !command.jointMatrices &&
+                !command.instanceModels && !command.previousInstanceModels;
+        }
+        static RetainedKey Key(const RenderCommand &command, bool emissiveGi)
+        { return {command.sourceObject, command.material, command.submeshIndex, command.lodIndex, emissiveGi}; }
+        const Entry *FindRetained(const RenderCommand &command, std::uint64_t revision, bool emissiveGi, std::uint64_t frame)
+        {
+            if (!CanRetain(command)) return nullptr;
+            const auto found = retained.find(Key(command, emissiveGi));
+            if (found == retained.end() || !found->second.packet.Matches(command, revision)) return nullptr;
+            found->second.lastUse = frame;
+            return &found->second.packet;
+        }
+        void Retain(const Entry &entry, bool emissiveGi, std::uint64_t frame)
+        {
+            if (entry.valid && entry.emitted && CanRetain(entry.input))
+            {
+                const auto key = Key(entry.input, emissiveGi);
+                if (retained.size() < MaxRetainedPackets || retained.contains(key))
+                    retained.insert_or_assign(key, RetainedEntry{entry, frame});
+            }
+        }
+        void BeginFrame(std::uint64_t frame)
+        {
+            // Lists retain their own active packets. The shared store keeps
+            // recently invisible variants without accumulating dead producers.
+            if (frame % RetentionFrames == 0)
+                std::erase_if(retained, [&](const auto &item) { return item.second.lastUse + RetentionFrames < frame; });
+        }
+        static constexpr std::size_t MaxRetainedPackets = 16384;
+        static constexpr std::uint64_t RetentionFrames = 120;
         struct List
         {
             std::vector<Entry> entries;
@@ -129,6 +186,7 @@ namespace PlutoGE::render
         void Reset()
         {
             materials.clear();
+            retained.clear();
             visible = {};
             shadows = {};
             gi = {};
@@ -137,6 +195,7 @@ namespace PlutoGE::render
         }
 
         std::unordered_map<const Material *, MaterialEntry> materials;
+        std::unordered_map<RetainedKey, RetainedEntry, RetainedHash> retained;
         List visible, shadows, gi;
         std::vector<BasicDraw> batched;
 

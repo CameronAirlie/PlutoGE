@@ -23,3 +23,19 @@ SnapshotOutput fragmentMain(FullscreenVertexOutput input)
     output.depth = depthSource.SampleLevel(uv, 0.0).r;
     return output;
 }
+
+[shader("fragment")]
+float4 colorFragment(FullscreenVertexOutput input) : SV_Target
+{
+    uint width, height;
+    source.GetDimensions(width, height);
+    return source.SampleLevel(input.position.xy / float2(width, height), 0.0);
+}
+
+[shader("fragment")]
+float depthFragment(FullscreenVertexOutput input) : SV_Target
+{
+    uint width, height;
+    depthSource.GetDimensions(width, height);
+    return depthSource.SampleLevel(input.position.xy / float2(width, height), 0.0).r;
+}

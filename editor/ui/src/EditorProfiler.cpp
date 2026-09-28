@@ -428,6 +428,10 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "VSM CPU cluster bounds: " << rhiScene.virtualShadows.clusterBoundsBuilds << " builds / "
+               << rhiScene.virtualShadows.clusterBoundsCacheHits << " hits\n";
+        report << "RHI point shadow atlas: " << rhiScene.pointShadowAtlasUpdates << " updates / "
+               << rhiScene.pointShadowAtlasCacheHits << " hits / " << rhiScene.pointShadowDraws << " draws\n";
         report << "RHI glass snapshots: " << rhiScene.glassSnapshots << " copies / "
                << rhiScene.glassPanes << " panes\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
@@ -481,7 +485,11 @@ namespace PlutoGE::ui
                        << pages.indirectDraws << " non-empty draws, " << pages.casterPagePairs << " caster/page pairs, "
                        << pages.submittedTriangles << " triangles\n";
             else report << "VSM GPU counters: pending asynchronous snapshot\n";
-            report << "VSM current resolution scale: " << pages.resolutionScale << "\n";
+            report << "VSM current resolution scale: " << pages.resolutionScale << "; pool " << pages.physicalCapacity << " pages\n";
+            report << "VSM directional fine: " << pages.directionalFineRequested << " requested, " << pages.directionalFineResident
+                   << " resident, " << pages.directionalFineCapacity << " available; local fine " << pages.localFineRequested
+                   << ", coarse " << pages.coarseRequested << "; oldest dirty " << pages.oldestDirtyAge
+                   << " frames, oversized updates " << pages.oversizedUpdates << "\n";
         }
         report << "RHI scene setup: " << rhiScene.sceneSetupMs << " ms\n";
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";

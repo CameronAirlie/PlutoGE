@@ -1231,6 +1231,9 @@ namespace PlutoGE::render
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
         m_timingStats.glassPanes = frameStats.glassPanes;
         m_timingStats.glassSnapshots = frameStats.glassSnapshots;
+        m_timingStats.pointShadowAtlasUpdates = frameStats.pointShadowAtlasUpdates;
+        m_timingStats.pointShadowAtlasCacheHits = frameStats.pointShadowAtlasCacheHits;
+        m_timingStats.pointShadowDraws = frameStats.pointShadowDraws;
         m_timingStats.materialPreparations = frameStats.materialPreparations;
         m_timingStats.materialPreparationHits = frameStats.materialPreparationHits;
         m_timingStats.geometryTriangles = frameStats.geometryTriangles;

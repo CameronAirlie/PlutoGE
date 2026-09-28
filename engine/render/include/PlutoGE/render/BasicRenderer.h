@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/ShadowGeometry.h"
 #include <optional>
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -225,6 +226,7 @@ namespace PlutoGE::render
         [[nodiscard]] bool IsValid() const noexcept { return m_vertexBuffer && m_indexBuffer && m_indexCount != 0; }
         [[nodiscard]] std::uint32_t GetIndexCount() const noexcept { return m_indexCount; }
         [[nodiscard]] std::uint64_t GetRevision() const noexcept { return m_revision; }
+        [[nodiscard]] std::span<const ShadowGeometryCluster> GetShadowClusters() const noexcept { return m_shadowClusters; }
 
     private:
         friend class BasicRenderer;
@@ -234,6 +236,8 @@ namespace PlutoGE::render
         std::size_t m_vertexCount = 0;
         std::uint64_t m_revision = 0;
         mutable std::vector<BasicVertex> m_pendingVertices;
+        std::vector<std::uint32_t> m_shadowIndices;
+        std::vector<ShadowGeometryCluster> m_shadowClusters;
     };
 
     struct BasicDraw
@@ -386,6 +390,13 @@ namespace PlutoGE::render
         glm::vec3 directionalColor{1.0f};
         bool shadowsEnabled = false;
         ShadowMethod shadowMethod = ShadowMethod::Virtual;
+        std::uint32_t virtualShadowPoolPages = PLUTO_VSM_DEFAULT_POOL_PAGES;
+        std::uint32_t virtualShadowSpotResolution = 2048;
+        std::uint32_t virtualShadowMaxPageAge = 8;
+        // An aged page may exceed the triangle budget once, alone, to guarantee progress.
+        bool virtualShadowAllowOversizedPages = true;
+        float virtualShadowCoarseMinCasterTexels = 0.5f;
+        bool virtualShadowClusterCulling = true;
         std::uint32_t virtualShadowPageBudget = 64;
         std::uint32_t virtualShadowTriangleBudget = 1000000;
         std::array<glm::mat4, 4> shadowMatrices{
@@ -456,6 +467,7 @@ namespace PlutoGE::render
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
+        std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
         std::size_t shadowCascadeTargets = 0;
         std::array<std::size_t, 4> shadowDrawsByCascade{};
 
@@ -751,6 +763,8 @@ namespace PlutoGE::render
         std::vector<rhi::Buffer> m_particleVertices;
         std::vector<std::size_t> m_particleVertexCapacities;
         std::vector<rhi::Buffer> m_particleParameters;
+        std::uint64_t m_pointShadowSignature = 0;
+        bool m_pointShadowCacheValid = false;
         rhi::Texture m_pointShadowColor;
         rhi::Texture m_pointShadowDepth;
         std::array<rhi::Buffer, 24> m_pointShadowCameras;

@@ -211,6 +211,14 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     const int shadow = spotFrame();
     if (!renderer.GetFrameStats().virtualShadowsActive || shadow > lit - 30)
         throw std::runtime_error("Spotlight VSM did not shadow without directional shadows");
+    for (const auto resolution : {512u, 1024u, 2048u})
+    {
+        lighting.virtualShadowSpotResolution = resolution;
+        for (int frame = 0; frame < 12; ++frame) spotFrame();
+        const auto stats = renderer.GetFrameStats().virtualShadows;
+        if (spotFrame() > dark + 3 || stats.localFineRequested == 0 || stats.directionalFineRequested != 0 || stats.coarseRequested != 4)
+            throw std::runtime_error("Spotlight resolution tier lost fine requests, coarse reservation, or shadow coverage");
+    }
     lighting.spotLights[0].light.position.x = .6f;
     lighting.spotLights[0].cone = {80, 90};
     for (int frame = 0; frame < 8; ++frame) spotFrame();
@@ -296,6 +304,76 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
             if (static_cast<unsigned char>(blocked[center]) > static_cast<unsigned char>(reference[center]) / 2)
                 throw std::runtime_error("Spotlight bias detached a nearby blocker shadow");
         }
+    // Point-only lighting must cache independently of directional/VSM state.
+    lighting = BasicLighting{};
+    lighting.shadowsEnabled = false;
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    lighting.cameraPosition = {0, 0, 2};
+    lighting.pointLights.push_back({{0, 0, 1.2f}, 4, {1, 0, 0}, 4, true});
+    receiver = BasicDraw{};
+    receiver.mesh = &mesh;
+    caster = receiver;
+    receiver.model = glm::translate(glm::mat4(1), glm::vec3(0, 0, .2f));
+    caster.model = glm::translate(glm::mat4(1), glm::vec3(0, 0, .7f));
+    const auto pointFrame = [&] {
+        renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {}, std::span(&caster, 1));
+        return readPixels(renderer.GetColorTexture());
+    };
+    const auto pointPixels = pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1 || !renderer.GetFrameStats().pointShadowDraws)
+        throw std::runtime_error("Point shadow atlas did not initialize");
+    if (pointFrame() != pointPixels || renderer.GetFrameStats().pointShadowAtlasCacheHits != 1 ||
+        renderer.GetFrameStats().pointShadowDraws != 0)
+        throw std::runtime_error("Stationary point shadow atlas was not reused exactly");
+    caster.model[3].x += 2.0f;
+    const auto movedPixels = pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("Point shadow caster movement was not invalidated");
+    if (movedPixels == pointPixels)
+    {
+        std::cout << "Point movement diagnostic: center=" << int(pointPixels[(128 * 256 + 128) * 4])
+                  << ", draws=" << renderer.GetFrameStats().pointShadowDraws << std::endl;
+        throw std::runtime_error("Point shadow movement did not change the receiver image");
+    }
+    lighting.pointLights[0].position.x += .3f;
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("Point shadow light movement was not invalidated");
+    auto deformed = vertices;
+    deformed[0].position[0] += .1f;
+    renderer.UpdateMeshVertices(mesh, deformed);
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("Point shadow mesh revision was not invalidated");
+    caster.alphaMode = 1;
+    caster.alphaCutoff = .4f;
+    pointFrame();
+    caster.alphaCutoff = .7f;
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("Point shadow alpha material edit was not invalidated");
+    // Opaque graphs can displace vertices too; their material/view inputs
+    // belong in the point cache key, not only those of alpha-masked graphs.
+    caster.alphaMode = 0;
+    auto pointGraph = std::make_shared<ShaderGraphProgram>();
+    pointGraph->usesViewDirection = true;
+    caster.shaderGraphProgram = pointGraph;
+    pointFrame();
+    caster.roughness = .13f;
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("Opaque point-shadow graph material edit was not invalidated");
+    lighting.cameraPosition.x += .1f;
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1)
+        throw std::runtime_error("View-dependent point-shadow graph was not invalidated");
+    caster.castsShadow = false;
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasUpdates != 1 || renderer.GetFrameStats().pointShadowDraws != 0)
+        throw std::runtime_error("Removed point caster left stale atlas contents");
+    pointFrame();
+    if (renderer.GetFrameStats().pointShadowAtlasCacheHits != 1)
+        throw std::runtime_error("Empty point atlas was not cached");
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

@@ -237,6 +237,14 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const std::array<rhi::Scissor, 3> gapBounds{{{0, 0, 20, 20}, {80, 80, 20, 20}, {80, 0, 20, 20}}};
     require(PlanGlassSnapshotGroup(gapPanes, gapBounds, 0).end == 3,
             "Empty space inside the group rectangle prevented safe snapshot sharing");
+    const std::array<rhi::Scissor, 3> reads{{{0, 0, 60, 20}, {40, 0, 60, 20}, {80, 0, 60, 20}}};
+    const std::array<rhi::Scissor, 3> writes{{{10, 0, 10, 20}, {60, 0, 10, 20}, {120, 0, 10, 20}}};
+    require(PlanGlassSnapshotGroup(gapPanes, reads, 0, writes).end == 3,
+            "Overlapping glass reads unnecessarily split snapshots");
+    auto dependentReads = reads;
+    dependentReads[2] = {10, 0, 80, 20};
+    require(PlanGlassSnapshotGroup(gapPanes, dependentReads, 0, writes).end == 2,
+            "Glass read-after-write dependency was incorrectly grouped");
     auto overlappingBounds = gapBounds;
     overlappingBounds[2] = {10, 10, 20, 20};
     require(PlanGlassSnapshotGroup(gapPanes, overlappingBounds, 0).end == 2,
@@ -258,6 +266,29 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     render(gapScene);
     require(renderer.GetFrameStats().glassSnapshots == 3 && readPixels(renderer.GetColorTexture()) == gapPixels,
             "Gap-aware glass grouping changed image pixels");
+    // Read footprints overlap in the gap, but neither pane writes into the
+    // other's sample footprint. Compare grouping with forced full snapshots.
+    auto readOverlap = gapPanes;
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        auto &draw = readOverlap[i];
+        const glm::vec3 position(i == 0 ? -.22f : .22f, 0, .6f);
+        draw.model = glm::translate(glm::mat4(1), position) * glm::scale(glm::mat4(1), glm::vec3(.1f));
+        draw.shadowBoundsCenter = draw.occlusionBoundsCenter = position;
+        draw.thickness = .005f;
+    }
+    const std::array readBounds{
+        GlassSnapshotBounds(readOverlap[0], glm::mat4(1), {}, 320, 180, false),
+        GlassSnapshotBounds(readOverlap[1], glm::mat4(1), {}, 320, 180, false)};
+    require(GlassFootprintsOverlap(readBounds[0], readBounds[1]), "Glass read-overlap fixture is not overlapping");
+    std::array readOverlapScene{readOverlap[0], readOverlap[1], left, right};
+    render(readOverlapScene);
+    require(renderer.GetFrameStats().glassSnapshots == 1, "Glass read-only overlap prevented sharing");
+    const auto readOverlapPixels = readPixels(renderer.GetColorTexture());
+    readOverlapScene[0].shadowBoundsRadius = readOverlapScene[1].shadowBoundsRadius = -1;
+    render(readOverlapScene);
+    require(renderer.GetFrameStats().glassSnapshots == 2 && readPixels(renderer.GetColorTexture()) == readOverlapPixels,
+            "Glass read-only overlap sharing changed pixels");
     std::array groupedScene{disjoint[0], disjoint[1], left, right};
     render(groupedScene);
     require(renderer.GetFrameStats().glassSnapshots == 1 && renderer.GetFrameStats().glassPanes == 2,

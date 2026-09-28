@@ -295,6 +295,10 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.shadowCascadeCacheHitCount),
                     static_cast<unsigned long long>(rhiScene.shadowCascadeUpdateCount),
                     static_cast<unsigned long long>(rhiScene.shadowCascadeTargetCount));
+        ImGui::Text("  Point shadow atlas: %llu hits, %llu updates, %llu draws",
+                    static_cast<unsigned long long>(rhiScene.pointShadowAtlasCacheHits),
+                    static_cast<unsigned long long>(rhiScene.pointShadowAtlasUpdates),
+                    static_cast<unsigned long long>(rhiScene.pointShadowDraws));
         ImGui::TextWrapped("  Directional shadows: %s", rhiScene.directionalShadowStatus.c_str());
         if (rhiScene.virtualShadowsActive)
         {
@@ -305,7 +309,10 @@ namespace PlutoGE::ui
             if (pages.gpuCountersAvailable)
             {
                 ImGui::Text("  VSM GPU frame %u (delayed): %u requested, %u resident, %u hits", pages.gpuFrame, pages.requested, pages.resident, pages.cacheHits);
-                ImGui::Text("  VSM resolution scale: %.0fx", pages.resolutionScale);
+                ImGui::Text("  VSM resolution scale: %.0fx; pool %u pages", pages.resolutionScale, pages.physicalCapacity);
+                ImGui::Text("  VSM directional fine: %u requested / %u resident / %u available; local fine %u, coarse %u",
+                    pages.directionalFineRequested, pages.directionalFineResident, pages.directionalFineCapacity, pages.localFineRequested, pages.coarseRequested);
+                ImGui::Text("  VSM oldest dirty page: %u frames; oversized updates: %u", pages.oldestDirtyAge, pages.oversizedUpdates);
                 ImGui::Text("  VSM updates: %u dirty, %u rendered, %u deferred; %u evicted, %u overflow",
                     pages.dirty, pages.updated, pages.deferred, pages.evicted, pages.overflow);
                 ImGui::Text("  VSM GPU: %u non-empty draws, %llu caster/page pairs, %llu triangles",

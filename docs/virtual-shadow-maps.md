@@ -27,9 +27,9 @@ See [default behavior](VSM_DEFAULT.md).
 
 1. Render current-frame receiver depth, including alpha-masked receivers. Reconstruct visible world positions in compute and select levels using pixel footprints. Atomically mark and compact unique page requests, including the shadow filter guard.
 2. Use four world-stable fine clipmaps, each representing a 16,384-square virtual map with 128-square pages, plus a coarse root level covering the outer fine level's extent. Absolute light-space coordinates preserve cached content while the camera scrolls. Projection changes invalidate affected content; depth recentering uses hysteresis.
-3. Retain requested resident pages in a fixed 256-page pool. The root's 8x8 pages reserve 64 slots and are requested each frame with priority for new coarse coverage. Fine levels share the remaining capacity without a CPU feedback round trip.
+3. Retain requested resident pages in a runtime-sized pool (256, 576, or 1024 pages). Directional root coverage reserves 64 pages when enabled; each active spotlight reserves four coarse pages. Directional and local fine requests share the remaining capacity. Allocation stays GPU-driven.
 4. Compute page content signatures from intersecting caster chunks. Signatures cover mesh revisions, transforms/instances, submesh ranges, bounds and alpha material inputs. Caster movement, removal and changed materials invalidate affected content. Unknown bounds conservatively intersect every page.
-5. Select dirty updates under both page and triangle budgets. Rotate update priority across the pool. Generate caster/page lists and indexed-indirect arguments on the GPU. Clear only dirty physical tiles with a generated depth-clear draw, then instance each caster chunk across its selected pages. Hardware clip distances confine geometry to each physical tile.
+5. Select dirty updates using an age-aware GPU sort. Overdue pages precede new coarse coverage, dirty resident content, and new fine coverage. Page and triangle budgets normally bound work; the configurable oversized-page escape admits one aged expensive page to guarantee progress. Generate caster/page lists and indexed-indirect arguments on the GPU. Clear only dirty physical tiles with a generated depth-clear draw, then instance each caster chunk across its selected pages. Hardware clip distances confine geometry to each physical tile.
 6. Publish new mappings after rendering and resource barriers. Lighting checks filter-footprint residency and tries coarser VSM coverage when fine pages are missing. Dirty resident pages retain usable depth while deferred; new or reassigned pages remain invalid until rendered. No cascade filter runs while VSM is active.
 
 Surface, fog and glass-fog shading use VSM coverage. Missing volume depth
@@ -40,11 +40,11 @@ or submission. See [exclusive VSM rendering](vsm-exclusive-shadow-path.md).
 
 ## Performance controls and instrumentation
 
-Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1â€“256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1â€“16,000,000). These limit atlas updates; receiver depth and ordinary scene rendering are additional work. Deferred pages may retain older resident depth or use coarser VSM coverage. Large meshes should have accurate bounds and useful submesh or LOD granularity.
+Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1â€“256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1â€“16,000,000). These normally limit atlas updates; an enabled aged oversized-page update may exceed the triangle budget. Counters report the actual submitted work; receiver depth and ordinary scene rendering are additional work. Deferred pages may retain older resident depth or use coarser VSM coverage. Large meshes should have accurate bounds and useful submesh or LOD granularity.
 
-There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Each chunk contains at most 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks; exceeding capacity reports VSM unavailable without enabling cascades.
+There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Shadow clusters contain up to 1024 triangles and 16 instances; the whole-draw fallback uses up to 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks; exceeding capacity reports VSM unavailable without enabling cascades.
 
-The physical D32 atlas and companion R32 attachment occupy 32 MiB in total.
+The physical D32 atlas and companion R32 attachment occupy 32, 72, or 128 MiB in total, depending on the selected pool tier.
 Page tables, requests, caster lists, indirect arguments, receiver targets and
 uniforms add further allocations; use the profiler's resource estimates.
 Disabling VSM releases its resources. Active VSM should report zero allocated
@@ -142,15 +142,13 @@ inverse-square attenuation and editable inner/outer cone angles. Their defaults
 preserve the original 0.9–0.975 cosine falloff.
 The first four eligible shadow-casting spots use perspective VSM projections,
 independently of the directional shadow toggle or legacy cascaded selection.
-Each spot reserves a 4×4 grid of 128-pixel pages (512×512 coverage) in the shared
-physical pool. These pages use GPU residency, caster signatures, bounded updates,
-indirect page rasterization and a 3×3 comparison filter. They do not allocate a
+Each spot requests visible fine pages at configurable 512, 1024, or 2048 resolution (default 2048), backed by a four-page, 256-square coarse map. These pages use GPU residency, caster signatures, age-aware updates, indirect page rasterization, and a subtexel tent comparison filter. They do not allocate a
 conventional spotlight shadow texture. Additional spots contribute unshadowed light.
 
 Spot position, direction and range invalidate the projection epoch; camera motion
 does not. Caster movement, masks and instances use the shared VSM invalidation path.
 Spot page frusta conservatively cull caster spheres in homogeneous coordinates.
-Spot pages and directional root pages receive priority before directional refinement.
+New coarse spot pages and directional root pages receive priority before new fine refinement; overdue pages take precedence over both.
 The page and triangle update budgets apply to their combined work.
 
 Select a Spot light in the inspector to edit **Inner Cone Angle (degrees)** and
@@ -159,3 +157,7 @@ fully lit and fades to zero at the outer cone. The outer angle is clamped to
 1–179 degrees; the inner angle is clamped to 0–outer. Settings survive scene and
 prefab serialization. Older scenes retain the original cone width. Changing the
 outer angle also changes the VSM projection and invalidates its cached pages.
+
+## Quality and freshness controls
+
+See [VSM quality and freshness](vsm-quality-and-freshness.md) for pool tiers, update-policy guarantees, geometry clustering, spotlight refinement, diagnostics, and regression coverage.

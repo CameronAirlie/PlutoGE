@@ -54,6 +54,40 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     };
     for (int frame = 0; frame < 8; ++frame) { renderSurface(); assertExclusive(); }
     const auto shadowed = readPixels(renderer.GetColorTexture());
+    // Pool resizing must retire old readbacks/mappings and preserve coverage.
+    for (const auto pages : {576u, 1024u, 256u})
+    {
+        lighting.virtualShadowPoolPages = pages;
+        for (int frame = 0; frame < 12; ++frame) { renderSurface(); assertExclusive(); }
+        if (renderer.GetFrameStats().virtualShadows.physicalCapacity != pages || readPixels(renderer.GetColorTexture()) != shadowed)
+            throw std::runtime_error("Resizing VSM pool changed shadow coverage or retained the old capacity");
+    }
+    // A two-triangle page cannot fit a one-triangle budget. Strict mode must
+    // report deferral; freshness mode must eventually render it and converge.
+    lighting.virtualShadowTriangleBudget = 1;
+    lighting.virtualShadowMaxPageAge = 2;
+    lighting.virtualShadowAllowOversizedPages = false;
+    caster.model[3].x = 0.01f;
+    for (int frame = 0; frame < 12; ++frame) renderSurface();
+    if (!renderer.GetFrameStats().virtualShadows.deferred || renderer.GetFrameStats().virtualShadows.submittedTriangles > 1)
+        throw std::runtime_error("Strict VSM triangle budget failed to report oversized dirty pages");
+    lighting.virtualShadowAllowOversizedPages = true;
+    bool sawOversized = false;
+    for (int frame = 0; frame < 64; ++frame)
+    {
+        renderSurface();
+        const auto stats = renderer.GetFrameStats().virtualShadows;
+        sawOversized |= stats.oversizedUpdates != 0;
+        if (stats.submittedTriangles > 2 || stats.oversizedUpdates > 1)
+            throw std::runtime_error("Oversized-page escape admitted more than one expensive page");
+    }
+    if (!sawOversized || renderer.GetFrameStats().virtualShadows.deferred != 0)
+        throw std::runtime_error("Oversized VSM pages failed to make bounded forward progress");
+    lighting.virtualShadowTriangleBudget = 1000000;
+    lighting.virtualShadowMaxPageAge = 8;
+    caster.model[3].x = 0;
+    for (int frame = 0; frame < 8; ++frame) renderSurface();
+    std::cout << "VSM pool resizing and oversized-page freshness passed\n";
     // Opaque fragment graphs do not alter shadow depth or coverage and must
     // not force a whole-scene fallback to cascades.
     auto graph = std::make_shared<ShaderGraphProgram>();

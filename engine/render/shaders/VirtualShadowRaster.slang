@@ -37,15 +37,15 @@ float receiverFragment(ReceiverOutput input) : SV_Target
 [shader("vertex")]
 PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 {
-    uint slot = pageLists[drawParameters.x * PLUTO_VSM_CAPACITY + instance / drawParameters.y];
+    uint slot = pageLists[drawParameters.x * vsm.pool.x + instance / drawParameters.y];
     VirtualShadowPage page = pages[slot];
     float3 world = mul(models[instance % drawParameters.y], float4(input.position, 1)).xyz;
     float4 projected = mul(vsm.matrices[page.address.z], float4(world, 1));
     // Keep the page transform homogeneous: vertices on/behind the light
     // plane must reach hardware clipping without a divide by zero.
-    float2 local = (projected.xy * 0.5 + projected.w * 0.5) * virtualGrid(page.address.z) -
+    float2 local = (projected.xy * 0.5 + projected.w * 0.5) * virtualGrid(vsm, page.address.z) -
         float2(virtualPageCoordinate(page.state.x)) * projected.w;
-    float2 atlas = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * projected.w + local) / PLUTO_VSM_ATLAS_TILES;
+    float2 atlas = (float2(slot % vsm.pool.y, slot / vsm.pool.y) * projected.w + local) / vsm.pool.y;
     PageOutput output;
     output.position = float4(atlas * 2.0 - projected.w, projected.z, projected.w);
     if (vsm.viewport.z != 0) output.position.y = -output.position.y;
@@ -67,7 +67,7 @@ ReceiverOutput clearVertex(uint vertex : SV_VertexID)
 {
     uint slot = vertex / 6;
     const float2 corners[6] = {float2(0,0),float2(1,0),float2(1,1),float2(0,0),float2(1,1),float2(0,1)};
-    float2 uv = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) + corners[vertex % 6]) / PLUTO_VSM_ATLAS_TILES;
+    float2 uv = (float2(slot % vsm.pool.y, slot / vsm.pool.y) + corners[vertex % 6]) / vsm.pool.y;
     ReceiverOutput output;
     output.position = float4(uv * 2.0 - 1.0, 1, 1);
     if (vsm.viewport.z != 0) output.position.y = -output.position.y;

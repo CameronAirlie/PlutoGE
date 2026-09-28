@@ -26,6 +26,12 @@ namespace PlutoGE::scene
     struct DirectionalShadowSettings
     {
         render::ShadowMethod method = render::ShadowMethod::Virtual;
+        int virtualPoolPages = 256;
+        int virtualSpotResolution = 2048;
+        int virtualMaxPageAge = 8;
+        bool virtualAllowOversizedPages = true;
+        float virtualCoarseMinCasterTexels = 0.5f;
+        bool virtualClusterCulling = true;
         int virtualPageBudget = 64;
         int virtualTriangleBudget = 1000000;
         int cascadeCount = kDefaultDirectionalShadowCascades;

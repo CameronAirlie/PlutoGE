@@ -337,26 +337,16 @@ float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal, float3 
     float2 gradient = computeReceiverPlaneDepthGradient(
         (clipDx.xyz - ndc * clipDx.w) / receiverClip.w,
         (clipDy.xyz - ndc * clipDy.w) / receiverClip.w);
-    int resolution = int(virtualResolution(level));
-    int2 center = int2(coordinate.xy * resolution);
-    float visibility = 0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-        {
-            int2 texel = clamp(center + int2(x,y), 0, resolution - 1);
-            int2 page = texel / PLUTO_VSM_PAGE_SIZE;
-            float2 tableUv = (float2(page + int2(0, level * PLUTO_VSM_GRID)) + 0.5) /
-                float2(PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS);
-            uint mapping = uint(virtualShadowTable.SampleLevel(tableUv, 0).r);
-            if (mapping == 0) { visibility += 1; continue; }
-            uint slot = mapping - 1;
-            float2 atlasUv = (float2(slot % PLUTO_VSM_ATLAS_TILES, slot / PLUTO_VSM_ATLAS_TILES) * PLUTO_VSM_PAGE_SIZE +
-                float2(texel % PLUTO_VSM_PAGE_SIZE) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
-            float2 tapUv = (float2(texel) + 0.5) / resolution;
-            float depth = coordinate.z + dot(gradient, tapUv - coordinate.xy) - 0.000001;
-            visibility += depth <= virtualShadowAtlas.SampleLevel(atlasUv, 0).r ? 1.0 : 0.0;
-        }
-    return visibility / 9.0;
+    float visibility;
+    for (uint attempt = 0; attempt < 2; ++attempt)
+    {
+        uint sampleLevel = level + attempt * PLUTO_VSM_SPOT_COUNT;
+        float support = 1.0 + clamp(vsm.settings.x, 0.0, 4.0) *
+            float(virtualResolution(vsm, sampleLevel)) / virtualResolution(vsm, level);
+        if (filterVirtualShadow(vsm, virtualShadowAtlas, virtualShadowTable, sampleLevel,
+                                coordinate, gradient, 0.000001, support, visibility)) return visibility;
+    }
+    return 1.0;
 }
 float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
                             float slope, out float rawVisibility, out float normalizedLevel)
@@ -372,10 +362,10 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
             min(1.0, vsm.metrics[firstLevel].x / vsm.metrics[level].x);
         float3 receiver = world + normal * vsm.metrics[level].x * lerp(0.08, 0.60, slope);
         float3 coordinate = virtualCoordinate(vsm, level, receiver);
-        float2 position = coordinate.xy * virtualResolution(level) - 0.5;
+        float2 position = coordinate.xy * virtualResolution(vsm, level) - 0.5;
         int2 first = int2(floor(position - support)) + 1;
         int2 last = int2(ceil(position + support)) - 1;
-        if (any(first < 0) || any(last >= virtualResolution(level)) || coordinate.z < 0 || coordinate.z > 1) continue;
+        if (any(first < 0) || any(last >= virtualResolution(vsm, level)) || coordinate.z < 0 || coordinate.z > 1) continue;
         int2 lowPage = first / PLUTO_VSM_PAGE_SIZE, highPage = last / PLUTO_VSM_PAGE_SIZE;
         // Decode each resident page once into an integer virtual-to-atlas
         // offset. The tent spans at most two pages per axis (support <= 5).
@@ -403,8 +393,8 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
             // Missing mappings are never sampled; avoid unsigned underflow
             // while preparing their unused offsets.
             const uint slot = max(mapping, 1u) - 1;
-            atlasOffsets[corner] = (int2(slot % PLUTO_VSM_ATLAS_TILES,
-                slot / PLUTO_VSM_ATLAS_TILES) - page) * PLUTO_VSM_PAGE_SIZE;
+            atlasOffsets[corner] = (int2(slot % vsm.pool.y,
+                slot / vsm.pool.y) - page) * PLUTO_VSM_PAGE_SIZE;
         }
         // Try a resident coarser clipmap when the requested filter footprint
         // is unavailable. The VSM path never samples conventional cascades.
@@ -422,10 +412,10 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
         {
             const float2 gatherOrigin = float2(first + atlasOffsets[0] + 1);
             float4 depths[4];
-            depths[0] = virtualShadowAtlas.GatherRed(gatherOrigin / PLUTO_VSM_ATLAS_SIZE);
-            depths[1] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 0)) / PLUTO_VSM_ATLAS_SIZE);
-            depths[2] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(0, 2)) / PLUTO_VSM_ATLAS_SIZE);
-            depths[3] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 2)) / PLUTO_VSM_ATLAS_SIZE);
+            depths[0] = virtualShadowAtlas.GatherRed(gatherOrigin / vsm.pool.z);
+            depths[1] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 0)) / vsm.pool.z);
+            depths[2] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(0, 2)) / vsm.pool.z);
+            depths[3] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 2)) / vsm.pool.z);
             // Gather components are (lower-left, lower-right, upper-right,
             // upper-left) in texture coordinates: row-major indices 3,2,0,1.
             // Unroll to keep gathers in registers and preserve scalar summation order.
@@ -435,7 +425,7 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                     const int2 texel = first + int2(x, y);
                     const int component = (y & 1) == 0 ? 3 - (x & 1) : (x & 1);
                     const float storedDepth = depths[(y / 2) * 2 + x / 2][component];
-                    const float2 tapUv = (float2(texel) + 0.5) / virtualResolution(level);
+                    const float2 tapUv = (float2(texel) + 0.5) / virtualResolution(vsm, level);
                     const float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= storedDepth ? 1.0 : 0.0;
                     const float2 tent = max(support - abs(float2(texel) - position), 0.0);
                     const float weight = tent.x * tent.y;
@@ -461,8 +451,8 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
                 const int2 offset = x >= pageBoundaryX ? rightOffset : leftOffset;
                 // Integer addressing preserves the original texel centres,
                 // including filters crossing unrelated physical atlas pages.
-                float2 atlas = (float2(texel + offset) + 0.5) / PLUTO_VSM_ATLAS_SIZE;
-                float2 tapUv = (float2(texel) + 0.5) / virtualResolution(level);
+                float2 atlas = (float2(texel + offset) + 0.5) / vsm.pool.z;
+                float2 tapUv = (float2(texel) + 0.5) / virtualResolution(vsm, level);
                 float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= virtualShadowAtlas.SampleLevel(atlas, 0).r ? 1.0 : 0.0;
                 float weight = max(support - abs(float(x) - position.x), 0.0) * tentY;
                 visibility += comparison * weight; weightSum += weight;

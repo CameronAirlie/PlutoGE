@@ -257,6 +257,12 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Method", PropertyType::Enum,
                 std::to_string(static_cast<int>(m_config.directionalShadowSettings.method)),
                 {"Cascaded Shadow Maps (Legacy)", "Virtual Shadow Maps (Default)"}});
+            properties.push_back({"VSM Cluster Culling", PropertyType::Bool, m_config.directionalShadowSettings.virtualClusterCulling ? "true" : "false"});
+            properties.push_back({"VSM Pool Pages", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualPoolPages)});
+            properties.push_back({"VSM Spotlight Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualSpotResolution)});
+            properties.push_back({"VSM Maximum Page Age", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualMaxPageAge)});
+            properties.push_back({"VSM Allow Oversized Pages", PropertyType::Bool, m_config.directionalShadowSettings.virtualAllowOversizedPages ? "true" : "false"});
+            properties.push_back({"VSM Coarse Minimum Caster Texels", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.virtualCoarseMinCasterTexels)});
             properties.push_back({"VSM Page Updates per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualPageBudget)});
             properties.push_back({"VSM Triangle Budget per Frame", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.virtualTriangleBudget)});
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
@@ -337,9 +343,21 @@ namespace PlutoGE::scene
                 m_config.directionalShadowSettings.method = property.value == "1"
                     ? render::ShadowMethod::Virtual : render::ShadowMethod::Cascaded;
             }
+            else if (property.name == "VSM Cluster Culling")
+                m_config.directionalShadowSettings.virtualClusterCulling = property.value == "true";
+            else if (property.name == "VSM Pool Pages")
+                m_config.directionalShadowSettings.virtualPoolPages = std::clamp(std::stoi(property.value), 256, 1024);
+            else if (property.name == "VSM Spotlight Resolution")
+                m_config.directionalShadowSettings.virtualSpotResolution = std::clamp(std::stoi(property.value), 512, 2048);
+            else if (property.name == "VSM Maximum Page Age")
+                m_config.directionalShadowSettings.virtualMaxPageAge = std::clamp(std::stoi(property.value), 1, 120);
+            else if (property.name == "VSM Allow Oversized Pages")
+                m_config.directionalShadowSettings.virtualAllowOversizedPages = property.value == "true";
+            else if (property.name == "VSM Coarse Minimum Caster Texels")
+                m_config.directionalShadowSettings.virtualCoarseMinCasterTexels = std::clamp(std::stof(property.value), 0.0f, 4.0f);
             else if (property.name == "VSM Page Updates per Frame")
             {
-                m_config.directionalShadowSettings.virtualPageBudget = std::clamp(std::stoi(property.value), 1, 256);
+                m_config.directionalShadowSettings.virtualPageBudget = std::clamp(std::stoi(property.value), 1, 1024);
             }
             else if (property.name == "VSM Triangle Budget per Frame")
             {

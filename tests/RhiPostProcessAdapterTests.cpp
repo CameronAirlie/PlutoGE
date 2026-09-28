@@ -2,6 +2,7 @@
 #include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
@@ -81,6 +82,21 @@ int main()
     if (!Near(restoredSpot.GetLight().spotCone.innerAngle, 0) || !Near(restoredSpot.GetLight().spotCone.outerAngle, 179)) return 110;
     const auto defaults = SpotCone{}.Cosines();
     if (!Near(defaults.x, .9f) || !Near(defaults.y, .975f)) return 111;
+
+    PlutoGE::scene::LightComponent configuredSun;
+    configuredSun.SetLightType(PlutoGE::scene::LightType::Directional);
+    using PlutoGE::scene::PropertyType;
+    configuredSun.Deserialize({{"VSM Pool Pages", PropertyType::Int, "576"},
+        {"VSM Spotlight Resolution", PropertyType::Int, "1024"}, {"VSM Maximum Page Age", PropertyType::Int, "12"},
+        {"VSM Allow Oversized Pages", PropertyType::Bool, "false"}, {"VSM Coarse Minimum Caster Texels", PropertyType::Float, "1.25"},
+        {"VSM Page Updates per Frame", PropertyType::Int, "500"}});
+    PlutoGE::scene::LightComponent restoredSun;
+    restoredSun.Deserialize(configuredSun.Serialize());
+    BasicLighting shadowSettings;
+    PlutoGE::scene::ApplyDirectionalShadowSettings(shadowSettings, restoredSun.GetLight().directionalShadowSettings);
+    if (shadowSettings.virtualShadowPoolPages != 576 || shadowSettings.virtualShadowSpotResolution != 1024 ||
+        shadowSettings.virtualShadowMaxPageAge != 12 || shadowSettings.virtualShadowAllowOversizedPages ||
+        !Near(shadowSettings.virtualShadowCoarseMinCasterTexels, 1.25f) || shadowSettings.virtualShadowPageBudget != 500) return 112;
 
     VoxelConeTracingEffect vct;
     std::array<VctLocalLight, 1> oldLight{{{{2,2,2,1}, {1,1,1,1}, {}, {}}}};

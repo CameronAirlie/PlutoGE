@@ -10,6 +10,9 @@ struct VirtualShadowParameters
     uint4 limits; // caster chunks, frame, page budget, triangle budget
     float4 settings; // softness, enabled, reset cache, resolution scale
     float4 camera;
+    uint4 pool; // capacity, atlas tiles per axis, atlas pixels per axis, spot fine grid
+    uint4 scheduling; // maximum preferred dirty age, allow oversized page, unused
+    float4 culling; // minimum coarse caster radius in texels, unused
     uint4 membershipEpochs[(PLUTO_VSM_LEVELS + 3) / 4];
 };
 struct VirtualShadowPage
@@ -26,8 +29,13 @@ struct VirtualShadowCaster
     uint4 identity;
 };
 uint2 virtualPageCoordinate(uint key) { return uint2(key % PLUTO_VSM_GRID, key / PLUTO_VSM_GRID); }
-uint virtualGrid(uint level) { return PLUTO_VSM_LEVEL_GRID(level); }
-uint virtualResolution(uint level) { return virtualGrid(level) * PLUTO_VSM_PAGE_SIZE; }
+uint virtualGrid(VirtualShadowParameters p, uint level)
+{
+    return level >= PLUTO_VSM_DIRECTIONAL_LEVELS && level < PLUTO_VSM_SPOT_ROOT_BASE
+        ? p.pool.w : PLUTO_VSM_LEVEL_GRID(level);
+}
+uint virtualResolution(VirtualShadowParameters p, uint level) { return virtualGrid(p, level) * PLUTO_VSM_PAGE_SIZE; }
+bool virtualCoarseLevel(uint level) { return level == PLUTO_VSM_ROOT_LEVEL || level >= PLUTO_VSM_SPOT_ROOT_BASE; }
 float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
 {
     float4 projected = mul(p.matrices[level], float4(world, 1));
@@ -51,7 +59,7 @@ int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
     for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);
-        float guard = 7.0 / virtualResolution(level);
+        float guard = 7.0 / virtualResolution(p, level);
         if (all(uv.xy > guard) && all(uv.xy < 1.0 - guard) && uv.z >= 0 && uv.z <= 1 &&
             (p.metrics[level].x * 2.0 >= footprint || level >= PLUTO_VSM_FINE_LEVELS - 1)) return level;
     }

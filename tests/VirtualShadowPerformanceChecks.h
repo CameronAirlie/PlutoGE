@@ -2,11 +2,12 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <cstring>
 #include <stdexcept>
 #include <string_view>
 
-// Deliberately pessimistic unknown caster bounds reproduce the original
-// many-pages-per-mesh risk. The GPU must bound actual work, not merely CPU calls.
+// Unknown authored bounds exercise automatic cluster bounds. The GPU must
+// bound actual work and submit one command per cluster, never per page pair.
 template<class ReadPixels>
 void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
                                   PlutoGE::render::rhi::IRenderDevice &device, ReadPixels readPixels)
@@ -44,6 +45,9 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
                      glm::scale(glm::mat4(1), glm::vec3(.2f, .2f, 1));
         draw.shadowBoundsRadius = -1;
     }
+    // Include a larger mesh so the image comparison covers split clusters as
+    // well as the page-sized meshes that should coalesce to single submissions.
+    casters.back().model = glm::translate(glm::mat4(1), glm::vec3(6,5,.2f)) * glm::scale(glm::mat4(1), glm::vec3(8,8,1));
     BasicLighting lighting;
     lighting.shadowsEnabled = true; lighting.shadowMethod = ShadowMethod::Virtual;
     lighting.shadowCascadeCount = 4; lighting.shadowResolution = 256;
@@ -61,8 +65,54 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
         renderer.Render(projection * lighting.view, lighting, receivers, {}, casters,
                         diagnosticView);
     };
+    // Compare identical geometry with and without clustered page culling. Warm
+    // both paths fully before comparing images; time a moving caster separately.
+    std::array<double, 2> comparisonGpu{}, comparisonCpu{};
+    std::array<std::uint64_t, 2> comparisonTriangles{};
+    std::vector<std::byte> referenceImage;
+    const float originalX = casters.front().model[3].x;
+    lighting.virtualShadowCoarseMinCasterTexels = 0;
+    for (int clustered = 0; clustered < 2; ++clustered)
+    {
+        lighting.virtualShadowClusterCulling = clustered != 0;
+        casters.front().model[3].x = originalX;
+        for (int frame = 0; frame < 160; ++frame) render(0);
+        const auto image = readPixels(renderer.GetColorTexture());
+        if (clustered == 0) referenceImage.assign(reinterpret_cast<const std::byte *>(image.data()), reinterpret_cast<const std::byte *>(image.data()) + image.size());
+        else if (image.size() != referenceImage.size() || std::memcmp(image.data(), referenceImage.data(), image.size()) != 0)
+            throw std::runtime_error("Clustered shadow geometry differs from whole-mesh reference");
+        for (int frame = 0; frame < 32; ++frame)
+        {
+            casters.front().model[3].x = originalX + float(frame) * 0.01f;
+            render(0);
+            if (frame >= 8)
+            {
+                comparisonTriangles[clustered] += renderer.GetFrameStats().virtualShadows.submittedTriangles;
+                comparisonGpu[clustered] += device.GetTimingStats("Scene").frameGpuMs;
+                comparisonCpu[clustered] += renderer.GetTimingStats().shadowRecordingMs;
+            }
+        }
+    }
+    if (comparisonTriangles[1] >= comparisonTriangles[0])
+        throw std::runtime_error("Cluster bounds did not reduce page geometry in the spatial fixture");
+    std::cout << "VSM whole-mesh/clustered motion: " << comparisonTriangles[0] / 24 << " / " << comparisonTriangles[1] / 24
+              << " triangles, " << comparisonGpu[0] / 24 << " / " << comparisonGpu[1] / 24 << " ms GPU frame, " << comparisonCpu[0] / 24 << " / " << comparisonCpu[1] / 24 << " ms shadow CPU\n";
+    casters.front().model[3].x = originalX;
     for (int frame = 0; frame < 80; ++frame) render(0);
     (void)readPixels(renderer.GetColorTexture());
+    // Immutable editor packets should skip bounds merging, while changed
+    // revisions must rebuild even when the mesh allocation is unchanged.
+    for (std::size_t i = 0; i < casters.size(); ++i) casters[i].preparationRevision = i + 1;
+    render(0);
+    render(0);
+    if (!renderer.GetFrameStats().virtualShadows.clusterBoundsCacheHits ||
+        renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds)
+        throw std::runtime_error("Stable VSM packets rebuilt cluster bounds");
+    ++casters.front().preparationRevision;
+    render(0);
+    if (renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds != 1)
+        throw std::runtime_error("VSM packet revision did not rebuild its cluster bounds");
+    for (auto &draw : casters) draw.preparationRevision = 0;
     for (int scenario = 0; scenario < 3; ++scenario)
     {
         double planning = 0, pages = 0, total = 0, receiverRequests = 0;
@@ -81,11 +131,11 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
                 frameStats.shadowObjectUploads || frameStats.shadowInstances)
                 throw std::runtime_error("VSM performance path retained cascade resources or work");
             if (stats.submittedTriangles > lighting.virtualShadowTriangleBudget || stats.updated > lighting.virtualShadowPageBudget ||
-                stats.submittedIndirectCommands > casters.size())
+                stats.submittedIndirectCommands > casters.size() * mesh.GetShadowClusters().size())
                 throw std::runtime_error("VSM performance budget regression");
             if (frame < 5 || !stats.gpuCountersAvailable) continue;
             const auto timing = device.GetTimingStats("Scene");
-            if (timing.indexedDrawCalls > 122) throw std::runtime_error("VSM recorded non-VSM shadow draws");
+            if (timing.indexedDrawCalls > casters.size() * mesh.GetShadowClusters().size() + 2) throw std::runtime_error("VSM recorded non-VSM shadow draws");
             total += timing.frameGpuMs;
             for (const auto &scope : timing.gpuScopes)
             {

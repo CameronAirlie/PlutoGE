@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "PlutoGE/render/VirtualShadowStats.h"
+#include "PlutoGE/render/VirtualShadowPolicy.h"
+#include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/rhi/Resource.h"
 #include <glm/glm.hpp>
 #include <memory>
@@ -25,9 +27,11 @@ namespace PlutoGE::render
         std::array<glm::vec4, PLUTO_VSM_LEVELS> metrics{};
         glm::uvec4 viewport{}, limits{};
         glm::vec4 settings{}, camera{};
+        glm::uvec4 pool{}, scheduling{};
+        glm::vec4 culling{};
         std::array<glm::uvec4, (PLUTO_VSM_LEVELS + 3) / 4> membershipEpochs{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 192 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
+    static_assert(sizeof(VirtualShadowParameters) == 240 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
 
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
@@ -70,7 +74,10 @@ namespace PlutoGE::render
           const void *mesh = nullptr;
           std::uint64_t meshRevision = 0, preparationRevision = 0;
           std::size_t firstInstance = 0;
+          glm::vec4 bounds{0, 0, 0, -1};
+          bool clustered = false;
       };
+        void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, 5> m_raster;
@@ -78,6 +85,16 @@ namespace PlutoGE::render
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
         rhi::Sampler m_sampler, m_materialSampler;
+        struct ClusterPlan
+        {
+            const void *mesh = nullptr;
+            std::uint64_t meshRevision = 0, packetRevision = 0;
+            std::uint32_t firstIndex = 0, indexCount = 0;
+            ShadowGeometryCluster merged;
+            glm::vec4 worldBounds{0, 0, 0, -1};
+            bool coalesce = false;
+        };
+        std::vector<ClusterPlan> m_clusterPlans;
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;
@@ -86,8 +103,8 @@ namespace PlutoGE::render
         std::uint32_t m_inputChangeFrame = 0;
         bool m_reuseFrame = false;
         bool m_cacheMembership = true;
-        float m_resolutionScale = 1.0f;
-        std::uint32_t m_feedbackAfter = 0, m_feedbackFrame = 0, m_lowPressureFrames = 0;
+        VirtualShadowResolutionPolicy m_resolutionPolicy;
+        std::uint32_t m_poolTiles = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();
     };
 }

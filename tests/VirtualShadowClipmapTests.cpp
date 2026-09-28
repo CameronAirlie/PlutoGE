@@ -10,6 +10,40 @@ int main()
 {
     try
     {
+        Require(VirtualShadowPoolTiles(256) == 16 && VirtualShadowPoolTiles(300) == 24 && VirtualShadowPoolTiles(1024) == 32,
+                "Physical pool tiers are inconsistent");
+        VirtualShadowResolutionPolicy policy;
+        Require(policy.Observe(1, 1, 300, 192, 192) && policy.Scale() == 2, "Pressure must reduce resolution");
+        Require(!policy.Observe(2, 2, 0, 0, 192), "Stale feedback bypassed settle period");
+        for (std::uint32_t frame = 33; frame < 65; ++frame) policy.Observe(frame, frame, 20, 20, 128);
+        Require(policy.Scale() == 1, "Local light reservations blocked directional resolution recovery");
+        Require(!policy.Observe(66, 66, 20, 20, 128), "Stable residency unnecessarily degraded resolution");
+        VirtualShadowResolutionPolicy hysteresis;
+        hysteresis.Observe(1, 1, 300, 192, 192);
+        for (std::uint32_t frame = 33; frame < 200; ++frame) hysteresis.Observe(frame, frame, 80, 80, 192);
+        Require(hysteresis.Scale() == 2, "Refinement ignored predicted fourfold demand");
+        std::vector<BasicVertex> clusterVertices(6);
+        clusterVertices[0].position = {-1,-1,0}; clusterVertices[1].position = {1,-1,0}; clusterVertices[2].position = {0,1,0};
+        clusterVertices[3].position = {99,-1,0}; clusterVertices[4].position = {101,-1,0}; clusterVertices[5].position = {100,1,0};
+        std::vector<std::uint32_t> clusterIndices;
+        for (int i = 0; i < ShadowClusterTriangleCount; ++i) clusterIndices.insert(clusterIndices.end(), {0,1,2});
+        for (int i = 0; i < ShadowClusterTriangleCount; ++i) clusterIndices.insert(clusterIndices.end(), {3,4,5});
+        const auto clusters = BuildShadowGeometryClusters(std::span<const BasicVertex>(clusterVertices), std::span<const std::uint32_t>(clusterIndices));
+        Require(clusters.size() == 2 && clusters[0].firstIndex == 0 && clusters[1].firstIndex == ShadowClusterTriangleCount * 3 && clusters[1].indexCount == ShadowClusterTriangleCount * 3,
+                "Shadow clusters dropped or overlapped triangles");
+        Require(clusters[0].center.x == 0 && clusters[1].center.x == 100 && clusters[0].extents.x == 1,
+                "Spatially separate index ranges retained whole-mesh bounds");
+        const auto submeshClusters = SelectShadowGeometryClusters(clusters, ShadowClusterTriangleCount * 3 + 2, 3);
+        Require(submeshClusters.size() == 1 && submeshClusters.front().firstIndex == ShadowClusterTriangleCount * 3,
+                "Submesh selection included unrelated geometry clusters");
+        auto transform = glm::scale(glm::mat4(1), glm::vec3(-2,3,1)); transform[1].x = 1.5f;
+        const auto sphere = ShadowClusterWorldSphere(clusters[0], std::span<const glm::mat4>(&transform, 1));
+        for (int i = 0; i < 3; ++i)
+            Require(glm::length(glm::vec3(transform * glm::vec4(clusterVertices[i].position[0], clusterVertices[i].position[1], clusterVertices[i].position[2], 1)) - glm::vec3(sphere)) <= sphere.w,
+                    "Cluster bounds lost geometry under mirrored scale/shear");
+        clusterVertices[0].position[0] = -20;
+        const auto deformed = BuildShadowGeometryClusters(std::span<const BasicVertex>(clusterVertices), std::span<const std::uint32_t>(clusterIndices));
+        Require(deformed[0].extents.x > clusters[0].extents.x, "Deformation retained stale cluster bounds");
         BasicLighting lighting;
         lighting.directionalDirection = {0, 0, 1}; lighting.cameraPosition = {.1f, .1f, .1f};
         const auto original = VirtualShadowMaps::BuildClipmaps(lighting);

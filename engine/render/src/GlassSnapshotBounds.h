@@ -9,7 +9,7 @@ namespace PlutoGE::render
     // Conservative sample footprint of BasicLit.slang's parallel-slab glass.
     // Unknown/deformed bounds and boxes crossing the eye plane use a full copy.
     inline rhi::Scissor GlassSnapshotBounds(const BasicDraw &draw, const glm::mat4 &viewProjection,
-                                            glm::vec2 clipOffset, std::uint32_t width, std::uint32_t height, bool flipY)
+                                            glm::vec2 clipOffset, std::uint32_t width, std::uint32_t height, bool flipY, bool sampleFootprint = true)
     {
         const rhi::Scissor full{0, 0, width, height};
         if (draw.shadowBoundsRadius < 0 || !std::isfinite(draw.shadowBoundsRadius) || !std::isfinite(draw.thickness) ||
@@ -25,7 +25,7 @@ namespace PlutoGE::render
         // Both shader displacement terms have denominators clamped to 0.1;
         // refracted and view directions have length <= 1. This deliberately
         // covers all normals, normal maps, IORs and transmission values.
-        extents += glm::vec3(20.0f * std::max(draw.thickness, 0.0f));
+        if (sampleFootprint) extents += glm::vec3(20.0f * std::max(draw.thickness, 0.0f));
         glm::vec2 low(1), high(0);
         for (unsigned corner = 0; corner < 8; ++corner)
         {
@@ -44,8 +44,9 @@ namespace PlutoGE::render
         // The shader's largest blur tap is 12 pixels. Add two more for
         // bilinear filtering and conservative rounding at snapshot boundaries.
         const glm::vec2 dimensions(width, height);
-        low = glm::clamp(glm::floor(low * dimensions) - 14.0f, glm::vec2(0), dimensions);
-        high = glm::clamp(glm::ceil(high * dimensions) + 14.0f, glm::vec2(0), dimensions);
+        const float guard = sampleFootprint ? 14.0f : 2.0f;
+        low = glm::clamp(glm::floor(low * dimensions) - guard, glm::vec2(0), dimensions);
+        high = glm::clamp(glm::ceil(high * dimensions) + guard, glm::vec2(0), dimensions);
         return {static_cast<std::int32_t>(low.x), static_cast<std::int32_t>(low.y),
                 static_cast<std::uint32_t>(high.x - low.x), static_cast<std::uint32_t>(high.y - low.y)};
     }
@@ -64,11 +65,13 @@ namespace PlutoGE::render
             b.y < a.y + static_cast<std::int32_t>(a.height);
     }
 
-    // A sample footprint contains the pane's raster footprint too. Compare
-    // actual footprints, not their enclosing rectangle (which includes gaps).
+    // A later pane needs a fresh snapshot only when it samples pixels written
+    // by an earlier pane. Overlapping read footprints alone are harmless.
+    // Callers without raster bounds retain the conservative read/read test.
     // Bound group size to keep planning cost bounded for very large imports.
     inline GlassSnapshotGroup PlanGlassSnapshotGroup(std::span<const BasicDraw> draws,
-        std::span<const rhi::Scissor> footprints, std::size_t first)
+        std::span<const rhi::Scissor> footprints, std::size_t first,
+        std::span<const rhi::Scissor> rasterFootprints = {})
     {
         GlassSnapshotGroup group{first + 1, footprints[first]};
         const auto limit = std::min(draws.size(), first + std::size_t{64});
@@ -77,7 +80,7 @@ namespace PlutoGE::render
             const auto &next = footprints[group.end];
             bool overlaps = false;
             for (auto index = first; index < group.end; ++index)
-                if (GlassFootprintsOverlap(footprints[index], next))
+                if (GlassFootprintsOverlap(rasterFootprints.empty() ? footprints[index] : rasterFootprints[index], next))
                 {
                     overlaps = true;
                     break;

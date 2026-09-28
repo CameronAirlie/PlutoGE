@@ -9,7 +9,13 @@ namespace PlutoGE::scene
     inline void ApplyDirectionalShadowSettings(render::BasicLighting &lighting, const DirectionalShadowSettings &settings)
     {
         lighting.shadowMethod = settings.method;
-        lighting.virtualShadowPageBudget = static_cast<std::uint32_t>(std::clamp(settings.virtualPageBudget, 1, 256));
+        lighting.virtualShadowPoolPages = static_cast<std::uint32_t>(std::clamp(settings.virtualPoolPages, 256, PLUTO_VSM_CAPACITY));
+        lighting.virtualShadowSpotResolution = static_cast<std::uint32_t>(std::clamp(settings.virtualSpotResolution, 512, 2048));
+        lighting.virtualShadowMaxPageAge = static_cast<std::uint32_t>(std::clamp(settings.virtualMaxPageAge, 1, 120));
+        lighting.virtualShadowAllowOversizedPages = settings.virtualAllowOversizedPages;
+        lighting.virtualShadowClusterCulling = settings.virtualClusterCulling;
+        lighting.virtualShadowCoarseMinCasterTexels = std::clamp(settings.virtualCoarseMinCasterTexels, 0.0f, 4.0f);
+        lighting.virtualShadowPageBudget = static_cast<std::uint32_t>(std::clamp(settings.virtualPageBudget, 1, PLUTO_VSM_CAPACITY));
         lighting.virtualShadowTriangleBudget = static_cast<std::uint32_t>(std::clamp(settings.virtualTriangleBudget, 1, 16000000));
         lighting.shadowResolution = static_cast<std::uint32_t>(std::clamp(
             settings.resolution, 256, 8192));

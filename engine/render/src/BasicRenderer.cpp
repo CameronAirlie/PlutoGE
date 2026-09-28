@@ -460,6 +460,35 @@ namespace PlutoGE::render
             return hash;
         }
 
+        std::uint64_t PointShadowAtlasSignature(std::span<const glm::mat4> matrices,
+            std::span<const BasicDraw> draws, std::span<const std::uint64_t> drawSignatures,
+            glm::vec3 camera, float graphTime)
+        {
+            std::uint64_t signature = 14695981039346656037ull;
+            HashVctValue(signature, matrices.size());
+            for (std::size_t face = 0; face < matrices.size(); ++face)
+                HashVctValue(signature, matrices[face]);
+            for (std::size_t index = 0; index < draws.size(); ++index)
+            {
+                const auto &draw = draws[index];
+                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
+                    continue;
+                HashVctValue(signature, drawSignatures[index]);
+                if (draw.shaderGraphProgram)
+                {
+                    const auto &graph = *draw.shaderGraphProgram;
+                    HashVctValue(signature, ShadowMaterial(draw,
+                        graph.usesViewDirection ? camera : glm::vec3(0), graph.usesTime ? graphTime : 0));
+                    HashVctValue(signature, draw.normalTexture);
+                    HashVctValue(signature, draw.metallicTexture);
+                    HashVctValue(signature, draw.roughnessTexture);
+                    HashVctValue(signature, draw.graphTextures);
+                    HashVctValue(signature, draw.graphSamplers);
+                }
+            }
+            return signature;
+        }
+
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
         {
@@ -1214,6 +1243,7 @@ namespace PlutoGE::render
         m_particleVertices.clear();
         m_particleVertexCapacities.clear();
         m_particleParameters.clear();
+        m_pointShadowCacheValid = false;
         m_pointShadowColor.Reset();
         m_pointShadowDepth.Reset();
         for (auto &buffer : m_pointShadowCameras)
@@ -1334,6 +1364,8 @@ namespace PlutoGE::render
                                                         {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
         mesh.m_indexCount = static_cast<std::uint32_t>(data.indices.size());
         mesh.m_vertexCount = data.vertices.size();
+        mesh.m_shadowIndices.assign(data.indices.begin(), data.indices.end());
+        mesh.m_shadowClusters = BuildShadowGeometryClusters(data.vertices, data.indices);
         return mesh;
     }
 
@@ -1343,7 +1375,11 @@ namespace PlutoGE::render
             throw std::invalid_argument("Dynamic mesh update must preserve vertex count");
         mesh.m_pendingVertices.assign(vertices.begin(), vertices.end());
         // Shadow caches must see deformation even when the model is stationary.
-        if (geometryChanged) mesh.m_revision = m_nextMeshRevision++;
+        if (geometryChanged)
+        {
+            mesh.m_revision = m_nextMeshRevision++;
+            mesh.m_shadowClusters = BuildShadowGeometryClusters(vertices, std::span<const std::uint32_t>(mesh.m_shadowIndices));
+        }
     }
 
     void BasicRenderer::SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
@@ -1606,8 +1642,9 @@ namespace PlutoGE::render
 
         if (shadowDraws.empty()) shadowDraws = draws;
         m_frameStats.shadowCandidates = shadowDraws.size();
-        if (virtualShadowsActive || cascadedShadowsActive)
+        if (virtualShadowsActive || cascadedShadowsActive || !lighting.pointLights.empty())
         {
+            core::CpuScope signatureScope("Shadow signatures", core::CpuCategory::Rendering);
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
             m_shadowSignatureCache.resize(shadowDraws.size());
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
@@ -1626,8 +1663,8 @@ namespace PlutoGE::render
                         if (draw.shaderGraphProgram && !virtualShadowsActive)
                         {
                             HashVctValue(m_shadowDrawSignatures[index], draw.shaderGraphProgram->hash);
-                            HashVctValue(m_shadowDrawSignatures[index], graphTime);
-                            HashVctValue(m_shadowDrawSignatures[index], lighting.cameraPosition);
+                            if (draw.shaderGraphProgram->usesTime) HashVctValue(m_shadowDrawSignatures[index], graphTime);
+                            if (draw.shaderGraphProgram->usesViewDirection) HashVctValue(m_shadowDrawSignatures[index], lighting.cameraPosition);
                             HashVctValue(m_shadowDrawSignatures[index], draw.normalTexture);
                             HashVctValue(m_shadowDrawSignatures[index], draw.metallicTexture);
                             HashVctValue(m_shadowDrawSignatures[index], draw.roughnessTexture);
@@ -1639,6 +1676,7 @@ namespace PlutoGE::render
         }
         if (virtualShadowsActive)
         {
+            core::CpuScope prepareScope("VSM preparation", core::CpuCategory::Rendering);
             virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
                 m_shadowDrawSignatures, m_width, m_height);
         }
@@ -1787,6 +1825,7 @@ namespace PlutoGE::render
         if (virtualShadowsActive)
         {
             const BasicMesh *boundShadowMesh = nullptr;
+            core::CpuScope recordScope("VSM recording", core::CpuCategory::Rendering);
             m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
             {
                 const auto &mesh = *submission.draw->mesh;
@@ -1974,8 +2013,24 @@ namespace PlutoGE::render
                 m_shadowCacheValid[cascade] = true;
             }
         }
+        // Cache the atlas as one unit because BeginRendering clears the whole
+        // attachment. Per-face updates require an explicit regional-clear path.
+        std::uint64_t pointSignature = 14695981039346656037ull;
         if (pointShadowCount > 0)
         {
+            core::CpuScope cacheScope("Point shadow cache validation", core::CpuCategory::Rendering);
+            pointSignature = PointShadowAtlasSignature(
+                std::span(frameParameters.pointShadowMatrices).first(pointShadowCount * 6),
+                shadowDraws, m_shadowDrawSignatures, lighting.cameraPosition, graphTime);
+        }
+        const bool reusePointShadows = m_pointShadowCacheValid && m_pointShadowSignature == pointSignature;
+        if (pointShadowCount > 0 && reusePointShadows)
+            ++m_frameStats.pointShadowAtlasCacheHits;
+        if (pointShadowCount > 0 && !reusePointShadows)
+        {
+            core::CpuScope pointScope("Point shadow recording", core::CpuCategory::Rendering);
+            commands.BeginGpuScope("RHI Point Shadows");
+            ++m_frameStats.pointShadowAtlasUpdates;
             if (!m_pointShadowColor)
             {
                 m_pointShadowColor =
@@ -2050,6 +2105,7 @@ namespace PlutoGE::render
                         }
                         commands.DrawIndexed(count, draw.firstIndex);
                         ++objectIndex;
+                        ++m_frameStats.pointShadowDraws;
                     };
                     if (draw.instanceModels && !draw.instanceModels->empty())
                         for (const auto &model : *draw.instanceModels)
@@ -2059,6 +2115,9 @@ namespace PlutoGE::render
                 }
             }
             commands.EndRendering();
+            commands.EndGpuScope();
+            m_pointShadowSignature = pointSignature;
+            m_pointShadowCacheValid = true;
         }
         shadowScope.End();
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
@@ -2501,10 +2560,15 @@ namespace PlutoGE::render
                 commands.EndRendering();
             }
             std::vector<rhi::Scissor> glassFootprints(transparentDraws.size());
+            std::vector<rhi::Scissor> glassRasterFootprints(transparentDraws.size());
             for (std::size_t index = 0; index < transparentDraws.size(); ++index)
                 if (transparentDraws[index].surfaceType == 1u)
+                {
                     glassFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
                         glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
+                    glassRasterFootprints[index] = GlassSnapshotBounds(transparentDraws[index], viewProjection,
+                        glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, false);
+                }
             geometryResourcesBound = false;
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
@@ -2516,7 +2580,7 @@ namespace PlutoGE::render
                 if (pane.surfaceType == 1u) ++m_frameStats.glassPanes;
                 if (pane.surfaceType == 1u && paneIndex >= snapshotGroupEnd)
                 {
-                    const auto group = PlanGlassSnapshotGroup(transparentDraws, glassFootprints, paneIndex);
+                    const auto group = PlanGlassSnapshotGroup(transparentDraws, glassFootprints, paneIndex, glassRasterFootprints);
                     snapshotGroupEnd = group.end;
                     ++m_frameStats.glassSnapshots;
                     if (rendering)

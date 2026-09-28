@@ -19,4 +19,16 @@ namespace PlutoGE::render
         for (const auto &command : source)
             if (rigid(command) && (!hasStatic || command.isStatic)) destination.push_back(command);
     }
+    inline void SelectVctScene(RenderCommandView source, std::vector<const RenderCommand *> &destination)
+    {
+        const auto rigid = [](const RenderCommand &command) {
+            return command.mesh && command.material && (!command.jointMatrices || command.jointMatrices->empty());
+        };
+        const bool hasStatic = std::ranges::any_of(source, [&](const auto &command) { return command.isStatic && rigid(command); });
+        destination.clear();
+        destination.reserve(source.size());
+        for (const auto &command : source)
+            if (rigid(command) && (!hasStatic || command.isStatic)) destination.push_back(&command);
+    }
+
 }

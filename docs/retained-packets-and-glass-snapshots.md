@@ -1,5 +1,8 @@
 # Retained packets and incremental glass snapshots
 
+The subsequent frontend migration is described in
+[Retained render scene](retained-render-scene.md).
+
 ## Capture and scope
 
 The 240-frame capture 9986–10225 averages 17.508 ms CPU and 10.842 ms scene GPU.

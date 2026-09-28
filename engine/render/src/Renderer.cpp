@@ -310,7 +310,7 @@ namespace PlutoGE::render
             return RenderCommandKey(a) < RenderCommandKey(b);
         }
 
-        auto RenderCommandPermutation(std::span<const RenderCommand> commands)
+        auto RenderCommandPermutation(RenderCommandView commands)
         {
             // Resolve material and mesh metadata once, not at every comparison.
             using Key = decltype(RenderCommandKey(RenderCommand{}));
@@ -1029,6 +1029,7 @@ namespace PlutoGE::render
 
     void Renderer::SubmitRenderCommand(const RenderCommand &command)
     {
+        m_sceneRefsDirty = true;
         if (!IsRenderCommandAcceptedForSubmission(command))
         {
             if (m_config.enableProfiling)
@@ -1057,6 +1058,7 @@ namespace PlutoGE::render
     {
         if (commands.empty())
             return;
+        m_sceneRefsDirty = true;
 
         m_renderCommands.reserve(m_renderCommands.size() + commands.size());
         m_shadowCasterSubmissionFlags.reserve(m_renderCommands.capacity());
@@ -1096,8 +1098,91 @@ namespace PlutoGE::render
         }
     }
 
+    void Renderer::PublishRenderProducer(std::uint64_t producer, std::uint64_t revision, std::span<const RenderCommand> commands)
+    {
+        m_retainedScene.Publish(producer, revision, commands);
+    }
+
+    void Renderer::SynchronizeRenderScene()
+    {
+        if (m_legacyMaterialized) return;
+        m_retainedScene.Synchronize();
+        const auto &retainedStats = m_retainedScene.GetStats();
+        m_cpuFrameStats.retainedProducers = retainedStats.activeProducers;
+        m_cpuFrameStats.retainedCommands = retainedStats.activeCommands;
+        m_cpuFrameStats.retainedUpdates = retainedStats.updates;
+        m_cpuFrameStats.retainedReuses = retainedStats.reusedProducers;
+        m_cpuFrameStats.retainedRemovals = retainedStats.removedProducers;
+        m_cpuFrameStats.retainedCommandRebuilds = retainedStats.rebuiltCommands;
+        if (m_sceneRefsDirty || m_retainedSceneRevision != m_retainedScene.Revision())
+        {
+            m_sceneCommandRefs.assign(m_retainedScene.Commands().begin(), m_retainedScene.Commands().end());
+            for (auto &command : m_renderCommands) m_sceneCommandRefs.push_back(&command);
+            m_retainedSceneRevision = m_retainedScene.Revision();
+            m_sceneRefsDirty = false;
+            m_sceneSortDirty = true;
+        }
+        if (!m_retainedCounted)
+        {
+            if (m_config.enableProfiling)
+                m_cpuFrameStats.submittedRenderCommandCount += static_cast<int>(m_retainedScene.Commands().size());
+            m_retainedCounted = true;
+        }
+    }
+
+    RenderCommandView Renderer::GetSceneRenderCommandView()
+    {
+        SynchronizeRenderScene();
+        return m_legacyMaterialized ? RenderCommandView(m_renderCommands) : RenderCommandView(m_sceneCommandRefs);
+    }
+
+    RenderCommandView Renderer::GetVisibleRenderCommandView() const
+    { return m_usingReferenceView ? RenderCommandView(m_visibleCommandRefs) : RenderCommandView(m_visibleRenderCommands); }
+
+    std::size_t Renderer::GetQueuedRenderCommandCount()
+    { return GetSceneRenderCommandView().size(); }
+
+    const std::vector<RenderCommand> &Renderer::GetSceneRenderCommands()
+    {
+        const auto view = GetSceneRenderCommandView();
+        if (m_legacyMaterialized) return m_renderCommands;
+        m_sceneCompatibilityCommands.assign(view.begin(), view.end());
+        return m_sceneCompatibilityCommands;
+    }
+
+    const std::vector<RenderCommand> &Renderer::GetVisibleRenderCommands() const
+    {
+        if (!m_usingReferenceView) return m_visibleRenderCommands;
+        const auto view = GetVisibleRenderCommandView();
+        m_visibleCompatibilityCommands.assign(view.begin(), view.end());
+        return m_visibleCompatibilityCommands;
+    }
+
+    void Renderer::MaterializeLegacyScene()
+    {
+        if (m_legacyMaterialized) return;
+        const auto view = GetSceneRenderCommandView();
+        std::vector<RenderCommand> commands(view.begin(), view.end());
+        m_renderCommands.swap(commands);
+        m_shadowCasterCommandIndices.clear();
+        m_shadowCasterSubmissionFlags.clear();
+        m_shadowCasterBaseFingerprint = 1469598103934665603ull;
+        m_shadowCastersMoved = false;
+        m_allShadowCastersStatic = true;
+        for (std::size_t i = 0; i < m_renderCommands.size(); ++i) TrackShadowCommand(i, m_renderCommands[i]);
+        m_renderCommandsDirty = true;
+        m_legacyMaterialized = true;
+        m_usingReferenceView = false;
+    }
+
     void Renderer::ClearRenderCommands()
     {
+        m_sceneRefsDirty |= !m_renderCommands.empty();
+        m_legacyMaterialized = false;
+        m_usingReferenceView = false;
+        m_retainedCounted = false;
+        m_retainedScene.BeginFrame();
+        m_visibleCommandRefs.clear();
         m_renderCommands.clear();
         m_shadowCasterCommandIndices.clear();
         m_shadowCasterSubmissionFlags.clear();
@@ -1133,6 +1218,8 @@ namespace PlutoGE::render
 
     void Renderer::EnsureRenderCommandsSorted()
     {
+        MaterializeLegacyScene();
+        m_usingReferenceView = false;
         if (!m_renderCommandsDirty || m_renderCommands.size() < 2)
         {
             m_renderCommandsDirty = false;
@@ -1194,7 +1281,7 @@ namespace PlutoGE::render
         m_renderCommandsDirty = false;
     }
 
-    void Renderer::UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight)
+    void Renderer::UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight, std::span<RenderCommand *const> commands)
     {
         const glm::mat4 inverseView = glm::inverse(cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
@@ -1202,12 +1289,13 @@ namespace PlutoGE::render
         const float halfViewportHeight = static_cast<float>(std::max(viewportHeight, 1)) * 0.5f;
         const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
         bool changed = false;
+        const auto commandCount = commands.empty() ? m_renderCommands.size() : commands.size();
         m_visibilityCandidates.clear();
-        m_visibilityCandidates.reserve(m_renderCommands.size());
+        m_visibilityCandidates.reserve(commandCount);
 
-        for (std::size_t commandIndex = 0; commandIndex < m_renderCommands.size(); ++commandIndex)
+        for (std::size_t commandIndex = 0; commandIndex < commandCount; ++commandIndex)
         {
-            auto &command = m_renderCommands[commandIndex];
+            auto &command = commands.empty() ? m_renderCommands[commandIndex] : *commands[commandIndex];
             if (!command.mesh)
             {
                 continue;
@@ -1265,6 +1353,7 @@ namespace PlutoGE::render
         if (changed)
         {
             m_renderCommandsDirty = true;
+            m_sceneSortDirty = true;
         }
     }
 
@@ -1605,22 +1694,41 @@ namespace PlutoGE::render
     {
         core::CpuScope scope("Viewport visibility preparation", core::CpuCategory::Rendering);
         const auto preparationStart = std::chrono::high_resolution_clock::now();
-        EnsureRenderCommandsSorted();
+        if (m_legacyMaterialized)
+        {
+            m_sceneCommandRefs.clear();
+            for (auto &command : m_renderCommands) m_sceneCommandRefs.push_back(&command);
+            m_sceneSortDirty = true;
+        }
+        SynchronizeRenderScene();
+        if (m_sceneSortDirty)
+        {
+            const auto permutation = RenderCommandPermutation(RenderCommandView(m_sceneCommandRefs));
+            std::vector<RenderCommand *> sorted;
+            sorted.reserve(permutation.size());
+            for (auto index : permutation) sorted.push_back(m_sceneCommandRefs[index]);
+            m_sceneCommandRefs.swap(sorted);
+            m_sceneSortDirty = false;
+            if (m_config.enableProfiling) ++m_cpuFrameStats.renderCommandSortCount;
+        }
         const auto sortEnd = std::chrono::high_resolution_clock::now();
-        UpdateRenderCommandLods(cameraData, viewportHeight);
+        UpdateRenderCommandLods(cameraData, viewportHeight, m_sceneCommandRefs);
+        m_usingReferenceView = true;
+        m_visibleCommandRefs.clear();
+        m_visibleCommandRefs.reserve(m_sceneCommandRefs.size());
         m_visibleRenderCommands.clear();
-        m_visibleRenderCommands.reserve(m_renderCommands.size());
+        m_visibleRenderCommands.reserve(m_sceneCommandRefs.size());
         std::size_t visibleInstanceScratchCursor = 0;
         const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         for (const auto &[commandIndex, fullyInsideFrustum] : m_visibilityCandidates)
         {
-            if (commandIndex >= m_renderCommands.size())
+            if (commandIndex >= m_sceneCommandRefs.size())
                 continue;
-            const auto &command = m_renderCommands[commandIndex];
+            const auto &command = *m_sceneCommandRefs[commandIndex];
             if (!command.instanceModels)
             {
-                m_visibleRenderCommands.push_back(command);
+                m_visibleCommandRefs.push_back(&command);
                 continue;
             }
             if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
@@ -1636,9 +1744,17 @@ namespace PlutoGE::render
             if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
                 continue;
             m_visibleRenderCommands.push_back(std::move(visibleCommand));
+            m_visibleCommandRefs.push_back(&m_visibleRenderCommands.back());
         }
-        if (m_renderCommandsDirty)
-            SortRenderCommands(m_visibleRenderCommands);
+        if (m_sceneSortDirty)
+        {
+            const auto permutation = RenderCommandPermutation(RenderCommandView(m_visibleCommandRefs));
+            std::vector<const RenderCommand *> sorted;
+            sorted.reserve(permutation.size());
+            for (auto index : permutation) sorted.push_back(m_visibleCommandRefs[index]);
+            m_visibleCommandRefs.swap(sorted);
+            if (m_config.enableProfiling) ++m_cpuFrameStats.renderCommandSortCount;
+        }
         if (m_config.enableProfiling)
         {
             const auto preparationEnd = std::chrono::high_resolution_clock::now();
@@ -1646,12 +1762,12 @@ namespace PlutoGE::render
                 std::chrono::duration<float, std::milli>(sortEnd - preparationStart).count();
             m_cpuFrameStats.renderFrameVisibilityMs +=
                 std::chrono::duration<float, std::milli>(preparationEnd - sortEnd).count();
-            m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
+            m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleCommandRefs.size());
             m_cpuFrameStats.frustumCulledRenderCommandCount =
-                static_cast<int>(m_renderCommands.size() - m_visibleRenderCommands.size());
+                static_cast<int>(m_sceneCommandRefs.size() - m_visibleCommandRefs.size());
             m_cpuFrameStats.visibleSingleLodCommandCount = 0;
             m_cpuFrameStats.visibleMultiLodCommandCount = 0;
-            for (const auto &command : m_visibleRenderCommands)
+            for (const auto &command : RenderCommandView(m_visibleCommandRefs))
             {
                 if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
                     ++m_cpuFrameStats.visibleMultiLodCommandCount;

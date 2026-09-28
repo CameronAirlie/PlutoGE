@@ -222,8 +222,8 @@ namespace PlutoGE::render
     }
 
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
-                                  const BasicLighting &lighting, std::span<const RenderCommand> commands,
-                                  std::span<const RenderCommand> shadowCommands,
+                                  const BasicLighting &lighting, RenderCommandView commands,
+                                  RenderCommandView shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
                                   const TexturePixelReader &texturePixelReader, PostProcessDebugView debugView,
@@ -440,7 +440,7 @@ namespace PlutoGE::render
         auto &skinningJobs = m_skinningJobs;
         pendingSkinning.clear();
         skinningJobs.clear();
-        const auto collectSkinning = [&](std::span<const RenderCommand> sources, bool shadowOnly)
+        const auto collectSkinning = [&](RenderCommandView sources, bool shadowOnly)
         {
             for (const auto &command : sources)
             {
@@ -535,7 +535,7 @@ namespace PlutoGE::render
         if (lighting.shadowsEnabled || localShadows) collectSkinning(shadowCommands, true);
         flushSkinning();
 
-        const auto appendDraws = [&](std::span<const RenderCommand> sourceCommands,
+        const auto appendDraws = [&](RenderCommandView sourceCommands,
                                      RhiDrawPreparationCache::List &cache, bool shadowOnly, bool giOnly = false) {
             // GI may introduce a pose absent from the visible/shadow lists.
             // Visible and shadow poses were already collected together above.
@@ -721,10 +721,10 @@ namespace PlutoGE::render
         core::CpuScope batchingScope("Opaque packet batching", core::CpuCategory::Rendering);
         if (visibleChanged)
         {
-            preparation.batched = preparation.visible.draws;
             const auto nextRevision = [&] { return preparation.NextRevision(); };
-            BatchOpaqueDraws(preparation.batched, nextRevision);
-            MergeAdjacentOpaqueDraws(preparation.batched, nextRevision);
+            const auto batches = preparation.opaqueBatches.Update(preparation.visible.draws, preparation.batched, nextRevision);
+            m_timingStats.reusedOpaqueBatchGroups = batches.reused;
+            m_timingStats.rebuiltOpaqueBatchGroups = batches.rebuilt;
         }
         auto &draws = preparation.batched;
         batchingScope.End();

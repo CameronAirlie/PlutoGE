@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RenderDebugView.h"
@@ -59,8 +60,8 @@ namespace PlutoGE::ui
         void ClearFrame();
         void RenderFrame(scene::CameraComponent &cameraComponent);
         void RenderRhiFrame(const render::CameraData &cameraData,
-                            std::span<const render::RenderCommand> commands,
-                            std::span<const render::RenderCommand> shadowCommands,
+                            render::RenderCommandView commands,
+                            render::RenderCommandView shadowCommands,
                             std::span<render::IPostProcessEffect *const> postProcessEffects);
         void Shutdown() override;
         bool ShouldRenderFrame() const;

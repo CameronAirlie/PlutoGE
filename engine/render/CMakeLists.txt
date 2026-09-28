@@ -12,6 +12,7 @@ configure_file(src/postprocess/FogIntegration.h.in "${CMAKE_CURRENT_BINARY_DIR}/
 add_library(PlutoGERender
     src/postprocess/VctVoxelizationShaders.cpp
     src/Renderer.cpp
+    src/RetainedRenderScene.cpp
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
     src/VirtualShadowMaps.cpp

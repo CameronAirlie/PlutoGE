@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
@@ -43,7 +44,7 @@ namespace PlutoGE::render
         { return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{}; }
         [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
-                                                 std::span<const RenderCommand> commands,
+                                                 RenderCommandView commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {},
                                                  const PlutoGE::scene::Scene *scene = nullptr,
                                                  std::span<IPostProcessEffect *const> postProcessEffects = {});

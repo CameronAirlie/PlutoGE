@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BasicDrawBatching.h"
+#include "RetainedOpaqueBatches.h"
 #include "PlutoGE/render/Renderer.h"
 
 namespace PlutoGE::render
@@ -12,7 +13,7 @@ namespace PlutoGE::render
     class RhiDrawPreparationCache
     {
       public:
-        std::vector<RenderCommand> giSource;
+        std::vector<const RenderCommand *> giSource;
         struct MaterialEntry
         {
             BasicDraw draw;
@@ -128,7 +129,7 @@ namespace PlutoGE::render
                 return hash;
             }
 
-            template<class Revision> void Reconcile(std::span<const RenderCommand> commands, Revision revision)
+            template<class Revision> void Reconcile(RenderCommandView commands, Revision revision)
             {
                 // Animation invalidates individual packets every frame, but
                 // usually leaves list slots in the same order. Retain storage
@@ -191,6 +192,7 @@ namespace PlutoGE::render
             shadows = {};
             gi = {};
             batched.clear();
+            opaqueBatches = {};
             // Never recycle tokens while the downstream renderer is alive.
         }
 
@@ -198,6 +200,7 @@ namespace PlutoGE::render
         std::unordered_map<RetainedKey, RetainedEntry, RetainedHash> retained;
         List visible, shadows, gi;
         std::vector<BasicDraw> batched;
+        RetainedOpaqueBatches opaqueBatches;
 
       private:
         std::uint64_t m_revision = 0;

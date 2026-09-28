@@ -455,6 +455,8 @@ namespace PlutoGE::ui
                << " ms, color copy recording " << rhiScene.glassCopyRecordingCpuMs
                << " ms, surface recording " << rhiScene.glassDrawRecordingCpuMs << " ms\n";
         report << "RHI retained packets: " << rhiScene.sharedDrawPacketHits << " shared across pass/list changes\n";
+        report << "RHI opaque batch groups: " << rhiScene.reusedOpaqueBatchGroups << " reused / "
+               << rhiScene.rebuiltOpaqueBatchGroups << " rebuilt (when the visible packet list changes)\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
                << rhiScene.materialPreparationHits << " reused\n";
         report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)
@@ -577,6 +579,10 @@ namespace PlutoGE::ui
         report << "Renderer / Main pass submission: " << cpuFrameStats.renderFramePassSubmissionMs << " ms\n";
         report << "Renderer / Finalization: " << cpuFrameStats.renderFrameFinalizationMs << " ms\n";
         report << "Render commands submitted: " << cpuFrameStats.submittedRenderCommandCount << "\n";
+        report << "Retained render scene: " << cpuFrameStats.retainedProducers << " producers / " << cpuFrameStats.retainedCommands
+               << " commands; " << cpuFrameStats.retainedUpdates << " publications / " << cpuFrameStats.retainedReuses
+               << " unchanged leases / " << cpuFrameStats.retainedRemovals << " removals / "
+               << cpuFrameStats.retainedCommandRebuilds << " command rebuilds\n";
         report << "Render commands submission culled: " << cpuFrameStats.submissionCulledRenderCommandCount << "\n";
         report << "Render commands visible: " << cpuFrameStats.visibleRenderCommandCount << "\n";
         report << "Render commands frustum culled: " << cpuFrameStats.frustumCulledRenderCommandCount << "\n";

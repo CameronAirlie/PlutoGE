@@ -3931,7 +3931,7 @@ namespace PlutoGE::ui
         if ((m_useRhiPreview || requiresRhiViewport) && m_rhiRenderService)
         {
             renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
-            RenderRhiFrame(cameraData, renderer.GetVisibleRenderCommands(), renderer.GetSceneRenderCommands(),
+            RenderRhiFrame(cameraData, renderer.GetVisibleRenderCommandView(), renderer.GetSceneRenderCommandView(),
                            postProcessEffects);
         }
         else
@@ -3946,8 +3946,8 @@ namespace PlutoGE::ui
     }
 
     void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData,
-                                       std::span<const render::RenderCommand> commands,
-                                       std::span<const render::RenderCommand> shadowCommands,
+                                       render::RenderCommandView commands,
+                                       render::RenderCommandView shadowCommands,
                                        std::span<render::IPostProcessEffect *const> postProcessEffects)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;

@@ -707,3 +707,8 @@ add_executable(PlutoGESnapshotDamageTests SnapshotDamageTests.cpp)
 target_include_directories(PlutoGESnapshotDamageTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include ${CMAKE_SOURCE_DIR}/engine/render/src)
 target_compile_features(PlutoGESnapshotDamageTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGESnapshotDamageTests COMMAND PlutoGESnapshotDamageTests)
+
+add_executable(PlutoGERetainedRenderSceneTests RetainedRenderSceneTests.cpp)
+target_link_libraries(PlutoGERetainedRenderSceneTests PRIVATE PlutoGE::Scene)
+target_include_directories(PlutoGERetainedRenderSceneTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGERetainedRenderSceneTests COMMAND PlutoGERetainedRenderSceneTests)

@@ -196,4 +196,35 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     (*instances)[0][3].x += .2f;
     render();
     require(renderer.GetTimingStats().rebuiltDrawPackets == 2, "Producer IDs hid mutable instance changes");
+    commands[0].instanceModels.reset();
+    Renderer frontend;
+    const auto renderFrontend = [&] {
+        frontend.PrepareVisibleRenderCommands(camera, 64);
+        require(renderer.Render(64, 64, camera, lighting, frontend.GetVisibleRenderCommandView(), frontend.GetSceneRenderCommandView()),
+            "Retained frontend render failed");
+        return device.ReadTextureRgba8(renderer.GetColorTexture());
+    };
+    auto referenceImage = render();
+    frontend.ClearRenderCommands();
+    frontend.PublishRenderProducer(clone.Value(), commands[0].sourceRevision, commands);
+    require(renderFrontend() == referenceImage, "Borrowed frontend changed the reference image");
+    frontend.ClearRenderCommands();
+    frontend.PublishRenderProducer(clone.Value(), commands[0].sourceRevision, commands);
+    require(renderFrontend() == referenceImage && frontend.GetRetainedSceneStats().rebuiltCommands == 0,
+        "Steady frontend rebuilt commands or changed pixels");
+    mutableConfig.emission = {1, 0, 0};
+    referenceImage = render();
+    frontend.ClearRenderCommands();
+    frontend.PublishRenderProducer(clone.Value(), commands[0].sourceRevision, commands);
+    require(renderFrontend() == referenceImage, "Direct material edit was lost by retained frontend");
+    commands[0].model[3].x += .2f;
+    ++commands[0].sourceRevision;
+    referenceImage = render();
+    frontend.ClearRenderCommands();
+    frontend.PublishRenderProducer(clone.Value(), commands[0].sourceRevision, commands);
+    require(renderFrontend() == referenceImage, "Retained transform edit changed reference rendering");
+    frontend.ClearRenderCommands();
+    renderFrontend();
+    require(renderer.GetDrawCount() == 0 && frontend.GetRetainedSceneStats().removedProducers == 1,
+        "Removed retained producer survived rendering");
 }

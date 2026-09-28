@@ -2,6 +2,8 @@
 
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/RenderCommandView.h"
+#include "PlutoGE/render/RetainedRenderScene.h"
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderTarget.h"
@@ -46,51 +48,6 @@ namespace PlutoGE::render
         // GPU queries and per-pass CPU clocks exist for the editor profiler and
         // should not add driver or clock-query overhead to standalone games.
         bool enableProfiling = true;
-    };
-
-    struct RenderCommand
-    {
-        Material *material = nullptr; // Material to use for rendering
-        Mesh *mesh = nullptr;         // Mesh to render
-        Shader *shader = nullptr;
-        glm::mat4 model = glm::mat4(1.0f); // Model matrix for the object (position, rotation, scale)
-        glm::mat4 previousModel = glm::mat4(1.0f);
-        MeshBounds worldBounds{};
-        MeshBounds previousWorldBounds{};
-        const std::vector<glm::mat4> *jointMatrices = nullptr;
-        bool skinningPoseChanged = false;
-        std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
-        std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
-        uint32_t submeshIndex = 0;
-        uint32_t lodIndex = 0;
-        uint32_t minLodIndex = 0;
-        uint32_t minShadowLodIndex = 0;
-        float maxDrawDistance = std::numeric_limits<float>::max();
-        float maxShadowDistance = std::numeric_limits<float>::max();
-        bool isStatic = false;
-        bool castsShadow = true;
-        bool usePrimaryUvForLightmap = false;
-        bool terrainGeomorph = false;
-        // Optional producer-owned identity/revision for immutable rigid object
-        // state (including motion history and bounds). Zero retains value-based
-        // validation for procedural callers and mutable pose/instance arrays.
-        std::uint64_t sourceObject = 0, sourceRevision = 0;
-
-        // LOD transition state is transient and packed into the otherwise
-        // unused high bits of minLodIndex.
-        uint32_t GetMinLodIndex() const { return minLodIndex & 0xffu; }
-        uint32_t GetLodTransitionIndex() const { return (minLodIndex >> 8u) & 0xffu; }
-        float GetLodTransitionFade() const
-        {
-            return static_cast<float>((minLodIndex >> 16u) & 0xffffu) / 65535.0f;
-        }
-        void SetLodTransition(uint32_t transitionIndex, float fade)
-        {
-            const uint32_t encodedFade = static_cast<uint32_t>(glm::clamp(fade, 0.0f, 1.0f) * 65535.0f + 0.5f);
-            minLodIndex = GetMinLodIndex() |
-                          ((transitionIndex & 0xffu) << 8u) |
-                          ((encodedFade & 0xffffu) << 16u);
-        }
     };
 
     struct GpuPassTiming
@@ -156,6 +113,8 @@ namespace PlutoGE::render
         int shadowCpuBatchBuildCount = 0;
         int shadowCpuImageCopyCount = 0;
         int submittedRenderCommandCount = 0;
+        std::size_t retainedProducers = 0, retainedCommands = 0, retainedUpdates = 0;
+        std::size_t retainedReuses = 0, retainedRemovals = 0, retainedCommandRebuilds = 0;
         int submissionCulledRenderCommandCount = 0;
         int visibleRenderCommandCount = 0;
         int frustumCulledRenderCommandCount = 0;
@@ -254,9 +213,14 @@ namespace PlutoGE::render
         [[nodiscard]] float GetTotalGpuPassTimeMs() const;
         [[nodiscard]] float GetTotalCpuPassTimeMs() const;
         [[nodiscard]] int GetProfiledRenderCount() const { return m_profiledRenderCount; }
-        [[nodiscard]] std::size_t GetQueuedRenderCommandCount() const { return m_renderCommands.size(); }
-        [[nodiscard]] const std::vector<RenderCommand> &GetSceneRenderCommands() const { return m_renderCommands; }
-        [[nodiscard]] const std::vector<RenderCommand> &GetVisibleRenderCommands() const { return m_visibleRenderCommands; }
+        [[nodiscard]] std::size_t GetQueuedRenderCommandCount();
+        // Compatibility snapshots for legacy consumers; RHI hosts use borrowed views.
+        [[nodiscard]] const std::vector<RenderCommand> &GetSceneRenderCommands();
+        [[nodiscard]] const std::vector<RenderCommand> &GetVisibleRenderCommands() const;
+        [[nodiscard]] RenderCommandView GetSceneRenderCommandView();
+        [[nodiscard]] RenderCommandView GetVisibleRenderCommandView() const;
+        [[nodiscard]] const RetainedRenderScene::Stats &GetRetainedSceneStats() const { return m_retainedScene.GetStats(); }
+        void PublishRenderProducer(std::uint64_t producer, std::uint64_t revision, std::span<const RenderCommand> commands);
         // Updates LOD selection and camera visibility without executing the
         // legacy OpenGL pass graph. RHI backends use this shared scene-prep path.
         void PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight);
@@ -290,6 +254,8 @@ namespace PlutoGE::render
         void SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands, bool applySubmissionCulling = true);
 
     private:
+        void SynchronizeRenderScene();
+        void MaterializeLegacyScene();
         struct SubmissionFrustum
         {
             std::array<glm::vec4, 6> planes{};
@@ -342,7 +308,7 @@ namespace PlutoGE::render
         FrameResources *GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height);
         void CleanupFrameResources();
         void EnsureRenderCommandsSorted();
-        void UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight);
+        void UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight, std::span<RenderCommand *const> commands = {});
         bool IsRenderCommandAcceptedForSubmission(const RenderCommand &command) const;
         void TrackShadowCommand(std::size_t commandIndex, const RenderCommand &command);
         void FinalizeShadowCommandSummary();
@@ -366,6 +332,13 @@ namespace PlutoGE::render
         LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
         PhysicalSkyPass *m_physicalSkyPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
+        RetainedRenderScene m_retainedScene;
+        std::vector<RenderCommand *> m_sceneCommandRefs;
+        std::vector<const RenderCommand *> m_visibleCommandRefs;
+        mutable std::vector<RenderCommand> m_sceneCompatibilityCommands, m_visibleCompatibilityCommands;
+        std::uint64_t m_retainedSceneRevision = ~std::uint64_t{0};
+        bool m_sceneRefsDirty = true, m_sceneSortDirty = true, m_legacyMaterialized = false;
+        bool m_usingReferenceView = false, m_retainedCounted = false;
         std::vector<RenderCommand> m_renderCommands;
         std::vector<std::size_t> m_shadowCasterCommandIndices;
         std::vector<std::uint8_t> m_shadowCasterSubmissionFlags;

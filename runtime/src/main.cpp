@@ -718,7 +718,7 @@ int RunRuntime(int argc, char **argv)
                                                   reinterpret_cast<const std::byte *>(source.data() + source.size()));
                 };
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, renderer.GetSceneRenderCommands(), readTexturePixels, scene.get(), postProcessEffects))
+                        cameraData, lighting, renderer.GetSceneRenderCommandView(), readTexturePixels, scene.get(), postProcessEffects))
                 {
                     std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
                     window.RequestClose();

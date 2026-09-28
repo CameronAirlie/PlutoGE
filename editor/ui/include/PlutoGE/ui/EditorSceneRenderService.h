@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
@@ -44,8 +45,8 @@ namespace PlutoGE::ui
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
-                    std::span<const render::RenderCommand> commands,
-                    std::span<const render::RenderCommand> shadowCommands,
+                    render::RenderCommandView commands,
+                    render::RenderCommandView shadowCommands,
                     std::span<render::IPostProcessEffect *const> postProcessEffects,
                     const scene::Scene *scene,
                     render::PostProcessDebugView debugView);

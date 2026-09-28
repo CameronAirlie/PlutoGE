@@ -100,8 +100,8 @@ namespace PlutoGE::ui
 
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
                                           const render::CameraData &cameraData,
-                                          std::span<const render::RenderCommand> commands,
-                                          std::span<const render::RenderCommand> shadowCommands,
+                                          render::RenderCommandView commands,
+                                          render::RenderCommandView shadowCommands,
                                           std::span<render::IPostProcessEffect *const> postProcessEffects,
                                           const scene::Scene *scene,
                                           render::PostProcessDebugView debugView)

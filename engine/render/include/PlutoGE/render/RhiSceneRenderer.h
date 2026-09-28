@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Camera.h"
@@ -56,6 +57,7 @@ namespace PlutoGE::render
         std::size_t recordedGeometryInstanceCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
         std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
+        std::size_t reusedOpaqueBatchGroups = 0, rebuiltOpaqueBatchGroups = 0;
         float glassBoundsCpuMs = 0, glassGroupingCpuMs = 0, glassDamageCpuMs = 0;
         float glassCopyRecordingCpuMs = 0, glassDrawRecordingCpuMs = 0;
         std::size_t sharedDrawPacketHits = 0;
@@ -151,8 +153,8 @@ namespace PlutoGE::render
             m_previousTemporalJitterNdc = glm::vec2(0.0f);
         }
         bool Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
-                    const BasicLighting &lighting, std::span<const RenderCommand> commands,
-                    std::span<const RenderCommand> shadowCommands,
+                    const BasicLighting &lighting, RenderCommandView commands,
+                    RenderCommandView shadowCommands,
                     std::span<IPostProcessEffect *const> postProcessEffects = {},
                     std::span<const BasicPostProcessEffect> atmosphereEffects = {},
                     const TexturePixelReader &texturePixelReader = {},

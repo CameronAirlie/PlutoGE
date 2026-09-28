@@ -1388,7 +1388,7 @@ namespace PlutoGE::scene
                 m_cachedMeshPositionOffset == offsetSource->m_meshPositionOffset &&
                 m_cachedMeshRotationOffset == offsetSource->m_meshRotationOffset)
             {
-                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, true);
+                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
                 return;
             }
             const glm::mat4 modelMatrix = entity->GetWorldTransform() * GetMeshOffsetTransform();
@@ -1400,7 +1400,7 @@ namespace PlutoGE::scene
                 m_hasCachedRenderCommandModel &&
                 AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
             {
-                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, true);
+                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
 
                 return;
             }
@@ -1460,7 +1460,7 @@ namespace PlutoGE::scene
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
-                renderer.SubmitRenderCommand(command);
+                if (!canCacheRenderCommands) renderer.SubmitRenderCommand(command);
                 if (canCacheRenderCommands)
                 {
                     rebuiltCommands.push_back(command);
@@ -1474,6 +1474,7 @@ namespace PlutoGE::scene
                 m_cachedRenderCommandModel = modelMatrix;
                 m_hasCachedRenderCommandModel = true;
                 m_renderCommandCacheDirty = false;
+                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
                 UpdateCachedPreviousModels();
             }
 

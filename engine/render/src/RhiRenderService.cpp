@@ -42,7 +42,7 @@ namespace PlutoGE::render
 
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
-                                                 std::span<const RenderCommand> commands,
+                                                 RenderCommandView commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                                  const scene::Scene *scene,
                                                  std::span<IPostProcessEffect *const> postProcessEffects)

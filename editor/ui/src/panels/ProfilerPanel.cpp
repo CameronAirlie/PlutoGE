@@ -407,6 +407,9 @@ namespace PlutoGE::ui
             ImGui::TreePop();
         }
         ImGui::Text("Render commands: %d submitted, %d submission culled", cpuFrameStats.submittedRenderCommandCount, cpuFrameStats.submissionCulledRenderCommandCount);
+        ImGui::Text("Retained scene: %zu producers, %zu commands; %zu updates, %zu reused, %zu removed, %zu rebuilt commands",
+                    cpuFrameStats.retainedProducers, cpuFrameStats.retainedCommands, cpuFrameStats.retainedUpdates,
+                    cpuFrameStats.retainedReuses, cpuFrameStats.retainedRemovals, cpuFrameStats.retainedCommandRebuilds);
         ImGui::Text("Visible commands: %d visible, %d frustum culled", cpuFrameStats.visibleRenderCommandCount, cpuFrameStats.frustumCulledRenderCommandCount);
         ImGui::Text("Visible LOD availability: %d single-level, %d multi-level", cpuFrameStats.visibleSingleLodCommandCount, cpuFrameStats.visibleMultiLodCommandCount);
         ImGui::Text("Render command sorts: %d", cpuFrameStats.renderCommandSortCount);

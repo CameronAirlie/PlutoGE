@@ -231,6 +231,7 @@ namespace PlutoGE::scene
 
     protected:
         friend class Entity;
+        friend class MeshComponent;
         // Rebuilt lazily in hierarchy order after structural edits. Enable and
         // active flags are evaluated at query time, including inactive ancestors.
         void InvalidateEnvironmentComponents()
@@ -251,6 +252,8 @@ namespace PlutoGE::scene
                 m_lights.erase(it);
             }
         }
+        void QueueMeshRenderUpdate(MeshComponent *meshComponent);
+        void QueueRenderSubtree(Entity *entity);
         void RegisterMeshComponent(MeshComponent *meshComponent);
         void UnregisterMeshComponent(MeshComponent *meshComponent);
         void RegisterTerrainComponent(TerrainComponent *terrainComponent);
@@ -294,6 +297,11 @@ namespace PlutoGE::scene
         std::unordered_map<EntityID, Entity *> m_entitiesById;
         std::vector<Entity *> m_rootEntities;
         std::vector<MeshComponent *> m_meshComponents;
+        std::unordered_set<MeshComponent *> m_dirtyRenderMeshes, m_dynamicRenderMeshes;
+        std::vector<std::uint64_t> m_removedRenderProducers;
+        std::shared_ptr<const void> m_renderSceneLifetime = std::make_shared<const int>(0);
+        std::uint64_t m_meshContentEpoch = 0;
+        std::unordered_map<MeshComponent *, std::uint64_t> m_renderMeshRevisions;
         std::vector<TerrainComponent *> m_terrainComponents;
         std::vector<FoliageComponent *> m_foliageComponents;
         std::vector<ParticleSystemComponent *> m_particleSystemComponents;

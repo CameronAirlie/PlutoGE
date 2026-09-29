@@ -33,6 +33,7 @@ namespace PlutoGE::render::rhi
         std::uint64_t indexedDrawCalls = 0;
         std::uint64_t dispatchCalls = 0;
         std::uint64_t uniformBytesUploaded = 0;
+        std::uint64_t persistentUniformBytesUploaded = 0;
         float descriptorCpuMs = 0.0f;
         float uniformUploadCpuMs = 0.0f;
         float presentFenceWaitMs = 0.0f;

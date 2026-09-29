@@ -502,6 +502,7 @@ namespace PlutoGE::scene
 
     void MeshComponent::MarkRenderCommandsDirty()
     {
+        if (auto *owner = GetOwner(); owner && owner->GetScene()) owner->GetScene()->QueueMeshRenderUpdate(this);
         m_renderCommandCacheDirty = true;
         m_hasCachedRenderCommandModel = false;
         m_cachedRenderCommands.clear();
@@ -530,7 +531,10 @@ namespace PlutoGE::scene
         for (auto &command : m_cachedRenderCommands)
         {
             if (command.previousModel != command.model)
+            {
                 command.sourceRevision = ++m_renderSourceRevision;
+                if (auto *owner = GetOwner(); owner && owner->GetScene()) owner->GetScene()->QueueMeshRenderUpdate(this);
+            }
             command.previousModel = command.model;
             command.previousWorldBounds = command.worldBounds;
         }
@@ -539,7 +543,7 @@ namespace PlutoGE::scene
     render::Material *MeshComponent::CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex)
     {
         auto *sourceMaterial = GetMaterialForMaterialSlot(materialSlotIndex);
-        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->GetConfig()) : new render::Material();
+        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
         SetMaterialForMaterialSlot(materialSlotIndex, uniqueMaterial);
         return uniqueMaterial;
     }
@@ -568,7 +572,7 @@ namespace PlutoGE::scene
     render::Material *MeshComponent::CreateUniqueMaterialForSubmesh(size_t submeshIndex)
     {
         auto *sourceMaterial = GetMaterialForSubmesh(submeshIndex);
-        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->GetConfig()) : new render::Material();
+        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
         SetMaterialForSubmesh(submeshIndex, uniqueMaterial);
         return uniqueMaterial;
     }
@@ -822,7 +826,7 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            const auto &config = material->GetConfig();
+            const auto &config = material->ReadConfig();
             const std::string prefix = std::string(kMaterialSlotPrefix) + std::to_string(materialSlotIndex) + ".";
             const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
             if (!materialAssetReference.empty())
@@ -849,7 +853,7 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            const auto &config = material->GetConfig();
+            const auto &config = material->ReadConfig();
             const std::string prefix = std::string(kSubmeshOverridePrefix) + std::to_string(submeshIndex) + ".";
             const auto &materialAssetReference = GetMaterialAssetForSubmesh(submeshIndex);
             if (!materialAssetReference.empty())
@@ -1236,6 +1240,7 @@ namespace PlutoGE::scene
         }
         m_meshPositionOffset = offset;
         MarkRenderCommandsDirty();
+        if (auto *owner = GetOwner(); owner && owner->GetScene()) owner->GetScene()->QueueRenderSubtree(owner);
     }
 
     const glm::vec3 &MeshComponent::GetMeshPositionOffset() const
@@ -1257,6 +1262,7 @@ namespace PlutoGE::scene
         }
         m_meshRotationOffset = offset;
         MarkRenderCommandsDirty();
+        if (auto *owner = GetOwner(); owner && owner->GetScene()) owner->GetScene()->QueueRenderSubtree(owner);
     }
 
     const glm::vec3 &MeshComponent::GetMeshRotationOffset() const
@@ -1374,7 +1380,10 @@ namespace PlutoGE::scene
             // A clip replacement can return this component to the cached path.
             // Never resurrect commands from before the animated interval.
             if (!canCacheRenderCommands)
+            {
                 m_renderCommandCacheDirty = true;
+                core::Engine::GetInstance().GetRenderer().RemoveRenderProducer(m_renderObjectIdentity.Value());
+            }
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
             if (!m_cachedRenderCommands.empty() && m_cachedRenderCommands.front().sourceObject != m_renderObjectIdentity.Value())

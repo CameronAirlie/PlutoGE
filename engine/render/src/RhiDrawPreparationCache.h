@@ -19,6 +19,7 @@ namespace PlutoGE::render
             BasicDraw draw;
             std::uint64_t revision = 0;
             std::uint64_t frame = 0;
+            std::uint64_t sourceIdentity = 0, sourceRevision = 0, textureResidencyRevision = 0;
         };
         struct Entry
         {
@@ -183,6 +184,13 @@ namespace PlutoGE::render
         std::uint64_t NextRevision()
         {
             return ++m_revision;
+        }
+        void InvalidateMesh(const Mesh *mesh)
+        {
+            for (auto *list : {&visible, &shadows, &gi})
+                for (auto &entry : list->entries)
+                    if (entry.input.mesh == mesh) entry.valid = false;
+            std::erase_if(retained, [&](const auto &item) { return item.second.packet.input.mesh == mesh; });
         }
         void Reset()
         {

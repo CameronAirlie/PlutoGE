@@ -15,6 +15,7 @@ add_library(PlutoGERender
     src/RetainedRenderScene.cpp
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
+    src/GeometryRendering.cpp
     src/VirtualShadowMaps.cpp
     src/OcclusionCulling.cpp
     src/SceneEnvironment.cpp
@@ -114,7 +115,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -189,6 +190,14 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(Particles "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLit "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLitStandard "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BasicLitColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" colorInstancedVertexMain colorMain)
+    pluto_add_slang_graphics_shader(BasicLitStandardInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" instancedVertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BasicLitStandardColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" colorInstancedVertexMain colorMain)
+    foreach(material IN ITEMS BasicLit BasicLitStandard)
+        pluto_add_slang_graphics_shader(${material}Color "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" colorVertexMain colorMain)
+        pluto_add_slang_graphics_shader(${material}ColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain colorMotionMain)
+        pluto_add_slang_graphics_shader(${material}Coverage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain coverageMain)
+    endforeach()
     pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
     pluto_add_slang_graphics_shader(GlassSceneCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(GlassColorCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain colorFragment)

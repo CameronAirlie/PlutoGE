@@ -12,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <atomic>
 
 namespace PlutoGE::render
 {
@@ -151,9 +152,12 @@ namespace PlutoGE::render
         Mesh &operator=(const Mesh &) = delete;
         // Render caches must not confuse a new allocation with a destroyed mesh
         // at the same address. The token never owns the mesh itself.
+        static std::uint64_t ContentEpoch() { return s_contentEpoch.load(std::memory_order_relaxed); }
+        std::uint64_t GetContentRevision() const { return m_contentRevision; }
         std::weak_ptr<const void> GetLifetimeToken() const { return m_lifetimeToken; }
         Mesh(const MeshConfig &config) : m_config(config)
         {
+            ++m_contentRevision; ++s_contentEpoch;
             m_meshData = m_config.data; // Store mesh data for buffer initialization
             if (!HasValidTangents(m_meshData))
             {
@@ -786,6 +790,7 @@ namespace PlutoGE::render
             }
 
             m_tessellated.fill(nullptr);
+            ++m_contentRevision; ++s_contentEpoch;
             m_meshData = std::move(rebuilt);
             m_config.data = m_meshData;
             m_config.hasLightmapUvs = true;
@@ -822,6 +827,8 @@ namespace PlutoGE::render
                 return;
             }
 
+            ++m_contentRevision; ++s_contentEpoch;
+            m_tessellated.fill(nullptr);
             m_meshData.vertices = vertices;
             if (!HasValidTangents(m_meshData))
             {
@@ -837,6 +844,7 @@ namespace PlutoGE::render
                     submesh.boundsMin, submesh.boundsMax);
             }
 
+            if (!m_VBO) return; // CPU/RHI meshes need no legacy GL allocation.
             glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
             glBufferData(GL_ARRAY_BUFFER,
                          m_meshData.vertices.size() * sizeof(MeshVertexData),
@@ -1119,6 +1127,8 @@ namespace PlutoGE::render
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
         MeshBounds m_bounds;
+        inline static std::atomic<std::uint64_t> s_contentEpoch{1};
+        std::uint64_t m_contentRevision = 1;
         std::shared_ptr<const void> m_lifetimeToken = std::make_shared<const int>(0);
 
         void Initialize()

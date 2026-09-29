@@ -641,9 +641,11 @@ float4 graphWorldPosition(float4x4 transform, float3 position, float3 normal, fl
 {
     float4 world = mul(transform,float4(position,1.0));
     float3 worldNormal = outlineOffset(transform,normal,1.0);
+#ifndef PLUTO_STANDARD_MATERIAL
     world.xyz += shaderGraphVertexOffset(shaderGraph,world.xyz,worldNormal,
         normalize(cameraPositionAmbient.xyz-world.xyz),time,uv*uvScale,
         baseColor,metallic,roughness,emission);
+#endif
     world.xyz += worldNormal*width;
     return world;
 }
@@ -757,18 +759,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
 #endif
-    if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
-    if (alphaMode == 2 && glassParameters.x < 0.5 && shaderGraphFrame.z < 0.5)
-    {
-        // Complementary coverage tests keep solid BLEND texels depth-correct,
-        // including overlapping triangles inside one draw. Evaluate after the
-        // shader graph so animated opacity follows the same rule in both passes.
-        // Exported interior atlases can encode solid regions as 253/255 alpha.
-        // Treat the final 1% as opaque; retain ordinary fractional coverage.
-        const bool opaqueCoverage = sampledColor.a >= 0.99;
-        if (transparentPass == opaqueCoverage) discard;
-        if (!transparentPass) sampledColor.a = 1.0;
-    }
+#include "SurfaceCoverage.slang"
     if (!transparentPass && (pointParameters.w == 4.0 || pointParameters.w == 10.0))
     {
         // Retain material evaluation, alpha coverage, MRT bandwidth and motion;
@@ -1099,4 +1090,61 @@ float4 transparentMain(VertexOutput input) : SV_Target0
     const float4 color = shadeSurface(input, true).color;
     // RHI blending uses ONE / ONE_MINUS_SRC_ALPHA (premultiplied coverage).
     return float4(color.rgb * saturate(color.a), saturate(color.a));
+}
+
+// Compact outputs share the production material evaluation.
+[shader("fragment")]
+float4 colorMain(VertexOutput input, bool frontFacing : SV_IsFrontFace) : SV_Target0
+{
+    return fragmentMain(input, frontFacing).color;
+}
+struct ColorMotionOutput
+{
+    float4 color : SV_Target0;
+    float2 motion : SV_Target1;
+};
+[shader("fragment")]
+ColorMotionOutput colorMotionMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
+{
+    FragmentOutput surface = fragmentMain(input, frontFacing);
+    ColorMotionOutput result;
+    result.color = surface.color;
+    result.motion = surface.motion.xy;
+    return result;
+}
+[shader("fragment")]
+void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
+{
+    // Ordinary opaque depth has no material texture or lighting work. Graph
+    // alpha can depend on any material input, so keep its exact evaluation.
+#ifndef PLUTO_STANDARD_MATERIAL
+    if (shaderGraph.header.x != 0)
+    {
+        fragmentMain(input, frontFacing);
+        return;
+    }
+#endif
+    if (alphaMode == 0) return;
+    if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;
+    const float alpha = baseColorTexture.Sample(input.uv * uvScale).a * baseColor.a;
+    float4 sampledColor = float4(0, 0, 0, alpha);
+    const bool transparentPass = false;
+#include "SurfaceCoverage.slang"
+}
+
+[shader("vertex")]
+VertexOutput colorVertexMain(VertexInput input)
+{
+    VertexOutput result = vertexMain(input);
+    result.previousClip = 0;
+    result.currentClip = 0;
+    return result;
+}
+[shader("vertex")]
+VertexOutput colorInstancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
+{
+    VertexOutput result = instancedVertexMain(input, instanceId);
+    result.previousClip = 0;
+    result.currentClip = 0;
+    return result;
 }

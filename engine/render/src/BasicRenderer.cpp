@@ -7,6 +7,7 @@
 #include "GlassSnapshotBounds.h"
 #include "SnapshotDamageTracker.h"
 #include "BasicDrawBatching.h"
+#include "PersistentParameterCache.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -616,44 +617,13 @@ namespace PlutoGE::render
             instancedDescriptor.vertexShader = shaders.instancedVertex;
             instancedDescriptor.resourceBindings.back() =
                 {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
-            instancedDescriptor.debugName = "BasicRenderer instanced opaque pipeline";
-            m_instancedPipeline = rhi::GraphicsPipeline(
-                device, device.CreateGraphicsPipeline(instancedDescriptor));
-            auto outlineDescriptor = descriptor;
-            outlineDescriptor.cullMode = rhi::CullMode::Front;
-            outlineDescriptor.debugName = "Outline shell";
-            m_outlinePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
-            outlineDescriptor.vertexShader = shaders.instancedVertex;
-            outlineDescriptor.resourceBindings.back() = instancedDescriptor.resourceBindings.back();
-            m_outlineInstancedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
-            // Ordinary views do not consume the sixth (diagnostic) output.
-            // Keep diagnostic variants for debug views without writing it in production.
-            auto noDebug = descriptor;
-            noDebug.colorFormats.pop_back();
-            noDebug.debugName = "Opaque without diagnostics";
-            m_opaqueNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
-            noDebug = instancedDescriptor;
-            noDebug.colorFormats.pop_back();
-            noDebug.debugName = "Instanced opaque without diagnostics";
-            m_instancedNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
-            noDebug.cullMode = rhi::CullMode::Front;
-            noDebug.debugName = "Instanced outline without diagnostics";
-            m_outlineInstancedNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
-            noDebug = descriptor;
-            noDebug.colorFormats.pop_back();
-            noDebug.cullMode = rhi::CullMode::Front;
-            noDebug.debugName = "Outline without diagnostics";
-            m_outlineNoDebugPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(noDebug));
-
-            if (!shaders.standardFragment.glsl.empty() || !shaders.standardFragment.spirv.empty())
-                for (std::size_t index = 0; index < m_standardOpaquePipelines.size(); ++index)
-                {
-                    auto standard = index % 2 ? instancedDescriptor : descriptor;
-                    standard.fragmentShader = shaders.standardFragment;
-                    if (index >= 2) standard.colorFormats.pop_back();
-                    standard.debugName = "Opaque material without shader graph";
-                    m_standardOpaquePipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(standard));
-                }
+            m_geometryDescriptors = {descriptor, instancedDescriptor};
+            m_compactFragments = shaders.compactFragments;
+            m_coverageFragments = shaders.coverageFragments;
+            m_standardFragment = shaders.standardFragment;
+            m_colorVertices = {shaders.colorVertex, shaders.colorInstancedVertex};
+            m_standardVertices = shaders.standardVertices;
+            m_standardColorVertices = shaders.standardColorVertices;
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1214,6 +1184,14 @@ namespace PlutoGE::render
     void BasicRenderer::Shutdown()
     {
         ResetVctResources();
+        m_geometryPipelines.clear();
+        m_geometryDescriptors = {};
+        m_compactFragments = {};
+        m_coverageFragments = {};
+        m_standardFragment = {};
+        m_colorVertices = {};
+        m_standardVertices = {};
+        m_standardColorVertices = {};
         m_depthTarget.Reset();
         m_temporalUpscalerOutput.Reset();
         m_displayTarget.Reset();
@@ -1280,9 +1258,7 @@ namespace PlutoGE::render
         m_fallbackTexture.Reset();
         m_fallbackNormalTexture.Reset();
         m_fallbackDataTexture.Reset();
-        m_objectBuffers.clear();
-        m_instanceBuffers.clear();
-        m_materialBuffers.clear();
+        m_geometryParameters.reset();
         m_cameraBuffer.Reset();
         m_debugViewBuffer.Reset();
         for (auto &buffer : m_shadowCameraBuffers)
@@ -1325,14 +1301,6 @@ namespace PlutoGE::render
         m_skyQuadratureTexture.Reset();
         m_glassDepthCopy.Reset();
         m_pipeline.Reset();
-        m_outlinePipeline.Reset();
-        m_opaqueNoDebugPipeline.Reset();
-        for (auto &pipeline : m_standardOpaquePipelines) pipeline.Reset();
-        m_instancedNoDebugPipeline.Reset();
-        m_outlineNoDebugPipeline.Reset();
-        m_outlineInstancedNoDebugPipeline.Reset();
-        m_outlineInstancedPipeline.Reset();
-        m_instancedPipeline.Reset();
         m_device = nullptr;
         m_width = 0;
         m_height = 0;
@@ -1448,14 +1416,10 @@ namespace PlutoGE::render
         m_glassDepthCopy.Reset();
         m_colorTarget = std::move(newColor);
         m_displayTarget = std::move(newDisplay);
-        m_normalTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                     {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer normals", true}));
-        m_materialTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                       {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer material", true}));
-        m_motionTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                     {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment, "G-buffer motion", true}));
-        m_albedoTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                     {width, height, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "G-buffer albedo", true}));
+        m_normalTarget.Reset();
+        m_materialTarget.Reset();
+        m_motionTarget.Reset();
+        m_albedoTarget.Reset();
         m_debugTarget.Reset();
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
@@ -2233,12 +2197,24 @@ namespace PlutoGE::render
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
         rhi::RenderingInfo renderingInfo;
         const bool geometryDebug = debugView != PostProcessDebugView::None;
-        if (geometryDebug && !m_debugTarget)
-            m_debugTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {m_width, m_height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "G-buffer debug", true}));
-        renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
-                                          m_motionTarget.Get(), m_albedoTarget.Get(), m_debugTarget.Get()};
-        if (!geometryDebug) renderingInfo.colorAttachments.pop_back();
+        BasicPostProcessInput geometryInputs = lighting.requiredGeometryInputs;
+        for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
+        if (upscalerFrame && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
+            geometryInputs = geometryInputs | BasicPostProcessInput::Motion;
+        auto geometryLayout = geometryDebug ? GeometryOutputLayout::Diagnostics : GeometryOutputLayout::Surface;
+        const auto available = [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); };
+        const bool compactAvailable = std::ranges::all_of(m_compactFragments, [&](const auto &variants)
+            { return std::ranges::all_of(variants, available); });
+        if (!geometryDebug && m_compactGeometry && compactAvailable &&
+            !HasInput(geometryInputs, BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Albedo))
+            geometryLayout = HasInput(geometryInputs, BasicPostProcessInput::Motion) ? GeometryOutputLayout::ColorMotion : GeometryOutputLayout::Color;
+        EnsureGeometryTargets(geometryLayout);
+        renderingInfo.colorAttachments = {m_colorTarget.Get()};
+        if (geometryLayout >= GeometryOutputLayout::Surface)
+            renderingInfo.colorAttachments = {m_colorTarget.Get(), m_normalTarget.Get(), m_materialTarget.Get(),
+                                              m_motionTarget.Get(), m_albedoTarget.Get()};
+        else if (geometryLayout == GeometryOutputLayout::ColorMotion) renderingInfo.colorAttachments.push_back(m_motionTarget.Get());
+        if (geometryDebug) renderingInfo.colorAttachments.push_back(m_debugTarget.Get());
         renderingInfo.depthAttachment = m_depthTarget.Get();
         renderingInfo.width = m_width;
         renderingInfo.height = m_height;
@@ -2264,28 +2240,24 @@ namespace PlutoGE::render
         // only when every receiver is a compatible opaque, single draw.
         const bool reuseReceiverDepth = virtualShadowsActive && temporalClipOffset == glm::vec4(0) &&
             std::ranges::all_of(draws, OcclusionCulling::SafeOccluder);
-        const bool occlusionActive = m_occlusion && m_occlusion->Record(*m_device, draws, occlusionProjection,
-            m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
-            {
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
-                commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
-            }, reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
-        m_frameStats.occlusionActive = occlusionActive;
-        if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
+        bool occlusionActive = false;
+        bool recordingDepth = false;
+        const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments, available);
+        const auto prepassEligible = [](const BasicDraw &draw)
+        {
+            return !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode < 2 &&
+                !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
+        };
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
         if (!geometryDebug) renderingInfo.clearColorValues.pop_back();
-        const auto opaquePipeline = geometryDebug ? m_pipeline.Get() : m_opaqueNoDebugPipeline.Get();
-        const auto instancedPipeline = geometryDebug ? m_instancedPipeline.Get() : m_instancedNoDebugPipeline.Get();
-        const auto outlinePipeline = geometryDebug ? m_outlinePipeline.Get() : m_outlineNoDebugPipeline.Get();
-        const auto outlineInstancedPipeline = geometryDebug ? m_outlineInstancedPipeline.Get() : m_outlineInstancedNoDebugPipeline.Get();
+        if (geometryLayout == GeometryOutputLayout::ColorMotion) renderingInfo.clearColorValues = {renderingInfo.clearColorValues[0], renderingInfo.clearColorValues[3]};
+        else if (geometryLayout == GeometryOutputLayout::Color) renderingInfo.clearColorValues.resize(1);
         const auto geometryRecordingStart = std::chrono::steady_clock::now();
         const std::string geometryScopeName = automaticSweep
             ? std::string("RHI Geometry sweep / ") + GeometryDiagnosticName(geometryMode) : "RHI Geometry";
         commands.BeginGpuScope(geometryScopeName);
         // Transition shadow outputs before entering dynamic rendering.
-        commands.BindPipeline(opaquePipeline);
+        commands.BindPipeline(m_pipeline.Get());
         commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
         for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
             commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
@@ -2294,17 +2266,17 @@ namespace PlutoGE::render
             commands.BindTexture(19, m_virtualShadows->Atlas(), m_shadowSampler.Get());
             commands.BindTexture(20, m_virtualShadows->PageTable(), m_shadowSampler.Get());
         }
-        commands.BeginRendering(renderingInfo);
-        std::size_t objectBufferCursor = 0;
+        if (!m_geometryParameters) m_geometryParameters = std::make_unique<PersistentParameterCache>();
+        m_geometryParameters->BeginFrame();
+        rhi::BufferHandle objectBuffer;
         BasicObjectParameters previousObjectParameters{};
-        std::size_t instanceBufferCursor = 0;
-        std::size_t materialBufferCursor = 0;
-        BasicMaterialParameters previousMaterialParameters{};
+
+
         struct FrameMaterial
         {
             BasicDraw surface;
             bool transparent;
-            std::size_t bufferIndex;
+            rhi::BufferHandle buffer;
         };
         // Own surface snapshots: outline packets are temporary stack objects.
         // Entries live for one frame, so shader time, fog and edits cannot stale.
@@ -2317,18 +2289,16 @@ namespace PlutoGE::render
         rhi::TextureHandle previousEmissionTexture;
         rhi::PipelineHandle boundDrawPipeline;
         const BasicMesh *boundDrawMesh = nullptr;
-        std::size_t boundMaterialIndex = std::numeric_limits<std::size_t>::max();
+        rhi::BufferHandle boundMaterial;
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
-            auto pipeline = transparent ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()) :
-                                  (draw.outlinePass ? (instanced ? outlineInstancedPipeline : outlinePipeline) :
-                                   (instanced ? instancedPipeline : opaquePipeline));
-            const auto standardIndex = (geometryDebug ? 0u : 2u) + (instanced ? 1u : 0u);
-            if (!transparent && !draw.outlinePass && !draw.shaderGraphProgram && m_standardOpaquePipelines[standardIndex])
-                pipeline = m_standardOpaquePipelines[standardIndex].Get();
+            const auto pipeline = transparent
+                ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get())
+                : GeometryPipeline(draw, instanced, geometryLayout, recordingDepth,
+                    depthPrepassActive && prepassEligible(draw) && !recordingDepth);
             if (boundDrawPipeline != pipeline)
             {
                 commands.BindPipeline(pipeline);
@@ -2352,17 +2322,16 @@ namespace PlutoGE::render
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
                 // each draw's history even when current transforms match.
-                if (objectBufferCursor == 0 ||
+                if (!objectBuffer ||
                     std::memcmp(&previousObjectParameters, &objectParameters, sizeof(objectParameters)) != 0)
                 {
-                    if (objectBufferCursor == m_objectBuffers.size())
-                        m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                            {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
-                    m_device->UpdateBuffer(m_objectBuffers[objectBufferCursor++].Get(), 0, Bytes(objectParameters));
+                    objectBuffer = objectParameters.model == objectParameters.previousModel
+                        ? m_geometryParameters->Acquire(*m_device, Bytes(objectParameters))
+                        : m_geometryParameters->AcquireTransient(*m_device, Bytes(objectParameters));
                     previousObjectParameters = objectParameters;
                 }
             }
-            const auto materialIndex = [&]() -> std::size_t
+            const auto materialHandle = [&]() -> rhi::BufferHandle
             {
                 std::size_t key = draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw);
                 HashBatchValue(key, transparent);
@@ -2373,7 +2342,7 @@ namespace PlutoGE::render
                             bool(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
                     {
                         ++m_frameStats.materialPreparationHits;
-                        return candidate.bufferIndex;
+                        return candidate.buffer;
                     }
                 BasicMaterialParameters materialParameters{
                     draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
@@ -2397,8 +2366,11 @@ namespace PlutoGE::render
                 if (draw.shaderGraphProgram)
                 {
                     materialParameters.shaderGraph = draw.shaderGraphProgram->data;
-                    materialParameters.shaderGraphFrame.x = graphTime;
-                    materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
+                    if (draw.shaderGraphProgram->usesTime)
+                    {
+                        materialParameters.shaderGraphFrame.x = graphTime;
+                        materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
+                    }
                     materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
                 }
                 if (transparent)
@@ -2409,28 +2381,16 @@ namespace PlutoGE::render
                             materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
                             break;
                         }
-                // Sorted submeshes commonly share a material. Keep its uniform
-                // allocation and dynamic offset stable until the values change.
-                // The cache is frame-local, so edits and viewport changes take
-                // effect immediately and in-flight buffers remain immutable.
-                if (materialBufferCursor == 0 ||
-                    std::memcmp(&previousMaterialParameters, &materialParameters, sizeof(materialParameters)) != 0)
-                {
-                    if (materialBufferCursor == m_materialBuffers.size())
-                        m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                            {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
-                    m_device->UpdateBuffer(m_materialBuffers[materialBufferCursor++].Get(), 0, Bytes(materialParameters));
-                    previousMaterialParameters = materialParameters;
-                }
-                const auto index = materialBufferCursor - 1;
-                candidates.push_back({draw, transparent, index});
+                const auto handle = draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime
+                    ? m_geometryParameters->AcquireTransient(*m_device, Bytes(materialParameters))
+                    : m_geometryParameters->Acquire(*m_device, Bytes(materialParameters), key);
+                candidates.push_back({draw, transparent, handle});
                 ++m_frameStats.materialPreparations;
-                return index;
+                return handle;
             }();
-            auto &materialBuffer = m_materialBuffers[materialIndex];
-            if (!geometryResourcesBound || boundMaterialIndex != materialIndex)
-                commands.BindUniformBuffer(8, materialBuffer.Get());
-            boundMaterialIndex = materialIndex;
+            if (!geometryResourcesBound || boundMaterial != materialHandle)
+                commands.BindUniformBuffer(8, materialHandle);
+            boundMaterial = materialHandle;
             const std::array materialTextures{
                 draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
                 draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),
@@ -2490,24 +2450,26 @@ namespace PlutoGE::render
                 {
                     for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
                     {
-                        if (instanceBufferCursor == m_instanceBuffers.size())
-                            m_instanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                                {sizeof(BasicInstanceObjectParameters), rhi::BufferUsage::Uniform,
-                                 "BasicRenderer geometry instances"}));
-                        BasicInstanceObjectParameters parameters;
+                        BasicInstanceObjectParameters parameters{};
                         const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
-                        const bool hasPrevious = draw.previousInstanceModels &&
+                        bool movingInstances = false;
+                        const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
                                                  draw.previousInstanceModels->size() == draw.instanceModels->size();
                         for (std::size_t instance = 0; instance < instanceCount; ++instance)
                         {
                             const auto &model = (*draw.instanceModels)[first + instance];
                             const auto &previous = hasPrevious ? (*draw.previousInstanceModels)[first + instance] : model;
+                            movingInstances |= model != previous;
                             parameters.instances[instance] = {model, previous,
                                 glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, 0.0f, 0.0f)};
                         }
-                        auto &instanceBuffer = m_instanceBuffers[instanceBufferCursor++];
-                        m_device->UpdateBuffer(instanceBuffer.Get(), 0, Bytes(parameters));
-                        commands.BindUniformBuffer(17, instanceBuffer.Get());
+                        std::size_t instanceKey = 0;
+                        HashBatchValue(instanceKey, draw.instanceModels.get());
+                        HashBatchValue(instanceKey, first);
+                        const auto instanceBuffer = movingInstances
+                            ? m_geometryParameters->AcquireTransient(*m_device, Bytes(parameters))
+                            : m_geometryParameters->Acquire(*m_device, Bytes(parameters), instanceKey);
+                        commands.BindUniformBuffer(17, instanceBuffer);
                         commands.DrawIndexedInstanced(drawCount, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
                         ++m_frameStats.geometryDraws;
                         m_frameStats.geometryInstances += instanceCount;
@@ -2517,8 +2479,8 @@ namespace PlutoGE::render
                 }
                 else
                 {
-                    commands.BindUniformBuffer(16, m_objectBuffers[objectBufferCursor - 1].Get());
-                    if (occlusionActive && !transparent && !draw.outlinePass)
+                    commands.BindUniformBuffer(16, objectBuffer);
+                    if (occlusionActive && !recordingDepth && !transparent && !draw.outlinePass)
                         commands.DrawIndexedIndirect(m_occlusion->Indirect(), static_cast<std::size_t>(&draw - draws.data()) * 20);
                     else
                         commands.DrawIndexed(drawCount, draw.firstIndex);
@@ -2528,6 +2490,45 @@ namespace PlutoGE::render
                 }
             }
         };
+        if (depthPrepassActive)
+        {
+            commands.BeginGpuScope("RHI Geometry / Coverage depth");
+            rhi::RenderingInfo depth;
+            depth.depthAttachment = m_depthTarget.Get();
+            depth.width = m_width; depth.height = m_height;
+            depth.clearColor = false;
+            commands.BeginRendering(depth);
+            recordingDepth = true;
+            for (std::size_t index = 0; index < draws.size(); ++index)
+                if (prepassEligible(draws[index])) recordDraw(draws[index], false, index);
+            recordingDepth = false;
+            commands.EndRendering();
+            commands.EndGpuScope();
+            m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
+            m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
+            m_frameStats.geometryTriangles = {};
+            renderingInfo.clearDepth = false;
+        }
+        // The legacy simplified occluder pass is two-sided. With material
+        // culling it is only safe to use the exact coverage depth produced above.
+        occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, draws, occlusionProjection,
+            m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
+            {
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
+            }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
+        m_frameStats.occlusionActive = occlusionActive;
+        if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
+        // Compute/coverage passes invalidate all cached graphics bindings.
+        boundDrawPipeline = {};
+        boundDrawMesh = nullptr;
+        geometryResourcesBound = false;
+        skyTextureBound = false;
+        boundMaterial = {};
+        commands.BeginRendering(renderingInfo);
+        m_frameStats.geometryColorOutputs = static_cast<std::uint32_t>(renderingInfo.colorAttachments.size());
         std::size_t historyIndex = 0;
         std::vector<BasicDraw> transparentDraws;
         commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
@@ -3054,10 +3055,10 @@ namespace PlutoGE::render
                     commands.BindUniformBuffer(0, buffer.Get());
                     commands.BindTexture(1, source, m_screenSampler.Get());
                     commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-                    commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-                    commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+                    commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.BindTexture(6, reflections, m_screenSampler.Get());
-                    commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(7, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.Draw(3);
                     commands.EndRendering();
                 };
@@ -3122,13 +3123,13 @@ namespace PlutoGE::render
                 if (HasInput(inputs, BasicPostProcessInput::Depth))
                     commands.BindTexture(2, volumeDepth ? volumeDepth : m_depthTarget.Get(), reducedVolume || volumeDepth ? m_shadowSampler.Get() : m_screenSampler.Get());
                 if (HasInput(inputs, BasicPostProcessInput::Normal))
-                    commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 if (HasInput(inputs, BasicPostProcessInput::Material))
-                    commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 if (HasInput(inputs, BasicPostProcessInput::Albedo))
-                    commands.BindTexture(7, m_albedoTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(7, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 if (HasInput(inputs, BasicPostProcessInput::Motion))
-                    commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
+                    commands.BindTexture(5, m_motionTarget ? m_motionTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 if (HasInput(inputs, BasicPostProcessInput::History))
                     commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
                                          m_screenSampler.Get());
@@ -3182,9 +3183,9 @@ namespace PlutoGE::render
             commands.BindUniformBuffer(0, m_debugViewBuffer.Get());
             commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
             commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-            commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-            commands.BindTexture(4, m_albedoTarget.Get(), m_screenSampler.Get());
-            commands.BindTexture(5, m_materialTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            commands.BindTexture(4, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            commands.BindTexture(5, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
             commands.BindTexture(6, m_debugTarget ? m_debugTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
             commands.Draw(3);
             commands.EndRendering();
@@ -3204,6 +3205,8 @@ namespace PlutoGE::render
                 m_previousModels.push_back(draw.model);
         m_hasPreviousFrame = true;
         m_previousGraphTime = graphTime;
+        m_frameStats.geometryParameterCreates = m_geometryParameters->misses;
+        m_frameStats.geometryParameterReuses = m_geometryParameters->hits;
         if (submit)
         {
             const auto submitStart = std::chrono::steady_clock::now();
@@ -4102,9 +4105,9 @@ namespace PlutoGE::render
         commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
         commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(5, m_albedoTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
         for (std::size_t direction = 0; direction < 6; ++direction)
             commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
         commands.BindTexture(13, m_vctProbeRadiance.Get(), m_vctVolumeSampler.Get());
@@ -4125,12 +4128,12 @@ namespace PlutoGE::render
         temporalInfo.width = m_width; temporalInfo.height = m_height; temporalInfo.clearDepth = false;
         commands.BeginRendering(temporalInfo); commands.BindPipeline(m_vctPostProcessPipelines[1].Get());
         commands.BindUniformBuffer(0, temporalBuffer.Get()); commands.BindTexture(1, m_vctTraceTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get()); commands.BindTexture(6, m_vctHistoryTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
+        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_motionTarget ? m_motionTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.BindTexture(6, m_vctHistoryTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
         commands.BindTexture(7, m_vctMetadataTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
         commands.BindTexture(8, source, m_screenSampler.Get());
-        commands.BindTexture(4, m_materialTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(9, m_albedoTarget.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
+        commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        commands.BindTexture(9, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
         const VctMetadataParameters metadata{m_inverseViewProjection, m_postProcessView,
                                              trace.flipY, trace.zeroToOneDepth, {}};
         auto &metadataBuffer = AcquireVctBuffer(m_vctBufferCursor++); m_device->UpdateBuffer(metadataBuffer.Get(), 0, Bytes(metadata));
@@ -4138,7 +4141,7 @@ namespace PlutoGE::render
         metadataInfo.width = m_width; metadataInfo.height = m_height; metadataInfo.clearDepth = false;
         commands.BeginRendering(metadataInfo); commands.BindPipeline(m_vctPostProcessPipelines[2].Get());
         commands.BindUniformBuffer(0, metadataBuffer.Get()); commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
+        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
         m_vctHistoryIndex = next; m_vctHistoryValid = true; m_vctPreviousView = m_postProcessView;
         return m_vctCompositeTarget.Get();
     }
@@ -4190,7 +4193,7 @@ namespace PlutoGE::render
         commands.BindUniformBuffer(0, rawBuffer.Get());
         commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();
 
@@ -4207,8 +4210,8 @@ namespace PlutoGE::render
         commands.BindUniformBuffer(0, resolveBuffer.Get());
         commands.BindTexture(1, m_ssaoRawTarget.Get(), m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(5, m_motionTarget.Get(), m_screenSampler.Get());
+        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        commands.BindTexture(5, m_motionTarget ? m_motionTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
         commands.BindTexture(6, m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(), m_screenSampler.Get());
         commands.Draw(3);
         commands.EndRendering();

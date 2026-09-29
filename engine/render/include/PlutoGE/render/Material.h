@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RenderObjectIdentity.h"
 
 #include "PlutoGE/render/ShaderGraph.h"
 
@@ -93,43 +94,60 @@ namespace PlutoGE::render
     public:
         Material() = default;
         Material(const MaterialConfig &config) : m_config(config) {}
-        ~Material() = default;
+        Material(const Material &) = default;
+        Material &operator=(const Material &other)
+        {
+            if (this != &other)
+            {
+                m_config = other.m_config; m_overrideShader = other.m_overrideShader;
+                Touch(); // Existing escaped references still require validation.
+            }
+            return *this;
+        }
+        ~Material() { s_changeEpoch.fetch_add(1, std::memory_order_relaxed); }
 
-        void SetShader(Shader *shader) { m_overrideShader = shader; }
+        void SetShader(Shader *shader) { if (m_overrideShader != shader) { m_overrideShader = shader; Touch(); } }
         Shader *GetShader() const { return m_overrideShader ? m_overrideShader : m_config.compiledShaderGraph; }
 
         void Bind(Shader *shader = nullptr);
 
-        void SetColor(const glm::vec4 &color) { m_config.color = color; }
-        void SetSurfaceType(MaterialSurfaceType surfaceType) { m_config.surfaceType = surfaceType; }
-        void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
-        void SetUvScale(const glm::vec2 &uvScale) { m_config.uvScale = uvScale; }
-        void SetAlphaMode(AlphaMode alphaMode) { m_config.alphaMode = alphaMode; }
-        void SetAlphaCutoff(float alphaCutoff) { m_config.alphaCutoff = alphaCutoff; }
-        void SetCastsShadow(bool castsShadow) { m_config.castsShadow = castsShadow; }
-        void SetTwoSided(bool twoSided) { m_config.twoSided = twoSided; }
-        void SetNormalTexture(Texture *texture) { m_config.normalTexture = texture; }
-        void SetFlipNormalY(bool flipNormalY) { m_config.flipNormalY = flipNormalY; }
-        void SetMetallic(float metallic) { m_config.metallic = metallic; }
-        void SetMetallicTexture(Texture *texture) { m_config.metallicTexture = texture; }
-        void SetMetallicTextureChannel(TextureChannel channel) { m_config.metallicTextureChannel = channel; }
-        void SetRoughness(float roughness) { m_config.roughness = roughness; }
-        void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
-        void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
-        void SetEmissionTexture(Texture *texture) { m_config.emissionTexture = texture; }
-        void SetEmissionTexCoord(int texCoord) { m_config.emissionTexCoord = texCoord == 1 ? 1 : 0; }
-        void SetEmission(const glm::vec3 &emission) { m_config.emission = emission; }
-        void SetSubsurface(float subsurface) { m_config.subsurface = subsurface; }
-        void SetSubsurfaceColor(const glm::vec3 &color) { m_config.subsurfaceColor = color; }
-        void SetSubsurfaceRadius(float radius) { m_config.subsurfaceRadius = radius; }
-        void SetTransmission(float transmission) { m_config.transmission = transmission; }
-        void SetIor(float ior) { m_config.ior = ior; }
-        void SetThickness(float thickness) { m_config.thickness = thickness; }
-        void SetAttenuationColor(const glm::vec3 &color) { m_config.attenuationColor = color; }
-        void SetAttenuationDistance(float distance) { m_config.attenuationDistance = distance; }
-        void SetLightmapTexture(Texture *texture) { m_config.lightmapTexture = texture; }
-        void SetLightmapUvTransform(const glm::vec4 &transform) { m_config.lightmapUvTransform = transform; }
-        MaterialConfig &GetConfig() { return m_config; }
+        void SetColor(const glm::vec4 &color) { if (m_config.color != (color)) { m_config.color = color; Touch(); } }
+        void SetSurfaceType(MaterialSurfaceType surfaceType) { if (m_config.surfaceType != (surfaceType)) { m_config.surfaceType = surfaceType; Touch(); } }
+        void SetAlbedoTexture(Texture *texture) { if (m_config.albedoTexture != (texture)) { m_config.albedoTexture = texture; Touch(); } }
+        void SetUvScale(const glm::vec2 &uvScale) { if (m_config.uvScale != (uvScale)) { m_config.uvScale = uvScale; Touch(); } }
+        void SetAlphaMode(AlphaMode alphaMode) { if (m_config.alphaMode != (alphaMode)) { m_config.alphaMode = alphaMode; Touch(); } }
+        void SetAlphaCutoff(float alphaCutoff) { if (m_config.alphaCutoff != (alphaCutoff)) { m_config.alphaCutoff = alphaCutoff; Touch(); } }
+        void SetCastsShadow(bool castsShadow) { if (m_config.castsShadow != (castsShadow)) { m_config.castsShadow = castsShadow; Touch(); } }
+        void SetTwoSided(bool twoSided) { if (m_config.twoSided != (twoSided)) { m_config.twoSided = twoSided; Touch(); } }
+        void SetNormalTexture(Texture *texture) { if (m_config.normalTexture != (texture)) { m_config.normalTexture = texture; Touch(); } }
+        void SetFlipNormalY(bool flipNormalY) { if (m_config.flipNormalY != (flipNormalY)) { m_config.flipNormalY = flipNormalY; Touch(); } }
+        void SetMetallic(float metallic) { if (m_config.metallic != (metallic)) { m_config.metallic = metallic; Touch(); } }
+        void SetMetallicTexture(Texture *texture) { if (m_config.metallicTexture != (texture)) { m_config.metallicTexture = texture; Touch(); } }
+        void SetMetallicTextureChannel(TextureChannel channel) { if (m_config.metallicTextureChannel != (channel)) { m_config.metallicTextureChannel = channel; Touch(); } }
+        void SetRoughness(float roughness) { if (m_config.roughness != (roughness)) { m_config.roughness = roughness; Touch(); } }
+        void SetRoughnessTexture(Texture *texture) { if (m_config.roughnessTexture != (texture)) { m_config.roughnessTexture = texture; Touch(); } }
+        void SetRoughnessTextureChannel(TextureChannel channel) { if (m_config.roughnessTextureChannel != (channel)) { m_config.roughnessTextureChannel = channel; Touch(); } }
+        void SetEmissionTexture(Texture *texture) { if (m_config.emissionTexture != (texture)) { m_config.emissionTexture = texture; Touch(); } }
+        void SetEmissionTexCoord(int texCoord) { if (m_config.emissionTexCoord != (texCoord == 1 ? 1 : 0)) { m_config.emissionTexCoord = texCoord == 1 ? 1 : 0; Touch(); } }
+        void SetEmission(const glm::vec3 &emission) { if (m_config.emission != (emission)) { m_config.emission = emission; Touch(); } }
+        void SetSubsurface(float subsurface) { if (m_config.subsurface != (subsurface)) { m_config.subsurface = subsurface; Touch(); } }
+        void SetSubsurfaceColor(const glm::vec3 &color) { if (m_config.subsurfaceColor != (color)) { m_config.subsurfaceColor = color; Touch(); } }
+        void SetSubsurfaceRadius(float radius) { if (m_config.subsurfaceRadius != (radius)) { m_config.subsurfaceRadius = radius; Touch(); } }
+        void SetTransmission(float transmission) { if (m_config.transmission != (transmission)) { m_config.transmission = transmission; Touch(); } }
+        void SetIor(float ior) { if (m_config.ior != (ior)) { m_config.ior = ior; Touch(); } }
+        void SetThickness(float thickness) { if (m_config.thickness != (thickness)) { m_config.thickness = thickness; Touch(); } }
+        void SetAttenuationColor(const glm::vec3 &color) { if (m_config.attenuationColor != (color)) { m_config.attenuationColor = color; Touch(); } }
+        void SetAttenuationDistance(float distance) { if (m_config.attenuationDistance != (distance)) { m_config.attenuationDistance = distance; Touch(); } }
+        void SetLightmapTexture(Texture *texture) { if (m_config.lightmapTexture != (texture)) { m_config.lightmapTexture = texture; Touch(); } }
+        void SetLightmapUvTransform(const glm::vec4 &transform) { if (m_config.lightmapUvTransform != (transform)) { m_config.lightmapUvTransform = transform; Touch(); } }
+        // Legacy mutable references can outlive a call. Never trust revisions after
+        // one escapes; those materials retain value-based validation.
+        MaterialConfig &GetConfig() { if (!m_untrackedEdits) { m_untrackedEdits = true; Touch(); } return m_config; }
+        const MaterialConfig &ReadConfig() const { return m_config; }
+        void SetConfig(MaterialConfig config) { m_config = std::move(config); Touch(); }
+        static std::uint64_t ChangeEpoch() { return s_changeEpoch.load(std::memory_order_relaxed); }
+        std::uint64_t GetRevision() const { return m_untrackedEdits ? 0 : m_revision; }
+        std::uint64_t GetIdentity() const { return m_identity.Value(); }
         const MaterialConfig &GetConfig() const { return m_config; }
 
     protected:
@@ -137,6 +155,11 @@ namespace PlutoGE::render
         friend class Renderer;
 
     private:
+        void Touch() { ++m_revision; s_changeEpoch.fetch_add(1, std::memory_order_relaxed); }
+        inline static std::atomic<std::uint64_t> s_changeEpoch{1};
+        RenderObjectIdentity m_identity;
+        std::uint64_t m_revision = 1;
+        bool m_untrackedEdits = false;
         MaterialConfig m_config;            // Material configuration data
         Shader *m_overrideShader = nullptr; // Pointer to the shader used for this material (can be set during rendering)
     };

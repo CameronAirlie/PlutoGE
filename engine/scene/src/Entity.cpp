@@ -115,6 +115,7 @@ namespace PlutoGE::scene
 
     void Entity::MarkTransformDirtyRecursive()
     {
+        if (m_scene) if (auto *mesh = GetComponent<MeshComponent>()) m_scene->QueueMeshRenderUpdate(mesh);
         m_worldTransformDirty = true;
         m_worldDecompositionDirty = true;
         ++m_transformRevision;
@@ -204,6 +205,7 @@ namespace PlutoGE::scene
         }
 
         m_isActive = active;
+        if (m_scene) m_scene->QueueRenderSubtree(this);
         MarkShadowSceneDirty();
     }
 

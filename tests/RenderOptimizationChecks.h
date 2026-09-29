@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -15,6 +16,12 @@ inline void LoadRenderOptimizationShaders(PlutoGE::render::BasicRendererShaderPa
     const auto additions = ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).LoadBasicRendererPackage();
     shaders.particleInstancedVertex = additions.particleInstancedVertex;
     shaders.standardFragment = additions.standardFragment;
+    shaders.standardVertices = additions.standardVertices;
+    shaders.standardColorVertices = additions.standardColorVertices;
+    shaders.colorVertex = additions.colorVertex;
+    shaders.colorInstancedVertex = additions.colorInstancedVertex;
+    shaders.compactFragments = additions.compactFragments;
+    shaders.coverageFragments = additions.coverageFragments;
     shaders.volumetricTrace = additions.volumetricTrace;
     shaders.volumetricComposite = additions.volumetricComposite;
     shaders.fusedColor = additions.fusedColor;
@@ -32,6 +39,15 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     {
         if (!value) throw std::runtime_error(message);
     };
+    {
+        const std::array<std::byte, 64> constants{};
+        rhi::Buffer persistent(device, device.CreateBuffer(
+            {constants.size(), rhi::BufferUsage::Uniform, "Immutable residency regression", true}, constants));
+        bool rejected = false;
+        try { device.UpdateBuffer(persistent.Get(), 0, constants); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        require(rejected, "Immutable parameter storage accepted an in-place mutation");
+    }
     const ParticleVisibility visibility(glm::mat4(1));
     require(visibility.IsVisible({0, 0, 0}, 0.1f), "Visible particle culled");
     require(visibility.IsVisible({1.1f, 0, 0}, 0.2f), "Billboard crossing viewport edge culled");
@@ -45,6 +61,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     shaders.volumetricTrace = {};
     shaders.volumetricComposite = {};
     BasicRenderer reference;
+    reference.SetGeometryOptimizations(false, false, false);
     require(reference.Initialize(device, shaders), "Reference renderer initialization failed");
     const auto oldWidth = renderer.GetWidth(), oldHeight = renderer.GetHeight();
     constexpr std::uint32_t width = 65, height = 47;
@@ -77,6 +94,32 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     draw.emission = {0.23f, 0.51f, 0.82f};
     BasicLighting lighting;
     lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    // More than the number of buffered frames: immutable geometry records
+    // must stay resident, while a changed material must become visible.
+    std::uint64_t coldPersistentBytes = 0;
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        renderer.Render(glm::mat4(1), lighting, {&draw, 1});
+        if (frame == 0) coldPersistentBytes = device.GetTimingStats().persistentUniformBytesUploaded;
+        if (frame >= 3)
+        {
+            require(renderer.GetFrameStats().geometryParameterCreates == 0, "Stationary geometry recreated parameter records");
+            if (device.GetApi() == rhi::GraphicsApi::Vulkan)
+                require(device.GetTimingStats().persistentUniformBytesUploaded == 0,
+                    "Stationary parameters were reuploaded after all buffered frames warmed");
+        }
+    }
+    if (device.GetApi() == rhi::GraphicsApi::Vulkan)
+    {
+        require(coldPersistentBytes > 0, "Residency test never populated persistent GPU storage");
+        std::cout << "Stationary persistent geometry upload: " << coldPersistentBytes << " bytes cold, 0 bytes warm\n";
+    }
+    const auto stationaryImage = readPixels(renderer.GetColorTexture());
+    draw.emission.x += .2f;
+    renderer.Render(glm::mat4(1), lighting, {&draw, 1});
+    require(renderer.GetFrameStats().geometryParameterCreates > 0, "Material edit reused stale GPU parameters");
+    require(stationaryImage != readPixels(renderer.GetColorTexture()), "Material edit did not reach GPU");
+    draw.emission.x -= .2f;
     // Compare the interpreter-free material variant against the full shader,
     // including instancing and both alpha coverage paths.
     for (int scenario = 0; scenario < 18; ++scenario)
@@ -107,6 +150,95 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         renderer.Render(glm::mat4(1), materialLighting, {&materialDraw, 1});
         compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
                 "Standard material variant differs from interpreter shader");
+    }
+    // Requirements must follow consumers on every frame, including transitions
+    // at an unchanged viewport size. Compare against full-output forward rendering.
+    for (int scenario = 0; scenario < 7; ++scenario)
+    {
+        auto surface = draw;
+        if (scenario == 1) surface.model[0][0] = -1; // mirrored rigid winding
+        if (scenario == 2) { surface.twoSided = true; surface.model[0][0] = -1; }
+        if (scenario == 3) { surface.alphaMode = 1; surface.baseColor.a = 0; }
+        std::vector<BasicPostProcessEffect> requiredEffects;
+        if (scenario == 4) requiredEffects.push_back({BasicPostProcessEffectType::MotionBlur});
+        const auto debug = scenario == 5 ? PostProcessDebugView::Normal : PostProcessDebugView::None;
+        reference.Render(glm::mat4(1), lighting, {&surface, 1}, requiredEffects, {}, debug);
+        const auto original = readPixels(reference.GetColorTexture());
+        renderer.Render(glm::mat4(1), lighting, {&surface, 1}, requiredEffects, {}, debug);
+        compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
+                "Geometry coverage/output layout changed the reference image");
+        const auto &stats = renderer.GetFrameStats();
+        require(stats.geometryColorOutputs == (scenario == 5 ? 6u : scenario == 4 ? 2u : 1u),
+                "Geometry output requirements did not follow active consumers");
+        require(stats.geometryDepthDraws == 1, "Opaque coverage prepass was not recorded");
+    }
+    // Shadow derivatives must match the full-output shader, including helper
+    // invocations at the receiver boundary and the first frame of a new pipeline.
+    {
+        auto receiver = draw;
+        receiver.emission = {0, 0, 0};
+        receiver.model[3].z = .6f;
+        auto caster = receiver;
+        caster.model = glm::translate(glm::mat4(1), glm::vec3(-.3f, 0, .1f)) *
+            glm::rotate(glm::mat4(1), .25f, glm::vec3(0, 0, 1)) *
+            glm::scale(glm::mat4(1), glm::vec3(.5f, 2, 1));
+        auto shadowLighting = lighting;
+        shadowLighting.shadowsEnabled = true;
+        shadowLighting.shadowMethod = ShadowMethod::Cascaded;
+        shadowLighting.shadowCascadeCount = 1;
+        shadowLighting.shadowResolution = 64;
+        shadowLighting.shadowMatrices[0] = glm::mat4(1);
+        shadowLighting.directionalIntensity = 1;
+        shadowLighting.directionalDirection = {0, 0, -1};
+        shadowLighting.cameraPosition = {0, 0, 3};
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            reference.Render(glm::mat4(1), shadowLighting, {&receiver, 1}, {}, {&caster, 1});
+            const auto original = readPixels(reference.GetColorTexture());
+            renderer.Render(glm::mat4(1), shadowLighting, {&receiver, 1}, {}, {&caster, 1});
+            compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
+                    "Compact shadow shading differs from the full-output reference");
+        }
+    }
+    // A repeatable overdraw workload measures the complete geometry scope,
+    // including coverage cost. Timings are diagnostic, never a flaky pass/fail gate.
+    {
+        require(renderer.Resize(490, 231), "Geometry benchmark resize failed");
+        std::vector<BasicDraw> layers(32, draw);
+        for (std::size_t i = 0; i < layers.size(); ++i)
+        {
+            layers[i].model[3].z = float(i) * .02f;
+            layers[i].baseColor = {.3f, .5f, .7f, 1};
+        }
+        auto lit = lighting;
+        lit.ambientIntensity = .2f;
+        lit.directionalIntensity = 1;
+        lit.directionalDirection = {-.2f, -.4f, -1};
+        lit.cameraPosition = {0, 0, 3};
+        decltype(readPixels(renderer.GetColorTexture())) baseline;
+        for (bool optimized : {false, true})
+        {
+            renderer.SetGeometryOptimizations(optimized, optimized, optimized);
+            double milliseconds = 0;
+            unsigned observations = 0;
+            std::uint64_t lastObservation = 0;
+            for (unsigned frame = 0; frame < 48; ++frame)
+            {
+                renderer.Render(glm::mat4(1), lit, layers);
+                auto pixels = readPixels(renderer.GetColorTexture());
+                if (!optimized && frame == 47) baseline = pixels;
+                if (optimized && frame == 47)
+                    require(pixels == baseline, "Depth-first overdraw benchmark changed the image");
+                const auto timing = device.GetTimingStats("Scene");
+                if (frame < 12 || !timing.hasGpuResult || timing.gpuObservationId == lastObservation) continue;
+                lastObservation = timing.gpuObservationId;
+                for (const auto &scope : timing.gpuScopes)
+                    if (scope.name == "RHI Geometry") { milliseconds += scope.milliseconds; ++observations; }
+            }
+            if (observations) std::cout << "Core geometry overdraw " << (optimized ? "optimized" : "reference")
+                << ": " << milliseconds / observations << " ms (" << observations << " observations)\n";
+        }
+        require(renderer.Resize(width, height), "Geometry benchmark restore failed");
     }
     BasicPostProcessEffect tone{BasicPostProcessEffectType::ToneMapping};
     tone.exposure = 1.3f;

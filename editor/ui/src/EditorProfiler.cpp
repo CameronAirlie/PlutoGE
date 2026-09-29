@@ -404,6 +404,7 @@ namespace PlutoGE::ui
         report << "RHI descriptor preparation CPU: " << rhi.descriptorCpuMs << " ms\n";
         report << "RHI uniform upload: " << rhi.uniformBytesUploaded << " bytes in "
                << rhi.uniformUploadCpuMs << " ms CPU\n";
+        report << "RHI persistent uniform upload: " << rhi.persistentUniformBytesUploaded << " bytes\n";
         const auto &rhiScene = frameTimingStats.rhiSceneTimingStats;
         const float activeRhiSceneCpuMs = std::max(0.0f, rhiScene.totalMs - rhi.frameFenceWaitMs);
         const float activeRhiBeginCpuMs = std::max(0.0f, rhiScene.beginFrameMs - rhi.frameFenceWaitMs);
@@ -429,6 +430,8 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
                << rhiScene.recordedGeometryInstanceCount << " instances\n";
+        report << "RHI geometry coverage: " << rhiScene.recordedGeometryDepthDrawCount << " depth draws; "
+               << rhiScene.geometryColorOutputs << " color outputs\n";
         report << "VSM CPU cluster bounds: " << rhiScene.virtualShadows.clusterBoundsBuilds << " builds / "
                << rhiScene.virtualShadows.clusterBoundsCacheHits << " hits\n";
         report << "RHI point shadow atlas: " << rhiScene.pointShadowAtlasUpdates << " updates / "
@@ -454,6 +457,8 @@ namespace PlutoGE::ui
                << " ms, grouping " << rhiScene.glassGroupingCpuMs << " ms, damage " << rhiScene.glassDamageCpuMs
                << " ms, color copy recording " << rhiScene.glassCopyRecordingCpuMs
                << " ms, surface recording " << rhiScene.glassDrawRecordingCpuMs << " ms\n";
+        report << "RHI persistent geometry parameters: " << rhiScene.geometryParameterCreates << " created / "
+               << rhiScene.geometryParameterReuses << " reused\n";
         report << "RHI retained packets: " << rhiScene.sharedDrawPacketHits << " shared across pass/list changes\n";
         report << "RHI opaque batch groups: " << rhiScene.reusedOpaqueBatchGroups << " reused / "
                << rhiScene.rebuiltOpaqueBatchGroups << " rebuilt (when the visible packet list changes)\n";

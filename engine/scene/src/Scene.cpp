@@ -3196,19 +3196,39 @@ namespace PlutoGE::scene
     {
         using Clock = std::chrono::high_resolution_clock;
         const auto meshStart = Clock::now();
-        for (auto *meshComponent : m_meshComponents)
+        auto &renderer = core::Engine::GetInstance().GetRenderer();
+        const bool republish = renderer.BeginRenderSceneScope(m_renderSceneLifetime);
+        struct ScopeExit { render::Renderer &renderer; ~ScopeExit() { renderer.EndRenderSceneScope(); } } scopeExit{renderer};
+        // Geometry mutation is rare. Until all asset writers send per-resource
+        // notifications, an epoch gates this compatibility invalidation walk.
+        const auto meshEpoch = render::Mesh::ContentEpoch();
+        if (republish || m_meshContentEpoch != meshEpoch)
+            for (auto *mesh : m_meshComponents)
+            {
+                const auto revision = mesh->GetMesh() ? mesh->GetMesh()->GetContentRevision() : 0;
+                auto &previousRevision = m_renderMeshRevisions[mesh];
+                if (previousRevision != revision) { mesh->NotifyMeshDataChanged(); previousRevision = revision; }
+                if (republish) { mesh->ResetRenderHistory(); m_dirtyRenderMeshes.insert(mesh); }
+            }
+        m_meshContentEpoch = meshEpoch;
+        for (auto id : m_removedRenderProducers) renderer.RemoveRenderProducer(id);
+        m_removedRenderProducers.clear();
+        auto pending = std::move(m_dirtyRenderMeshes);
+        m_dirtyRenderMeshes.clear();
+        pending.insert(m_dynamicRenderMeshes.begin(), m_dynamicRenderMeshes.end());
+        std::vector<MeshComponent *> ordered(pending.begin(), pending.end());
+        std::ranges::sort(ordered, {}, &MeshComponent::GetRenderProducerId);
+        for (auto *meshComponent : ordered)
         {
-            if (!meshComponent || !meshComponent->IsEnabled())
-            {
-                continue;
-            }
-
+            if (meshComponent->NeedsFrameRenderSubmission()) m_dynamicRenderMeshes.insert(meshComponent);
+            else m_dynamicRenderMeshes.erase(meshComponent);
             auto *owner = meshComponent->GetOwner();
-            if (!owner || !owner->IsActive())
+            if (!meshComponent->IsEnabled() || !meshComponent->IsVisible() || !meshComponent->GetMesh() || !owner || !owner->IsActive())
             {
+                renderer.RemoveRenderProducer(meshComponent->GetRenderProducerId());
+                meshComponent->ResetRenderHistory();
                 continue;
             }
-
             meshComponent->SubmitRenderCommands();
         }
         const auto terrainStart = Clock::now();
@@ -3329,6 +3349,18 @@ namespace PlutoGE::scene
             m_rmlWidgetComponents.end());
     }
 
+    void Scene::QueueRenderSubtree(Entity *entity)
+    {
+        if (!entity) return;
+        if (auto *mesh = entity->GetComponent<MeshComponent>()) QueueMeshRenderUpdate(mesh);
+        for (auto *child : entity->GetChildren()) QueueRenderSubtree(child);
+    }
+
+    void Scene::QueueMeshRenderUpdate(MeshComponent *meshComponent)
+    {
+        if (meshComponent) m_dirtyRenderMeshes.insert(meshComponent);
+    }
+
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)
     {
         if (!meshComponent)
@@ -3339,6 +3371,7 @@ namespace PlutoGE::scene
         if (std::find(m_meshComponents.begin(), m_meshComponents.end(), meshComponent) == m_meshComponents.end())
         {
             m_meshComponents.push_back(meshComponent);
+            QueueMeshRenderUpdate(meshComponent);
         }
     }
 
@@ -3349,6 +3382,10 @@ namespace PlutoGE::scene
             return;
         }
 
+        m_dirtyRenderMeshes.erase(meshComponent);
+        m_dynamicRenderMeshes.erase(meshComponent);
+        m_renderMeshRevisions.erase(meshComponent);
+        m_removedRenderProducers.push_back(meshComponent->GetRenderProducerId());
         m_meshComponents.erase(std::remove(m_meshComponents.begin(), m_meshComponents.end(), meshComponent), m_meshComponents.end());
     }
 

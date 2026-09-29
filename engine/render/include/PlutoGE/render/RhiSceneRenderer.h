@@ -53,6 +53,9 @@ namespace PlutoGE::render
         std::size_t visibleDrawCount = 0;
         std::size_t visibleInstanceCount = 0;
         std::size_t shadowCandidateCount = 0;
+        std::size_t recordedGeometryDepthDrawCount = 0;
+        std::uint32_t geometryColorOutputs = 0;
+        std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
@@ -186,6 +189,7 @@ namespace PlutoGE::render
           BasicMesh mesh;
           std::unordered_map<std::uint64_t, std::uint32_t> canonicalGeometry;
           std::unordered_map<std::uint64_t, ShadowGeometryCluster> localBounds;
+          std::uint64_t contentRevision = 0;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh
@@ -196,6 +200,7 @@ namespace PlutoGE::render
           std::vector<glm::mat4> pose;
           std::uint64_t lastFrame = 0;
           std::uint64_t queuedFrame = 0;
+          std::uint64_t contentRevision = 0;
           std::uint64_t historyEpoch = 0;
           bool wasMoving = false;
           glm::vec3 boundsCenter{0};
@@ -221,6 +226,11 @@ namespace PlutoGE::render
       // One CPU-only job bounds worker count and temporary image memory.
       std::future<std::vector<std::byte>> m_normalMipJob;
       const Texture *m_pendingNormalSource = nullptr;
+      std::weak_ptr<const void> m_pendingNormalLifetime;
+      std::uint64_t m_pendingNormalRevision = 0;
+      struct TextureVersion { std::weak_ptr<const void> lifetime; std::uint64_t identity, revision; };
+      std::unordered_map<const Texture *, TextureVersion> m_textureVersions;
+      std::uint64_t m_textureResidencyRevision = 1;
       std::uint32_t m_pendingNormalWidth = 0;
       std::uint32_t m_pendingNormalHeight = 0;
       std::size_t m_sceneCommandCount = 0;

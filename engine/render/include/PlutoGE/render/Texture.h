@@ -1,4 +1,6 @@
 #pragma once
+#include "PlutoGE/render/RenderObjectIdentity.h"
+#include <memory>
 
 #include <glad/glad.h>
 #include <array>
@@ -26,6 +28,9 @@ namespace PlutoGE::render
         Texture(const TextureConfig &config) : m_filePath(config.filePath) {}
         ~Texture();
 
+        std::uint64_t GetIdentity() const { return m_identity.Value(); }
+        std::uint64_t GetContentRevision() const { return m_contentRevision; }
+        std::weak_ptr<const void> GetLifetimeToken() const { return m_lifetime; }
         GLenum GetType() const { return m_type; }
 
         GLuint GetTextureID() const { return m_textureID; }
@@ -49,6 +54,9 @@ namespace PlutoGE::render
         void Upload3D(GLenum format, GLenum type, const void *data) const;
 
     protected:
+        RenderObjectIdentity m_identity;
+        mutable std::uint64_t m_contentRevision = 1;
+        std::shared_ptr<const void> m_lifetime = std::make_shared<const int>(0);
         friend class TextureManager;   // Allow TextureManager to access private members
         std::string m_filePath;        // Path to the texture file (for reference)
         GLuint m_textureID = 0;        // OpenGL texture ID

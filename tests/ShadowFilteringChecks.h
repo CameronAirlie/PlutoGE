@@ -61,8 +61,21 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     lighting.shadowFilterRadius = 4;
     renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {},
                     std::span(&caster, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
-    if (readPixels(renderer.GetColorTexture()) != pixels)
+    const auto filteredPixels = readPixels(renderer.GetColorTexture());
+    if (filteredPixels != pixels)
+    {
+        std::size_t changed = 0;
+        int maximum = 0;
+        for (std::size_t i = 0; i < pixels.size(); ++i)
+        {
+            const int delta = std::abs(int(filteredPixels[i]) - int(pixels[i]));
+            changed += delta != 0;
+            maximum = std::max(maximum, delta);
+        }
+        std::cout << "Coverage draws: " << renderer.GetFrameStats().geometryDepthDraws << "\n";
+        std::cout << "Shadow filter changed channels: " << changed << ", max delta " << maximum << '\n';
         throw std::runtime_error("Screen-space filter radius changed shadow-map coverage");
+    }
     lighting.shadowFilterEnabled = false;
 
     // A straight, magnified edge exposes plateaus hidden by counting unique
@@ -381,6 +394,7 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     lighting.cameraPosition = {0, 0, 4};
     lighting.pointLights.push_back({{0, 0, 4}, 20, {1, 1, 1}, 16, true});
     receiver = BasicDraw{}; receiver.mesh = &mesh;
+    receiver.twoSided = true; // This fixture observes both sides of the receiver.
     receiver.model[3].z = .2f;
     std::array<BasicDraw, 2> faceCasters{receiver, receiver};
     faceCasters[0].model[3].z = .7f; faceCasters[1].model[3].z = 7.3f;

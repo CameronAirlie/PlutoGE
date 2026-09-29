@@ -117,6 +117,22 @@ groupshared uint planRequested[PLUTO_VSM_CAPACITY];
 groupshared uint planFree[PLUTO_VSM_CAPACITY];
 groupshared uint planCounts[PLUTO_VSM_LEVELS];
 groupshared uint planQuotas[PLUTO_VSM_LEVELS];
+// A deterministic workgroup scan preserves request order and physical-slot
+// preference without serial storage-buffer reads/writes on lane zero.
+groupshared uint planScan[VSM_PLANNING_LANES];
+uint inclusivePlanScan(uint value, uint lane)
+{
+    planScan[lane] = value;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = 1; stride < VSM_PLANNING_LANES; stride *= 2)
+    {
+        uint previous = lane >= stride ? planScan[lane - stride] : 0;
+        GroupMemoryBarrierWithGroupSync();
+        planScan[lane] += previous;
+        GroupMemoryBarrierWithGroupSync();
+    }
+    return planScan[lane];
+}
 [shader("compute")][numthreads(VSM_PLANNING_LANES, 1, 1)]
 void allocateMain(uint lane : SV_GroupIndex)
 {
@@ -129,80 +145,127 @@ void allocateMain(uint lane : SV_GroupIndex)
         bool retained = p.state.y != 0 && p.address.w == vsm.origins[level].z &&
             all(local >= 0) && all(local < int(virtualGrid(vsm, level)));
         planRequested[slot] = 0;
-        if (retained) planRequested[slot] = requestMask[uint2(local.x, local.y + level * PLUTO_VSM_GRID)] != 0 ? 1u : 0u;
+        if (retained && requestMask[uint2(local.x, local.y + level * PLUTO_VSM_GRID)] != 0)
+            planRequested[slot] = uint(level) + 1;
+        planFree[slot] = 0;
         pages[slot] = p;
     }
+    if (lane == 0)
+    {
+        uint reserved = 0, fineLevels = 0;
+        for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
+        {
+            if (virtualCoarseLevel(level)) reserved += requests[level];
+            else if (requests[level] != 0) ++fineLevels;
+        }
+        uint fineCapacity = vsm.pool.x - min(vsm.pool.x, reserved);
+        uint spare = vsm.pool.x;
+        for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
+        {
+            planQuotas[level] = min(requests[level], virtualCoarseLevel(level) ? requests[level] : fineCapacity / max(1u, fineLevels));
+            spare -= planQuotas[level];
+        }
+        for (uint round = 0; round < vsm.pool.x && spare > 0; ++round)
+            for (uint level = 0; level < PLUTO_VSM_LEVELS && spare > 0; ++level)
+                if (planQuotas[level] < requests[level]) { ++planQuotas[level]; --spare; }
+        stats[13] = fineCapacity;
+        stats[15] = reserved;
+    }
     AllMemoryBarrierWithGroupSync();
-    if (lane != 0) return;
-    uint reserved = 0, fineLevels = 0;
-    for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
+    // Independent level ranks keep the same retained-slot preference as the
+    // reference allocator. Only shared compact metadata is scanned here.
+    for (uint level = lane; level < PLUTO_VSM_LEVELS; level += VSM_PLANNING_LANES)
     {
-        if (virtualCoarseLevel(level)) reserved += requests[level];
-        else if (requests[level] != 0) ++fineLevels;
+        uint count = 0;
+        for (uint slot = 0; slot < vsm.pool.x; ++slot)
+            if (planRequested[slot] == level + 1 && count < planQuotas[level])
+            {
+                planFree[slot] = 1;
+                ++count;
+            }
+        planCounts[level] = count;
     }
-    uint fineCapacity = vsm.pool.x - min(vsm.pool.x, reserved);
-    uint spare = vsm.pool.x;
-    for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
-    {
-        planCounts[level] = 0;
-        planQuotas[level] = min(requests[level], virtualCoarseLevel(level) ? requests[level] : fineCapacity / max(1u, fineLevels));
-        spare -= planQuotas[level];
-    }
-    for (uint round = 0; round < vsm.pool.x && spare > 0; ++round)
-        for (uint level = 0; level < PLUTO_VSM_LEVELS && spare > 0; ++level)
-            if (planQuotas[level] < requests[level]) { ++planQuotas[level]; --spare; }
-    uint freeCount = 0;
-    for (uint slot = 0; slot < vsm.pool.x; ++slot)
+    GroupMemoryBarrierWithGroupSync();
+    for (uint slot = lane; slot < vsm.pool.x; slot += VSM_PLANNING_LANES)
     {
         VirtualShadowPage p = pages[slot];
         uint level = p.address.z;
-        if (planRequested[slot] != 0 && planCounts[level] < planQuotas[level])
+        if (planFree[slot] != 0)
         {
             int2 local = p.address.xy - vsm.origins[level].xy;
             p.state.x = local.y * PLUTO_VSM_GRID + local.x;
             p.state.y = vsm.limits.y;
             p.pending.w = max(p.pending.w, vsm.membershipEpochs[level / 4][level % 4]);
             requestMask[uint2(local.x, local.y + level * PLUTO_VSM_GRID)] = 2;
-            ++planCounts[level];
         }
-        // Leave unused contents eligible for reuse if they are requested again
-        // before this physical slot is reassigned. Its old frame excludes it
-        // from this frame's signature/render/publish passes.
-        else { planFree[freeCount++] = slot; p.freshness.x = 0; }
+        else p.freshness.x = 0;
         pages[slot] = p;
+    }
+    AllMemoryBarrierWithGroupSync();
+    // Reuse the request scratch as an ordered free-slot list after all readers
+    // of its old contents have completed.
+    uint freeCount = 0;
+    for (uint first = 0; first < vsm.pool.x; first += VSM_PLANNING_LANES)
+    {
+        uint slot = first + lane;
+        uint freeSlot = slot < vsm.pool.x && planFree[slot] == 0 ? 1u : 0u;
+        uint rank = inclusivePlanScan(freeSlot, lane);
+        if (freeSlot != 0) planRequested[freeCount + rank - 1] = slot;
+        freeCount += planScan[VSM_PLANNING_LANES - 1];
+        GroupMemoryBarrierWithGroupSync();
     }
     uint nextFree = 0;
     for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
-        for (uint index = 0; index < requests[level] && planCounts[level] < planQuotas[level]; ++index)
-        {
-            uint key = requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + index];
-            uint2 local = virtualPageCoordinate(key);
-            uint2 at = local + uint2(0, level * PLUTO_VSM_GRID);
-            if (requestMask[at] != 1) continue;
-            uint slot = planFree[nextFree++];
-            VirtualShadowPage p = pages[slot];
-            if (p.state.y != 0) ++stats[4];
-            p.address = int4(vsm.origins[level].xy + int2(local), int(level), vsm.origins[level].z);
-            p.state = uint4(key, vsm.limits.y, 0, 0);
-            p.signature = 0;
-            p.freshness = 0;
-            p.pending.w = vsm.limits.y;
-            pages[slot] = p;
-            requestMask[at] = 2;
-            ++planCounts[level];
-        }
-    uint localResident = 0;
-    for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
-        stats[0] += requests[level];
-        stats[1] += planCounts[level];
-        if (level < PLUTO_VSM_FINE_LEVELS) { stats[11] += requests[level]; stats[12] += planCounts[level]; }
-        else if (!virtualCoarseLevel(level)) { stats[14] += requests[level]; localResident += planCounts[level]; }
+        uint count = planCounts[level];
+        for (uint first = 0; first < requests[level] && count < planQuotas[level]; first += VSM_PLANNING_LANES)
+        {
+            uint index = first + lane;
+            uint key = 0;
+            uint needed = 0;
+            if (index < requests[level])
+            {
+                key = requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + index];
+                uint2 at = virtualPageCoordinate(key) + uint2(0, level * PLUTO_VSM_GRID);
+                needed = requestMask[at] == 1 ? 1u : 0u;
+            }
+            uint rank = inclusivePlanScan(needed, lane);
+            uint assigned = min(planScan[VSM_PLANNING_LANES - 1], planQuotas[level] - count);
+            if (needed != 0 && rank <= assigned)
+            {
+                uint slot = planRequested[nextFree + rank - 1];
+                VirtualShadowPage p = pages[slot];
+                if (p.state.y != 0) InterlockedAdd(stats[4], 1u);
+                p.address = int4(vsm.origins[level].xy + int2(virtualPageCoordinate(key)), int(level), vsm.origins[level].z);
+                p.state = uint4(key, vsm.limits.y, 0, 0);
+                p.signature = 0;
+                p.freshness = 0;
+                p.pending.w = vsm.limits.y;
+                pages[slot] = p;
+                requestMask[virtualPageCoordinate(key) + uint2(0, level * PLUTO_VSM_GRID)] = 2;
+            }
+            count += assigned;
+            nextFree += assigned;
+            AllMemoryBarrierWithGroupSync();
+        }
+        if (lane == 0) planCounts[level] = count;
     }
-    stats[5] = stats[0] - stats[1];
-    stats[13] = fineCapacity - localResident;
-    stats[15] = reserved;
+    GroupMemoryBarrierWithGroupSync();
+    if (lane == 0)
+    {
+        uint localResident = 0;
+        for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
+        {
+            stats[0] += requests[level];
+            stats[1] += planCounts[level];
+            if (level < PLUTO_VSM_FINE_LEVELS) { stats[11] += requests[level]; stats[12] += planCounts[level]; }
+            else if (!virtualCoarseLevel(level)) { stats[14] += requests[level]; localResident += planCounts[level]; }
+        }
+        stats[5] = stats[0] - stats[1];
+        stats[13] -= localResident;
+    }
 }
+
 bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
 {
     if (caster.bounds.w < 0) return true;

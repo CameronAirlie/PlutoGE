@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <type_traits>
+#include <stdexcept>
 
 namespace
 {
@@ -56,6 +57,13 @@ int main()
     assert(!BufferHandle{}.IsValid());
 
     detail::HandleRegistry<BufferHandle, int> registry;
+    // Recorded commands cache pointers, not only handles. Growth must preserve
+    // resource addresses independently of generation/reuse checks below.
+    const auto stableHandle = registry.Insert(123);
+    const auto *stablePointer = registry.Get(stableHandle);
+    for (int i = 0; i < 4096; ++i) (void)registry.Insert(i);
+    if (registry.Get(stableHandle) != stablePointer || *stablePointer != 123)
+        throw std::runtime_error("Resource registry growth invalidated a bound resource");
     const auto oldHandle = registry.Insert(42);
     assert(registry.Get(oldHandle) && *registry.Get(oldHandle) == 42);
     assert(registry.Remove(oldHandle) == 42);

@@ -202,6 +202,8 @@ namespace PlutoGE::render::rhi::vulkan
             VkBuffer buffer = VK_NULL_HANDLE;
             VmaAllocation allocation = VK_NULL_HANDLE;
             std::vector<std::byte> uniformData;
+            bool immutable = false;
+            VkDeviceSize persistentOffset = VK_WHOLE_SIZE;
             std::array<VkDeviceSize, 3> uniformOffsets{VK_WHOLE_SIZE, VK_WHOLE_SIZE, VK_WHOLE_SIZE};
             std::array<std::uint64_t, 3> uniformEpochs{};
             std::size_t size = 0;
@@ -892,7 +894,40 @@ namespace PlutoGE::render::rhi::vulkan
         VkDeviceSize uniformAlignment = 256;
         float maxSamplerAnisotropy = 1.0f;
         std::uint32_t maxIndexedIndirectBatchSize = 0;
-        static constexpr VkDeviceSize UniformArenaSize = 32ull * 1024ull * 1024ull;
+        // Preserve the original transient capacity. Immutable records occupy a
+        // bounded tail, shared by offsets across all buffered arena copies.
+        static constexpr VkDeviceSize TransientUniformSize = 32ull * 1024ull * 1024ull;
+        static constexpr VkDeviceSize UniformArenaSize = TransientUniformSize + 16ull * 1024ull * 1024ull;
+        struct UniformRange { VkDeviceSize offset, size; };
+        std::vector<UniformRange> freeUniformRanges{{TransientUniformSize, UniformArenaSize - TransientUniformSize}};
+        VkDeviceSize AllocatePersistentUniform(std::size_t size)
+        {
+            const auto alignedSize = (size + uniformAlignment - 1) & ~(uniformAlignment - 1);
+            for (auto it = freeUniformRanges.begin(); it != freeUniformRanges.end(); ++it)
+                if (it->size >= alignedSize)
+                {
+                    const auto offset = it->offset;
+                    it->offset += alignedSize; it->size -= alignedSize;
+                    if (!it->size) freeUniformRanges.erase(it);
+                    return offset;
+                }
+            return VK_WHOLE_SIZE; // Capacity pressure uses the transient path.
+        }
+        void FreePersistentUniform(const BufferResource &resource)
+        {
+            if (resource.persistentOffset == VK_WHOLE_SIZE) return;
+            freeUniformRanges.push_back({resource.persistentOffset,
+                (resource.size + uniformAlignment - 1) & ~(uniformAlignment - 1)});
+            std::sort(freeUniformRanges.begin(), freeUniformRanges.end(),
+                [](const auto &a, const auto &b) { return a.offset < b.offset; });
+            for (std::size_t i = 1; i < freeUniformRanges.size();)
+                if (freeUniformRanges[i-1].offset + freeUniformRanges[i-1].size == freeUniformRanges[i].offset)
+                {
+                    freeUniformRanges[i-1].size += freeUniformRanges[i].size;
+                    freeUniformRanges.erase(freeUniformRanges.begin() + i);
+                }
+                else ++i;
+        }
         std::string deviceName;
         float timestampPeriodNs = 1.0f;
         // Covers every submission on the graphics queue, including scene,
@@ -943,19 +978,23 @@ namespace PlutoGE::render::rhi::vulkan
         VkDeviceSize EnsureUniformResident(BufferResource &resource)
         {
             auto &arena = uniformArenas[activeFrameIndex];
-            if (resource.uniformEpochs[activeFrameIndex] == arena.epoch)
+            const bool persistent = resource.persistentOffset != VK_WHOLE_SIZE;
+            const auto epoch = persistent ? std::uint64_t{1} : arena.epoch;
+            if (resource.uniformEpochs[activeFrameIndex] == epoch)
                 return resource.uniformOffsets[activeFrameIndex];
-            const auto aligned = (arena.cursor + uniformAlignment - 1) & ~(uniformAlignment - 1);
-            if (aligned + resource.size > UniformArenaSize)
+            const auto aligned = persistent ? resource.persistentOffset :
+                (arena.cursor + uniformAlignment - 1) & ~(uniformAlignment - 1);
+            if (!persistent && aligned + resource.size > TransientUniformSize)
                 throw std::runtime_error("Vulkan per-frame uniform arena exhausted");
             std::memcpy(static_cast<std::byte *>(arena.mapped) + aligned,
                         resource.uniformData.data(), resource.size);
             arena.dirtyStart = std::min(arena.dirtyStart, aligned);
             arena.dirtyEnd = std::max(arena.dirtyEnd, aligned + resource.size);
-            arena.cursor = aligned + resource.size;
+            if (!persistent) arena.cursor = aligned + resource.size;
             resource.uniformOffsets[activeFrameIndex] = aligned;
-            resource.uniformEpochs[activeFrameIndex] = arena.epoch;
+            resource.uniformEpochs[activeFrameIndex] = epoch;
             timingStats.uniformBytesUploaded += resource.size;
+            if (persistent) timingStats.persistentUniformBytesUploaded += resource.size;
             return aligned;
         }
 
@@ -998,7 +1037,7 @@ namespace PlutoGE::render::rhi::vulkan
                         if (resource.image) vmaDestroyImage(allocator, resource.image, resource.allocation);
                     });
             collect(deferredBuffers, [&](auto &resource)
-                    { if (resource.buffer) vmaDestroyBuffer(allocator, resource.buffer, resource.allocation); });
+                    { FreePersistentUniform(resource); if (resource.buffer) vmaDestroyBuffer(allocator, resource.buffer, resource.allocation); });
 #if PLUTO_HAS_FSR2
             collect(deferredFsr2Contexts, [](auto &context)
                     {
@@ -1130,6 +1169,7 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.indexedDrawCalls = 0;
             m_impl.timingStats.dispatchCalls = 0;
             m_impl.timingStats.uniformBytesUploaded = 0;
+            m_impl.timingStats.persistentUniformBytesUploaded = 0;
             m_impl.timingStats.descriptorCpuMs = 0.0f;
             m_impl.timingStats.uniformUploadCpuMs = 0.0f;
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
@@ -1218,7 +1258,8 @@ namespace PlutoGE::render::rhi::vulkan
                                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             if (m_depth)
                 m_impl.Transition(CommandBuffer(), *m_depth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
             std::vector<VkRenderingAttachmentInfo> colors(m_colors.size());
             for (std::size_t index = 0; index < m_colors.size(); ++index)
@@ -2736,6 +2777,8 @@ namespace PlutoGE::render::rhi::vulkan
 
     BufferHandle VulkanDevice::CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.immutable && data.size() != descriptor.size)
+            throw std::invalid_argument("Immutable buffers require complete initial data");
         if (!descriptor.size || data.size() > descriptor.size)
             throw std::invalid_argument("Invalid Vulkan buffer size/data");
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -2747,9 +2790,11 @@ namespace PlutoGE::render::rhi::vulkan
         BufferResource resource;
         resource.size = descriptor.size;
         resource.usage = descriptor.usage;
+        resource.immutable = descriptor.immutable;
         if (descriptor.usage == BufferUsage::Uniform)
         {
             resource.uniformData.resize(descriptor.size);
+            if (descriptor.immutable) resource.persistentOffset = m_impl->AllocatePersistentUniform(descriptor.size);
             if (!data.empty())
                 std::memcpy(resource.uniformData.data(), data.data(), data.size());
             return m_impl->buffers.Insert(std::move(resource));
@@ -3166,6 +3211,7 @@ namespace PlutoGE::render::rhi::vulkan
         auto *resource = m_impl->buffers.Get(handle);
         if (!resource || offset > resource->size || data.size() > resource->size - offset)
             throw std::invalid_argument("Invalid Vulkan buffer update");
+        if (resource->immutable) throw std::invalid_argument("Cannot update an immutable buffer");
         if (resource->usage == BufferUsage::Uniform)
         {
             const auto uploadStart = std::chrono::steady_clock::now();

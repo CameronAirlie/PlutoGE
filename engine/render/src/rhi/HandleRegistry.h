@@ -3,6 +3,7 @@
 #include "PlutoGE/render/rhi/Types.h"
 
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -85,7 +86,9 @@ namespace PlutoGE::render::rhi::detail
             std::optional<ResourceType> resource;
             std::uint32_t generation = 1;
         };
-        std::vector<Slot> m_slots;
+        // Command contexts retain resource pointers while recording. Lazy
+        // pipeline/target creation must not relocate already bound resources.
+        std::deque<Slot> m_slots;
         std::vector<std::uint32_t> m_freeIndices;
     };
 }

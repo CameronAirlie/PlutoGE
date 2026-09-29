@@ -21,6 +21,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -28,6 +29,7 @@
 namespace PlutoGE::render
 {
     class PostProcessResourcePool;
+    class PersistentParameterCache;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -63,6 +65,11 @@ namespace PlutoGE::render
         Motion = 1u << 3u,
         History = 1u << 4u,
         Albedo = 1u << 5u,
+    };
+
+    enum class GeometryOutputLayout : std::uint8_t
+    {
+        Color, ColorMotion, Surface, Diagnostics
     };
 
     enum class BasicPostProcessStage : std::uint8_t
@@ -189,6 +196,11 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode instancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode standardFragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode colorVertex, colorInstancedVertex;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> standardVertices, standardColorVertices;
+        // Color-only and color+motion entry points, for graph and standard materials.
+        std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> compactFragments;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
@@ -372,6 +384,8 @@ namespace PlutoGE::render
 
     struct BasicLighting
     {
+        // Declare external surface-buffer consumers (for example readback tools).
+        BasicPostProcessInput requiredGeometryInputs = BasicPostProcessInput::None;
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         OcclusionMode occlusionMode = OcclusionMode::Off;
         std::vector<BasicPointLight> pointLights;
@@ -455,6 +469,9 @@ namespace PlutoGE::render
         std::uint32_t vctGeometryBuilds = 0, vctRelightDispatches = 0, vctPublications = 0;
         std::uint64_t vctPublishedVoxels = 0;
         std::uint32_t vctSecondarySlices = 0, vctSecondaryPublications = 0;
+        std::size_t geometryDepthDraws = 0;
+        std::uint32_t geometryColorOutputs = 0;
+        std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
@@ -519,6 +536,9 @@ namespace PlutoGE::render
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
+        // Reference switches for controlled rendering/performance comparisons.
+        void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
+        { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
         [[nodiscard]] const char *VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
                                                                std::span<const BasicDraw> shadowDraws = {}) const;
         [[nodiscard]] bool UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
@@ -557,6 +577,16 @@ namespace PlutoGE::render
         }
 
     private:
+        [[nodiscard]] rhi::PipelineHandle GeometryPipeline(const BasicDraw &draw, bool instanced,
+            GeometryOutputLayout layout, bool depthOnly, bool prepassed);
+        void EnsureGeometryTargets(GeometryOutputLayout layout);
+        bool m_compactGeometry = true, m_depthPrepass = true, m_materialCulling = true;
+        std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
+        std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> m_compactFragments;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_coverageFragments;
+        rhi::GraphicsPipelineDescriptor::ShaderCode m_standardFragment;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
+        std::unordered_map<unsigned, rhi::GraphicsPipeline> m_geometryPipelines;
         [[nodiscard]] rhi::TextureHandle RenderFusedColor(rhi::TextureHandle source,
             std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
             std::size_t bufferIndex, std::size_t &targetIndex);
@@ -603,11 +633,6 @@ namespace PlutoGE::render
         rhi::Texture m_skyQuadratureTexture;
         rhi::Texture m_glassDepthCopy;
         rhi::GraphicsPipeline m_pipeline;
-        rhi::GraphicsPipeline m_instancedPipeline;
-        rhi::GraphicsPipeline m_outlinePipeline, m_outlineInstancedPipeline;
-        rhi::GraphicsPipeline m_opaqueNoDebugPipeline, m_instancedNoDebugPipeline;
-        std::array<rhi::GraphicsPipeline, 4> m_standardOpaquePipelines;
-        rhi::GraphicsPipeline m_outlineNoDebugPipeline, m_outlineInstancedNoDebugPipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;
         rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;
@@ -643,9 +668,8 @@ namespace PlutoGE::render
         std::size_t m_oceanBufferCursor = 0;
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
-        std::vector<rhi::Buffer> m_objectBuffers;
-        std::vector<rhi::Buffer> m_instanceBuffers;
-        std::vector<rhi::Buffer> m_materialBuffers;
+        std::unique_ptr<PersistentParameterCache> m_geometryParameters;
+
         rhi::Texture m_fallbackTexture;
         rhi::Texture m_fallbackNormalTexture;
         rhi::Texture m_fallbackDataTexture;

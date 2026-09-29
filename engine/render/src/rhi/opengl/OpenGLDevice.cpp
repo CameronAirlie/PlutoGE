@@ -21,6 +21,7 @@ namespace PlutoGE::render::rhi::opengl
             GLuint name = 0;
             std::size_t size = 0;
             BufferUsage usage{};
+            bool immutable = false;
         };
         struct TextureResource
         {
@@ -665,6 +666,8 @@ namespace PlutoGE::render::rhi::opengl
 
     BufferHandle OpenGLDevice::CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> data)
     {
+        if (descriptor.immutable && data.size() != descriptor.size)
+            throw std::invalid_argument("Immutable buffers require complete initial data");
         if (descriptor.size == 0 || data.size() > descriptor.size)
             throw std::invalid_argument("RHI buffer has an invalid size or initial data");
         GLuint name = 0;
@@ -672,7 +675,7 @@ namespace PlutoGE::render::rhi::opengl
         glBindBuffer(BufferTarget(descriptor.usage), name);
         glBufferData(BufferTarget(descriptor.usage), static_cast<GLsizeiptr>(descriptor.size), data.empty() ? nullptr : data.data(), GL_DYNAMIC_DRAW);
         LabelObject(GL_BUFFER, name, descriptor.debugName);
-        return m_impl->buffers.Insert(BufferResource{name, descriptor.size, descriptor.usage});
+        return m_impl->buffers.Insert(BufferResource{name, descriptor.size, descriptor.usage, descriptor.immutable});
     }
 
     TextureHandle OpenGLDevice::CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> data)
@@ -844,6 +847,7 @@ namespace PlutoGE::render::rhi::opengl
         auto *buffer = m_impl->buffers.Get(handle);
         if (!buffer || offset > buffer->size || data.size() > buffer->size - offset)
             throw std::invalid_argument("Invalid, stale, or out-of-bounds RHI buffer update");
+        if (buffer->immutable) throw std::invalid_argument("Cannot update an immutable buffer");
         glBindBuffer(BufferTarget(buffer->usage), buffer->name);
         glBufferSubData(BufferTarget(buffer->usage), static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(data.size()), data.data());
     }

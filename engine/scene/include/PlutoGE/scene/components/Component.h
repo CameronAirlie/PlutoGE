@@ -53,7 +53,8 @@ namespace PlutoGE::scene
         virtual void Deserialize(const std::vector<Property> &properties) {}
 
         bool IsEnabled() const { return m_enabled; }
-        void SetEnabled(bool enabled) { m_enabled = enabled; }
+        void SetEnabled(bool enabled) { if (m_enabled != enabled) { m_enabled = enabled; OnEnabledChanged(); } }
+        virtual void OnEnabledChanged() {}
 
         Entity *GetOwner() const { return m_entity; }
         ComponentTypeID GetTypeID() const { return m_typeID; }

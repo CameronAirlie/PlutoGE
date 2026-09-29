@@ -2158,7 +2158,7 @@ namespace PlutoGE::assets
                 continue;
             }
 
-            auto &config = material->GetConfig();
+            auto config = material->ReadConfig();
             const std::string effectiveReference = config.shaderGraphReference.empty()
                                                        ? std::string(Project::kBuiltinDefaultShaderGraphReference)
                                                        : config.shaderGraphReference;
@@ -2166,6 +2166,7 @@ namespace PlutoGE::assets
             {
                 config.shaderGraphReference = effectiveReference;
                 ResolveMaterialShaderGraph(config);
+                material->SetConfig(std::move(config));
             }
         }
     }
@@ -2489,7 +2490,7 @@ namespace PlutoGE::assets
             {
                 // Components and render-command caches share this pointer.
                 // Replace its saved configuration, not the object itself.
-                cachedMaterial->GetConfig() = std::move(material->GetConfig());
+                cachedMaterial->SetConfig(material->ReadConfig());
                 delete material;
                 material = cachedMaterial;
             }
@@ -2644,7 +2645,7 @@ namespace PlutoGE::assets
                 cachedConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
             }
             ResolveMaterialShaderGraph(cachedConfig);
-            cachedMaterial->second->GetConfig() = cachedConfig;
+            cachedMaterial->second->SetConfig(cachedConfig);
         }
 
         return true;

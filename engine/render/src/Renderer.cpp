@@ -61,13 +61,13 @@ namespace PlutoGE::render
 
         bool HasVertexGraph(const RenderCommand &command)
         {
-            return command.material && command.material->GetConfig().shaderGraphProgram &&
-                command.material->GetConfig().shaderGraphProgram->data.header.z>0;
+            return command.material && command.material->ReadConfig().shaderGraphProgram &&
+                command.material->ReadConfig().shaderGraphProgram->data.header.z>0;
         }
         bool IsShadowCasterCommand(const RenderCommand &command)
         {
             return command.mesh && command.material && command.castsShadow &&
-                   command.material->GetConfig().castsShadow;
+                   command.material->ReadConfig().castsShadow;
         }
 
         bool ShadowTransformsEqual(const glm::mat4 &a, const glm::mat4 &b,
@@ -1041,11 +1041,11 @@ namespace PlutoGE::render
             m_renderCommandsDirty = true;
         const std::size_t commandIndex = m_renderCommands.size();
         auto &submitted = m_renderCommands.emplace_back(command);
-        if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
-            submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
+        if(submitted.mesh && submitted.material && submitted.material->ReadConfig().shaderGraphProgram)
+            submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->ReadConfig().shaderGraphProgram->data.header.w));
         TrackShadowCommand(commandIndex, submitted);
         if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
-        if(command.material)for(const auto &pass:command.material->GetConfig().additionalPasses){
+        if(command.material)for(const auto &pass:command.material->ReadConfig().additionalPasses){
             auto overlay=command;overlay.material=pass.get();overlay.castsShadow=false;
             SubmitRenderCommand(overlay);m_renderCommandsDirty=true;
         }
@@ -1079,12 +1079,12 @@ namespace PlutoGE::render
             }
             const std::size_t commandIndex = m_renderCommands.size();
             auto &submitted = m_renderCommands.emplace_back(command);
-            if(submitted.mesh && submitted.material && submitted.material->GetConfig().shaderGraphProgram)
-                submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->GetConfig().shaderGraphProgram->data.header.w));
+            if(submitted.mesh && submitted.material && submitted.material->ReadConfig().shaderGraphProgram)
+                submitted.mesh=submitted.mesh->GetTessellated(unsigned(submitted.material->ReadConfig().shaderGraphProgram->data.header.w));
             TrackShadowCommand(commandIndex, submitted);
             if (submitted.mesh != command.mesh) m_renderCommandsDirty = true;
             if (command.material)
-                for (const auto &pass : command.material->GetConfig().additionalPasses)
+                for (const auto &pass : command.material->ReadConfig().additionalPasses)
                 {
                     auto overlay = command;
                     overlay.material = pass.get();
@@ -1367,7 +1367,7 @@ namespace PlutoGE::render
 
         // Shadow casters must be retained regardless of camera visibility.
         // Avoid testing every camera plane only to accept them afterward.
-        if (command.castsShadow && command.material && command.material->GetConfig().castsShadow)
+        if (command.castsShadow && command.material && command.material->ReadConfig().castsShadow)
             return true;
 
         for (const auto &frustum : m_submissionFrustums)

@@ -22,11 +22,14 @@ namespace PlutoGE::render
             std::uint64_t id = 0, revision = 0, seen = 0, generation = 0;
             Revisions revisions;
             bool queued = false, structuralDirty = true;
+            const void *scope = nullptr;
+            std::uint64_t scopeGeneration = 0;
             std::vector<RenderCommand> source, expanded;
+            std::vector<std::uint64_t> meshRevisions;
             std::vector<std::size_t> expandedSources;
             std::vector<MaterialTopology> dependencies;
         };
-        struct MaterialState { MaterialTopology topology; std::uint64_t frame = 0; };
+        struct MaterialState { MaterialTopology topology; std::uint64_t frame = 0, identity = 0, revision = 0; };
         std::uint64_t frame = 1, generation = 0, revision = 0;
         std::vector<std::unique_ptr<Producer>> slots;
         std::vector<std::uint32_t> freeSlots;
@@ -34,19 +37,30 @@ namespace PlutoGE::render
         std::vector<Handle> dirty;
         std::vector<RenderCommand *> commands;
         std::unordered_map<Material *, MaterialState> materialSnapshots;
+        struct Scope { std::weak_ptr<const void> lifetime; std::uint64_t seen = 0, generation = 0; };
+        std::uint64_t nextScopeGeneration = 0;
+        std::unordered_map<const void *, Scope> scopes;
+        const void *activeScope = nullptr;
         bool synchronized = false, membershipChanged = false;
+        bool hasTransient = false, hasUntrackedMaterials = false;
+        std::uint64_t materialEpoch = 0;
         Stats stats;
 
         const MaterialTopology &Snapshot(Material *material)
         {
             auto &entry = materialSnapshots[material];
+            hasUntrackedMaterials |= material->GetRevision() == 0;
             if (entry.frame != frame)
             {
                 entry.frame = frame;
+                const auto revision = material->GetRevision();
+                hasUntrackedMaterials |= revision == 0;
+                if (revision && entry.identity == material->GetIdentity() && entry.revision == revision) return entry.topology;
+                entry.identity = material->GetIdentity(); entry.revision = revision;
                 auto &snapshot = entry.topology;
                 snapshot.material = material;
                 snapshot.shader = material->GetShader();
-                const auto &config = material->GetConfig();
+                const auto &config = material->ReadConfig();
                 snapshot.graph = config.shaderGraphProgram.get();
                 snapshot.tessellation = config.shaderGraphProgram ? config.shaderGraphProgram->data.header.w : 0;
                 snapshot.overlays.clear();
@@ -101,6 +115,34 @@ namespace PlutoGE::render
         state.stats = {};
         state.synchronized = false;
     }
+    bool RetainedRenderScene::BeginScope(const std::shared_ptr<const void> &lifetime)
+    {
+        auto &state = *m_impl;
+        auto &scope = state.scopes[lifetime.get()];
+        const bool publish = scope.lifetime.expired() || scope.seen + 1 < state.frame;
+        const auto generation = scope.lifetime.expired() ? ++state.nextScopeGeneration : scope.generation;
+        scope = {lifetime, state.frame, generation};
+        state.activeScope = lifetime.get();
+        state.membershipChanged |= publish;
+        state.synchronized = false;
+        return publish;
+    }
+    void RetainedRenderScene::EndScope() { m_impl->activeScope = nullptr; }
+    void RetainedRenderScene::Remove(std::uint64_t id)
+    {
+        auto &state = *m_impl;
+        auto found = state.producers.find(id);
+        if (found == state.producers.end()) return;
+        // A queued removal from an old scene must not remove an object that
+        // has already migrated and published into a different active scope.
+        if (state.activeScope && state.slots[found->second.index]->scope != state.activeScope) return;
+        state.slots[found->second.index].reset();
+        state.freeSlots.push_back(found->second.index);
+        state.producers.erase(found);
+        ++state.stats.removedProducers;
+        state.membershipChanged = true;
+        state.synchronized = false;
+    }
     RetainedRenderScene::Handle RetainedRenderScene::Publish(std::uint64_t id, std::uint64_t revision,
                                                             std::span<const RenderCommand> commands)
     {
@@ -126,13 +168,16 @@ namespace PlutoGE::render
         auto &producer = *state.slots[handle.index];
         if (producer.seen != state.frame) state.synchronized = false;
         producer.seen = state.frame;
+        producer.scope = state.activeScope;
+        producer.scopeGeneration = producer.scope ? state.scopes.at(producer.scope).generation : 0;
+        state.hasTransient |= producer.scope == nullptr;
         if (producer.revision == revision) { ++state.stats.reusedProducers; return handle; }
         bool geometryChanged = producer.source.size() != commands.size();
         bool materialChanged = geometryChanged, transformChanged = geometryChanged;
         for (std::size_t i = 0; i < std::min(producer.source.size(), commands.size()); ++i)
         {
             const auto &a = producer.source[i], &b = commands[i];
-            geometryChanged |= a.mesh != b.mesh || a.submeshIndex != b.submeshIndex || a.lodIndex != b.lodIndex || a.isStatic != b.isStatic ||
+            geometryChanged |= producer.meshRevisions[i] != (b.mesh ? b.mesh->GetContentRevision() : 0) || a.mesh != b.mesh || a.submeshIndex != b.submeshIndex || a.lodIndex != b.lodIndex || a.isStatic != b.isStatic ||
                 a.castsShadow != b.castsShadow || a.minLodIndex != b.minLodIndex || a.minShadowLodIndex != b.minShadowLodIndex ||
                 a.maxDrawDistance != b.maxDrawDistance || a.maxShadowDistance != b.maxShadowDistance ||
                 a.usePrimaryUvForLightmap != b.usePrimaryUvForLightmap || a.terrainGeomorph != b.terrainGeomorph;
@@ -146,6 +191,8 @@ namespace PlutoGE::render
         if (transformChanged) ++producer.revisions.transform;
         producer.structuralDirty |= geometryChanged || materialChanged;
         producer.source.assign(commands.begin(), commands.end());
+        producer.meshRevisions.clear();
+        for (const auto &command : commands) producer.meshRevisions.push_back(command.mesh ? command.mesh->GetContentRevision() : 0);
         producer.revision = revision;
         ++state.stats.updates;
         state.Queue(handle);
@@ -155,11 +202,23 @@ namespace PlutoGE::render
     {
         auto &state = *m_impl;
         if (state.synchronized) return;
+        // Stable tracked scenes do no per-producer dependency validation.
+        // Escaped mutable configs retain the conservative compatibility walk.
+        const auto materialEpoch = Material::ChangeEpoch();
+        const bool liveScopes = std::ranges::all_of(state.scopes, [&](const auto &item) {
+            return !item.second.lifetime.expired() && item.second.seen == state.frame;
+        });
+        const bool inspect = state.hasTransient || state.hasUntrackedMaterials ||
+            state.materialEpoch != materialEpoch || !liveScopes || state.membershipChanged;
+        state.materialEpoch = materialEpoch;
         // Retire missing leases before inspecting any raw resource dependency.
-        for (auto it = state.producers.begin(); it != state.producers.end();)
+        if (inspect) { state.hasTransient = false; state.hasUntrackedMaterials = false; }
+        if (inspect) for (auto it = state.producers.begin(); it != state.producers.end();)
         {
             auto &producer = state.slots[it->second.index];
-            if (producer->seen != state.frame)
+            const auto scope = state.scopes.find(producer->scope);
+            const bool liveScope = scope != state.scopes.end() && scope->second.generation == producer->scopeGeneration && !scope->second.lifetime.expired() && scope->second.seen == state.frame;
+            if (producer->scope ? !liveScope : producer->seen != state.frame)
             {
                 state.freeSlots.push_back(it->second.index);
                 producer.reset();
@@ -169,6 +228,7 @@ namespace PlutoGE::render
             }
             else
             {
+                state.hasTransient |= producer->scope == nullptr;
                 if (!producer->structuralDirty)
                     for (const auto &dependency : producer->dependencies)
                         if (!(dependency == state.Snapshot(dependency.material)))
@@ -223,6 +283,7 @@ namespace PlutoGE::render
         state.stats.activeProducers = state.producers.size();
         state.stats.activeCommands = state.commands.size();
         std::erase_if(state.materialSnapshots, [&](const auto &item) { return item.second.frame != state.frame; });
+        std::erase_if(state.scopes, [&](const auto &item) { return item.second.lifetime.expired() || item.second.seen != state.frame; });
         state.membershipChanged = false;
         state.synchronized = true;
     }

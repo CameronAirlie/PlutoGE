@@ -220,6 +220,9 @@ namespace PlutoGE::render
         [[nodiscard]] RenderCommandView GetSceneRenderCommandView();
         [[nodiscard]] RenderCommandView GetVisibleRenderCommandView() const;
         [[nodiscard]] const RetainedRenderScene::Stats &GetRetainedSceneStats() const { return m_retainedScene.GetStats(); }
+        bool BeginRenderSceneScope(const std::shared_ptr<const void> &lifetime) { return m_retainedScene.BeginScope(lifetime); }
+        void EndRenderSceneScope() { m_retainedScene.EndScope(); }
+        void RemoveRenderProducer(std::uint64_t producer) { m_retainedScene.Remove(producer); }
         void PublishRenderProducer(std::uint64_t producer, std::uint64_t revision, std::span<const RenderCommand> commands);
         // Updates LOD selection and camera visibility without executing the
         // legacy OpenGL pass graph. RHI backends use this shared scene-prep path.

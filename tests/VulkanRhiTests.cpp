@@ -142,6 +142,10 @@ int main(int argc, char **argv)
         shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
         LoadRenderOptimizationShaders(shaders);
         BasicRenderer renderer;
+        if (argc > 2 && std::string_view(argv[2]) == "--geometry-reference")
+            renderer.SetGeometryOptimizations(false, false, false);
+        if (argc > 2 && std::string_view(argv[2]) == "--geometry-no-prepass")
+            renderer.SetGeometryOptimizations(true, false, true);
         if (argc > 3 && std::string_view(argv[3]) == "--reference-stages") shaders.ssrStages = {};
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
@@ -542,6 +546,7 @@ int main(int argc, char **argv)
             std::cerr << "BasicRenderer shadow cache invalidation was not cascade-local\n";
             return 15;
         }
+        neutralLighting.requiredGeometryInputs = BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Motion;
         renderer.Render(projection * view, neutralLighting, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
         const auto normalPixels = device.ReadTextureRgba8(renderer.GetNormalTexture());

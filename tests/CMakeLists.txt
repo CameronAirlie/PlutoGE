@@ -90,6 +90,13 @@ endif()
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+if (WIN32 AND TARGET OpenAL)
+    foreach(rhi_test IN ITEMS PlutoGEOpenGLRhiTests PlutoGEVulkanRhiTests)
+        add_custom_command(TARGET ${rhi_test} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${rhi_test}>/$<TARGET_FILE_NAME:OpenAL>)
+    endforeach()
+endif()
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)

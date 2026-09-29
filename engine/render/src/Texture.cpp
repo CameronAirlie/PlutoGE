@@ -154,6 +154,7 @@ namespace PlutoGE::render
         Graphics::BindTexture(GL_TEXTURE_3D, m_textureID);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, m_width, m_height, m_depth, format, type, data);
+        ++m_contentRevision;
         Graphics::BindTexture(GL_TEXTURE_3D, 0);
     }
 }

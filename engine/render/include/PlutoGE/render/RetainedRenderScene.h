@@ -30,6 +30,11 @@ namespace PlutoGE::render
         RetainedRenderScene(const RetainedRenderScene &) = delete;
         RetainedRenderScene &operator=(const RetainedRenderScene &) = delete;
         void BeginFrame();
+        // A scene lease replaces per-object leases. False means unchanged
+        // producers remain registered; true requires initial publication.
+        bool BeginScope(const std::shared_ptr<const void> &lifetime);
+        void EndScope();
+        void Remove(std::uint64_t producer);
         Handle Publish(std::uint64_t producer, std::uint64_t revision, std::span<const RenderCommand> commands);
         // Completes queued changes before exposing any borrowed command views.
         void Synchronize();

@@ -216,6 +216,9 @@ namespace PlutoGE::render::rhi
         std::size_t size = 0;
         BufferUsage usage = BufferUsage::Vertex;
         std::string debugName;
+        // Initialized once; backends may retain GPU residency across frames.
+        // Updating an immutable buffer is an error. Create a replacement instead.
+        bool immutable = false;
     };
 
     struct TextureDescriptor

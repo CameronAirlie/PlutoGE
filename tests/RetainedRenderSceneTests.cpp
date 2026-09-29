@@ -60,6 +60,70 @@ int main() try
     try { scene.Publish(3, 1, source); } catch (const std::invalid_argument &) { rejected = true; }
     Require(rejected, "Mutable instance producer accepted");
 
+    // A scene lease retains stationary producers without object publications.
+    RetainedRenderScene scoped;
+    auto lifetime = std::make_shared<const int>(0);
+    source[0].instanceModels.reset();
+    scoped.BeginFrame(); Require(scoped.BeginScope(lifetime), "New scope did not request publication");
+    const auto scopedHandle = scoped.Publish(42, 1, source); scoped.EndScope(); scoped.Synchronize();
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        scoped.BeginFrame(); Require(!scoped.BeginScope(lifetime), "Stable scope requested publication");
+        scoped.EndScope(); scoped.Synchronize();
+        Require(scoped.IsValid(scopedHandle) && scoped.Commands().size() == 1 && scoped.GetStats().updates == 0,
+            "Stationary producer required a per-frame publication");
+    }
+    scoped.Remove(42); scoped.Synchronize(); Require(scoped.Commands().empty(), "Explicit removal failed");
+    scoped.BeginScope(lifetime); scoped.Publish(42, 2, source); scoped.EndScope();
+    lifetime.reset(); scoped.Synchronize(); Require(scoped.Commands().empty(), "Destroyed scene retained resources");
+    auto anotherScope = std::make_shared<const int>(0);
+    scoped.BeginScope(anotherScope); scoped.Publish(43, 1, source); scoped.EndScope(); scoped.Synchronize();
+    scoped.BeginFrame(); scoped.Synchronize(); Require(scoped.Commands().empty(), "Inactive scope survived scene switch");
+    Require(scoped.BeginScope(anotherScope), "Returning scene failed to request publication"); scoped.EndScope();
+
+    auto oldScope = std::make_shared<const int>(0), newScope = std::make_shared<const int>(0);
+    scoped.BeginScope(oldScope); scoped.Publish(44, 1, source); scoped.EndScope();
+    scoped.BeginScope(newScope); scoped.Publish(44, 1, source); scoped.EndScope();
+    scoped.BeginScope(oldScope); scoped.Remove(44); scoped.EndScope(); scoped.Synchronize();
+    Require(scoped.Commands().size() == 1, "Queued old-scene removal deleted a migrated producer");
+
+    int reusedScopeStorage = 0;
+    const auto makeScope = [&] { return std::shared_ptr<const void>(&reusedScopeStorage, [](const void *) {}); };
+    auto originalScope = makeScope();
+    RetainedRenderScene reusedScopes;
+    reusedScopes.BeginFrame(); reusedScopes.BeginScope(originalScope); reusedScopes.Publish(45, 1, source);
+    reusedScopes.EndScope(); reusedScopes.Synchronize(); originalScope.reset();
+    auto replacementScope = makeScope();
+    Require(reusedScopes.BeginScope(replacementScope), "Recycled scope address retained old generation");
+    reusedScopes.EndScope(); reusedScopes.Synchronize();
+    Require(reusedScopes.Commands().empty(), "Recycled scope address resurrected stale producer");
+
+    Material versioned;
+    RetainedRenderScene dependencies;
+    auto dependencyScope = std::make_shared<const int>(0);
+    std::array dependencySource{RenderCommand{.material = &versioned}};
+    dependencies.BeginFrame(); dependencies.BeginScope(dependencyScope);
+    dependencies.Publish(100, 1, dependencySource); dependencies.EndScope(); dependencies.Synchronize();
+    auto editedConfig = versioned.ReadConfig();
+    editedConfig.additionalPasses.push_back(std::make_shared<Material>());
+    versioned.SetConfig(std::move(editedConfig));
+    dependencies.BeginFrame(); dependencies.BeginScope(dependencyScope); dependencies.EndScope(); dependencies.Synchronize();
+    Require(dependencies.Commands().size() == 2 && dependencies.GetStats().updates == 0,
+        "Tracked material topology edit required object republication");
+    dependencies.BeginFrame(); dependencies.BeginScope(dependencyScope); dependencies.EndScope(); dependencies.Synchronize();
+    Require(dependencies.GetStats().rebuiltCommands == 0, "Stable tracked dependencies rebuilt commands");
+
+    Material tracked;
+    const auto materialRevision = tracked.GetRevision();
+    tracked.SetRoughness(tracked.ReadConfig().roughness);
+    Require(tracked.GetRevision() == materialRevision, "No-op material edit invalidated records");
+    tracked.SetRoughness(.25f);
+    Require(tracked.GetRevision() > materialRevision, "Material edit missed revision");
+    const auto config = tracked.ReadConfig(); tracked.SetConfig(config);
+    Require(tracked.GetRevision() != 0, "Tracked config replacement escaped mutable storage");
+    auto &escaped = tracked.GetConfig(); escaped.roughness = .5f;
+    Require(tracked.GetRevision() == 0, "Escaped material reference incorrectly trusted revisions");
+
     // The renderer's modern views borrow persistent rigid records. Compatibility
     // snapshots and transient submissions still describe the same scene.
     Renderer renderer;
@@ -158,6 +222,29 @@ int main() try
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / frames;
         Require(submitted == frames * many.size(), "Submission benchmark lost commands");
         std::cout << (retained ? "Retained" : "Transient") << " rigid submission: " << ms << " ms/frame (2048 commands)\n";
+    }
+    // One producer per object measures elimination of the per-object heartbeat.
+    for (const bool useScope : {false, true})
+    {
+        Renderer benchmark;
+        auto lifetime = std::make_shared<const int>(0);
+        benchmark.ClearRenderCommands();
+        if (useScope) benchmark.BeginRenderSceneScope(lifetime);
+        for (std::size_t i = 0; i < many.size(); ++i)
+            benchmark.PublishRenderProducer(i + 1, 1, std::span(&many[i], 1));
+        benchmark.EndRenderSceneScope(); (void)benchmark.GetSceneRenderCommandView();
+        const auto start = std::chrono::steady_clock::now();
+        for (int frame = 0; frame < 240; ++frame)
+        {
+            benchmark.ClearRenderCommands();
+            if (useScope) { benchmark.BeginRenderSceneScope(lifetime); benchmark.EndRenderSceneScope(); }
+            else for (std::size_t i = 0; i < many.size(); ++i)
+                benchmark.PublishRenderProducer(i + 1, 1, std::span(&many[i], 1));
+            Require(benchmark.GetSceneRenderCommandView().size() == many.size(), "Producer scope lost objects");
+            Require(benchmark.GetRetainedSceneStats().rebuiltCommands == 0, "Stationary producer scope rebuilt commands");
+        }
+        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 240;
+        std::cout << (useScope ? "Scoped" : "Leased") << " stationary scene: " << ms << " ms/frame (2048 producers)\n";
     }
     std::cout << "Retained scene lifecycle, borrowed views and incremental batching passed\n";
 }

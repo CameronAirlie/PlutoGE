@@ -149,9 +149,10 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     };
     const auto originalOrder = renderReordered();
     std::reverse(reordered.begin(), reordered.end());
-    require(renderReordered() == originalOrder && renderer.GetTimingStats().rebuiltDrawPackets == 0 &&
-                renderer.GetTimingStats().reusedDrawPackets == 6,
-            "Reordering rigid commands rebuilt packets or changed pixels");
+    const auto reverseOrder = renderReordered();
+    require(reverseOrder == originalOrder, "Reordering rigid commands changed pixels");
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 0 && renderer.GetTimingStats().reusedDrawPackets == 6,
+            "Reordering rigid commands rebuilt unchanged packets");
     reordered.erase(reordered.begin() + 1);
     renderReordered();
     require(renderer.GetTimingStats().rebuiltDrawPackets == 0 && renderer.GetTimingStats().reusedDrawPackets == 4,

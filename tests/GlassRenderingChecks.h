@@ -347,9 +347,13 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
             "Disjoint glass did not reduce recorded snapshot copies");
     const auto groupedPixels = readPixels(renderer.GetColorTexture());
     require(renderer.GetFrameStats().glassDepthSnapshots == 1, "Glass copied immutable depth more than once");
-    require(renderer.GetFrameStats().materialPreparations == 3 &&
+    require(renderer.GetFrameStats().materialPreparations <= 3 &&
             renderer.GetFrameStats().materialPreparationHits >= 1,
             "Repeated glass material was prepared more than once");
+    render(groupedScene);
+    require(renderer.GetFrameStats().materialPreparations == 0 &&
+            readPixels(renderer.GetColorTexture()) == groupedPixels,
+            "Stationary glass material records were not retained across frames");
     // Force hash collisions: surface equality, not the hash, must decide reuse.
     for (auto &draw : groupedScene)
     {
@@ -361,9 +365,9 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
             "Material hash collision reused different surface parameters");
     groupedScene[0].emission += glm::vec3(1, 0, 0);
     render(groupedScene);
-    require(renderer.GetFrameStats().materialPreparations == 4 &&
+    require(renderer.GetFrameStats().materialPreparations == 1 &&
             readPixels(renderer.GetColorTexture()) != groupedPixels,
-            "Frame-local material cache missed an edited glass surface");
+            "Retained material cache did not update only the edited glass surface");
     for (auto &draw : disjoint) draw.shadowBoundsRadius = -1;
     require(PlanGlassSnapshotGroup(disjoint, 0, glm::mat4(1), {}, 320, 180, false).end == 1,
             "Unknown glass bounds incorrectly shared a snapshot");
@@ -438,10 +442,14 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     revisited[1].shadowBoundsCenter.x = revisited[1].occlusionBoundsCenter.x = 0;
     revisited[1].emission = {0, 1, 0};
     render(revisited);
-    require(renderer.GetFrameStats().materialPreparations == 2 &&
+    require(renderer.GetFrameStats().materialPreparations <= 2 &&
             renderer.GetFrameStats().materialPreparationHits >= 1,
             "Non-consecutive glass material was not reused");
     const auto reusedMaterials = readPixels(renderer.GetColorTexture());
+    render(revisited);
+    require(renderer.GetFrameStats().materialPreparations == 0 &&
+            readPixels(renderer.GetColorTexture()) == reusedMaterials,
+            "Non-consecutive glass records did not persist across frames");
     // Glass emits no outline pass, but differing outline widths conservatively
     // split surface-cache keys. This forces independent material preparation.
     for (std::size_t i = 0; i < revisited.size(); ++i) revisited[i].outlineWidth = float(i + 1);

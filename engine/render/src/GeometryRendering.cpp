@@ -1,5 +1,6 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <cmath>
+#include <algorithm>
 
 namespace PlutoGE::render
 {
@@ -18,6 +19,17 @@ namespace PlutoGE::render
             ensure(m_albedoTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer albedo");
         }
         if (layout == GeometryOutputLayout::Diagnostics) ensure(m_debugTarget, rhi::Format::R16G16B16A16Float, "G-buffer debug");
+    }
+
+    BasicRenderer::DepthResources BasicRenderer::GeometryDepthResources(const BasicDraw &draw, bool instanced) const
+    {
+        const auto available = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
+        if (draw.shaderGraphProgram) return DepthResources::Full;
+        const auto &opaque = m_opaqueDepth[instanced ? 1 : 0];
+        if (draw.alphaMode == 0 && available(opaque.vertex) && available(opaque.fragment))
+            return DepthResources::Opaque;
+        return available(m_standardFragment) && available(m_standardColorVertices[instanced ? 1 : 0])
+            ? DepthResources::Alpha : DepthResources::Full;
     }
 
     rhi::PipelineHandle BasicRenderer::GeometryPipeline(const BasicDraw &draw, bool instanced,
@@ -39,8 +51,9 @@ namespace PlutoGE::render
                     cull = determinant < 0 ? rhi::CullMode::Front : rhi::CullMode::Back;
             }
         }
+        const auto depthResources = depthOnly ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
         const unsigned key = static_cast<unsigned>(layout) | (unsigned(instanced) << 2) | (unsigned(standard) << 3) |
-            (unsigned(cull) << 4) | (unsigned(depthOnly) << 6) | (unsigned(prepassed) << 7);
+            (unsigned(cull) << 4) | (unsigned(depthOnly) << 6) | (unsigned(prepassed) << 7) | (unsigned(depthResources) << 8);
         auto found = m_geometryPipelines.find(key);
         if (found != m_geometryPipelines.end()) return found->second.Get();
         auto descriptor = m_geometryDescriptors[instanced ? 1 : 0];
@@ -56,6 +69,23 @@ namespace PlutoGE::render
             descriptor.colorFormats.clear();
             descriptor.colorFormat = rhi::Format::Undefined;
             descriptor.fragmentShader = m_coverageFragments[standard ? 1 : 0];
+            if (depthResources != DepthResources::Full)
+            {
+                if (depthResources == DepthResources::Opaque)
+                {
+                    descriptor.vertexShader = m_opaqueDepth[instanced ? 1 : 0].vertex;
+                    descriptor.fragmentShader = m_opaqueDepth[instanced ? 1 : 0].fragment;
+                }
+                // The standard coverage shader only consumes camera, object,
+                // material constants and base alpha. Graph coverage retains the
+                // full layout because its fragment evaluation can use lighting.
+                std::erase_if(descriptor.resourceBindings, [depthResources](const auto &binding) {
+                    return !((binding.type == rhi::ResourceBindingType::UniformBuffer &&
+                        (binding.slot == 0 || binding.slot == 16 || binding.slot == 17 ||
+                            (depthResources == DepthResources::Alpha && binding.slot == 8))) ||
+                        (depthResources == DepthResources::Alpha && binding.type == rhi::ResourceBindingType::SampledTexture && binding.slot == 9));
+                });
+            }
         }
         else
         {

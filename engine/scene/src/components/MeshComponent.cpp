@@ -1340,6 +1340,15 @@ namespace PlutoGE::scene
         return transform;
     }
 
+    bool MeshComponent::NeedsFrameRenderSubmission() const
+    {
+        // Imported node/skeleton metadata alone does not make an object dynamic.
+        // Keep animation owners conservative: paused poses, layers, editor
+        // scrubbing and ragdolls can change independently of IsPlaying().
+        return m_mesh && (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes) &&
+            FindAnimationComponent(GetOwner()) != nullptr;
+    }
+
     void MeshComponent::SubmitRenderCommands()
     {
         if (m_mesh && m_visible)

@@ -35,16 +35,26 @@ int main(int argc, char **argv)
     });
     window.PollEvents();
     resizeCount = 0;
-    const auto resizeCallback = glfwSetFramebufferSizeCallback(native, nullptr);
-    glfwSetFramebufferSizeCallback(native, resizeCallback);
-    resizeCallback(native, 80, 70);
-    resizeCallback(native, 90, 75);
-    resizeCallback(native, 100, 80);
+    glfwSetWindowSize(native, 320, 240);
+    glfwSetWindowSize(native, 400, 280);
+    glfwSetWindowSize(native, 480, 320);
     if (resizeCount != 0) return 19;
     window.PollEvents();
-    if (resizeCount != 1 || resizedWidth != 100 || resizedHeight != 80) return 20;
+    const auto coalescedExtent = window.GetExtents();
+    if (resizeCount != 1 || resizedWidth != coalescedExtent.width || resizedHeight != coalescedExtent.height) return 20;
     window.PollEvents();
     if (resizeCount != 1) return 21;
+    // Native integrations may replace the GLFW callback. Presentation must
+    // still recover the actual framebuffer extent on the next event poll.
+    const auto resizeCallback = glfwSetFramebufferSizeCallback(native, nullptr);
+    glfwSetWindowSize(native, 120, 90);
+    window.PollEvents();
+    const auto actualExtent = window.GetExtents();
+    if (resizeCount != 2 || resizedWidth != actualExtent.width || resizedHeight != actualExtent.height)
+        return 22;
+    window.PollEvents();
+    if (resizeCount != 2) return 23;
+    glfwSetFramebufferSizeCallback(native, resizeCallback);
     window.SetResizeCallback(nullptr);
     if (argc > 1 && std::string_view(argv[1]) == "--resize-only")
     {

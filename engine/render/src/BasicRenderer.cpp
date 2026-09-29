@@ -8,6 +8,7 @@
 #include "SnapshotDamageTracker.h"
 #include "BasicDrawBatching.h"
 #include "PersistentParameterCache.h"
+#include "MaterialPreparationCache.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -620,6 +621,7 @@ namespace PlutoGE::render
             m_geometryDescriptors = {descriptor, instancedDescriptor};
             m_compactFragments = shaders.compactFragments;
             m_coverageFragments = shaders.coverageFragments;
+            m_opaqueDepth = shaders.opaqueDepth;
             m_standardFragment = shaders.standardFragment;
             m_colorVertices = {shaders.colorVertex, shaders.colorInstancedVertex};
             m_standardVertices = shaders.standardVertices;
@@ -1188,6 +1190,7 @@ namespace PlutoGE::render
         m_geometryDescriptors = {};
         m_compactFragments = {};
         m_coverageFragments = {};
+        m_opaqueDepth = {};
         m_standardFragment = {};
         m_colorVertices = {};
         m_standardVertices = {};
@@ -1259,6 +1262,7 @@ namespace PlutoGE::render
         m_fallbackNormalTexture.Reset();
         m_fallbackDataTexture.Reset();
         m_geometryParameters.reset();
+        m_materialPreparation.reset();
         m_cameraBuffer.Reset();
         m_debugViewBuffer.Reset();
         for (auto &buffer : m_shadowCameraBuffers)
@@ -2272,15 +2276,16 @@ namespace PlutoGE::render
         BasicObjectParameters previousObjectParameters{};
 
 
-        struct FrameMaterial
-        {
-            BasicDraw surface;
-            bool transparent;
-            rhi::BufferHandle buffer;
-        };
-        // Own surface snapshots: outline packets are temporary stack objects.
-        // Entries live for one frame, so shader time, fog and edits cannot stale.
-        std::unordered_map<std::size_t, std::vector<FrameMaterial>> frameMaterials;
+        if (!m_materialPreparation) m_materialPreparation = std::make_unique<MaterialPreparationCache>();
+        std::array<glm::vec4, 4> glassFog{};
+        for (const auto &effect : postProcessEffects)
+            if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+            {
+                std::copy_n(effect.parameters.begin(), 4, glassFog.begin());
+                glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
+                break;
+            }
+        m_materialPreparation->BeginFrame(m_width, m_height, glassFog);
         bool geometryResourcesBound = false;
         bool skyTextureBound = false;
         std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
@@ -2331,108 +2336,113 @@ namespace PlutoGE::render
                     previousObjectParameters = objectParameters;
                 }
             }
-            const auto materialHandle = [&]() -> rhi::BufferHandle
+            const auto depthResources = recordingDepth ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
+            const bool leanDepth = depthResources != DepthResources::Full;
+            if (depthResources != DepthResources::Opaque)
             {
-                std::size_t key = draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw);
-                HashBatchValue(key, transparent);
-                auto &candidates = frameMaterials[key];
-                for (const auto &candidate : candidates)
-                    if (candidate.transparent == transparent && SameBasicDrawSurface(candidate.surface, draw) &&
-                        bool(candidate.surface.shaderGraphProgram && candidate.surface.shaderGraphProgram->requiresSceneTextures) ==
-                            bool(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
+                const auto materialHandle = [&]() -> rhi::BufferHandle
+                {
+                    std::size_t key = draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw);
+                    HashBatchValue(key, transparent);
+                    if (const auto cached = m_materialPreparation->Find(key, draw, transparent))
                     {
                         ++m_frameStats.materialPreparationHits;
-                        return candidate.buffer;
+                        ++m_geometryParameters->hits;
+                        return cached;
                     }
-                BasicMaterialParameters materialParameters{
-                    draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
-                    draw.emission, draw.alphaCutoff, draw.alphaMode,
-                    draw.normalTexture ? 1u : 0u,
-                    draw.metallicTexture ? 1u : 0u,
-                    draw.roughnessTexture ? 1u : 0u,
-                    draw.metallicChannel, draw.roughnessChannel,
-                    draw.flipNormalY ? 1u : 0u, draw.twoSided ? 1u : 0u,
-                    glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
-                              std::clamp(draw.subsurface, 0.0f, 1.0f)),
-                    glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
-                    glm::vec4(float(draw.surfaceType), std::clamp(draw.transmission, 0.0f, 1.0f),
-                              std::clamp(draw.ior, 1.0f, 3.0f), std::max(draw.thickness, 0.0f)),
-                    glm::vec4(glm::clamp(draw.attenuationColor, glm::vec3(0.0001f), glm::vec3(1.0f)),
-                              std::max(draw.attenuationDistance, 0.0001f)),
-                    glm::vec4(1.0f / m_width, 1.0f / m_height,
-                              m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
-                materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
-                materialParameters.emissionChannels = draw.emissionChannels;
-                if (draw.shaderGraphProgram)
-                {
-                    materialParameters.shaderGraph = draw.shaderGraphProgram->data;
-                    if (draw.shaderGraphProgram->usesTime)
+                    BasicMaterialParameters materialParameters{
+                        draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
+                        draw.emission, draw.alphaCutoff, draw.alphaMode,
+                        draw.normalTexture ? 1u : 0u,
+                        draw.metallicTexture ? 1u : 0u,
+                        draw.roughnessTexture ? 1u : 0u,
+                        draw.metallicChannel, draw.roughnessChannel,
+                        draw.flipNormalY ? 1u : 0u, draw.twoSided ? 1u : 0u,
+                        glm::vec4(glm::max(draw.subsurfaceColor, glm::vec3(0.0f)),
+                                  std::clamp(draw.subsurface, 0.0f, 1.0f)),
+                        glm::vec4(std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f),
+                        glm::vec4(float(draw.surfaceType), std::clamp(draw.transmission, 0.0f, 1.0f),
+                                  std::clamp(draw.ior, 1.0f, 3.0f), std::max(draw.thickness, 0.0f)),
+                        glm::vec4(glm::clamp(draw.attenuationColor, glm::vec3(0.0001f), glm::vec3(1.0f)),
+                                  std::max(draw.attenuationDistance, 0.0001f)),
+                        glm::vec4(1.0f / m_width, 1.0f / m_height,
+                                  m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
+                    materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
+                    materialParameters.emissionChannels = draw.emissionChannels;
+                    if (draw.shaderGraphProgram)
                     {
-                        materialParameters.shaderGraphFrame.x = graphTime;
-                        materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
-                    }
-                    materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
-                }
-                if (transparent)
-                    for (const auto &effect : postProcessEffects)
-                        if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                        materialParameters.shaderGraph = draw.shaderGraphProgram->data;
+                        if (draw.shaderGraphProgram->usesTime)
                         {
-                            std::copy_n(effect.parameters.begin(), 4, materialParameters.glassFog.begin());
-                            materialParameters.glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
-                            break;
+                            materialParameters.shaderGraphFrame.x = graphTime;
+                            materialParameters.shaderGraphFrame.y = m_hasPreviousFrame ? m_previousGraphTime : graphTime;
                         }
-                const auto handle = draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime
-                    ? m_geometryParameters->AcquireTransient(*m_device, Bytes(materialParameters))
-                    : m_geometryParameters->Acquire(*m_device, Bytes(materialParameters), key);
-                candidates.push_back({draw, transparent, handle});
-                ++m_frameStats.materialPreparations;
-                return handle;
-            }();
-            if (!geometryResourcesBound || boundMaterial != materialHandle)
-                commands.BindUniformBuffer(8, materialHandle);
-            boundMaterial = materialHandle;
-            const std::array materialTextures{
-                draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
-                draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),
-                draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),
-                draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get()};
-            for (std::uint32_t index = 0; index < materialTextures.size(); ++index)
-                if (!geometryResourcesBound || previousMaterialTextures[index] != materialTextures[index])
-                    commands.BindTexture(9 + index, materialTextures[index], m_fallbackSampler.Get());
-            // Pass boundaries explicitly invalidate bindings; consecutive draws
-            // within either geometry or transparency can retain shared resources.
-            if (!geometryResourcesBound)
-                for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
-                    commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
-                        ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-            if (!geometryResourcesBound)
-            {
-                commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
-                commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
-                                     m_shadowSampler.Get());
-                commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                        materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
+                    }
+                    if (transparent) materialParameters.glassFog = glassFog;
+                    const bool animated = draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime;
+                    const auto handle = animated
+                        ? m_geometryParameters->AcquireTransient(*m_device, Bytes(materialParameters))
+                        : m_materialPreparation->Insert(*m_device, key, draw, transparent, Bytes(materialParameters));
+                    if (animated) m_materialPreparation->InsertTransient(key, draw, transparent, handle);
+                    else ++m_geometryParameters->misses;
+                    ++m_frameStats.materialPreparations;
+                    return handle;
+                }();
+                if (!geometryResourcesBound || boundMaterial != materialHandle)
+                    commands.BindUniformBuffer(8, materialHandle);
+                boundMaterial = materialHandle;
+                const std::array materialTextures{
+                    draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),
+                    draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),
+                    draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),
+                    draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get()};
+                for (std::uint32_t index = 0; index < (leanDepth ? 1u : materialTextures.size()); ++index)
+                    if (!geometryResourcesBound || previousMaterialTextures[index] != materialTextures[index])
+                        commands.BindTexture(9 + index, materialTextures[index], m_fallbackSampler.Get());
+                if (!leanDepth)
+                {
+                    // Pass boundaries explicitly invalidate bindings; consecutive draws
+                    // within either geometry or transparency can retain shared resources.
+                    if (!geometryResourcesBound)
+                        for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
+                            commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
+                                ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                    if (!geometryResourcesBound)
+                    {
+                        commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
+                        commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
+                                             m_shadowSampler.Get());
+                        commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                        commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                    }
+                    if (!geometryResourcesBound || !skyTextureBound)
+                    {
+                        commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                        skyTextureBound = true;
+                    }
+                    for (unsigned i = 0; i < 4; ++i)
+                    {
+                        const auto texture = draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get();
+                        const auto sampler = m_graphSamplers[draw.graphSamplers[i] & 3].Get();
+                        if (!geometryResourcesBound || previousGraphTextures[i] != texture || previousGraphSamplers[i] != sampler)
+                            commands.BindTexture(22 + i, texture, sampler);
+                        previousGraphTextures[i] = texture;
+                        previousGraphSamplers[i] = sampler;
+                    }
+                    const auto emissionTexture = draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get();
+                    if (!geometryResourcesBound || previousEmissionTexture != emissionTexture)
+                        commands.BindTexture(26, emissionTexture, m_fallbackSampler.Get());
+                    previousEmissionTexture = emissionTexture;
+                }
+                previousMaterialTextures = materialTextures;
+                geometryResourcesBound = !leanDepth;
             }
-            if (!geometryResourcesBound || !skyTextureBound)
+            else
             {
-                commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                skyTextureBound = true;
+                // The next alpha/graph draw must re-establish its material bindings.
+                geometryResourcesBound = false;
             }
-            for (unsigned i = 0; i < 4; ++i)
-            {
-                const auto texture = draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get();
-                const auto sampler = m_graphSamplers[draw.graphSamplers[i] & 3].Get();
-                if (!geometryResourcesBound || previousGraphTextures[i] != texture || previousGraphSamplers[i] != sampler)
-                    commands.BindTexture(22 + i, texture, sampler);
-                previousGraphTextures[i] = texture;
-                previousGraphSamplers[i] = sampler;
-            }
-            const auto emissionTexture = draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get();
-            if (!geometryResourcesBound || previousEmissionTexture != emissionTexture)
-                commands.BindTexture(26, emissionTexture, m_fallbackSampler.Get());
-            previousEmissionTexture = emissionTexture;
-            previousMaterialTextures = materialTextures;
-            geometryResourcesBound = true;
             if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundDrawMesh != draw.mesh)
             {
                 commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());

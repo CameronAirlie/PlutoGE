@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -307,6 +308,8 @@ namespace PlutoGE::scene
              typeID == GetComponentTypeID<VolumetricCloudComponent>()))
             m_scene->InvalidateEnvironmentComponents();
         ++m_componentRevision;
+        if (m_scene && typeID == GetComponentTypeID<AnimationComponent>())
+            m_scene->QueueRenderSubtree(this);
     }
 
     void Entity::DetachComponent(Component *component)
@@ -325,6 +328,8 @@ namespace PlutoGE::scene
         bucket.erase(std::remove(bucket.begin(), bucket.end(), component), bucket.end());
         component->m_entity = nullptr;
         ++m_componentRevision;
+        if (m_scene && typeID == GetComponentTypeID<AnimationComponent>())
+            m_scene->QueueRenderSubtree(this);
     }
 
     Component *Entity::AddComponent(Component *component)

@@ -3352,7 +3352,7 @@ namespace PlutoGE::scene
     void Scene::QueueRenderSubtree(Entity *entity)
     {
         if (!entity) return;
-        if (auto *mesh = entity->GetComponent<MeshComponent>()) QueueMeshRenderUpdate(mesh);
+        for (auto *mesh : entity->GetComponents<MeshComponent>()) QueueMeshRenderUpdate(mesh);
         for (auto *child : entity->GetChildren()) QueueRenderSubtree(child);
     }
 

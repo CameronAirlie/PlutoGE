@@ -1,10 +1,20 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
 #include <iostream>
 #include <stdexcept>
 #include <unordered_set>
+
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 int main()
 {
@@ -17,17 +27,55 @@ int main()
         vulkan::VulkanDevice device(description);
         auto swapchain=device.CreateSwapchain(description);
         ImGui::CreateContext(); ImGui::GetIO().IniFilename=nullptr;
+        // Synthetic input is sequenced by test frames, including native capture
+        // events. Consume each frame's complete event batch deterministically.
+        ImGui::GetIO().ConfigInputTrickleEventQueue = false;
         auto compositor=ui::CreateEditorCompositor(GraphicsApi::Vulkan);
         if(!compositor->Initialize(window,device,*swapchain)) throw std::runtime_error("Compositor initialization failed");
+        auto *native = static_cast<GLFWwindow *>(window.GetWindow());
+        window.SetResizeCallback([&](int width, int height) {
+            if (width > 0 && height > 0 && !swapchain->Resize(width, height))
+                throw std::runtime_error("Editor swapchain resize failed");
+        });
+        const auto mouseCallback = glfwSetMouseButtonCallback(native, nullptr);
+        glfwSetMouseButtonCallback(native, mouseCallback);
+        if (!mouseCallback) throw std::runtime_error("ImGui mouse callback missing");
+        int buttonClicks = 0;
         std::vector<std::byte> pixels(128*128*4,std::byte{255});
         auto color=device.CreateTexture({128,128,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"viewport",true,1,false,1},pixels);
         auto alternate=device.CreateTexture({128,128,Format::R8G8B8A8Unorm,TextureUsage::Sampled,"replacement",true,1,false,1},pixels);
         const auto keepColor=compositor->RegisterTexture({&device,color,128,128});
         const auto keepAlternate=compositor->RegisterTexture({&device,alternate,128,128});
         for(int frame=0;frame<1200;++frame) {
-            window.PollEvents(); compositor->BeginFrame(); ImGui::NewFrame();
-            ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize({128,128});
+            if (frame == 400 || frame == 800) {
+                // Reproduce a missed callback while the native window grows
+                // beyond its initial presentation extent, then shrinks again.
+                glfwSetFramebufferSizeCallback(native, nullptr);
+                glfwSetWindowSize(native, frame == 400 ? 256 : 128, frame == 400 ? 192 : 128);
+            }
+            window.PollEvents(); compositor->BeginFrame();
+            if (frame >= 10 && frame <= 12) {
+                if (frame > 10) {
+#ifdef _WIN32
+                    SendMessageW(glfwGetWin32Window(native), frame == 11 ? WM_LBUTTONDOWN : WM_LBUTTONUP,
+                                 frame == 11 ? MK_LBUTTON : 0, MAKELPARAM(24, 24));
+#else
+                    mouseCallback(native, GLFW_MOUSE_BUTTON_LEFT, frame == 11 ? GLFW_PRESS : GLFW_RELEASE, 0);
+#endif
+                    if (window.GetInputState().mouseState.buttons[0] != (frame == 11))
+                        throw std::runtime_error("ImGui did not chain the engine mouse callback");
+                }
+                // Keep the hidden test deterministic without moving the user's
+                // desktop cursor when Windows changes capture on button down.
+                ImGui_ImplGlfw_CursorPosCallback(native, 24, 24);
+            }
+            ImGui::NewFrame();
+            const auto extent = window.GetExtents();
+            if (swapchain->GetWidth() != extent.width || swapchain->GetHeight() != extent.height)
+                throw std::runtime_error("Editor presentation retained an outdated framebuffer extent");
+            ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
             ImGui::Begin("Viewport",nullptr,ImGuiWindowFlags_NoDecoration);
+            if (ImGui::Button("Input check", {96, 24})) ++buttonClicks;
             ImGui::Text("Font atlas frame %d",frame);
             std::unordered_set<std::uint64_t> recorded;
             // Retire descriptors AFTER they have been put into CPU draw lists.
@@ -47,10 +95,11 @@ int main()
             ImGui::End(); ImGui::Render(); compositor->RenderDrawData(ImGui::GetDrawData());
             if(!swapchain->Present(color)) throw std::runtime_error("Presentation failed");
         }
+        if (buttonClicks != 1) throw std::runtime_error("ImGui button did not respond to GLFW press/release");
         compositor->UnregisterTexture(keepColor); compositor->UnregisterTexture(keepAlternate);
         compositor->Shutdown(); ImGui::DestroyContext();
         device.DestroyTexture(color); device.DestroyTexture(alternate);
-        std::cout<<"PASS 1200 Vulkan editor frames, 19200 descriptor replacements, queued draws and stale handles\n";
+        std::cout<<"PASS 1200 Vulkan editor frames, 19200 descriptor replacements, resize recovery, ImGui clicks and callback chaining\n";
     } catch(const std::exception &e) { std::cerr<<e.what()<<'\n'; return 1; }
     window.Close();
 }

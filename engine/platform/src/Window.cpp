@@ -226,6 +226,19 @@ namespace PlutoGE::platform
     {
         m_inputState.BeginFrame();
         glfwPollEvents();
+        // The framebuffer is authoritative even when a native resize notification
+        // was missed or another integration replaced GLFW's callback. Keep the
+        // presentation extent consistent with the size ImGui queries each frame.
+        if (m_window)
+        {
+            const auto extent = GetExtents();
+            if (extent.width != m_clientWidth || extent.height != m_clientHeight)
+            {
+                m_clientWidth = extent.width;
+                m_clientHeight = extent.height;
+                m_resizePending = true;
+            }
+        }
         // A drag can deliver many sizes in one poll. Rebuild GPU resources only
         // for the latest size, outside GLFW's C callback stack.
         if (m_resizePending)

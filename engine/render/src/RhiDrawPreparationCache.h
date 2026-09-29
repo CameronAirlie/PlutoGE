@@ -136,13 +136,17 @@ namespace PlutoGE::render
                 // usually leaves list slots in the same order. Retain storage
                 // and cached packets in that case instead of rehashing and
                 // moving the entire scene because one actor changed pose.
-                // This is only a placement hint: Matches still validates every
-                // value before a packet is reused, including repeated meshes.
+                // Producer identity preserves placement while a tracked object
+                // moves. Legacy callers without IDs need model equality here:
+                // repeated mesh/material pairs do not establish object identity.
+                // Matches still validates revisions and all mutable payloads.
                 bool sameSlots = entries.size() == commands.size();
                 for (size_t i = 0; sameSlots && i < commands.size(); ++i)
                     sameSlots = entries[i].input.mesh == commands[i].mesh &&
                                 entries[i].input.material == commands[i].material &&
-                                entries[i].input.submeshIndex == commands[i].submeshIndex;
+                                entries[i].input.submeshIndex == commands[i].submeshIndex &&
+                                entries[i].input.sourceObject == commands[i].sourceObject &&
+                                (commands[i].sourceObject || entries[i].input.model == commands[i].model);
                 if (sameSlots)
                     return;
                 previous.swap(entries);

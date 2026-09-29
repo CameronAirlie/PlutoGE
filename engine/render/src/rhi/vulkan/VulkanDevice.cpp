@@ -1196,6 +1196,7 @@ namespace PlutoGE::render::rhi::vulkan
             m_boundDynamicOffsetCounts.fill(0);
             m_boundPipelineLayout = VK_NULL_HANDLE;
             m_descriptorBindingsDirty = true;
+            m_descriptorSetsDirty.fill(true);
             m_boundVertexBuffer = {};
             m_boundIndexBuffer = {};
             m_boundVertexOffset = 0;
@@ -1440,6 +1441,7 @@ namespace PlutoGE::render::rhi::vulkan
                 }
                 m_pipeline = pipeline;
                 m_descriptorBindingsDirty = true;
+                m_descriptorSetsDirty.fill(true);
                 vkCmdBindPipeline(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE
                                                                        : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   m_pipeline->pipeline);
@@ -1486,7 +1488,7 @@ namespace PlutoGE::render::rhi::vulkan
             // Dynamic offsets select the individual buffer contents. The descriptor itself only
             // changes when its range changes, so equally-sized per-draw buffers can share a set.
             if (!previous || previous->size != resource->size)
-                m_descriptorBindingsDirty = true;
+                MarkDescriptorBindingDirty(ResourceBindingType::UniformBuffer, slot);
             m_uniformBuffers[slot] = handle;
             const auto offset = m_impl.EnsureUniformResident(*resource);
             if (offset > std::numeric_limits<std::uint32_t>::max())
@@ -1506,7 +1508,7 @@ namespace PlutoGE::render::rhi::vulkan
                                   m_pipeline->compute ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                   VK_ACCESS_SHADER_READ_BIT);
             if (m_sampledTextures[slot] != textureHandle || m_samplers[slot] != samplerHandle)
-                m_descriptorBindingsDirty = true;
+                MarkDescriptorBindingDirty(ResourceBindingType::SampledTexture, slot);
             m_sampledTextures[slot] = textureHandle;
             m_samplers[slot] = samplerHandle;
         }
@@ -1521,7 +1523,7 @@ namespace PlutoGE::render::rhi::vulkan
                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                   VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             if (m_storageImages[slot] != textureHandle || m_storageMipLevels[slot] != mipLevel)
-                m_descriptorBindingsDirty = true;
+                MarkDescriptorBindingDirty(ResourceBindingType::StorageImage, slot);
             m_storageImages[slot] = textureHandle;
             m_storageMipLevels[slot] = mipLevel;
         }
@@ -1565,7 +1567,7 @@ namespace PlutoGE::render::rhi::vulkan
             auto *buffer = m_impl.buffers.Get(handle);
             if (!m_pipeline || slot >= MaxResourceSlots || !buffer || buffer->usage != BufferUsage::Storage)
                 throw std::invalid_argument("Invalid Vulkan storage buffer");
-            if (m_storageBuffers[slot] != handle) m_descriptorBindingsDirty = true;
+            if (m_storageBuffers[slot] != handle) MarkDescriptorBindingDirty(ResourceBindingType::StorageBuffer, slot);
             m_storageBuffers[slot] = handle;
         }
         void DrawIndexedIndirect(BufferHandle handle, std::size_t offset) override
@@ -1709,6 +1711,7 @@ namespace PlutoGE::render::rhi::vulkan
             m_boundDynamicOffsetCounts.fill(0);
             m_lastDescriptorKeyValid.fill(false);
             m_descriptorBindingsDirty = true;
+            m_descriptorSetsDirty.fill(true);
         }
 
     private:
@@ -1734,6 +1737,20 @@ namespace PlutoGE::render::rhi::vulkan
         static std::uint64_t EncodeHandle(Handle<Tag> handle) noexcept
         {
             return (static_cast<std::uint64_t>(handle.generation) << 32u) | handle.index;
+        }
+
+        void MarkDescriptorBindingDirty(ResourceBindingType type, std::uint32_t slot)
+        {
+            // Slots are a typed RHI namespace (texture 16 and uniform 16 are
+            // distinct). A pipeline change invalidates every set separately.
+            for (std::size_t set = 0; set < std::min(m_pipeline->bindingsBySet.size(), m_descriptorSetsDirty.size()); ++set)
+                for (const auto &binding : m_pipeline->bindingsBySet[set])
+                    if (binding.type == type && binding.slot == slot)
+                    {
+                        m_descriptorSetsDirty[set] = true;
+                        m_descriptorBindingsDirty = true;
+                        break;
+                    }
         }
 
         void PrepareDraw()
@@ -1768,6 +1785,14 @@ namespace PlutoGE::render::rhi::vulkan
                 auto &key = keys[setIndex];
                 key.layout = layout;
                 dynamicOffsetStarts[setIndex] = dynamicOffsetCount;
+                if (!m_descriptorSetsDirty[setIndex])
+                {
+                    sets[setIndex] = m_preparedDescriptorSets[setIndex];
+                    for (const auto slot : m_pipeline->dynamicUniformSlotsBySet[setIndex])
+                        dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[slot];
+                    dynamicOffsetCounts[setIndex] = dynamicOffsetCount - dynamicOffsetStarts[setIndex];
+                    continue;
+                }
                 for (const auto &binding : m_pipeline->bindingsBySet[setIndex])
                 {
                     if (binding.type == ResourceBindingType::UniformBuffer)
@@ -1891,7 +1916,8 @@ namespace PlutoGE::render::rhi::vulkan
                     writes[writeCount++] = write;
                 }
             }
-            vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writeCount), writes.data(), 0, nullptr);
+            if (writeCount != 0)
+                vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writeCount), writes.data(), 0, nullptr);
             m_impl.timingStats.descriptorWrites += writeCount;
             for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
             {
@@ -1916,6 +1942,7 @@ namespace PlutoGE::render::rhi::vulkan
             m_boundPipelineLayout = m_pipeline->layout;
             std::copy_n(sets.begin(), setCount, m_preparedDescriptorSets.begin());
             m_descriptorBindingsDirty = false;
+            m_descriptorSetsDirty.fill(false);
             m_impl.timingStats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
                                                       std::chrono::steady_clock::now() - descriptorStart)
                                                       .count();
@@ -2044,6 +2071,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::size_t m_boundIndexOffset = 0;
         VkPipelineLayout m_boundPipelineLayout = VK_NULL_HANDLE;
         bool m_descriptorBindingsDirty = true;
+        std::array<bool, MaxDescriptorSets> m_descriptorSetsDirty{};
         bool m_recording = false;
         bool m_rendering = false;
         struct ActiveScope

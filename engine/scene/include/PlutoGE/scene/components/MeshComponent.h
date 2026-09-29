@@ -52,7 +52,7 @@ namespace PlutoGE::scene
         void ResetRenderHistory() { m_previousSubmeshModels.clear(); m_renderCommandCacheDirty = true; }
         void OnEnabledChanged() override { MarkRenderCommandsDirty(); }
         std::uint64_t GetRenderProducerId() const { return m_renderObjectIdentity.Value(); }
-        bool NeedsFrameRenderSubmission() const { return m_mesh && (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes); }
+        bool NeedsFrameRenderSubmission() const;
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;

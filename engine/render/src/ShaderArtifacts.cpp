@@ -51,6 +51,9 @@ namespace PlutoGE::render
                 {Load("BasicLitColor", "fragment"), Load("BasicLitColorMotion", "fragment")},
                 {Load("BasicLitStandardColor", "fragment"), Load("BasicLitStandardColorMotion", "fragment")}}},
             .coverageFragments = {Load("BasicLitCoverage", "fragment"), Load("BasicLitStandardCoverage", "fragment")},
+            .opaqueDepth = {{
+                {.vertex = Load("GeometryDepth", "vertex"), .fragment = Load("GeometryDepth", "fragment")},
+                {.vertex = Load("GeometryDepthInstanced", "vertex"), .fragment = Load("GeometryDepthInstanced", "fragment")}}},
             .transparentFragment = Load("Glass", "fragment"),
             .glassSceneCopy = {.vertex = Load("GlassSceneCopy", "vertex"),
                                .fragment = Load("GlassSceneCopy", "fragment")},

@@ -22,6 +22,7 @@ inline void LoadRenderOptimizationShaders(PlutoGE::render::BasicRendererShaderPa
     shaders.colorInstancedVertex = additions.colorInstancedVertex;
     shaders.compactFragments = additions.compactFragments;
     shaders.coverageFragments = additions.coverageFragments;
+    shaders.opaqueDepth = additions.opaqueDepth;
     shaders.volumetricTrace = additions.volumetricTrace;
     shaders.volumetricComposite = additions.volumetricComposite;
     shaders.fusedColor = additions.fusedColor;
@@ -92,6 +93,10 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     BasicDraw draw;
     draw.mesh = &mesh;
     draw.emission = {0.23f, 0.51f, 0.82f};
+    // Deliberately collide preparation keys: retained materials must validate
+    // the complete surface instead of treating a hash as resource identity.
+    draw.preparationRevision = 1;
+    draw.preparedMaterialHash = 42;
     BasicLighting lighting;
     lighting.ambientIntensity = lighting.directionalIntensity = 0;
     // More than the number of buffered frames: immutable geometry records
@@ -103,6 +108,8 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         if (frame == 0) coldPersistentBytes = device.GetTimingStats().persistentUniformBytesUploaded;
         if (frame >= 3)
         {
+            require(renderer.GetFrameStats().materialPreparations == 0,
+                "Stationary materials were reconstructed despite retained GPU records");
             require(renderer.GetFrameStats().geometryParameterCreates == 0, "Stationary geometry recreated parameter records");
             if (device.GetApi() == rhi::GraphicsApi::Vulkan)
                 require(device.GetTimingStats().persistentUniformBytesUploaded == 0,
@@ -120,6 +127,24 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     require(renderer.GetFrameStats().geometryParameterCreates > 0, "Material edit reused stale GPU parameters");
     require(stationaryImage != readPixels(renderer.GetColorTexture()), "Material edit did not reach GPU");
     draw.emission.x -= .2f;
+    require(renderer.Resize(width + 1, height), "Material viewport test resize failed");
+    renderer.Render(glm::mat4(1), lighting, {&draw, 1});
+    require(renderer.GetFrameStats().materialPreparations > 0, "Viewport change retained stale material constants");
+    require(renderer.Resize(width, height), "Material viewport test restore failed");
+    renderer.Render(glm::mat4(1), lighting, {&draw, 1});
+    require(readPixels(renderer.GetColorTexture()) == stationaryImage, "Viewport round trip changed stationary material pixels");
+    {
+        auto animatedDraw = draw;
+        auto program = std::make_shared<ShaderGraphProgram>();
+        program->usesTime = true;
+        animatedDraw.shaderGraphProgram = program;
+        for (int frame = 0; frame < 2; ++frame)
+        {
+            renderer.Render(glm::mat4(1), lighting, {&animatedDraw, 1});
+            require(renderer.GetFrameStats().materialPreparations > 0,
+                "Time-dependent graph reused a previous frame's material record");
+        }
+    }
     // Compare the interpreter-free material variant against the full shader,
     // including instancing and both alpha coverage paths.
     for (int scenario = 0; scenario < 18; ++scenario)
@@ -219,8 +244,9 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         for (bool optimized : {false, true})
         {
             renderer.SetGeometryOptimizations(optimized, optimized, optimized);
-            double milliseconds = 0;
-            unsigned observations = 0;
+            double milliseconds = 0, recordingMilliseconds = 0, descriptorMilliseconds = 0;
+            std::uint64_t materialPreparations = 0, descriptorBinds = 0;
+            unsigned observations = 0, cpuSamples = 0;
             std::uint64_t lastObservation = 0;
             for (unsigned frame = 0; frame < 48; ++frame)
             {
@@ -230,6 +256,14 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
                 if (optimized && frame == 47)
                     require(pixels == baseline, "Depth-first overdraw benchmark changed the image");
                 const auto timing = device.GetTimingStats("Scene");
+                if (frame >= 12)
+                {
+                    recordingMilliseconds += renderer.GetTimingStats().geometryRecordingMs;
+                    descriptorMilliseconds += timing.descriptorCpuMs;
+                    descriptorBinds += timing.descriptorBindCalls;
+                    materialPreparations += renderer.GetFrameStats().materialPreparations;
+                    ++cpuSamples;
+                }
                 if (frame < 12 || !timing.hasGpuResult || timing.gpuObservationId == lastObservation) continue;
                 lastObservation = timing.gpuObservationId;
                 for (const auto &scope : timing.gpuScopes)
@@ -237,6 +271,11 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
             }
             if (observations) std::cout << "Core geometry overdraw " << (optimized ? "optimized" : "reference")
                 << ": " << milliseconds / observations << " ms (" << observations << " observations)\n";
+            if (cpuSamples) std::cout << "Geometry submission " << (optimized ? "optimized" : "reference")
+                << ": recording=" << recordingMilliseconds / cpuSamples
+                << " ms, descriptors=" << descriptorMilliseconds / cpuSamples
+                << " ms, descriptor binds=" << double(descriptorBinds) / cpuSamples
+                << ", material preparations=" << double(materialPreparations) / cpuSamples << '\n';
         }
         require(renderer.Resize(width, height), "Geometry benchmark restore failed");
     }

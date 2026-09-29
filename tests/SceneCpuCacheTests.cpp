@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cmath>
@@ -19,6 +20,30 @@ bool Near(const glm::mat4 &a, const glm::mat4 &b)
 }
 int main() try
 {
+    // Imported animation metadata is stationary until an animation owner is
+    // attached. Ownership changes and reparenting must remain discoverable.
+    {
+        render::MeshConfig config;
+        config.animationNodes.resize(1);
+        config.submeshes.push_back({.animatedNodeIndex = 0});
+        render::Mesh mesh(config);
+        scene::Scene ownershipScene;
+        auto *root = ownershipScene.AddEntity(std::make_unique<scene::Entity>());
+        auto *child = ownershipScene.AddEntity(std::make_unique<scene::Entity>(), root);
+        auto *component = child->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{.mesh = &mesh});
+        Require(!component->NeedsFrameRenderSubmission(), "Dormant imported nodes request continuous submission");
+        auto *animator = root->CreateComponent<scene::AnimationComponent>();
+        Require(component->NeedsFrameRenderSubmission(), "Attached ancestor animator did not wake mesh");
+        // Paused animators remain conservative for pose edits and ragdolls.
+        animator->Stop();
+        Require(component->NeedsFrameRenderSubmission(), "Paused animator lost pose tracking");
+        child->SetParent(nullptr);
+        Require(!component->NeedsFrameRenderSubmission(), "Reparented mesh retained old animation owner");
+        child->SetParent(root);
+        Require(component->NeedsFrameRenderSubmission(), "Reparented mesh missed new animation owner");
+        root->RemoveComponent(animator);
+        Require(!component->NeedsFrameRenderSubmission(), "Removed animator kept mesh dynamic");
+    }
     // Cached decomposition must follow ancestor edits, reparenting, reflection,
     // and singular scales, even when the matrix was read before decomposition.
     scene::Entity parent, other, child;
@@ -75,6 +100,7 @@ int main() try
     // not authorization to reuse stale transforms/material/LOD/history.
     render::RhiDrawPreparationCache::List packets;
     std::vector<render::RenderCommand> commands(3);
+    for (size_t i = 0; i < commands.size(); ++i) commands[i].sourceObject = i + 1;
     commands[1].model[3].x = 3;
     commands[2].submeshIndex = 1;
     const auto revision = [](const auto &) { return uint64_t{7}; };
@@ -89,7 +115,8 @@ int main() try
     Require(!packets.entries[2].Matches(commands[2], 7), "Moved packet reused");
     std::swap(commands[0], commands[1]);
     packets.Reconcile(commands, revision);
-    Require(!packets.entries[0].Matches(commands[0], 7), "Repeated-mesh reorder reused stale transform");
+    Require(packets.entries[0].Matches(commands[0], 7) && packets.entries[1].Matches(commands[1], 7),
+        "Repeated-mesh reorder rebuilt unchanged producer packets");
     Require(!packets.entries[1].Matches(commands[1], 8), "Material revision ignored");
     commands[0].previousModel[3].y = 4;
     Require(!packets.entries[0].Matches(commands[0], 7), "Motion history ignored");

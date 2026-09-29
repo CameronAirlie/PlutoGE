@@ -30,6 +30,7 @@ namespace PlutoGE::render
 {
     class PostProcessResourcePool;
     class PersistentParameterCache;
+    class MaterialPreparationCache;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -201,6 +202,7 @@ namespace PlutoGE::render
         // Color-only and color+motion entry points, for graph and standard materials.
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
+        std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
@@ -584,6 +586,9 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> m_compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_coverageFragments;
+        std::array<BasicPostProcessShaderPackage, 2> m_opaqueDepth;
+        enum class DepthResources { Full, Alpha, Opaque };
+        DepthResources GeometryDepthResources(const BasicDraw &draw, bool instanced) const;
         rhi::GraphicsPipelineDescriptor::ShaderCode m_standardFragment;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
         std::unordered_map<unsigned, rhi::GraphicsPipeline> m_geometryPipelines;
@@ -669,6 +674,7 @@ namespace PlutoGE::render
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::unique_ptr<PersistentParameterCache> m_geometryParameters;
+        std::unique_ptr<MaterialPreparationCache> m_materialPreparation;
 
         rhi::Texture m_fallbackTexture;
         rhi::Texture m_fallbackNormalTexture;

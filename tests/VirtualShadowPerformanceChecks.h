@@ -123,6 +123,36 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1 ||
         renderer.GetFrameStats().virtualShadows.reusedPackets != casters.size())
         throw std::runtime_error("A changed VSM packet rebuilt unaffected packets");
+    // An inactive packet can retain a range whose chunks were overwritten by
+    // another source index. Restoring it and shrinking the list must rebuild
+    // that range before the next whole-preparation cache hit refreshes pointers.
+    const auto originalReceiver = receivers.front();
+    auto replacementReceiver = originalReceiver;
+    replacementReceiver.preparationRevision = 20000;
+    receivers = {BasicDraw{}, replacementReceiver};
+    render(0);
+    receivers = {originalReceiver};
+    render(0);
+    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1)
+        throw std::runtime_error("VSM reused receiver chunks overwritten by a different packet");
+    render(0);
+    if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
+        throw std::runtime_error("Restored receiver did not return to immutable VSM reuse");
+    const auto originalCasters = casters;
+    casters = {originalCasters.front()};
+    render(0);
+    auto replacementCaster = casters.front();
+    replacementCaster.preparationRevision = 30000;
+    casters = {BasicDraw{}, replacementCaster};
+    render(0);
+    casters = {originalCasters.front()};
+    render(0);
+    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1)
+        throw std::runtime_error("VSM reused caster chunks overwritten by a different packet");
+    render(0);
+    if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
+        throw std::runtime_error("Restored caster did not return to immutable VSM reuse");
+    casters = originalCasters;
     receivers[0].preparationRevision = 0;
     for (auto &draw : casters) draw.preparationRevision = 0;
     // The shared draw table must preserve output and reduce CPU calls. Force

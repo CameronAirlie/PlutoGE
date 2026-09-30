@@ -360,6 +360,16 @@ namespace PlutoGE::render
                     if (draw.preparationRevision && packet.revision == draw.preparationRevision &&
                         packet.mesh == draw.mesh && packet.meshRevision == draw.mesh->GetRevision() &&
                         packet.first == cursor && packet.clustered == clustered && packet.coalesced == coalesced &&
+                        cursor <= chunks.size() && packet.count <= chunks.size() - cursor &&
+                        // Packets retain ranges in shared chunk storage, not ownership
+                        // of those slots. Visibility changes can overwrite a range
+                        // while its old packet remains cached at an inactive index.
+                        std::all_of(chunks.begin() + cursor, chunks.begin() + cursor + packet.count,
+                            [&](const Chunk &chunk) {
+                                return chunk.sourceIndex == index && chunk.mesh == draw.mesh &&
+                                    chunk.meshRevision == draw.mesh->GetRevision() &&
+                                    chunk.preparationRevision == draw.preparationRevision;
+                            }) &&
                         (!shadow || (cursor + packet.count) * sizeof(Caster) <= m_uploadedCasters.size()))
                     {
                         ++m_stats->reusedPackets;
@@ -367,6 +377,7 @@ namespace PlutoGE::render
                         {
                             auto &chunk = chunks[cursor++];
                             chunk.submission.draw = &draw;
+                            chunk.sourceIndex = index;
                             if (shadow)
                             {
                                 Caster input;
@@ -374,6 +385,7 @@ namespace PlutoGE::render
                                 const auto signature = signatures[index] ^ (std::uint64_t(chunk.submission.firstIndex) * 0x9e3779b97f4a7c15ull);
                                 input.identity.x = std::uint32_t(signature);
                                 input.identity.y = std::uint32_t(signature >> 32) ^ std::uint32_t(chunk.firstInstance);
+                                input.draw.w = static_cast<std::uint32_t>(index);
                                 inputs.push_back(input);
                             }
                         }

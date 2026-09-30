@@ -340,7 +340,21 @@ FetchContent_Declare(
 # starving every sound. Scope these flags to the dependency and its helpers;
 # retain debug symbols and the Debug CRT without changing engine build flags.
 function(pluto_make_realtime_audio_available)
+    if (WIN32)
+        # OpenAL 1.25.2 probes SHGetKnownFolderPath without linking shell32.
+        # A link failure incorrectly enables NTDDI_VISTA, conflicting with
+        # the current SDK's default _WIN32_WINNT. Retry cached failures with
+        # the required library; keep this setting local to the dependency.
+        list(APPEND CMAKE_REQUIRED_LIBRARIES shell32)
+        if (NOT HAVE_SHGETKNOWNFOLDERPATH_NO_NTDDI)
+            unset(HAVE_SHGETKNOWNFOLDERPATH_NO_NTDDI CACHE)
+        endif()
+    endif()
     if (MSVC)
+        # MSVC provides atomics and math through its runtime. Its linker may
+        # ignore the probes' -l flags and incorrectly report Unix libraries.
+        set(HAVE_LIBATOMIC FALSE)
+        set(HAVE_LIBM FALSE)
         string(REGEX REPLACE "/Od|/Ob0|/RTC[1su]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
         string(APPEND CMAKE_CXX_FLAGS_DEBUG " /O2 /Ob2")
     else()

@@ -14,6 +14,19 @@ namespace PlutoGE::platform
     namespace
     {
 #ifdef _WIN32
+        void RestoreNativeEventRouting(GLFWwindow *window)
+        {
+            if (!window) return;
+            const HWND nativeWindow = glfwGetWin32Window(window);
+            // GLFW's Win32 procedure uses this association before dispatching
+            // any event. If a native integration loses the property, cursor
+            // polling still updates hover while clicks, keys and resize events
+            // disappear. Restore our owned window's association, leaving the
+            // actual GLFW/ImGui callback chain intact.
+            if (nativeWindow && GetPropW(nativeWindow, L"GLFW") != window)
+                SetPropW(nativeWindow, L"GLFW", window);
+        }
+
         void ApplyEmbeddedWindowIcon(GLFWwindow *window)
         {
             if (!window)
@@ -111,6 +124,7 @@ namespace PlutoGE::platform
         }
 
 #ifdef _WIN32
+        RestoreNativeEventRouting(static_cast<GLFWwindow *>(m_window));
         ApplyEmbeddedWindowIcon(static_cast<GLFWwindow *>(m_window));
 #endif
 
@@ -224,6 +238,9 @@ namespace PlutoGE::platform
 
     void Window::PollEvents()
     {
+#ifdef _WIN32
+        RestoreNativeEventRouting(static_cast<GLFWwindow *>(m_window));
+#endif
         m_inputState.BeginFrame();
         glfwPollEvents();
         // The framebuffer is authoritative even when a native resize notification

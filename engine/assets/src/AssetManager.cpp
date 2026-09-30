@@ -98,8 +98,12 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
     {
+        // Direct meshes have no imported sub-object identity. In particular,
+        // legacy generated prefabs stored a project URI here with localId=0;
+        // searching every metadata sidecar for that URI can stall every clone.
+        if (localId == 0) return {};
         const auto sourceReference = ResolveStableAssetId(modelAssetId);
-        if (sourceReference.empty() || localId == 0)
+        if (sourceReference.empty())
             return {};
         const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;

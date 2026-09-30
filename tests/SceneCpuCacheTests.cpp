@@ -4,6 +4,8 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cmath>
@@ -159,6 +161,41 @@ int main() try
     Require(hitIs(far) && hitIs(far), "Empty shape membership");
     invalid->GetComponent<scene::ColliderComponent>()->SetShape(scene::ColliderShape::Box);
     Require(hitIs(invalid), "Empty shape becoming valid");
+    {
+        scene::Scene simulation;
+        auto *moving = simulation.AddEntity(std::make_unique<scene::Entity>());
+        moving->SetPosition({0, 10, 0});
+        moving->CreateComponent<scene::ColliderComponent>();
+        moving->CreateComponent<scene::RigidbodyComponent>();
+        auto *victim = simulation.AddEntity(std::make_unique<scene::Entity>());
+        victim->CreateComponent<scene::ColliderComponent>();
+        simulation.StartRuntime();
+        auto rebuilt = [&]() {
+            core::CpuTrace trace(true);
+            simulation.Update(1.f / 60.f);
+            const auto samples = trace.TakeSamples();
+            return std::any_of(samples.begin(), samples.end(), [](const auto &sample) {
+                return sample.name == "Physics simulation world rebuild";
+            });
+        };
+        Require(rebuilt(), "Initial simulation did not build its bodies");
+        const float previousHeight = moving->GetWorldPosition().y;
+        victim->SetActive(false);
+        Require(!rebuilt(), "Deactivation rebuilt surviving physics bodies");
+        Require(moving->GetWorldPosition().y < previousHeight, "Surviving dynamic body stopped simulating");
+        victim->SetActive(true);
+        Require(rebuilt(), "Reactivation did not restore a removed body");
+        victim->GetComponent<scene::ColliderComponent>()->SetEnabled(false);
+        Require(!rebuilt(), "Disabling collider rebuilt surviving bodies");
+        victim->GetComponent<scene::ColliderComponent>()->SetEnabled(true);
+        Require(rebuilt(), "Reenabled collider missing from simulation");
+        simulation.DestroyEntity(victim->GetID());
+        (void)rebuilt(); // Destruction also invalidates pointers owned by the scene.
+        Require(!rebuilt(), "Destroyed collider caused repeated physics rebuilds");
+        moving->GetComponent<scene::ColliderComponent>()->SetCenter({0, .2f, 0});
+        Require(rebuilt(), "Changed surviving shape was not rebuilt");
+        simulation.StopRuntime();
+    }
     std::cout << "Scene CPU cache checks passed\n";
     return 0;
 }

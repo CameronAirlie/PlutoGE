@@ -1672,6 +1672,7 @@ namespace PlutoGE::scene
     void Scene::RebuildRuntimePhysicsState(const std::vector<Entity *> &entities,
                                            const std::vector<Entity *> &activeEntities)
     {
+        core::CpuScope scope("Physics simulation world rebuild", core::CpuCategory::Physics);
         struct PreservedRagdollPart
         {
             btTransform transform;
@@ -3976,7 +3977,23 @@ namespace PlutoGE::scene
 
         if (!rebuildRuntimePhysics)
         {
-            const auto &existingBodies = m_runtimePhysicsState->world->bodies;
+            auto &world = *m_runtimePhysicsState->world;
+            auto &existingBodies = world.bodies;
+            // Death/deactivation usually only removes a collider. Preserve all
+            // surviving Bullet bodies (and their mesh shapes and simulation
+            // state) instead of rebuilding the entire world for that removal.
+            size_t previousEntityCount = 0;
+            for (const auto &body : existingBodies) previousEntityCount += body.foliage == nullptr ? 1u : 0u;
+            if (previousEntityCount > physicsEntities.size())
+            {
+                const std::unordered_set<Entity *> active(physicsEntities.begin(), physicsEntities.end());
+                std::erase_if(existingBodies, [&](BulletStepBody &body)
+                {
+                    if (body.foliage || active.contains(body.entity)) return false;
+                    if (body.body) world.dynamicsWorld.removeRigidBody(body.body.get());
+                    return true;
+                });
+            }
             size_t entityBodyCount = 0;
             for (const auto &body : existingBodies) entityBodyCount += body.foliage == nullptr ? 1u : 0u;
             if (entityBodyCount != physicsEntities.size())

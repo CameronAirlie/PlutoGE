@@ -47,6 +47,13 @@ int main()
         const auto keepColor=compositor->RegisterTexture({&device,color,128,128});
         const auto keepAlternate=compositor->RegisterTexture({&device,alternate,128,128});
         for(int frame=0;frame<1200;++frame) {
+            const int inputFrame = frame % 400;
+#ifdef _WIN32
+            // Losing this native association leaves polling-based hover alive
+            // but makes GLFW discard mouse, keyboard and resize messages.
+            if (inputFrame == 10)
+                RemovePropW(glfwGetWin32Window(native), L"GLFW");
+#endif
             if (frame == 400 || frame == 800) {
                 // Reproduce a missed callback while the native window grows
                 // beyond its initial presentation extent, then shrinks again.
@@ -54,21 +61,33 @@ int main()
                 glfwSetWindowSize(native, frame == 400 ? 256 : 128, frame == 400 ? 192 : 128);
             }
             window.PollEvents(); compositor->BeginFrame();
-            if (frame >= 10 && frame <= 12) {
-                if (frame > 10) {
 #ifdef _WIN32
-                    SendMessageW(glfwGetWin32Window(native), frame == 11 ? WM_LBUTTONDOWN : WM_LBUTTONUP,
-                                 frame == 11 ? MK_LBUTTON : 0, MAKELPARAM(24, 24));
-#else
-                    mouseCallback(native, GLFW_MOUSE_BUTTON_LEFT, frame == 11 ? GLFW_PRESS : GLFW_RELEASE, 0);
+            if (GetPropW(glfwGetWin32Window(native), L"GLFW") != native)
+                throw std::runtime_error("Native GLFW event routing was not recovered");
 #endif
-                    if (window.GetInputState().mouseState.buttons[0] != (frame == 11))
+            if (inputFrame >= 10 && inputFrame <= 12) {
+                if (inputFrame > 10) {
+#ifdef _WIN32
+                    SendMessageW(glfwGetWin32Window(native), inputFrame == 11 ? WM_LBUTTONDOWN : WM_LBUTTONUP,
+                                 inputFrame == 11 ? MK_LBUTTON : 0, MAKELPARAM(24, 24));
+#else
+                    mouseCallback(native, GLFW_MOUSE_BUTTON_LEFT, inputFrame == 11 ? GLFW_PRESS : GLFW_RELEASE, 0);
+#endif
+                    if (window.GetInputState().mouseState.buttons[0] != (inputFrame == 11))
                         throw std::runtime_error("ImGui did not chain the engine mouse callback");
                 }
                 // Keep the hidden test deterministic without moving the user's
                 // desktop cursor when Windows changes capture on button down.
                 ImGui_ImplGlfw_CursorPosCallback(native, 24, 24);
             }
+#ifdef _WIN32
+            if (inputFrame == 13 || inputFrame == 14) {
+                SendMessageW(glfwGetWin32Window(native), inputFrame == 13 ? WM_KEYDOWN : WM_KEYUP,
+                             'A', inputFrame == 13 ? 0x001e0001 : 0xc01e0001);
+                if (window.GetInputState().keys[GLFW_KEY_A] != (inputFrame == 13))
+                    throw std::runtime_error("Native keyboard routing did not recover");
+            }
+#endif
             ImGui::NewFrame();
             const auto extent = window.GetExtents();
             if (swapchain->GetWidth() != extent.width || swapchain->GetHeight() != extent.height)
@@ -95,11 +114,11 @@ int main()
             ImGui::End(); ImGui::Render(); compositor->RenderDrawData(ImGui::GetDrawData());
             if(!swapchain->Present(color)) throw std::runtime_error("Presentation failed");
         }
-        if (buttonClicks != 1) throw std::runtime_error("ImGui button did not respond to GLFW press/release");
+        if (buttonClicks != 3) throw std::runtime_error("ImGui button did not respond to GLFW press/release after routing recovery");
         compositor->UnregisterTexture(keepColor); compositor->UnregisterTexture(keepAlternate);
         compositor->Shutdown(); ImGui::DestroyContext();
         device.DestroyTexture(color); device.DestroyTexture(alternate);
-        std::cout<<"PASS 1200 Vulkan editor frames, 19200 descriptor replacements, resize recovery, ImGui clicks and callback chaining\n";
+        std::cout<<"PASS 1200 Vulkan editor frames, 19200 descriptor replacements, resize recovery, repeated native routing recovery, ImGui clicks, keyboard and callback chaining\n";
     } catch(const std::exception &e) { std::cerr<<e.what()<<'\n'; return 1; }
     window.Close();
 }

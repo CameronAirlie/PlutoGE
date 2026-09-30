@@ -106,6 +106,18 @@ namespace PlutoGE::render
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();
         m_geometryPipelines.emplace(key, std::move(pipeline));
+        if (standard)
+        {
+            // Prepare the matching graph path when the scene first prepares
+            // ordinary geometry. Unlit loot and hit effects use this path;
+            // compiling it on their first appearance can stall combat for a
+            // full second. The representative only selects pipeline state;
+            // no geometry is submitted and no material data is changed.
+            static const auto graph = std::make_shared<const ShaderGraphProgram>();
+            auto graphDraw = draw;
+            graphDraw.shaderGraphProgram = graph;
+            (void)GeometryPipeline(graphDraw, instanced, layout, depthOnly, prepassed);
+        }
         return handle;
     }
 

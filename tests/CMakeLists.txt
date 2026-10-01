@@ -292,6 +292,10 @@ add_executable(PlutoGEScenePortraitPoseTests ScenePortraitPoseTests.cpp)
 target_link_libraries(PlutoGEScenePortraitPoseTests PRIVATE ${pluto_scene_test_libraries})
 add_test(NAME PlutoGEScenePortraitPoseTests COMMAND PlutoGEScenePortraitPoseTests)
 
+add_executable(PlutoGECameraStackTests CameraStackTests.cpp)
+target_link_libraries(PlutoGECameraStackTests PRIVATE ${pluto_scene_test_libraries})
+add_test(NAME PlutoGECameraStackTests COMMAND PlutoGECameraStackTests)
+
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -548,6 +552,7 @@ add_test(NAME PlutoGEVulkanTemporalMotionTests COMMAND PlutoGEVulkanRhiTests --t
 add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --temporal-motion)
 
 add_test(NAME PlutoGEVulkanPreparationCacheTests COMMAND PlutoGEVulkanRhiTests --preparation-cache)
+add_test(NAME PlutoGEVulkanCameraStackTests COMMAND PlutoGEVulkanRhiTests --camera-stack)
 add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
 

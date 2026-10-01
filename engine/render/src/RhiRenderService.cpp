@@ -28,6 +28,7 @@ namespace PlutoGE::render
     {
         m_loadingRenderer.Shutdown();
         RmlUiRuntime::Get().Shutdown();
+        m_cameraStack.Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
@@ -45,7 +46,8 @@ namespace PlutoGE::render
                                                  RenderCommandView commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                                  const scene::Scene *scene,
-                                                 std::span<IPostProcessEffect *const> postProcessEffects)
+                                                 std::span<IPostProcessEffect *const> postProcessEffects,
+                                                 std::span<const CameraOverlayLayer> overlays)
     {
         if (!m_swapchain || !m_renderer)
             return false;
@@ -66,9 +68,15 @@ namespace PlutoGE::render
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
+        // Overlay renderers record their own frames, so the base frame is
+        // submitted first and the composite leaves the open recording for UI.
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
-                                     !combineRuntimeUiSubmission, scene))
+                                     !overlays.empty() || !combineRuntimeUiSubmission, scene))
+            return false;
+        if (!m_cameraStack.Composite(*m_device, m_sceneRenderer->GetColorTexture(), m_swapchain->GetWidth(),
+                                     m_swapchain->GetHeight(), overlays, texturePixelReader, scene,
+                                     !combineRuntimeUiSubmission))
             return false;
         if (scene && scene->HasRmlRuntimeUI())
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),

@@ -2,6 +2,7 @@
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <cstdint>
@@ -49,7 +50,9 @@ namespace PlutoGE::ui
                     render::RenderCommandView shadowCommands,
                     std::span<render::IPostProcessEffect *const> postProcessEffects,
                     const scene::Scene *scene,
-                    render::PostProcessDebugView debugView);
+                    render::PostProcessDebugView debugView,
+                    // Composited in order over the base camera, beneath runtime UI.
+                    std::span<const render::CameraOverlayLayer> overlays = {});
 
         [[nodiscard]] const std::string &GetLastRenderError() const noexcept { return m_lastRenderError; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
@@ -77,6 +80,7 @@ namespace PlutoGE::ui
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
         render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;
+        render::RhiCameraStackCompositor m_cameraStack;
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;
         bool m_vulkanAvailable = false;

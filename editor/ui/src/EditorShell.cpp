@@ -35,6 +35,7 @@
 #include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -750,38 +751,6 @@ namespace PlutoGE::ui
             {
                 CollectEntitiesRecursive(child, entities);
             }
-        }
-
-        scene::CameraComponent *FindFirstSceneCamera(scene::Scene *scene)
-        {
-            if (!scene)
-            {
-                return nullptr;
-            }
-
-            std::vector<scene::Entity *> entities;
-            for (auto *rootEntity : scene->GetRootEntities())
-            {
-                CollectEntitiesRecursive(rootEntity, entities);
-            }
-
-            for (auto *entity : entities)
-            {
-                if (!entity || !entity->IsActive())
-                {
-                    continue;
-                }
-
-                if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
-                {
-                    if (cameraComponent->GetCamera())
-                    {
-                        return cameraComponent;
-                    }
-                }
-            }
-
-            return nullptr;
         }
 
         std::unique_ptr<scene::Scene> CreateEmptyScene()
@@ -3149,7 +3118,9 @@ namespace PlutoGE::ui
 
             window.SetScriptInputEnabled(shouldEnableRuntimeInput());
 
-            auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
+            // The game view renders the same camera stack as a built game.
+            auto gameCameraStack = m_scene ? scene::ResolveCameraStack(*m_scene) : scene::CameraStack{};
+            auto *cameraComponent2 = gameCameraStack.base;
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
             bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
             render::CameraData editorCameraData{};
@@ -3309,7 +3280,8 @@ namespace PlutoGE::ui
 
             // Scripts may destroy the active camera or replace the entire scene
             // during Update. Any component pointer captured before Update is stale.
-            cameraComponent2 = FindFirstSceneCamera(m_scene.get());
+            gameCameraStack = m_scene ? scene::ResolveCameraStack(*m_scene) : scene::CameraStack{};
+            cameraComponent2 = gameCameraStack.base;
             shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() &&
                                     IsCameraActiveInScene(m_scene.get(), cameraComponent2);
 
@@ -3428,7 +3400,7 @@ namespace PlutoGE::ui
                 frameTimingStats.renderedViewportPixels +=
                     static_cast<std::uint64_t>((std::max)(renderTarget2Width, 0)) *
                     static_cast<std::uint64_t>((std::max)(renderTarget2Height, 0));
-                viewportPanel2->RenderFrame(*cameraComponent2);
+                viewportPanel2->RenderFrame(*cameraComponent2, gameCameraStack.overlays);
             }
             else
             {

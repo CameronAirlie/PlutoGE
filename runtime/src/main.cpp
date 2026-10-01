@@ -7,6 +7,7 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -110,48 +111,9 @@ namespace PlutoGE
             }
         }
 
-        scene::CameraComponent *FindFirstSceneCamera(scene::Scene *scene)
+        scene::CameraComponent *FindBaseCamera(scene::Scene *scene)
         {
-            if (!scene)
-            {
-                return nullptr;
-            }
-
-            std::vector<scene::Entity *> entities;
-            for (auto *rootEntity : scene->GetRootEntities())
-            {
-                CollectEntitiesRecursive(rootEntity, entities);
-            }
-
-            scene::CameraComponent *fallbackCamera = nullptr;
-
-            for (auto *entity : entities)
-            {
-                if (!entity || !entity->IsActive())
-                {
-                    continue;
-                }
-
-                if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
-                {
-                    if (!cameraComponent->GetCamera() || !cameraComponent->IsEnabled())
-                    {
-                        continue;
-                    }
-
-                    if (cameraComponent->IsMainCamera())
-                    {
-                        return cameraComponent;
-                    }
-
-                    if (!fallbackCamera)
-                    {
-                        fallbackCamera = cameraComponent;
-                    }
-                }
-            }
-
-            return fallbackCamera;
+            return scene ? scene::ResolveCameraStack(*scene).base : nullptr;
         }
 
         std::filesystem::path ResolveExecutablePath(char **argv)
@@ -576,7 +538,7 @@ int RunRuntime(int argc, char **argv)
         PlutoGE::CollectEntitiesRecursive(rootEntity, loadedEntities);
     }
     PlutoGE::g_runtimeDiagnostics.Log("Loaded entity count: " + std::to_string(loadedEntities.size()));
-    PlutoGE::g_runtimeDiagnostics.Log(std::string("Startup camera present: ") + (PlutoGE::FindFirstSceneCamera(scene.get()) ? "yes" : "no"));
+    PlutoGE::g_runtimeDiagnostics.Log(std::string("Startup camera present: ") + (PlutoGE::FindBaseCamera(scene.get()) ? "yes" : "no"));
 #endif
 
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
@@ -589,6 +551,9 @@ int RunRuntime(int argc, char **argv)
         !useVulkanRenderer && runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
         runtimeRenderScale < 0.999f;
     std::unique_ptr<PlutoGE::render::RenderTarget> runtimeRenderTarget;
+    // Persist filtered command storage across frames to avoid reallocations.
+    PlutoGE::scene::CameraCommandFilter baseCameraCommandFilter;
+    PlutoGE::scene::CameraOverlayLayerBuilder overlayCameraLayers;
     PlutoGE::render::SpatialUpscaler runtimeUpscaler;
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
@@ -669,7 +634,7 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
         if (!hasLoggedFirstFrameDiagnostics)
         {
-            PlutoGE::LogSceneDiagnostics(scene.get(), PlutoGE::FindFirstSceneCamera(scene.get()), renderer);
+            PlutoGE::LogSceneDiagnostics(scene.get(), PlutoGE::FindBaseCamera(scene.get()), renderer);
             hasLoggedFirstFrameDiagnostics = true;
         }
 #endif
@@ -699,7 +664,8 @@ int RunRuntime(int argc, char **argv)
 
         if (useVulkanRenderer)
         {
-            if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get());
+            const auto cameraStack = scene ? PlutoGE::scene::ResolveCameraStack(*scene) : PlutoGE::scene::CameraStack{};
+            if (auto *cameraComponent = cameraStack.base;
                 cameraComponent && windowExtents.width > 0 && windowExtents.height > 0)
             {
 #ifdef _WIN32
@@ -717,8 +683,12 @@ int RunRuntime(int argc, char **argv)
                     return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
                                                   reinterpret_cast<const std::byte *>(source.data() + source.size()));
                 };
+                const auto sceneCommands = renderer.GetSceneRenderCommandView();
+                const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
+                const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
+                                                                windowExtents.width, windowExtents.height);
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, renderer.GetSceneRenderCommandView(), readTexturePixels, scene.get(), postProcessEffects))
+                        cameraData, lighting, cameraCommands, readTexturePixels, scene.get(), postProcessEffects, overlays))
                 {
                     std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
                     window.RequestClose();
@@ -729,7 +699,7 @@ int RunRuntime(int argc, char **argv)
         else
         {
             renderer.BeginFrame(frameRenderTarget);
-            if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get()))
+            if (auto *cameraComponent = PlutoGE::FindBaseCamera(scene.get()))
             {
 #ifdef _WIN32
                 PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";

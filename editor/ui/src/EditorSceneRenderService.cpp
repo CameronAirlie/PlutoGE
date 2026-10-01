@@ -78,6 +78,7 @@ namespace PlutoGE::ui
     void EditorSceneRenderService::Shutdown()
     {
         render::RmlUiRuntime::Get().Shutdown();
+        m_cameraStack.Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
@@ -104,7 +105,8 @@ namespace PlutoGE::ui
                                           render::RenderCommandView shadowCommands,
                                           std::span<render::IPostProcessEffect *const> postProcessEffects,
                                           const scene::Scene *scene,
-                                          render::PostProcessDebugView debugView)
+                                          render::PostProcessDebugView debugView,
+                                          std::span<const render::CameraOverlayLayer> overlays)
     {
         core::CpuScope serviceScope("Viewport scene service", core::CpuCategory::Rendering);
         core::CpuScope preparationScope("Viewport lighting and atmosphere", core::CpuCategory::Rendering);
@@ -147,11 +149,18 @@ namespace PlutoGE::ui
             // scene command buffer and submit both together.
             const bool combineRuntimeUiSubmission = m_isVulkan && scene && scene->HasRmlRuntimeUI() &&
                                                     render::RmlUiRuntime::Get().IsInitialized();
+            // Debug views show the base camera's buffers alone. Overlay renderers
+            // record their own frames, so the base frame is submitted first.
+            if (debugView != render::PostProcessDebugView::None)
+                overlays = {};
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
                                          postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView,
-                                         !combineRuntimeUiSubmission, scene))
+                                         !overlays.empty() || !combineRuntimeUiSubmission, scene))
                 throw std::runtime_error("Scene renderer returned no frame at " + std::to_string(width) + "x" + std::to_string(height));
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
+            if (!m_cameraStack.Composite(*m_device, m_viewportTexture, width, height, overlays,
+                                         readOpenGlTexture, scene, !combineRuntimeUiSubmission))
+                throw std::runtime_error("Overlay cameras could not be composited");
             if (scene && scene->HasRmlRuntimeUI())
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
                                                       static_cast<int>(width), static_cast<int>(height),

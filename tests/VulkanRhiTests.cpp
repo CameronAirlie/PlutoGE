@@ -1,4 +1,5 @@
 #include "OrthographicUpscalerChecks.h"
+#include "CameraStackRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -198,6 +199,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--preparation-cache")
         {
             CheckPreparationCache(device, shaders);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--camera-stack")
+        {
+            CheckCameraStackComposite(device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--opaque-batching")

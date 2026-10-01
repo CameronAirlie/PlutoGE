@@ -544,6 +544,9 @@ namespace PlutoGE::render
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
+        // Device timing statistics are published per submission label. Secondary
+        // renderers use their own label so they never replace the main scene's.
+        void SetSubmissionLabel(std::string label) { m_submissionLabel = std::move(label); }
         // Reference switches for controlled rendering/performance comparisons.
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
@@ -865,6 +868,7 @@ namespace PlutoGE::render
         bool m_hasPreviousFrame = false;
         float m_previousGraphTime = 0.0f;
         rhi::TextureHandle m_outputColor;
+        std::string m_submissionLabel = "Scene";
         BasicRendererFrameStats m_frameStats;
         BasicRendererTimingStats m_timingStats;
     };

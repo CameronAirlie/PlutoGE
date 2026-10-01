@@ -13,6 +13,7 @@
 #include "PlutoGE/render/TexturePainter.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
+#include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
@@ -58,6 +59,13 @@
 
 namespace PlutoGE::ui
 {
+    struct ViewportPanel::CameraStackState
+    {
+        scene::CameraCommandFilter commandFilter;
+        scene::CameraCommandFilter shadowCommandFilter;
+        scene::CameraOverlayLayerBuilder overlayLayers;
+    };
+
     ViewportPanel::ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService)
         : Panel(config), m_config(config), m_rhiRenderService(renderService)
     {
@@ -3907,7 +3915,8 @@ namespace PlutoGE::ui
         }
     }
 
-    void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
+    void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent,
+                                    std::span<scene::CameraComponent *const> overlayCameras)
     {
         core::CpuScope scope("Game viewport frame", core::CpuCategory::Rendering);
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
@@ -3931,8 +3940,22 @@ namespace PlutoGE::ui
         if ((m_useRhiPreview || requiresRhiViewport) && m_rhiRenderService)
         {
             renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
-            RenderRhiFrame(cameraData, renderer.GetVisibleRenderCommandView(), renderer.GetSceneRenderCommandView(),
-                           postProcessEffects);
+            auto commands = renderer.GetVisibleRenderCommandView();
+            auto shadowCommands = renderer.GetSceneRenderCommandView();
+            std::span<const render::CameraOverlayLayer> overlays;
+            if (activeScene)
+            {
+                if (!m_cameraStack)
+                    m_cameraStack = std::make_unique<CameraStackState>();
+                const auto &tagFilter = cameraComponent.GetTagFilter();
+                // Overlays select from the unculled scene; base visibility culling
+                // uses the base camera's frustum, not the overlay's.
+                overlays = m_cameraStack->overlayLayers.Build(*activeScene, overlayCameras, shadowCommands,
+                                                              sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+                commands = m_cameraStack->commandFilter.Apply(*activeScene, tagFilter, commands);
+                shadowCommands = m_cameraStack->shadowCommandFilter.Apply(*activeScene, tagFilter, shadowCommands);
+            }
+            RenderRhiFrame(cameraData, commands, shadowCommands, postProcessEffects, overlays);
         }
         else
         {
@@ -3948,7 +3971,8 @@ namespace PlutoGE::ui
     void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData,
                                        render::RenderCommandView commands,
                                        render::RenderCommandView shadowCommands,
-                                       std::span<render::IPostProcessEffect *const> postProcessEffects)
+                                       std::span<render::IPostProcessEffect *const> postProcessEffects,
+                                       std::span<const render::CameraOverlayLayer> overlays)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
@@ -3968,7 +3992,8 @@ namespace PlutoGE::ui
                                         static_cast<std::uint32_t>(target->GetHeight()),
                                         cameraData, commands, shadowCommands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene(),
-                                        EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView()))
+                                        EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView(),
+                                        overlays))
         {
             // A Vulkan project must never silently display the legacy OpenGL
             // scene as if it came from the selected backend. Keep the RHI path

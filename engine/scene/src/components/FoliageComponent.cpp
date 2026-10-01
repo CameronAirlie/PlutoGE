@@ -634,6 +634,7 @@ namespace PlutoGE::scene
                     }
 
                     render::RenderCommand command;
+                    command.ownerEntity = GetOwner() ? GetOwner()->GetID() : 0;
                     command.model = cluster.models->front();
                     command.previousModel = command.model;
                     command.material = material;

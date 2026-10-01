@@ -203,6 +203,7 @@ namespace PlutoGE::scene
         for (std::size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
         {
             render::RenderCommand command;
+            command.ownerEntity = entity->GetID();
             command.model = modelMatrix;
             command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
             command.material = m_material;

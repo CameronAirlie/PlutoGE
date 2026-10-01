@@ -168,10 +168,18 @@ namespace PlutoGE::render
         auto renderer = std::make_unique<BasicRenderer>();
         if (!renderer->Initialize(device, shaders))
             return false;
+        renderer->SetSubmissionLabel(m_submissionLabel);
         m_device = &device;
         m_renderer = std::move(renderer);
         m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    void RhiSceneRenderer::SetSubmissionLabel(std::string label)
+    {
+        m_submissionLabel = std::move(label);
+        if (m_renderer)
+            m_renderer->SetSubmissionLabel(m_submissionLabel);
     }
 
     void RhiSceneRenderer::InvalidateAssetCache()
@@ -942,7 +950,7 @@ namespace PlutoGE::render
             }
         }
         std::vector<BasicPostProcessEffect> basicEffects(atmosphereEffects.begin(), atmosphereEffects.end());
-        if (scene)
+        if (scene && m_sceneEffectsEnabled)
         {
             auto oceans = CollectRhiOceans(*scene, effectiveLighting);
             basicEffects.insert(basicEffects.end(), std::make_move_iterator(oceans.begin()), std::make_move_iterator(oceans.end()));
@@ -1108,7 +1116,7 @@ namespace PlutoGE::render
             draw.texture = {};
             return draw;
         };
-        if (scene)
+        if (scene && m_sceneEffectsEnabled)
         {
             core::CpuScope particleScope("Particle render preparation", core::CpuCategory::Rendering);
             const auto inverseView = glm::inverse(cameraData.view);

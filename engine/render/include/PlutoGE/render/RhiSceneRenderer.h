@@ -130,6 +130,10 @@ namespace PlutoGE::render
             m_immediateTextureUploads = enabled;
         }
         void InvalidateAssetCache();
+        void SetSubmissionLabel(std::string label);
+        // Scene-wide effects (oceans and particle systems) belong to the main
+        // view. Secondary views disable them but keep the scene's lights.
+        void SetSceneEffectsEnabled(bool enabled) noexcept { m_sceneEffectsEnabled = enabled; }
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
             if (m_upscalerOptions == options)
@@ -180,6 +184,8 @@ namespace PlutoGE::render
 
     private:
       bool m_immediateTextureUploads = false;
+      bool m_sceneEffectsEnabled = true;
+      std::string m_submissionLabel = "Scene";
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;

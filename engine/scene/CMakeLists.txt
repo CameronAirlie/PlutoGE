@@ -25,6 +25,8 @@ add_library(PlutoGEScene
     src/components/SkeletonAttachmentComponent.cpp
     src/components/CameraRigComponent.cpp
     src/components/CameraComponent.cpp
+    src/CameraStack.cpp
+    src/CameraTagFilter.cpp
     src/components/ColliderComponent.cpp
     src/components/DecalComponent.cpp
     src/components/FoliageComponent.cpp

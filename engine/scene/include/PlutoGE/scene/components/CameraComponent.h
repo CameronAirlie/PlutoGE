@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
@@ -17,6 +18,14 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
+    // Base cameras render the scene; overlay cameras are composited on top of
+    // the main base camera, in OverlayOrder (for example a weapon camera).
+    enum class CameraRenderType
+    {
+        Base,
+        Overlay,
+    };
+
     class CameraComponent : public TypedComponent<CameraComponent>
     {
     public:
@@ -34,6 +43,14 @@ namespace PlutoGE::scene
         bool IsMainCamera() const { return m_isMainCamera; }
         void SetPrimary(bool isPrimary) { SetMainCamera(isPrimary); }
         bool IsPrimary() const { return IsMainCamera(); }
+        void SetRenderType(CameraRenderType renderType) { m_renderType = renderType; }
+        CameraRenderType GetRenderType() const { return m_renderType; }
+        bool IsOverlay() const { return m_renderType == CameraRenderType::Overlay; }
+        // Overlays composite in ascending order; later overlays draw on top.
+        void SetOverlayOrder(int order) { m_overlayOrder = order; }
+        int GetOverlayOrder() const { return m_overlayOrder; }
+        void SetTagFilter(CameraTagFilter filter) { m_tagFilter = std::move(filter); }
+        const CameraTagFilter &GetTagFilter() const { return m_tagFilter; }
 
         render::CameraData GetCameraData(int width, int height) const;
 
@@ -62,6 +79,9 @@ namespace PlutoGE::scene
     private:
         std::unique_ptr<render::Camera> m_camera;
         bool m_isMainCamera = false;
+        CameraRenderType m_renderType = CameraRenderType::Base;
+        int m_overlayOrder = 0;
+        CameraTagFilter m_tagFilter;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
         std::string m_postProcessPresetAssetReference;
     };

@@ -1589,7 +1589,7 @@ namespace PlutoGE::render
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         core::CpuScope beginScope("RHI.BeginFrame", core::CpuCategory::Rendering);
         const auto beginFrameStart = std::chrono::steady_clock::now();
-        commands.BeginFrame("Scene");
+        commands.BeginFrame(m_submissionLabel);
         const auto uploadDeformedMeshes = [&](std::span<const BasicDraw> list)
         {
             for (const auto &draw : list)

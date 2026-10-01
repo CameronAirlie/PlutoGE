@@ -30,6 +30,7 @@ add_library(PlutoGERender
     src/RmlLoadingDocument.cpp
     src/RhiSkinning.cpp
     src/RhiSceneRenderer.cpp
+    src/RhiCameraStack.cpp
     src/ScenePortrait.cpp
     src/RhiOcean.cpp
     src/RhiPostProcessAdapter.cpp
@@ -191,6 +192,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
 
     pluto_add_slang_graphics_shader(ThumbnailCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ThumbnailCopy.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(PortraitCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PortraitCopy.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(CameraStackComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CameraStackComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ParticlesInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VolumetricFogTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(VolumetricCloudTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" vertexMain traceMain)

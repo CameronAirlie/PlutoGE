@@ -2,6 +2,7 @@
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <memory>
@@ -47,7 +48,9 @@ namespace PlutoGE::render
                                                  RenderCommandView commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {},
                                                  const PlutoGE::scene::Scene *scene = nullptr,
-                                                 std::span<IPostProcessEffect *const> postProcessEffects = {});
+                                                 std::span<IPostProcessEffect *const> postProcessEffects = {},
+                                                 // Composited in order over the base camera, beneath runtime UI.
+                                                 std::span<const CameraOverlayLayer> overlays = {});
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
@@ -64,6 +67,7 @@ namespace PlutoGE::render
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;
         std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;
+        RhiCameraStackCompositor m_cameraStack;
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
         std::uint64_t m_frameSequence = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;

@@ -271,6 +271,10 @@ namespace PlutoGE::scene
         }
 
         properties.push_back({"MainCamera", scene::PropertyType::Bool, m_isMainCamera ? "true" : "false"});
+        properties.push_back({"RenderType", scene::PropertyType::Enum, m_renderType == CameraRenderType::Overlay ? "1" : "0", {"Base", "Overlay"}});
+        properties.push_back({"OverlayOrder", scene::PropertyType::Int, std::to_string(m_overlayOrder)});
+        properties.push_back({"RenderTags", scene::PropertyType::String, CameraTagFilter::FormatTagList(m_tagFilter.GetIncludedTags())});
+        properties.push_back({"IgnoredTags", scene::PropertyType::String, CameraTagFilter::FormatTagList(m_tagFilter.GetExcludedTags())});
 
         properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
 
@@ -342,6 +346,22 @@ namespace PlutoGE::scene
             else if (property.name == "MainCamera" || property.name == "Primary")
             {
                 m_isMainCamera = (property.value == "true");
+            }
+            else if (property.name == "RenderType")
+            {
+                m_renderType = property.value == "1" ? CameraRenderType::Overlay : CameraRenderType::Base;
+            }
+            else if (property.name == "OverlayOrder")
+            {
+                m_overlayOrder = std::stoi(property.value);
+            }
+            else if (property.name == "RenderTags")
+            {
+                m_tagFilter.SetIncludedTags(CameraTagFilter::ParseTagList(property.value));
+            }
+            else if (property.name == "IgnoredTags")
+            {
+                m_tagFilter.SetExcludedTags(CameraTagFilter::ParseTagList(property.value));
             }
             else if (property.name == "PostProcessEffectCount")
             {

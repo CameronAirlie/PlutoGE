@@ -1453,6 +1453,7 @@ namespace PlutoGE::scene
                     command.sourceObject = m_renderObjectIdentity.Value();
                     command.sourceRevision = sourceRevision;
                 }
+                command.ownerEntity = entity->GetID();
                 command.model = submeshModelMatrix;
                 const auto previous = m_previousSubmeshModels.find(submeshIndex);
                 command.previousModel = previous != m_previousSubmeshModels.end()

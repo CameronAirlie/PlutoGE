@@ -21,6 +21,7 @@ namespace PlutoGE::render
     class Mesh;
     class Texture;
     struct RenderCommand;
+    struct CameraOverlayLayer;
     class IPostProcessEffect;
     namespace rhi
     {
@@ -58,11 +59,14 @@ namespace PlutoGE::ui
         void Initialize() override;
         void Render() override;
         void ClearFrame();
-        void RenderFrame(scene::CameraComponent &cameraComponent);
+        // Overlay cameras are composited over the base camera on the RHI path.
+        void RenderFrame(scene::CameraComponent &cameraComponent,
+                         std::span<scene::CameraComponent *const> overlayCameras = {});
         void RenderRhiFrame(const render::CameraData &cameraData,
                             render::RenderCommandView commands,
                             render::RenderCommandView shadowCommands,
-                            std::span<render::IPostProcessEffect *const> postProcessEffects);
+                            std::span<render::IPostProcessEffect *const> postProcessEffects,
+                            std::span<const render::CameraOverlayLayer> overlays = {});
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 
@@ -121,6 +125,9 @@ namespace PlutoGE::ui
         float m_scaleSnap = 0.1f;
 
     private:
+        struct CameraStackState;
+        // Per-frame filtered command storage for the game camera stack.
+        std::unique_ptr<CameraStackState> m_cameraStack;
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
         render::RenderTarget *m_scaledRenderTarget = nullptr;
         std::unique_ptr<render::SpatialUpscaler> m_upscaler;

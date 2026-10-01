@@ -36,6 +36,9 @@ namespace PlutoGE::render
         // state (including motion history and bounds). Zero retains value-based
         // validation for procedural callers and mutable pose/instance arrays.
         std::uint64_t sourceObject = 0, sourceRevision = 0;
+        // Opaque ID of the scene entity that produced this command, or zero for
+        // procedural geometry. Camera filters use it to select commands by tag.
+        std::uint32_t ownerEntity = 0;
 
         // LOD transition state is transient and packed into the otherwise
         // unused high bits of minLodIndex.

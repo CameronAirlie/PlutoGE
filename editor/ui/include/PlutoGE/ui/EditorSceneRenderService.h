@@ -3,6 +3,7 @@
 
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RhiCameraStack.h"
+#include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <cstdint>
@@ -44,6 +45,9 @@ namespace PlutoGE::ui
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
         void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
+        // Renders cameras into their render textures; call once per frame
+        // before the viewports so materials sample this frame's images.
+        bool RenderTextures(std::span<const render::RenderTextureView> views, const scene::Scene *scene);
         bool Render(std::uint32_t width, std::uint32_t height,
                     const render::CameraData &cameraData,
                     render::RenderCommandView commands,
@@ -52,7 +56,7 @@ namespace PlutoGE::ui
                     const scene::Scene *scene,
                     render::PostProcessDebugView debugView,
                     // Composited in order over the base camera, beneath runtime UI.
-                    std::span<const render::CameraOverlayLayer> overlays = {});
+                    std::span<const render::CameraView> overlays = {});
 
         [[nodiscard]] const std::string &GetLastRenderError() const noexcept { return m_lastRenderError; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }
@@ -81,6 +85,8 @@ namespace PlutoGE::ui
         render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;
         render::RhiCameraStackCompositor m_cameraStack;
+        render::RhiRenderTextureRenderer m_renderTextures;
+        std::string m_lastRenderTextureError;
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;
         bool m_vulkanAvailable = false;

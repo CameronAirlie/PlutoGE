@@ -21,7 +21,7 @@ namespace PlutoGE::render
     class Mesh;
     class Texture;
     struct RenderCommand;
-    struct CameraOverlayLayer;
+    struct CameraView;
     class IPostProcessEffect;
     namespace rhi
     {
@@ -66,7 +66,7 @@ namespace PlutoGE::ui
                             render::RenderCommandView commands,
                             render::RenderCommandView shadowCommands,
                             std::span<render::IPostProcessEffect *const> postProcessEffects,
-                            std::span<const render::CameraOverlayLayer> overlays = {});
+                            std::span<const render::CameraView> overlays = {});
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 

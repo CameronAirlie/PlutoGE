@@ -3345,6 +3345,23 @@ namespace PlutoGE::ui
 
             core::CpuScope viewportScope("Viewport.Render", core::CpuCategory::Rendering);
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
+            // Render textures are drawn once and shared by both viewports, which
+            // use the same device whenever a project selects the RHI path.
+            if (m_scene && !gameCameraStack.textureCameras.empty())
+            {
+                auto *textureService = m_gameSceneRenderService && m_gameSceneRenderService->IsInitialized()
+                    ? m_gameSceneRenderService.get()
+                    : m_editorSceneRenderService && m_editorSceneRenderService->IsInitialized()
+                        ? m_editorSceneRenderService.get() : nullptr;
+                if (textureService)
+                {
+                    if (!m_renderTextureViews)
+                        m_renderTextureViews = std::make_unique<scene::RenderTextureViewBuilder>();
+                    const auto views = m_renderTextureViews->Build(*m_scene, gameCameraStack.textureCameras,
+                                                                   renderer.GetSceneRenderCommandView());
+                    textureService->RenderTextures(views, m_scene.get());
+                }
+            }
             if (shouldRenderViewport1)
             {
                 auto *sceneRenderTarget = viewportPanel->GetSceneRenderTarget();

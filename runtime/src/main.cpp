@@ -554,6 +554,7 @@ int RunRuntime(int argc, char **argv)
     // Persist filtered command storage across frames to avoid reallocations.
     PlutoGE::scene::CameraCommandFilter baseCameraCommandFilter;
     PlutoGE::scene::CameraOverlayLayerBuilder overlayCameraLayers;
+    PlutoGE::scene::RenderTextureViewBuilder renderTextureViews;
     PlutoGE::render::SpatialUpscaler runtimeUpscaler;
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
@@ -687,6 +688,9 @@ int RunRuntime(int argc, char **argv)
                 const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
                 const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
                                                                 windowExtents.width, windowExtents.height);
+                const auto textureViews = renderTextureViews.Build(*scene, cameraStack.textureCameras, sceneCommands);
+                if (!engine.GetRhiRenderService().RenderTextures(textureViews, readTexturePixels, scene.get()))
+                    std::cerr << "Failed to render the frame's render textures." << std::endl;
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
                         cameraData, lighting, cameraCommands, readTexturePixels, scene.get(), postProcessEffects, overlays))
                 {

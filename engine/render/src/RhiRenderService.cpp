@@ -29,6 +29,7 @@ namespace PlutoGE::render
         m_loadingRenderer.Shutdown();
         RmlUiRuntime::Get().Shutdown();
         m_cameraStack.Shutdown();
+        m_renderTextures.Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
@@ -41,13 +42,20 @@ namespace PlutoGE::render
         m_hostFrameReady = false;
     }
 
+    bool RhiRenderService::RenderTextures(std::span<const RenderTextureView> views,
+                                          const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
+                                          const scene::Scene *scene)
+    {
+        return m_device && m_renderTextures.Render(*m_device, views, texturePixelReader, scene);
+    }
+
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  RenderCommandView commands,
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                                  const scene::Scene *scene,
                                                  std::span<IPostProcessEffect *const> postProcessEffects,
-                                                 std::span<const CameraOverlayLayer> overlays)
+                                                 std::span<const CameraView> overlays)
     {
         if (!m_swapchain || !m_renderer)
             return false;

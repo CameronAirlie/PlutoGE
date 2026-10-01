@@ -8,6 +8,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -2008,6 +2009,11 @@ namespace PlutoGE::ui
                     m_newPostProcessPresetNameBuffer.fill('\0');
                     m_pendingMenuAction = PendingMenuAction::CreatePostProcessPreset;
                 }
+                if (ImGui::MenuItem("Render Texture"))
+                {
+                    m_newRenderTextureNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreateRenderTexture;
+                }
                 if (ImGui::MenuItem("Shader Graph"))
                 {
                     m_newShaderGraphNameBuffer.fill('\0');
@@ -2104,6 +2110,9 @@ namespace PlutoGE::ui
             break;
         case PendingMenuAction::CreatePostProcessPreset:
             ImGui::OpenPopup("Create Post Process Preset Asset");
+            break;
+        case PendingMenuAction::CreateRenderTexture:
+            ImGui::OpenPopup("Create Render Texture Asset");
             break;
         case PendingMenuAction::CreateShaderGraph:
             ImGui::OpenPopup("Create Shader Graph Asset");
@@ -2448,6 +2457,39 @@ namespace PlutoGE::ui
                     m_assetCacheDirty = true;
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created post process preset: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Render Texture Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newRenderTextureNameBuffer.data(), m_newRenderTextureNameBuffer.size());
+            ImGui::DragInt2("Size", m_newRenderTextureSize, 1.0f, render::RenderTextureDescriptor::kMinSize,
+                            render::RenderTextureDescriptor::kMaxSize);
+            const std::string sanitizedName = SanitizeAssetFileName(m_newRenderTextureNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Textures");
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto path = createDirectory / (sanitizedName + std::string(render::RenderTexture::kAssetExtension));
+                std::error_code directoryError;
+                std::filesystem::create_directories(createDirectory, directoryError);
+                std::string errorMessage;
+                if (render::RenderTexture::SaveDescriptor(
+                        path, {.width = m_newRenderTextureSize[0], .height = m_newRenderTextureSize[1]}, &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                    "Created render texture: " + project->MakeAssetReference(path));
                     ImGui::CloseCurrentPopup();
                 }
                 else

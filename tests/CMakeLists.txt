@@ -553,6 +553,7 @@ add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --t
 
 add_test(NAME PlutoGEVulkanPreparationCacheTests COMMAND PlutoGEVulkanRhiTests --preparation-cache)
 add_test(NAME PlutoGEVulkanCameraStackTests COMMAND PlutoGEVulkanRhiTests --camera-stack)
+add_test(NAME PlutoGEVulkanRenderTextureTests COMMAND PlutoGEVulkanRhiTests --render-texture)
 add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
 

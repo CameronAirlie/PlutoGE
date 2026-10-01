@@ -39,6 +39,7 @@ namespace PlutoGE::assets
 namespace PlutoGE::scene
 {
     class IblCaptureComponent;
+    class RenderTextureViewBuilder;
 }
 
 namespace PlutoGE::ui
@@ -340,6 +341,8 @@ namespace PlutoGE::ui
         PanelManager m_panelManager;
         std::unique_ptr<EditorSceneRenderService> m_editorSceneRenderService;
         std::unique_ptr<EditorSceneRenderService> m_gameSceneRenderService;
+        // Per-frame storage for cameras that render into render textures.
+        std::unique_ptr<scene::RenderTextureViewBuilder> m_renderTextureViews;
         bool m_pendingRuntimeStart = false;
         EditorProfiler m_profiler;
 

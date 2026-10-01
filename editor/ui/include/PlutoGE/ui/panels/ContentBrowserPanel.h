@@ -59,6 +59,7 @@ namespace PlutoGE::ui
             CreateSurfaceResponse,
             CreateParticleSystem,
             CreatePostProcessPreset,
+            CreateRenderTexture,
             CreateShaderGraph,
             CreateAnimationGraph,
             CreateScriptableObject,
@@ -82,6 +83,8 @@ namespace PlutoGE::ui
         std::string m_surfaceError;
         std::array<char, 96> m_newParticleSystemNameBuffer{};
         std::array<char, 96> m_newPostProcessPresetNameBuffer{};
+        std::array<char, 96> m_newRenderTextureNameBuffer{};
+        int m_newRenderTextureSize[2] = {512, 512};
         std::array<char, 96> m_newShaderGraphNameBuffer{};
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         std::array<char, 96> m_newScriptableObjectNameBuffer{};

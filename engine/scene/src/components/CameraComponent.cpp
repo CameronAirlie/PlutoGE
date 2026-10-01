@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
@@ -236,6 +237,31 @@ namespace PlutoGE::scene
         return m_postProcessEffects[index].get();
     }
 
+    bool CameraComponent::SetTargetTextureAssetReference(std::string assetReference)
+    {
+        if (assetReference.empty())
+        {
+            m_targetTextureReference.clear();
+            m_targetTexture = nullptr;
+            return true;
+        }
+        if (!render::RenderTexture::IsAssetPath(assetReference))
+            return false;
+        const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference);
+        auto *texture = dynamic_cast<render::RenderTexture *>(render::Texture::LoadFromFile(path.c_str()));
+        if (!texture)
+            return false;
+        m_targetTexture = texture;
+        m_targetTextureReference = std::move(assetReference);
+        return true;
+    }
+
+    void CameraComponent::SetTargetTexture(render::RenderTexture *texture)
+    {
+        m_targetTexture = texture;
+        m_targetTextureReference.clear();
+    }
+
     bool CameraComponent::SetPostProcessPresetAssetReference(std::string assetReference)
     {
         if (!EnsurePostProcessMutationContext())
@@ -275,6 +301,7 @@ namespace PlutoGE::scene
         properties.push_back({"OverlayOrder", scene::PropertyType::Int, std::to_string(m_overlayOrder)});
         properties.push_back({"RenderTags", scene::PropertyType::String, CameraTagFilter::FormatTagList(m_tagFilter.GetIncludedTags())});
         properties.push_back({"IgnoredTags", scene::PropertyType::String, CameraTagFilter::FormatTagList(m_tagFilter.GetExcludedTags())});
+        properties.push_back({"TargetTexture", scene::PropertyType::String, m_targetTextureReference});
 
         properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
 
@@ -362,6 +389,15 @@ namespace PlutoGE::scene
             else if (property.name == "IgnoredTags")
             {
                 m_tagFilter.SetExcludedTags(CameraTagFilter::ParseTagList(property.value));
+            }
+            else if (property.name == "TargetTexture")
+            {
+                // Keep the reference when the asset is missing so it is not lost on save.
+                if (!SetTargetTextureAssetReference(property.value))
+                {
+                    m_targetTexture = nullptr;
+                    m_targetTextureReference = property.value;
+                }
             }
             else if (property.name == "PostProcessEffectCount")
             {

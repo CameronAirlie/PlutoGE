@@ -26,7 +26,9 @@ namespace PlutoGE::render
     {
     public:
         Texture(const TextureConfig &config) : m_filePath(config.filePath) {}
-        ~Texture();
+        // Virtual so specialised textures (such as RenderTexture) can be owned
+        // and identified through Texture pointers held by materials.
+        virtual ~Texture();
 
         std::uint64_t GetIdentity() const { return m_identity.Value(); }
         std::uint64_t GetContentRevision() const { return m_contentRevision; }

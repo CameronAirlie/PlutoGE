@@ -1,5 +1,7 @@
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderCommand.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
@@ -8,6 +10,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -200,6 +203,80 @@ namespace
     }
 }
 
+void RenderTextureAssets()
+{
+    const auto directory = std::filesystem::temp_directory_path() / "PlutoGE-render-texture-tests";
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "Monitor.plutorendertexture";
+    Require(render::RenderTexture::SaveDescriptor(path, {.width = 320, .height = 99999}), "Descriptor must save");
+    const auto loaded = render::RenderTexture::LoadDescriptor(path);
+    Require(loaded && loaded->width == 320 && loaded->height == render::RenderTextureDescriptor::kMaxSize,
+            "Descriptors must round-trip and clamp to the supported size");
+    Require(!render::RenderTexture::LoadDescriptor(directory / "Missing.plutorendertexture"), "Missing assets must not load");
+
+    Require(render::RenderTexture::IsAssetPath("Textures/Screen.PlutoRenderTexture") &&
+                !render::RenderTexture::IsAssetPath("Textures/Screen.png"),
+            "Render texture paths must be recognized case-insensitively");
+    Require(assets::Project::GetAssetTypeForReference("project://Textures/Screen.plutorendertexture") ==
+                assets::ProjectAssetType::Texture,
+            "Render textures must be offered wherever textures are");
+
+    // Material slots and cameras share one instance per asset, whatever the
+    // requested colour space or path spelling.
+    auto *srgb = render::Texture::LoadFromFile(path.string().c_str(), render::TextureColorSpace::SRGB);
+    const auto alternateSpelling = (directory / "." / "Monitor.plutorendertexture").string();
+    auto *linear = render::Texture::LoadFromFile(alternateSpelling.c_str(), render::TextureColorSpace::Linear);
+    auto *renderTexture = dynamic_cast<render::RenderTexture *>(srgb);
+    Require(renderTexture && srgb == linear, "One render texture instance must back every reference");
+    Require(renderTexture->GetWidth() == 320 && renderTexture->GetRgba8Pixels().empty(),
+            "Render textures expose their size but no CPU pixels");
+
+    const auto revision = renderTexture->GetContentRevision();
+    renderTexture->SetDescriptor({.width = 320, .height = render::RenderTextureDescriptor::kMaxSize});
+    Require(renderTexture->GetContentRevision() == revision, "An unchanged size must not invalidate materials");
+    renderTexture->SetDescriptor({.width = 64, .height = 32});
+    Require(renderTexture->GetContentRevision() != revision && renderTexture->GetHeight() == 32,
+            "Resizing must invalidate sampling materials");
+    std::filesystem::remove_all(directory);
+}
+
+void TextureCameras()
+{
+    render::RenderTexture monitor("Monitor.plutorendertexture", {.width = 256, .height = 128});
+    Scene scene;
+    auto *screenCamera = AddCamera(scene, CameraRenderType::Base);
+    auto *securityCamera = AddCamera(scene, CameraRenderType::Base);
+    securityCamera->SetMainCamera(true);
+    securityCamera->SetTargetTexture(&monitor);
+    auto *missingTarget = AddCamera(scene, CameraRenderType::Base);
+    missingTarget->Deserialize({{"TargetTexture", PropertyType::String, "project://Missing.plutorendertexture"}});
+    auto *offscreenOverlay = AddCamera(scene, CameraRenderType::Overlay);
+    offscreenOverlay->SetTargetTexture(&monitor);
+
+    const auto stack = ResolveCameraStack(scene);
+    Require(stack.base == screenCamera, "A main camera with a target texture must not take the screen");
+    Require(stack.overlays.empty(), "Texture cameras must never composite on screen");
+    Require(stack.textureCameras == std::vector<CameraComponent *>{securityCamera, offscreenOverlay},
+            "Texture cameras with a target must render offscreen, in hierarchy order");
+    Require(missingTarget->RendersToTexture() &&
+                missingTarget->GetTargetTextureAssetReference() == "project://Missing.plutorendertexture",
+            "A missing target asset must stay referenced and keep its camera offscreen");
+
+    const std::array commands{render::RenderCommand{}};
+    RenderTextureViewBuilder builder;
+    const auto views = builder.Build(scene, stack.textureCameras, commands);
+    Require(views.size() == 2 && views[0].target == &monitor && views[0].view.commands.size() == 1,
+            "Each texture camera must produce a view of its target");
+    const auto expected = securityCamera->GetCameraData(256, 128);
+    Require(views[0].view.cameraData.projection == expected.projection, "Views must use the target texture's aspect");
+
+    Scene textureOnly;
+    AddCamera(textureOnly, CameraRenderType::Base)->SetTargetTexture(&monitor);
+    const auto offscreenStack = ResolveCameraStack(textureOnly);
+    Require(!offscreenStack && offscreenStack.textureCameras.size() == 1,
+            "Texture cameras must render even when no camera draws to the screen");
+}
+
 int main()
 {
     try
@@ -210,6 +287,8 @@ int main()
         CommandFiltering();
         OverlayLayers();
         Serialization();
+        RenderTextureAssets();
+        TextureCameras();
         std::cout << "PASS: camera stack resolution, tag filtering, overlay layers and serialization\n";
         return 0;
     }

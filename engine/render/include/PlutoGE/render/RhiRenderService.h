@@ -3,6 +3,7 @@
 
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/RhiCameraStack.h"
+#include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <memory>
@@ -43,6 +44,11 @@ namespace PlutoGE::render
         [[nodiscard]] bool PresentLoading(float elapsedSeconds, unsigned stage, const LoadingScreenStyle &style = {});
         [[nodiscard]] rhi::TextureHandle GetHostColorTexture() const noexcept
         { return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{}; }
+        // Renders cameras into their render textures. Call before the frame's
+        // RenderSceneAndPresent so materials sample this frame's images.
+        [[nodiscard]] bool RenderTextures(std::span<const RenderTextureView> views,
+                                          const RhiSceneRenderer::TexturePixelReader &texturePixelReader = {},
+                                          const PlutoGE::scene::Scene *scene = nullptr);
         [[nodiscard]] bool RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  RenderCommandView commands,
@@ -50,7 +56,7 @@ namespace PlutoGE::render
                                                  const PlutoGE::scene::Scene *scene = nullptr,
                                                  std::span<IPostProcessEffect *const> postProcessEffects = {},
                                                  // Composited in order over the base camera, beneath runtime UI.
-                                                 std::span<const CameraOverlayLayer> overlays = {});
+                                                 std::span<const CameraView> overlays = {});
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
@@ -68,6 +74,7 @@ namespace PlutoGE::render
         std::unique_ptr<BasicRenderer> m_renderer;
         std::unique_ptr<RhiSceneRenderer> m_sceneRenderer;
         RhiCameraStackCompositor m_cameraStack;
+        RhiRenderTextureRenderer m_renderTextures;
         rhi::GraphicsApi m_graphicsApi = rhi::GraphicsApi::OpenGL;
         std::uint64_t m_frameSequence = 0;
         rhi::TemporalUpscalerOptions m_upscalerOptions;

@@ -14,6 +14,7 @@ namespace PlutoGE::render
 {
     class Camera;
     struct CameraData;
+    class RenderTexture;
 }
 
 namespace PlutoGE::scene
@@ -52,6 +53,17 @@ namespace PlutoGE::scene
         void SetTagFilter(CameraTagFilter filter) { m_tagFilter = std::move(filter); }
         const CameraTagFilter &GetTagFilter() const { return m_tagFilter; }
 
+        // A camera with a target texture renders into it instead of the screen.
+        // Returns false, keeping the current target, if the asset cannot be loaded.
+        bool SetTargetTextureAssetReference(std::string assetReference);
+        const std::string &GetTargetTextureAssetReference() const { return m_targetTextureReference; }
+        // Assigns a texture directly, for code-created render textures.
+        void SetTargetTexture(render::RenderTexture *texture);
+        render::RenderTexture *GetTargetTexture() const { return m_targetTexture; }
+        // True while a target is assigned, even if its asset is missing, so an
+        // offscreen camera never takes over the screen.
+        bool RendersToTexture() const { return m_targetTexture || !m_targetTextureReference.empty(); }
+
         render::CameraData GetCameraData(int width, int height) const;
 
         void AddPostProcessEffect(std::unique_ptr<render::IPostProcessEffect> effect);
@@ -82,6 +94,8 @@ namespace PlutoGE::scene
         CameraRenderType m_renderType = CameraRenderType::Base;
         int m_overlayOrder = 0;
         CameraTagFilter m_tagFilter;
+        std::string m_targetTextureReference;
+        render::RenderTexture *m_targetTexture = nullptr;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
         std::string m_postProcessPresetAssetReference;
     };

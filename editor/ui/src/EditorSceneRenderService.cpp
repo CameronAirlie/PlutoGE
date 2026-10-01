@@ -19,6 +19,27 @@
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        // Prefers retained CPU pixels; legacy textures may only exist in OpenGL.
+        std::vector<std::byte> ReadTexturePixels(const render::Texture &source)
+        {
+            if (!source.GetRgba8Pixels().empty())
+            {
+                const auto pixels = source.GetRgba8Pixels();
+                return std::vector<std::byte>(reinterpret_cast<const std::byte *>(pixels.data()),
+                                              reinterpret_cast<const std::byte *>(pixels.data() + pixels.size()));
+            }
+            if (source.GetType() != GL_TEXTURE_2D || source.GetTextureID() == 0)
+                return std::vector<std::byte>{};
+            const auto pixelCount = static_cast<std::size_t>(source.GetWidth()) * source.GetHeight();
+            std::vector<std::byte> pixels(pixelCount * 4);
+            glBindTexture(GL_TEXTURE_2D, source.GetTextureID());
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        }
+    }
+
     EditorSceneRenderService::~EditorSceneRenderService()
     {
         Shutdown();
@@ -79,6 +100,7 @@ namespace PlutoGE::ui
     {
         render::RmlUiRuntime::Get().Shutdown();
         m_cameraStack.Shutdown();
+        m_renderTextures.Shutdown();
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
@@ -99,6 +121,32 @@ namespace PlutoGE::ui
             m_sceneRenderer->SetTemporalUpscalerOptions(options);
     }
 
+    bool EditorSceneRenderService::RenderTextures(std::span<const render::RenderTextureView> views,
+                                                  const scene::Scene *scene)
+    {
+        if (!m_device)
+            return false;
+        core::CpuScope scope("Render textures", core::CpuCategory::Rendering);
+        try
+        {
+            if (!m_renderTextures.Render(*m_device, views, ReadTexturePixels, scene))
+                throw std::runtime_error("a render texture could not be rendered");
+            m_lastRenderTextureError.clear();
+            return true;
+        }
+        catch (const std::exception &error)
+        {
+            const std::string message = std::string("Render texture pass failed: ") + error.what();
+            if (m_lastRenderTextureError != message)
+            {
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, message);
+                m_lastRenderTextureError = message;
+            }
+            m_device->GetImmediateContext().RecoverInterruptedFrame();
+            return false;
+        }
+    }
+
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
                                           const render::CameraData &cameraData,
                                           render::RenderCommandView commands,
@@ -106,7 +154,7 @@ namespace PlutoGE::ui
                                           std::span<render::IPostProcessEffect *const> postProcessEffects,
                                           const scene::Scene *scene,
                                           render::PostProcessDebugView debugView,
-                                          std::span<const render::CameraOverlayLayer> overlays)
+                                          std::span<const render::CameraView> overlays)
     {
         core::CpuScope serviceScope("Viewport scene service", core::CpuCategory::Rendering);
         core::CpuScope preparationScope("Viewport lighting and atmosphere", core::CpuCategory::Rendering);
@@ -117,22 +165,6 @@ namespace PlutoGE::ui
         lighting.geometryDiagnosticMode = m_geometryDiagnosticMode;
         lighting.occlusionMode = m_occlusionMode;
 
-        const auto readOpenGlTexture = [](const render::Texture &source)
-        {
-            if (!source.GetRgba8Pixels().empty())
-            {
-                const auto pixels = source.GetRgba8Pixels();
-                return std::vector<std::byte>(reinterpret_cast<const std::byte *>(pixels.data()),
-                                              reinterpret_cast<const std::byte *>(pixels.data() + pixels.size()));
-            }
-            if (source.GetType() != GL_TEXTURE_2D || source.GetTextureID() == 0)
-                return std::vector<std::byte>{};
-            const auto pixelCount = static_cast<std::size_t>(source.GetWidth()) * source.GetHeight();
-            std::vector<std::byte> pixels(pixelCount * 4);
-            glBindTexture(GL_TEXTURE_2D, source.GetTextureID());
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            return pixels;
-        };
 
         auto atmosphereEffects = render::BuildSceneAtmosphere(scene, lighting);
 
@@ -154,12 +186,12 @@ namespace PlutoGE::ui
             if (debugView != render::PostProcessDebugView::None)
                 overlays = {};
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
-                                         postProcessEffects, atmosphereEffects, readOpenGlTexture, debugView,
+                                         postProcessEffects, atmosphereEffects, ReadTexturePixels, debugView,
                                          !overlays.empty() || !combineRuntimeUiSubmission, scene))
                 throw std::runtime_error("Scene renderer returned no frame at " + std::to_string(width) + "x" + std::to_string(height));
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
             if (!m_cameraStack.Composite(*m_device, m_viewportTexture, width, height, overlays,
-                                         readOpenGlTexture, scene, !combineRuntimeUiSubmission))
+                                         ReadTexturePixels, scene, !combineRuntimeUiSubmission))
                 throw std::runtime_error("Overlay cameras could not be composited");
             if (scene && scene->HasRmlRuntimeUI())
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,

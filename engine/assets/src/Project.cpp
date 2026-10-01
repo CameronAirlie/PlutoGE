@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetDatabase.h"
+#include "PlutoGE/render/RenderTexture.h"
 
 #include <algorithm>
 #include <array>
@@ -987,7 +988,9 @@ namespace PlutoGE::assets
         if (EndsWithInsensitive(reference, ".png") || EndsWithInsensitive(reference, ".jpg") ||
             EndsWithInsensitive(reference, ".jpeg") || EndsWithInsensitive(reference, ".tga") ||
             EndsWithInsensitive(reference, ".hdr") || EndsWithInsensitive(reference, ".exr") ||
-            EndsWithInsensitive(reference, ".dds"))
+            EndsWithInsensitive(reference, ".dds") ||
+            // Render textures are assignable wherever an image texture is.
+            render::RenderTexture::IsAssetPath(reference))
         {
             return ProjectAssetType::Texture;
         }

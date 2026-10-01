@@ -1,5 +1,5 @@
 #pragma once
-#include "PlutoGE/render/RenderCommandView.h"
+#include "PlutoGE/render/CameraView.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <memory>
@@ -13,17 +13,6 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::render
 {
-    class IPostProcessEffect;
-
-    // One overlay camera's contribution to a camera stack. Views are borrowed
-    // for a single Composite call.
-    struct CameraOverlayLayer
-    {
-        CameraData cameraData;
-        RenderCommandView commands;
-        std::span<IPostProcessEffect *const> postProcessEffects;
-    };
-
     // Renders overlay cameras (for example a first-person weapon camera) and
     // composites them, in order, over a base camera's final colour.
     //
@@ -46,7 +35,7 @@ namespace PlutoGE::render
         // caller can append work (such as runtime UI) before one final submit.
         bool Composite(rhi::IRenderDevice &device, rhi::TextureHandle target,
                        std::uint32_t width, std::uint32_t height,
-                       std::span<const CameraOverlayLayer> overlays,
+                       std::span<const CameraView> overlays,
                        const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                        const scene::Scene *scene, bool submit = true);
 

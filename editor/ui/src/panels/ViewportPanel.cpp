@@ -3942,7 +3942,7 @@ namespace PlutoGE::ui
             renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
             auto commands = renderer.GetVisibleRenderCommandView();
             auto shadowCommands = renderer.GetSceneRenderCommandView();
-            std::span<const render::CameraOverlayLayer> overlays;
+            std::span<const render::CameraView> overlays;
             if (activeScene)
             {
                 if (!m_cameraStack)
@@ -3972,7 +3972,7 @@ namespace PlutoGE::ui
                                        render::RenderCommandView commands,
                                        render::RenderCommandView shadowCommands,
                                        std::span<render::IPostProcessEffect *const> postProcessEffects,
-                                       std::span<const render::CameraOverlayLayer> overlays)
+                                       std::span<const render::CameraView> overlays)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)

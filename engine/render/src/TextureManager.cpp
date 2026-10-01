@@ -2,6 +2,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/DdsImage.h"
 #include "PlutoGE/platform/Window.h"
@@ -364,6 +365,20 @@ namespace PlutoGE::render
         return m_window->EnsureOpenGLContextCurrent(true);
     }
 
+    Texture *TextureManager::LoadRenderTexture(const std::string &assetPath)
+    {
+        const std::string cacheKey =
+            std::filesystem::path(assetPath).lexically_normal().generic_string() + "#render";
+        if (const auto cached = m_textureCache.find(cacheKey); cached != m_textureCache.end())
+            return cached->second;
+        const auto descriptor = RenderTexture::LoadDescriptor(assetPath);
+        if (!descriptor)
+            return nullptr;
+        auto *texture = new RenderTexture(assetPath, *descriptor);
+        m_textureCache.emplace(cacheKey, texture);
+        return texture;
+    }
+
     Texture *TextureManager::FindTexture(const std::string &cacheKey) const
     {
         auto it = m_textureCache.find(cacheKey);
@@ -383,6 +398,8 @@ namespace PlutoGE::render
         }
 
         const std::string sourcePath(filePath);
+        if (RenderTexture::IsAssetPath(sourcePath))
+            return LoadRenderTexture(sourcePath);
         const std::string cacheKey = BuildTextureCacheKey(sourcePath, colorSpace);
 
         // Check if the texture is already loaded

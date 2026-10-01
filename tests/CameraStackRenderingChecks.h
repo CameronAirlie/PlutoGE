@@ -55,7 +55,7 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
             "An empty camera stack must be a no-op");
     const auto baseAlone = device.ReadTextureRgba8(base.GetColorTexture());
 
-    const std::array overlays{CameraOverlayLayer{.cameraData = camera, .commands = overlayCommands}};
+    const std::array overlays{CameraView{.cameraData = camera, .commands = overlayCommands}};
     require(compositor.Composite(device, base.GetColorTexture(), size, size, overlays, {}, nullptr),
             "Camera stack composite failed");
     const auto stacked = device.ReadTextureRgba8(base.GetColorTexture());

@@ -37,6 +37,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Character and vehicle cameras | [Camera rigs](CAMERA_RIGS.md) |
 | Orthographic game cameras | [Projection, framing and zoom](ORTHOGRAPHIC_CAMERAS.md) |
 | Weapon and overlay cameras | [Camera stacking](CAMERA_STACKING.md) |
+| Monitors, mirrors and in-world screens | [Render textures](RENDER_TEXTURES.md) |
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |

@@ -74,7 +74,7 @@ namespace PlutoGE::render
 
     bool RhiCameraStackCompositor::Composite(rhi::IRenderDevice &device, rhi::TextureHandle target,
                                              std::uint32_t width, std::uint32_t height,
-                                             std::span<const CameraOverlayLayer> overlays,
+                                             std::span<const CameraView> overlays,
                                              const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                              const scene::Scene *scene, bool submit)
     {

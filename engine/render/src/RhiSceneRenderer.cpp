@@ -12,6 +12,7 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -340,9 +341,15 @@ namespace PlutoGE::render
                                        auto &cache,
                                        const char *debugName, bool normalMap = false) -> rhi::TextureHandle
         {
-            if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0 || !texturePixelReader)
+            if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0)
                 return {};
             m_textureVersions.try_emplace(source, TextureVersion{source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()});
+            // Render textures are drawn on the GPU; republishing bumps their
+            // revision, which re-prepares the materials that sample them.
+            if (const auto *renderTexture = dynamic_cast<const RenderTexture *>(source))
+                return renderTexture->GetGpuTexture(*m_device);
+            if (!texturePixelReader)
+                return {};
             if (const auto cached = cache.find(source); cached != cache.end())
                 return cached->second.Get();
             if (normalMap && m_normalMipJob.valid())

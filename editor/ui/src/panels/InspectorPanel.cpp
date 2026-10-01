@@ -23,6 +23,7 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -3078,6 +3079,59 @@ namespace PlutoGE::ui
         return changed;
     }
 
+    namespace
+    {
+        // Cameras with a target texture render offscreen, like Unity's Camera.targetTexture.
+        void RenderCameraTargetTextureEditor(scene::CameraComponent &camera)
+        {
+            auto &editorShell = EditorShell::GetInstance();
+            const std::string &reference = camera.GetTargetTextureAssetReference();
+            if (ImGui::BeginCombo("Target Texture", reference.empty() ? "None (screen)" : reference.c_str()))
+            {
+                if (ImGui::Selectable("None (screen)", reference.empty()) && camera.SetTargetTextureAssetReference({}))
+                    editorShell.MarkSceneDirty();
+                for (const auto &option : GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Texture))
+                {
+                    if (!render::RenderTexture::IsAssetPath(option.reference))
+                        continue;
+                    if (ImGui::Selectable(option.displayName.c_str(), option.reference == reference))
+                    {
+                        if (camera.SetTargetTextureAssetReference(option.reference))
+                            editorShell.MarkSceneDirty();
+                        else
+                            editorShell.Log(EditorShell::ConsoleSeverity::Error, "Cannot load render texture: " + option.reference);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            auto *texture = camera.GetTargetTexture();
+            if (!reference.empty() && !texture)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Render texture asset is missing; this camera is idle.");
+                return;
+            }
+            if (!texture)
+                return;
+            // Size belongs to the shared asset, so edits apply to every user.
+            auto descriptor = texture->GetDescriptor();
+            int size[2] = {descriptor.width, descriptor.height};
+            ImGui::DragInt2("Texture Size", size, 1.0f, render::RenderTextureDescriptor::kMinSize,
+                            render::RenderTextureDescriptor::kMaxSize);
+            if (ImGui::IsItemDeactivatedAfterEdit() && !reference.empty())
+            {
+                descriptor.width = size[0];
+                descriptor.height = size[1];
+                const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference);
+                std::string errorMessage;
+                if (render::RenderTexture::SaveDescriptor(path, descriptor, &errorMessage))
+                    texture->SetDescriptor(descriptor);
+                else
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+            ImGui::TextDisabled("Renders offscreen; show it with a material texture slot.");
+        }
+    }
+
     void InspectorPanel::RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const
     {
         if (!ImGui::TreeNode("Post Processing"))
@@ -4892,6 +4946,7 @@ namespace PlutoGE::ui
                             {
                                 SetSceneMainCamera(entity->GetScene(), cameraComponent, isMainCamera);
                             }
+                            RenderCameraTargetTextureEditor(*cameraComponent);
 
                             RenderCameraPostProcessEditor(*cameraComponent);
                         }
@@ -6240,7 +6295,7 @@ namespace PlutoGE::ui
                         int propertyIndex = 0;
                         for (auto &property : properties)
                         {
-                            if (property.name == "PostProcessEffectCount" || property.name == "MainCamera" || property.name == "Primary" || property.name.rfind("PostProcessEffects.", 0) == 0)
+                            if (property.name == "PostProcessEffectCount" || property.name == "MainCamera" || property.name == "Primary" || property.name == "TargetTexture" || property.name.rfind("PostProcessEffects.", 0) == 0)
                             {
                                 continue;
                             }

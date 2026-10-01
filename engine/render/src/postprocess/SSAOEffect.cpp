@@ -622,27 +622,6 @@ namespace PlutoGE::render
         EndApply();
     }
 
-    void SSAOEffect::RenderAmbientOcclusion(const RenderContext &renderContext, RenderTarget *destinationRenderTarget)
-    {
-        if (!destinationRenderTarget)
-        {
-            return;
-        }
-
-        RenderTarget *resolvedAoTarget = GenerateResolvedAmbientOcclusion(renderContext, destinationRenderTarget->GetWidth(), destinationRenderTarget->GetHeight());
-        if (!resolvedAoTarget)
-        {
-            return;
-        }
-
-        RenderResolvedAoTexture(PostProcessContext{
-                                    .renderContext = renderContext,
-                                    .sourceRenderTarget = destinationRenderTarget,
-                                    .destinationRenderTarget = destinationRenderTarget,
-                                },
-                                resolvedAoTarget, kAoOnlyMode);
-    }
-
     void SSAOEffect::Apply(const PostProcessContext &context)
     {
         if (!context.sourceRenderTarget || !context.destinationRenderTarget)

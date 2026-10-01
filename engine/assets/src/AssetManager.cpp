@@ -696,71 +696,6 @@ namespace PlutoGE::assets
         return sawHeader;
     }
 
-    bool AssetManager::SaveAnimationAsset(const std::string &assetReference,
-                                          const std::vector<render::AnimationClip> &clips,
-                                          std::string *errorMessage)
-    {
-        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
-        {
-            if (errorMessage)
-            {
-                *errorMessage = "Cannot save an empty or engine animation asset reference.";
-            }
-            return false;
-        }
-
-        const std::string animationPath = ResolveAssetPath(assetReference);
-        if (animationPath.empty())
-        {
-            if (errorMessage)
-            {
-                *errorMessage = "Could not resolve animation asset path.";
-            }
-            return false;
-        }
-
-        std::error_code errorCode;
-        std::filesystem::create_directories(std::filesystem::path(animationPath).parent_path(), errorCode);
-        if (errorCode)
-        {
-            if (errorMessage)
-            {
-                *errorMessage = "Failed to create animation asset directory: " + errorCode.message();
-            }
-            return false;
-        }
-
-        std::ofstream output(animationPath, std::ios::binary | std::ios::trunc);
-        if (!output.is_open())
-        {
-            if (errorMessage)
-            {
-                *errorMessage = "Failed to open animation asset for writing.";
-            }
-            return false;
-        }
-
-        constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
-        constexpr std::uint32_t kVersion = 6;
-        WritePod(output, kMagic);
-        WritePod(output, kVersion);
-        WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
-        for (const auto &clip : clips)
-        {
-            WriteAnimationClip(output, clip);
-        }
-
-        if (!output.good())
-        {
-            if (errorMessage)
-            {
-                *errorMessage = "Failed to write animation asset.";
-            }
-            return false;
-        }
-        return true;
-    }
-
     bool AssetManager::SaveAnimationAssetReferences(const std::string &assetReference,
                                                     const std::vector<std::string> &clipReferences,
                                                     std::string *errorMessage)
@@ -881,14 +816,6 @@ namespace PlutoGE::assets
             return false;
         }
         return true;
-    }
-
-    render::Material *AssetManager::CreateMaterial()
-    {
-        // Create a new material with default configuration
-        render::Material *material = new render::Material();
-        // Optionally, you can add caching for materials as well if needed
-        return material;
     }
 
     render::Material *AssetManager::CreateDefaultMaterial()
@@ -3083,43 +3010,6 @@ namespace PlutoGE::assets
         }
         m_postProcessPresetCache[assetReference] = asset;
         return true;
-    }
-
-    render::ShaderSource AssetManager::LoadShader(const char *vertexPath, const char *fragmentPath)
-    {
-        // Load vertex shader source
-        std::string vertexSource;
-        PlutoGE::content::InputFile vertexFile(GetAssetPath(vertexPath));
-        if (vertexFile.is_open())
-        {
-            std::stringstream buffer;
-            buffer << vertexFile.rdbuf();
-            vertexSource = buffer.str();
-            vertexFile.close();
-        }
-        else
-        {
-            // Handle error: failed to open vertex shader file
-            return {};
-        }
-
-        // Load fragment shader source
-        std::string fragmentSource;
-        PlutoGE::content::InputFile fragmentFile(GetAssetPath(fragmentPath));
-        if (fragmentFile.is_open())
-        {
-            std::stringstream buffer;
-            buffer << fragmentFile.rdbuf();
-            fragmentSource = buffer.str();
-            fragmentFile.close();
-        }
-        else
-        {
-            // Handle error: failed to open fragment shader file
-            return {};
-        }
-
-        return {vertexSource, fragmentSource};
     }
 
     std::string AssetManager::GetAssetPath(const std::string &relativePath) const

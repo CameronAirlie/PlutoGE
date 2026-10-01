@@ -202,6 +202,11 @@ namespace PlutoGE::scene
     {
     }
 
+    ScriptComponent::~ScriptComponent()
+    {
+        Stop();
+    }
+
     void ScriptComponent::Start()
     {
         if (m_started || m_scriptClass.empty())

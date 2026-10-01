@@ -1,4 +1,6 @@
 #include "PlutoGE/core/CpuTrace.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
@@ -6,6 +8,8 @@
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/render/DebugDraw.h"
@@ -257,28 +261,6 @@ namespace PlutoGE::scripting
             RmlWidget = 14,
             ActiveRagdoll = 15,
         };
-
-        std::basic_string<char_t> Utf8ToHostString(std::string_view text)
-        {
-#ifdef _WIN32
-            if (text.empty())
-            {
-                return {};
-            }
-
-            const int wideSize = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-            if (wideSize <= 0)
-            {
-                return {};
-            }
-
-            std::wstring wide(static_cast<size_t>(wideSize), L'\0');
-            MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), wideSize);
-            return wide;
-#else
-            return std::string(text);
-#endif
-        }
 
         std::string HostStringToUtf8(std::basic_string_view<char_t> text)
         {
@@ -2518,36 +2500,6 @@ namespace PlutoGE::scripting
         {
             if (auto *component = FindSoundEmitter(entityId))
                 component->SetPitch(value);
-        }
-        float GetSoundEmitterMinDistance(uint32_t entityId)
-        {
-            auto *component = FindSoundEmitter(entityId);
-            return component ? component->GetMinDistance() : 1.0f;
-        }
-        void SetSoundEmitterMinDistance(uint32_t entityId, float value)
-        {
-            if (auto *component = FindSoundEmitter(entityId))
-                component->SetMinDistance(value);
-        }
-        float GetSoundEmitterMaxDistance(uint32_t entityId)
-        {
-            auto *component = FindSoundEmitter(entityId);
-            return component ? component->GetMaxDistance() : 30.0f;
-        }
-        void SetSoundEmitterMaxDistance(uint32_t entityId, float value)
-        {
-            if (auto *component = FindSoundEmitter(entityId))
-                component->SetMaxDistance(value);
-        }
-        float GetSoundEmitterRolloff(uint32_t entityId)
-        {
-            auto *component = FindSoundEmitter(entityId);
-            return component ? component->GetRolloff() : 1.0f;
-        }
-        void SetSoundEmitterRolloff(uint32_t entityId, float value)
-        {
-            if (auto *component = FindSoundEmitter(entityId))
-                component->SetRolloff(value);
         }
 
         scene::CanvasComponent *FindCanvas(uint32_t entityId)

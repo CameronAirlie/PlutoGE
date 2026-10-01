@@ -207,13 +207,6 @@ namespace PlutoGE::scene
         Initialize();
     }
 
-    void LightComponent::SetShadowMap(render::Texture *shadowMap)
-    {
-        m_config.shadowMap.reset(shadowMap);
-        MarkDirty();
-        Initialize();
-    }
-
     void LightComponent::MarkDirty()
     {
         m_config.isDirty = true;

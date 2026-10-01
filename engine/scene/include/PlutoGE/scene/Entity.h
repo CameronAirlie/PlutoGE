@@ -206,24 +206,6 @@ namespace PlutoGE::scene
             return RemoveComponent(static_cast<Component *>(component));
         }
 
-        template <typename T>
-        std::size_t RemoveComponents()
-        {
-            static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
-
-            std::size_t removedCount = 0;
-            auto components = GetComponents<T>();
-            for (auto *component : components)
-            {
-                if (RemoveComponent(component))
-                {
-                    ++removedCount;
-                }
-            }
-
-            return removedCount;
-        }
-
     protected:
         friend class Scene; // Allow Scene to access private members for managing entity hierarchy
         static EntityID GenerateUniqueID();

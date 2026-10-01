@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"

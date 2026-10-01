@@ -29,7 +29,7 @@ namespace PlutoGE::scene
     {
     public:
         explicit ScriptComponent(const ScriptComponentConfig &config = {});
-        ~ScriptComponent() override { Stop(); }
+        ~ScriptComponent() override;
 
         void Start();
         void Stop();

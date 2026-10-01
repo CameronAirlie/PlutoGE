@@ -187,14 +187,15 @@ cmake --build --preset editor-debug
 Building `PlutoGEEditor` also builds `PlutoGERuntime` in the selected configuration
 when `PLUTO_BUILD_RUNTIME` is enabled (the default), keeping the executable used
 for game exports current. Existing exported games must be exported again to pick
-up runtime changes. The `msvc-debug` preset additionally builds tests. PlutoGE's
-own Visual Studio targets also compile up to two source files concurrently per
-project; configure `-DPLUTO_MSVC_COMPILE_JOBS=1` to reduce memory pressure.
-The larger render, scene, and editor UI targets use private precompiled standard
-library headers. Configure with `-DPLUTO_ENABLE_PCH=OFF` to compare build times
-or troubleshoot compiler compatibility. Changing this option rebuilds those
-targets. ScriptCore builds only when its tracked inputs change, and editor
-resources are copied individually when changed, including resource-only edits.
+up runtime changes. The `msvc-debug` preset additionally builds tests. Visual Studio
+builds schedule individual compiles across all projects, one per core; configure
+`-DPLUTO_MSVC_MAX_COMPILES=N` to cap them and reduce memory pressure.
+The larger render, scene, asset, editor UI, and runtime targets use private
+precompiled standard library, GLM, and glad headers. Configure with
+`-DPLUTO_ENABLE_PCH=OFF` to compare build times or troubleshoot compiler
+compatibility. Changing this option rebuilds those targets. ScriptCore builds
+only when its tracked inputs change, and editor resources are copied
+individually when changed, including resource-only edits.
 
 For a full Windows build with NVIDIA DLSS and FSR 2 enabled, use the MSVC
 NVIDIA presets. These build the editor, runtime, and tests with eight parallel
@@ -488,7 +489,6 @@ ctest --test-dir out/build/msvc -C Debug `
 |---|---:|---|
 | `PLUTO_BUILD_EDITOR` | `ON` | Build `PlutoGEEditor` |
 | `PLUTO_BUILD_RUNTIME` | `ON` | Build `PlutoGERuntime` |
-| `PLUTO_BUILD_SAMPLES` | `ON` | Reserved for sample applications; samples are not currently added by the root build |
 | `BUILD_TESTING` | `ON` | Build and register the test executables |
 | `PLUTO_ENABLE_PCH` | `ON` | Precompile stable headers for larger targets |
 | `PLUTO_ENABLE_FSR2` | `OFF` | Build the Vulkan FSR 2 integration; some presets enable it |

@@ -1,6 +1,8 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 

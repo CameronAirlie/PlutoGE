@@ -31,20 +31,6 @@ namespace PlutoGE::ui
             return haystack.find(needle) != std::string::npos;
         }
 
-        ImVec4 SeverityColor(EditorShell::ConsoleSeverity severity)
-        {
-            switch (severity)
-            {
-            case EditorShell::ConsoleSeverity::Warning:
-                return ImVec4(1.0f, 0.78f, 0.25f, 1.0f);
-            case EditorShell::ConsoleSeverity::Error:
-                return ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-            case EditorShell::ConsoleSeverity::Info:
-            default:
-                return ImGui::GetStyleColorVec4(ImGuiCol_Text);
-            }
-        }
-
         const char *SeverityLabel(EditorShell::ConsoleSeverity severity)
         {
             switch (severity)

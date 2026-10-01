@@ -1,6 +1,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/TextureManager.h"
 
 #include <iostream>
 

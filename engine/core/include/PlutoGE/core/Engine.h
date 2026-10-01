@@ -1,30 +1,56 @@
 #pragma once
 
-#include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/core/SceneLoading.h"
+#include "PlutoGE/import/MeshImportOptions.h"
 #include "PlutoGE/platform/Window.h"
-#include "PlutoGE/assets/AssetManager.h"
-#include "PlutoGE/import/MeshImporter.h"
-#include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
-#include "PlutoGE/render/RhiRenderService.h"
-#include "PlutoGE/render/rhi/RenderDevice.h"
-#include "PlutoGE/render/TextureManager.h"
-#include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/render/LoadingScreenStyle.h"
+#include "PlutoGE/render/rhi/Types.h"
 
 #include <cstdint>
-#include <future>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+// Almost every engine source includes this header. Subsystems are owned through
+// pointers so that it does not also pull in every subsystem's interface; include
+// the subsystem header where its members are used.
+namespace PlutoGE::assets
+{
+    class AssetManager;
+}
+
+namespace PlutoGE::assetimport
+{
+    class MeshImporter;
+    struct ImportedMeshAsset;
+}
+
+namespace PlutoGE::audio
+{
+    class AudioSystem;
+}
+
 namespace PlutoGE::render
 {
-    class Texture;
     class Material;
-    class Shader;
+    class Mesh;
+    class Renderer;
+    class RhiRenderService;
+    class TextureManager;
+    struct AnimationClip;
+
+    namespace rhi
+    {
+        class IRenderDevice;
+        class ISwapchain;
+    }
+}
+
+namespace PlutoGE::scripting
+{
+    class ScriptEngine;
 }
 
 namespace PlutoGE::scene
@@ -52,20 +78,12 @@ namespace PlutoGE::core
         bool enableProfiling = false;
     };
 
-    struct MeshImportStatus
-    {
-        bool pending = false;
-        std::string filePath;
-        std::string errorMessage;
-    };
-
     class Engine
     {
     public:
-        ~Engine() = default;
+        ~Engine();
 
         bool Initialize(const EngineConfig &config = EngineConfig());
-        void Run();
         void Shutdown();
 
         static Engine &GetInstance()
@@ -77,27 +95,23 @@ namespace PlutoGE::core
         [[nodiscard]] const EngineConfig &GetConfig() const { return m_config; }
 
         [[nodiscard]] platform::Window &GetWindow() { return m_window; }
-        [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
+        [[nodiscard]] render::Renderer &GetRenderer() { return *m_renderer; }
         [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() { return m_renderDevice.get(); }
         [[nodiscard]] render::rhi::ISwapchain *GetSwapchain() { return m_swapchain.get(); }
         [[nodiscard]] bool IsVSyncEnabled() const noexcept;
         bool SetVSyncEnabled(bool enabled);
-        [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return m_rhiRenderService; }
-        [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
-        [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return m_meshImporter; }
-        [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
-        [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return m_scriptEngine; }
-        [[nodiscard]] audio::AudioSystem &GetAudioSystem() { return m_audioSystem; }
+        [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return *m_rhiRenderService; }
+        [[nodiscard]] assets::AssetManager &GetAssetManager() { return *m_assetManager; }
+        [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return *m_meshImporter; }
+        [[nodiscard]] render::TextureManager &GetTextureManager() { return *m_textureManager; }
+        [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return *m_scriptEngine; }
+        [[nodiscard]] audio::AudioSystem &GetAudioSystem() { return *m_audioSystem; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
         void StartRuntime();
         void StopRuntime();
         [[nodiscard]] bool IsRuntimeRunning() const { return m_isRuntimeRunning; }
         ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath, const assetimport::MeshImportOptions &options = {});
         ImportedRenderMeshAsset GenerateMeshAssetLods(const std::string &filePath, const assetimport::MeshImportOptions &options = {});
-        render::Mesh *ImportMesh(const std::string &filePath);
-        void QueueMeshImport(scene::EntityID entityId, const std::string &filePath);
-        void UpdateAsyncMeshImports();
-        [[nodiscard]] MeshImportStatus GetMeshImportStatus(scene::EntityID entityId) const;
         void SetScene(scene::Scene *scene);
         bool RequestSceneLoad(std::string sceneAssetReference);
         SceneLoading &GetSceneLoading() noexcept { return m_sceneLoading; }
@@ -108,28 +122,21 @@ namespace PlutoGE::core
         [[nodiscard]] bool ConsumeApplicationQuitRequest();
 
     private:
-        struct PendingMeshImportJob
-        {
-            scene::EntityID entityId = 0;
-            std::string normalizedPath;
-            std::future<assetimport::ImportedMeshSourceAsset> future;
-        };
-
         ImportedRenderMeshAsset BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset);
-        ImportedRenderMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset, const assetimport::MeshImportOptions &options = {});
 
-        Engine() = default;
+        Engine();
         EngineConfig m_config;
         platform::Window m_window;
-        render::Renderer m_renderer;
+        // Declaration order is construction order; destruction runs in reverse.
+        std::unique_ptr<render::Renderer> m_renderer;
         std::unique_ptr<render::rhi::IRenderDevice> m_renderDevice;
         std::unique_ptr<render::rhi::ISwapchain> m_swapchain;
-        render::RhiRenderService m_rhiRenderService;
-        assets::AssetManager m_assetManager;
-        assetimport::MeshImporter m_meshImporter;
-        render::TextureManager m_textureManager;
-        scripting::ScriptEngine m_scriptEngine;
-        audio::AudioSystem m_audioSystem;
+        std::unique_ptr<render::RhiRenderService> m_rhiRenderService;
+        std::unique_ptr<assets::AssetManager> m_assetManager;
+        std::unique_ptr<assetimport::MeshImporter> m_meshImporter;
+        std::unique_ptr<render::TextureManager> m_textureManager;
+        std::unique_ptr<scripting::ScriptEngine> m_scriptEngine;
+        std::unique_ptr<audio::AudioSystem> m_audioSystem;
         scene::Scene *m_scene = nullptr;
         struct ImportedMaterialCacheEntry
         {
@@ -138,8 +145,6 @@ namespace PlutoGE::core
         };
         std::unordered_map<std::string, ImportedMaterialCacheEntry> m_importedMaterialCache;
         std::vector<ImportedMaterialCacheEntry> m_retiredImportedMaterialCache;
-        std::unordered_map<scene::EntityID, PendingMeshImportJob> m_pendingMeshImports;
-        std::unordered_map<scene::EntityID, std::string> m_meshImportErrors;
 
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;

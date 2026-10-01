@@ -103,7 +103,6 @@ namespace PlutoGE::scene
         const std::string &GetSourceMeshPath() const;
         void SetMaterialAssetReference(const std::string &materialAssetReference);
         const std::string &GetMaterialAssetReference() const;
-        void ClearMaterialAssetReference();
 
         void SetPaintEnabled(bool enabled) { m_paintEnabled = enabled; }
         bool IsPaintEnabled() const { return m_paintEnabled; }

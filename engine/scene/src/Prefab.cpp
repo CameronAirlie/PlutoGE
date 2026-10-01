@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Prefab.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"

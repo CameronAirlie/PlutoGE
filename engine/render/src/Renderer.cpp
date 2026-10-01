@@ -1,4 +1,6 @@
 #include "PlutoGE/core/CpuTrace.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Shader.h"

@@ -642,12 +642,6 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
-    void SplineComponent::SetWidth(float width)
-    {
-        m_width = std::max(width, 0.05f);
-        MarkDirty();
-    }
-
     void SplineComponent::SetGuardrailHeight(float height)
     {
         if (!std::isfinite(height)) return;
@@ -667,51 +661,9 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
-    void SplineComponent::SetSamplesPerSegment(int samplesPerSegment)
-    {
-        m_samplesPerSegment = std::clamp(samplesPerSegment, 1, 128);
-        MarkDirty();
-    }
-
-    void SplineComponent::SetCollisionSamplesPerSegment(int collisionSamplesPerSegment)
-    {
-        m_collisionSamplesPerSegment = std::clamp(collisionSamplesPerSegment, 1, 128);
-        MarkDirty();
-    }
-
-    void SplineComponent::SetMaxChordError(float maxChordError)
-    {
-        m_maxChordError = std::max(maxChordError, 0.001f);
-        MarkDirty();
-    }
-
-    void SplineComponent::SetMaxTangentAngleDegrees(float maxTangentAngleDegrees)
-    {
-        m_maxTangentAngleDegrees = std::clamp(maxTangentAngleDegrees, 0.1f, 90.0f);
-        MarkDirty();
-    }
-
-    void SplineComponent::SetUvMetersPerTile(float uvMetersPerTile)
-    {
-        m_uvMetersPerTile = std::max(uvMetersPerTile, 0.01f);
-        MarkDirty();
-    }
-
     void SplineComponent::SetClosed(bool closed)
     {
         m_closed = closed;
-        MarkDirty();
-    }
-
-    void SplineComponent::SetGenerateMesh(bool generateMesh)
-    {
-        m_generateMesh = generateMesh;
-        MarkDirty();
-    }
-
-    void SplineComponent::SetGenerateCollision(bool generateCollision)
-    {
-        m_generateCollision = generateCollision;
         MarkDirty();
     }
 

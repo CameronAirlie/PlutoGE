@@ -64,7 +64,6 @@ namespace PlutoGE::scene
                 void SetPointRotation(std::size_t index, const glm::vec3 &rotation);
 
                 float GetWidth() const { return m_width; }
-                void SetWidth(float width);
                 float GetGuardrailHeight() const { return m_guardrailHeight; }
                 void SetGuardrailHeight(float height);
                 int GetLodCount() const { return m_lodCount; }
@@ -72,21 +71,14 @@ namespace PlutoGE::scene
                 float GetThickness() const { return m_thickness; }
                 void SetThickness(float thickness);
                 int GetSamplesPerSegment() const { return m_samplesPerSegment; }
-                void SetSamplesPerSegment(int samplesPerSegment);
                 int GetCollisionSamplesPerSegment() const { return m_collisionSamplesPerSegment; }
-                void SetCollisionSamplesPerSegment(int collisionSamplesPerSegment);
                 float GetMaxChordError() const { return m_maxChordError; }
-                void SetMaxChordError(float maxChordError);
                 float GetMaxTangentAngleDegrees() const { return m_maxTangentAngleDegrees; }
-                void SetMaxTangentAngleDegrees(float maxTangentAngleDegrees);
                 float GetUvMetersPerTile() const { return m_uvMetersPerTile; }
-                void SetUvMetersPerTile(float uvMetersPerTile);
                 bool IsClosed() const { return m_closed; }
                 void SetClosed(bool closed);
                 bool ShouldGenerateMesh() const { return m_generateMesh; }
-                void SetGenerateMesh(bool generateMesh);
                 bool ShouldGenerateCollision() const { return m_generateCollision; }
-                void SetGenerateCollision(bool generateCollision);
                 void SetMaterial(render::Material *material);
                 render::Material *GetMaterial() const { return m_material; }
                 void SetMaterialAssetReference(const std::string &materialAssetReference);

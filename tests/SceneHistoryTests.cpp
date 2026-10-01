@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/SceneHistory.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"

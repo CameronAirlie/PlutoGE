@@ -5,6 +5,8 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -371,28 +373,6 @@ namespace PlutoGE::scene
         return true;
     }
 
-    bool TerrainComponent::SaveHeightMap(const std::string &filePath) const
-    {
-        std::ofstream output(filePath, std::ios::binary);
-        if (!output.is_open())
-        {
-            return false;
-        }
-
-        output << "P5\n"
-               << m_width << " " << m_depth << "\n255\n";
-        for (int z = m_depth - 1; z >= 0; --z)
-        {
-            for (int x = 0; x < m_width; ++x)
-            {
-                const float normalized = glm::clamp(GetHeightSample(x, z) / std::max(m_heightScale, 0.01f), 0.0f, 1.0f);
-                const unsigned char value = static_cast<unsigned char>(std::lround(normalized * 255.0f));
-                output.write(reinterpret_cast<const char *>(&value), 1);
-            }
-        }
-        return true;
-    }
-
     bool TerrainComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
     {
         auto *entity = GetOwner();
@@ -588,40 +568,9 @@ namespace PlutoGE::scene
         MarkMeshDirty();
     }
 
-    void TerrainComponent::SetCellSize(float cellSize)
-    {
-        m_cellSize = std::max(0.01f, cellSize);
-        MarkMeshDirty();
-    }
-
-    void TerrainComponent::SetHeightScale(float heightScale)
-    {
-        const float previousHeightScale = m_heightScale;
-        m_heightScale = std::max(0.01f, heightScale);
-        const float scaleRatio = m_heightScale / previousHeightScale;
-        for (auto &height : m_heights)
-        {
-            height = glm::clamp(height * scaleRatio, 0.0f, m_heightScale);
-        }
-        m_flattenHeight = glm::clamp(m_flattenHeight * scaleRatio, 0.0f, m_heightScale);
-        MarkMeshDirty();
-    }
-
-    void TerrainComponent::SetSurfaceSmoothing(float smoothing)
-    {
-        m_surfaceSmoothing = glm::clamp(smoothing, 0.0f, 1.0f);
-        MarkMeshDirty();
-    }
-
     float TerrainComponent::GetHeightAtLocalPosition(float x, float z) const
     {
         return SampleHeight(x / m_cellSize, z / m_cellSize);
-    }
-
-    void TerrainComponent::SetChunkSize(int chunkSize)
-    {
-        m_chunkSize = std::max(2, chunkSize);
-        MarkMeshDirty();
     }
 
     void TerrainComponent::SetLodCount(int lodCount)

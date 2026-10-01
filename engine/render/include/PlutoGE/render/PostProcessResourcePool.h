@@ -19,7 +19,6 @@ namespace PlutoGE::render
         void Import(PostProcessResourceId id, rhi::TextureHandle texture);
         [[nodiscard]] rhi::TextureHandle Get(PostProcessResourceId id) const;
         void InvalidateHistory() noexcept;
-        void Reset() noexcept;
         [[nodiscard]] std::size_t GetTransientAllocationCount() const noexcept { return m_transients.size(); }
         [[nodiscard]] std::size_t GetHistoryAllocationCount() const noexcept { return m_history.size(); }
 

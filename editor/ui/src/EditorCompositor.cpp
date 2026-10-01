@@ -10,6 +10,7 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <limits>

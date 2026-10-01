@@ -68,9 +68,6 @@ namespace PlutoGE::assets
         bool LoadAnimationAsset(const std::string &assetReference, std::vector<render::AnimationClip> &clips) const;
         bool LoadAnimationClipAsset(const std::string &assetReference, render::AnimationClip &clip) const;
         bool LoadAnimationClipReferences(const std::string &assetReference, std::vector<std::string> &clipReferences) const;
-        bool SaveAnimationAsset(const std::string &assetReference,
-                                const std::vector<render::AnimationClip> &clips,
-                                std::string *errorMessage = nullptr);
         bool SaveAnimationAssetReferences(const std::string &assetReference,
                                           const std::vector<std::string> &clipReferences,
                                           std::string *errorMessage = nullptr);
@@ -93,10 +90,8 @@ namespace PlutoGE::assets
         bool SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage = nullptr);
         bool ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
-        render::Material *CreateMaterial();
         render::Material *CreateDefaultMaterial();
         render::Material *CreateDefaultShadedMaterial();
-        render::ShaderSource LoadShader(const char *vertexPath, const char *fragmentPath);
 
         std::string GetAssetDirectory() const { return m_assetDirectory; }
         void SetAssetDirectory(const std::string &directory) { m_assetDirectory = directory; }

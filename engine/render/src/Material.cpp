@@ -26,11 +26,6 @@ namespace PlutoGE::render
             activeShader->TrySetUniform(name, value);
         };
 
-        const auto setVec2 = [activeShader](const char *name, const glm::vec2 &value)
-        {
-            activeShader->TrySetUniform(name, value);
-        };
-
         const auto setVec3 = [activeShader](const char *name, const glm::vec3 &value)
         {
             activeShader->TrySetUniform(name, value);

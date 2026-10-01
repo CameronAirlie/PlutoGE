@@ -66,12 +66,6 @@ namespace
         return std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
     }
 
-    struct ShadowCasterBounds
-    {
-        glm::vec3 center{0.0f};
-        float radius = 10.0f;
-    };
-
     struct ShadowCasterEntry
     {
         const PlutoGE::render::RenderCommand *command = nullptr;
@@ -981,80 +975,6 @@ namespace
             .center = glm::vec3(model * glm::vec4(bounds.center, 1.0f)),
             .radius = bounds.radius * glm::max(scaleX, glm::max(scaleY, scaleZ)),
         };
-    }
-
-    DirectionalShadowDirtyRegion BuildMovedCasterDirtyRegion(
-        const std::vector<ShadowCasterEntry> &shadowCasters,
-        const DirectionalCascadeProjection &cascadeProjection,
-        const glm::vec3 &shadowWorldOrigin,
-        int shadowResolution,
-        float filterRadiusPixels)
-    {
-        DirectionalShadowDirtyRegion region;
-        glm::vec2 dirtyMin(std::numeric_limits<float>::max());
-        glm::vec2 dirtyMax(std::numeric_limits<float>::lowest());
-
-        const auto includeBounds = [&](const PlutoGE::render::MeshBounds &bounds)
-        {
-            if (!IsBoundsOverlappingDirectionalRegion(
-                    bounds,
-                    cascadeProjection.lightViewMatrix,
-                    shadowWorldOrigin,
-                    cascadeProjection.receiverMin,
-                    cascadeProjection.receiverMax))
-            {
-                return;
-            }
-            const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
-            const glm::vec3 lightSpaceCenter = glm::vec3(
-                cascadeProjection.lightViewMatrix * glm::vec4(relativeCenter, 1.0f));
-            const glm::vec2 radius(glm::max(bounds.radius, 0.001f));
-            dirtyMin = glm::min(dirtyMin, glm::vec2(lightSpaceCenter) - radius);
-            dirtyMax = glm::max(dirtyMax, glm::vec2(lightSpaceCenter) + radius);
-            region.valid = true;
-        };
-
-        for (const auto &shadowCaster : shadowCasters)
-        {
-            if (!shadowCaster.hasMoved)
-            {
-                continue;
-            }
-            includeBounds(shadowCaster.bounds);
-            includeBounds(shadowCaster.previousBounds);
-        }
-
-        if (!region.valid)
-        {
-            return region;
-        }
-
-        const float safeResolution = static_cast<float>(glm::max(shadowResolution, 1));
-        const glm::vec2 texelSize = cascadeProjection.receiverExtent / safeResolution;
-        const glm::vec2 guard = texelSize * glm::max(filterRadiusPixels + 2.0f, 2.0f);
-        dirtyMin = glm::max(dirtyMin - guard, cascadeProjection.receiverMin);
-        dirtyMax = glm::min(dirtyMax + guard, cascadeProjection.receiverMax);
-        if (glm::any(glm::lessThanEqual(dirtyMax, dirtyMin)))
-        {
-            region.valid = false;
-            return region;
-        }
-
-        region.min = dirtyMin;
-        region.max = dirtyMax;
-        const glm::vec2 normalizedMin = glm::clamp(
-            (dirtyMin - cascadeProjection.receiverMin) / cascadeProjection.receiverExtent,
-            glm::vec2(0.0f), glm::vec2(1.0f));
-        const glm::vec2 normalizedMax = glm::clamp(
-            (dirtyMax - cascadeProjection.receiverMin) / cascadeProjection.receiverExtent,
-            glm::vec2(0.0f), glm::vec2(1.0f));
-        region.pixelX = glm::clamp(static_cast<int>(std::floor(normalizedMin.x * safeResolution)), 0, shadowResolution - 1);
-        region.pixelY = glm::clamp(static_cast<int>(std::floor(normalizedMin.y * safeResolution)), 0, shadowResolution - 1);
-        const int pixelMaxX = glm::clamp(static_cast<int>(std::ceil(normalizedMax.x * safeResolution)), region.pixelX + 1, shadowResolution);
-        const int pixelMaxY = glm::clamp(static_cast<int>(std::ceil(normalizedMax.y * safeResolution)), region.pixelY + 1, shadowResolution);
-        region.pixelWidth = pixelMaxX - region.pixelX;
-        region.pixelHeight = pixelMaxY - region.pixelY;
-        return region;
     }
 
     std::vector<DirectionalShadowDirtyRegion> BuildMovedCasterDirtyRegions(

@@ -4,6 +4,8 @@
 #include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -528,19 +530,6 @@ namespace PlutoGE::ui
             }
 
             return NormalizeAssetRelativePath(DisplayAssetReference(asset.reference));
-        }
-
-        std::string GetReferenceFolder(const assets::Project &project, const assets::ProjectAssetEntry &asset)
-        {
-            return GetAssetFolderParent(GetReferenceRelativePath(project, asset));
-        }
-
-        std::string GetReferenceFileName(const assets::Project &project, const assets::ProjectAssetEntry &asset)
-        {
-            const std::string relativePath = GetReferenceRelativePath(project, asset);
-            const auto separator = relativePath.find_last_of('/');
-            const auto fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
-            return fileName.empty() ? DisplayAssetReference(asset.reference) : fileName;
         }
 
         std::string GetAssetFolderName(std::string_view folder)
@@ -1183,19 +1172,6 @@ namespace PlutoGE::ui
             return output.good();
         }
 
-        std::string SanitizeImportedAssetName(std::string text)
-        {
-            for (auto &character : text)
-            {
-                const unsigned char value = static_cast<unsigned char>(character);
-                if (std::isalnum(value) == 0 && character != '_' && character != '-')
-                {
-                    character = '_';
-                }
-            }
-            return text.empty() ? "Asset" : text;
-        }
-
         std::string ImportTextureAsset(const assets::Project &project,
                                        const std::filesystem::path &importDirectory,
                                        const assetimport::ImportedTextureData &texture,
@@ -1355,25 +1331,6 @@ namespace PlutoGE::ui
             }
 
             animationComponent->SetAnimationAssetReference(animationReference);
-        }
-
-        void AttachImportedAnimations(scene::Entity &entity,
-                                      const std::string &sourceReference,
-                                      const core::ImportedRenderMeshAsset &importedMeshAsset)
-        {
-            if (!importedMeshAsset.animations || importedMeshAsset.animations->empty())
-            {
-                return;
-            }
-
-            auto *animationComponent = entity.GetComponent<scene::AnimationComponent>();
-            if (!animationComponent)
-            {
-                animationComponent = entity.CreateComponent<scene::AnimationComponent>();
-            }
-
-            animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
-            animationComponent->SetSourceAnimationPath(sourceReference);
         }
 
         std::string MakeClipAssetFileName(const std::filesystem::path &sourcePath, const render::AnimationClip &clip, std::size_t clipIndex)

@@ -102,11 +102,4 @@ namespace PlutoGE::render
     }
 
     void PostProcessResourcePool::InvalidateHistory() noexcept { m_history.clear(); }
-    void PostProcessResourcePool::Reset() noexcept
-    {
-        m_bindings.clear();
-        m_transients.clear();
-        m_history.clear();
-        m_width = m_height = 0;
-    }
 }

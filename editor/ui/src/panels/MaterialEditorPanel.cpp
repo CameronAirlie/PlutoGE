@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Scene.h"

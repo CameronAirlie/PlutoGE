@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scripting/ScriptEngine.h"

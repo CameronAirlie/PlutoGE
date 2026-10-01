@@ -163,17 +163,9 @@ namespace PlutoGE::assets
         return true;
     }
 
-    const AssetRecord *AssetDatabase::FindById(std::string_view id) const
-    {
-        const auto found = m_byId.find(std::string(id)); return found == m_byId.end() ? nullptr : &m_records[found->second];
-    }
     const AssetRecord *AssetDatabase::FindByReference(std::string_view reference) const
     {
         const auto found = m_byReference.find(std::string(reference)); return found == m_byReference.end() ? nullptr : &m_records[found->second];
-    }
-    std::string AssetDatabase::ResolveId(std::string_view id) const
-    {
-        const auto *record = FindById(id); return record ? record->reference : std::string{};
     }
 
     bool CookProjectContent(Project &project, const std::filesystem::path &destination, const CookOptions &options, std::string *errorMessage)

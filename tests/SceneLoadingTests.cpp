@@ -4,6 +4,10 @@
 #include <sstream>
 #include "PlutoGE/core/SceneLoading.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"

@@ -32,8 +32,6 @@ Write-Host 'Configuring the Windows distribution build...'
     -DPLUTO_BUILD_EDITOR=ON `
     -DPLUTO_BUILD_RUNTIME=ON `
     -DPLUTO_EDITOR_WINDOWED=ON `
-    -DPLUTO_RUNTIME_WINDOWED=ON `
-    -DPLUTO_BUILD_SAMPLES=OFF `
     -DBUILD_TESTING=$(-not $SkipTests)
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 

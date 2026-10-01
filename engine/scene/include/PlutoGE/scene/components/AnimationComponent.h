@@ -198,7 +198,6 @@ namespace PlutoGE::scene
         bool AddTransition(int sourceStateIndex, int destinationStateIndex);
         void RemoveTransition(int sourceStateIndex, int transitionIndex);
         void SetBool(std::string_view parameterName, bool value);
-        bool GetBool(std::string_view parameterName) const;
         void SetTrigger(std::string_view parameterName);
         void ResetTrigger(std::string_view parameterName);
         void SetFloat(std::string_view parameterName, float value);
@@ -206,10 +205,6 @@ namespace PlutoGE::scene
         void SetInt(std::string_view parameterName, int value);
         int GetInt(std::string_view parameterName) const;
         bool PlayState(std::string_view stateName);
-        int FindLayerIndex(std::string_view layerName) const;
-        bool PlayLayer(std::string_view layerName, bool restart = true);
-        bool StopLayer(std::string_view layerName);
-        float GetLayerWeight(std::string_view layerName) const;
         const std::vector<AnimationLayer> &GetLayers() const { return m_layers; }
 
         // Enables a lightweight, constraint-based skeletal ragdoll. The current

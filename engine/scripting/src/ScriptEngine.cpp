@@ -23,42 +23,6 @@ namespace PlutoGE::scripting
             return '"' + path.string() + '"';
         }
 
-        class NullScriptRuntime final : public IScriptRuntime
-        {
-        public:
-            bool LoadAssembly(const std::filesystem::path &assemblyPath) override
-            {
-                m_loadedAssembly = assemblyPath;
-                m_lastError = "Managed scripting runtime is unavailable.";
-                return false;
-            }
-
-            [[nodiscard]] bool IsLoaded() const override
-            {
-                return false;
-            }
-
-            [[nodiscard]] std::vector<ScriptClassDefinition> GetScriptClasses() const override
-            {
-                return {};
-            }
-
-            [[nodiscard]] std::unique_ptr<ScriptInstance> CreateInstance(const ScriptClassDefinition &scriptClass) const override
-            {
-                (void)scriptClass;
-                return nullptr;
-            }
-
-            [[nodiscard]] std::string GetLastError() const override
-            {
-                return m_lastError;
-            }
-
-        private:
-            std::filesystem::path m_loadedAssembly;
-            std::string m_lastError;
-        };
-
     }
 
     void SetScriptLogSink(ScriptLogSink sink)
@@ -282,11 +246,6 @@ namespace PlutoGE::scripting
         m_runtime.reset();
         m_initialized = false;
         render::DebugDraw::Get().Clear();
-    }
-
-    void ScriptEngine::SetRuntime(std::unique_ptr<IScriptRuntime> runtime)
-    {
-        m_runtime = std::move(runtime);
     }
 
     bool ScriptEngine::LoadAssembly(const std::filesystem::path &assemblyPath)

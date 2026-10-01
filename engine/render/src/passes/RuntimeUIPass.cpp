@@ -2,6 +2,8 @@
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"

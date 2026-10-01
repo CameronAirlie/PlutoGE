@@ -27,9 +27,7 @@ namespace PlutoGE::assets
     {
     public:
         bool Scan(Project &project, std::string *errorMessage = nullptr);
-        const AssetRecord *FindById(std::string_view id) const;
         const AssetRecord *FindByReference(std::string_view reference) const;
-        std::string ResolveId(std::string_view id) const;
         const std::vector<AssetRecord> &GetRecords() const { return m_records; }
 
         static std::filesystem::path GetMetadataPath(const std::filesystem::path &assetPath);

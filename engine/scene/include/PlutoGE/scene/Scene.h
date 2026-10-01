@@ -225,8 +225,6 @@ namespace PlutoGE::scene
         const std::vector<CanvasComponent *> &GetCanvasComponents() const { return m_canvasComponents; }
         const std::vector<RmlWidgetComponent *> &GetRmlWidgetComponents() const { return m_rmlWidgetComponents; }
         int AddIblCaptureVolume(IblCaptureVolume captureVolume);
-        void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
-        void RemoveIblCaptureVolume(std::size_t index);
         void ClearIblCaptureVolumes();
 
     protected:

@@ -20,6 +20,8 @@
 #include "PlutoGE/scene/RoadJunction.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
@@ -1508,39 +1510,6 @@ namespace PlutoGE::ui
 
             output << updatedSource;
             return result;
-        }
-
-        std::string SanitizeScriptIdentifier(std::string_view text)
-        {
-            std::string identifier;
-            identifier.reserve(text.size());
-
-            for (const char rawCharacter : text)
-            {
-                const unsigned char character = static_cast<unsigned char>(rawCharacter);
-                if (std::isalnum(character) != 0 || rawCharacter == '_')
-                {
-                    if (identifier.empty() && std::isdigit(character) != 0)
-                    {
-                        identifier.push_back('_');
-                    }
-
-                    identifier.push_back(rawCharacter);
-                    continue;
-                }
-
-                if (!identifier.empty() && identifier.back() != '_')
-                {
-                    identifier.push_back('_');
-                }
-            }
-
-            while (!identifier.empty() && identifier.back() == '_')
-            {
-                identifier.pop_back();
-            }
-
-            return identifier;
         }
 
         glm::vec3 ParseVec3Property(const std::string &value)

@@ -1,4 +1,7 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/ui/EditorCompositor.h"

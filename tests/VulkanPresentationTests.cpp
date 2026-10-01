@@ -1,4 +1,6 @@
 #include "PlutoGE/platform/Window.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 

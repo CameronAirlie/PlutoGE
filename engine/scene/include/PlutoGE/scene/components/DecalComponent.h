@@ -36,9 +36,7 @@ namespace PlutoGE::scene
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         void SetTint(const glm::vec4 &tint) { m_tint = tint; }
         const glm::vec4 &GetTint() const { return m_tint; }
-        void SetNormalCutoff(float cutoff);
         float GetNormalCutoff() const { return m_normalCutoff; }
-        void SetLifetime(float lifetime, float fadeDuration = 0.0f);
         float GetLifetime() const { return m_lifetime; }
         float GetFadeDuration() const { return m_fadeDuration; }
 

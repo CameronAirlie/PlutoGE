@@ -40,9 +40,6 @@ namespace PlutoGE::scene
         bool GetCollideWithFloor() const { return m_collideWithFloor; }
         float GetFloorOffset() const { return m_floorOffset; }
         std::size_t GetSimulatedVertexCount() const { return m_particles.size(); }
-        glm::vec3 GetSimulatedVertexPosition(std::size_t index) const;
-
-        void ResetSimulation();
 
     private:
         struct Particle

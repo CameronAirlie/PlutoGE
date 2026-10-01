@@ -42,6 +42,7 @@ add_library(PlutoGERender
     src/TextureManager.cpp
     src/TexturePainter.cpp
     src/Shader.cpp
+    src/BuiltinShaders.cpp
     src/ShaderArtifacts.cpp
     src/Texture.cpp
     src/ShaderGraph.cpp

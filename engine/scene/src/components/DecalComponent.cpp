@@ -42,18 +42,6 @@ namespace PlutoGE::scene
         ResolveMaterial();
     }
 
-    void DecalComponent::SetNormalCutoff(float cutoff)
-    {
-        m_normalCutoff = std::clamp(cutoff, -1.0f, 1.0f);
-    }
-
-    void DecalComponent::SetLifetime(float lifetime, float fadeDuration)
-    {
-        m_lifetime = std::max(lifetime, 0.0f);
-        m_fadeDuration = std::clamp(fadeDuration, 0.0f, m_lifetime);
-        m_age = 0.0f;
-    }
-
     void DecalComponent::Update(float deltaTime)
     {
         if (m_lifetime <= 0.0f)

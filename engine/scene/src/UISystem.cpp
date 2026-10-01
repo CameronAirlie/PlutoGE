@@ -31,15 +31,6 @@ namespace PlutoGE::scene
         }
     }
 
-    void UISystem::Clear()
-    {
-        m_elements.clear();
-        m_elementByEntity.clear();
-        m_hoveredEntity = 0;
-        m_focusedEntity = 0;
-        m_capturedEntity = 0;
-    }
-
     void UISystem::ResetButtonStates(Scene &scene)
     {
         for (auto *root : scene.GetRootEntities())

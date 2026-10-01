@@ -442,18 +442,6 @@ namespace PlutoGE::render
             return mesh;
         }
 
-        static Mesh *FromData(MeshData data, std::vector<Submesh> submeshes = {}, bool hasLightmapUvs = false)
-        {
-            MeshConfig config;
-            config.data = std::move(data);
-            config.submeshes = std::move(submeshes);
-            config.hasLightmapUvs = hasLightmapUvs;
-
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
-        }
-
         static Mesh *FromConfig(MeshConfig config)
         {
             Mesh *mesh = new Mesh(config);

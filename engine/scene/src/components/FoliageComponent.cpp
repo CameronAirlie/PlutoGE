@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/scene/Entity.h"
@@ -920,11 +921,6 @@ namespace PlutoGE::scene
         static const std::string empty;
         const auto *type = GetSelectedType();
         return type ? type->materialAssetReference : empty;
-    }
-
-    void FoliageComponent::ClearMaterialAssetReference()
-    {
-        ClearTypeMaterialAssetReference(static_cast<std::size_t>(m_selectedTypeIndex));
     }
 
     void FoliageComponent::SetBrushRadius(float radius)

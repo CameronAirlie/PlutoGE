@@ -6,6 +6,7 @@
 #include "CanonicalGeometry.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"

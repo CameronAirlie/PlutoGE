@@ -91,12 +91,6 @@ namespace PlutoGE::ui
         return nullptr;
     }
 
-    scene::CanvasComponent *CanvasEditorPanel::FindCanvas(scene::Entity *entity) const
-    {
-        auto *root = FindCanvasRoot(entity);
-        return root ? root->GetComponent<scene::CanvasComponent>() : nullptr;
-    }
-
     void CanvasEditorPanel::BeginDrag(scene::Entity &entity, scene::RectTransformComponent &rect,
                                       int handle, const glm::vec2 &canvasMouse)
     {

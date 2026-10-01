@@ -552,8 +552,6 @@ namespace PlutoGE::render
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
         [[nodiscard]] const char *VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
                                                                std::span<const BasicDraw> shadowDraws = {}) const;
-        [[nodiscard]] bool UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
-                                             std::span<const BasicDraw> shadowDraws = {}) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws,
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},

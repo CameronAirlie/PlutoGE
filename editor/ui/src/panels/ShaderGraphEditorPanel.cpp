@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/GraphEditorPanelUtils.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -389,12 +390,6 @@ namespace PlutoGE::ui
                                                         std::clamp(value.w, 0.0f, 1.0f)));
         }
 
-        float PreviewNoise(int x, int y, float seed)
-        {
-            const int n = x * 15731 + y * 789221 + static_cast<int>(seed * 131.0f);
-            return static_cast<float>((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 2147483647.0f;
-        }
-
         float PreviewHash(float x, float y)
         {
             return render::NoiseHash(x, y);
@@ -700,32 +695,6 @@ namespace PlutoGE::ui
             return result;
         }
 
-        void DrawPreviewBars(ImDrawList *drawList, const ImRect &rect, const float *values, const ImU32 *colors, int count)
-        {
-            const float padding = std::clamp(rect.GetHeight() * 0.12f, 1.0f, 5.0f);
-            const float gap = std::max(1.0f, rect.GetHeight() * 0.05f);
-            const float barHeight = (rect.GetHeight() - padding * 2.0f - gap * static_cast<float>(std::max(0, count - 1))) / static_cast<float>(count);
-            for (int index = 0; index < count; ++index)
-            {
-                const float y0 = rect.Min.y + padding + (barHeight + gap) * static_cast<float>(index);
-                const ImRect barRect(ImVec2(rect.Min.x + padding, y0), ImVec2(rect.Max.x - padding, y0 + std::max(1.0f, barHeight)));
-                drawList->AddRectFilled(barRect.Min, barRect.Max, IM_COL32(42, 47, 58, 255), 2.0f);
-                const float fill = std::clamp(values[index], 0.0f, 1.0f);
-                drawList->AddRectFilled(barRect.Min, ImVec2(barRect.Min.x + barRect.GetWidth() * fill, barRect.Max.y), colors[index], 2.0f);
-            }
-        }
-
-        void DrawPreviewStripes(ImDrawList *drawList, const ImRect &rect, const ImU32 *colors, int count)
-        {
-            const float stripeWidth = rect.GetWidth() / static_cast<float>(count);
-            for (int index = 0; index < count; ++index)
-            {
-                drawList->AddRectFilled(ImVec2(rect.Min.x + stripeWidth * static_cast<float>(index), rect.Min.y),
-                                        ImVec2(rect.Min.x + stripeWidth * static_cast<float>(index + 1), rect.Max.y),
-                                        colors[index]);
-            }
-        }
-
         const char *PreviewPrimaryPin(const render::ShaderGraphNode &node)
         {
             if (node.kind == render::ShaderGraphNodeKind::TextureSample) return "Color";
@@ -941,16 +910,6 @@ namespace PlutoGE::ui
             }
 
             return graph.nodes[outputNodeIndex].kind != render::ShaderGraphNodeKind::Output;
-        }
-
-        void RemoveLinksForNode(render::ShaderGraph &graph, int nodeId)
-        {
-            graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(),
-                                             [nodeId](const render::ShaderGraphLink &link)
-                                             {
-                                                 return link.fromNodeId == nodeId || link.toNodeId == nodeId;
-                                             }),
-                              graph.links.end());
         }
 
         class ShaderGraphDelegate : public GraphEditor::Delegate

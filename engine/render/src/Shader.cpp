@@ -6,7 +6,6 @@
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/core/Engine.h"
 
 #include <GLFW/glfw3.h>
 
@@ -127,7 +126,7 @@ namespace PlutoGE::render
         return shader;
     }
 
-    bool LinkShaderProgram(GLuint programID, const ShaderConfig &config)
+    bool LinkShaderProgram(GLuint programID)
     {
         glLinkProgram(programID);
 
@@ -138,9 +137,7 @@ namespace PlutoGE::render
         {
             char infoLog[512];
             glGetProgramInfoLog(programID, 512, nullptr, infoLog);
-            std::cerr << "Shader program linking failed: " << infoLog << std::endl
-                      << "Vertex Shader Path: " << config.vertexShaderPath << std::endl
-                      << "Fragment Shader Path: " << config.fragmentShaderPath << std::endl;
+            std::cerr << "Shader program linking failed: " << infoLog << std::endl;
             glDeleteProgram(programID);
             return false;
         }
@@ -194,7 +191,7 @@ namespace PlutoGE::render
                                         source.transformFeedbackBufferMode);
         }
 
-        if (!LinkShaderProgram(programID, ShaderConfig{}))
+        if (!LinkShaderProgram(programID))
         {
             std::cerr << "Failed to link shader program from source." << std::endl;
             return nullptr; // Linking failed, error already logged
@@ -219,21 +216,6 @@ namespace PlutoGE::render
         Shader *shader = new Shader();
         shader->m_programID = programID;
         return shader;
-    }
-
-    Shader *Shader::Create(const ShaderConfig &config)
-    {
-        auto &engine = core::Engine::GetInstance();
-        ShaderSource source = engine.GetAssetManager().LoadShader(config.vertexShaderPath.c_str(), config.fragmentShaderPath.c_str());
-
-        if (source.vertexSource.empty() || source.fragmentSource.empty())
-        {
-            // Handle error: failed to load shader source
-            std::cerr << "Failed to load shader source for paths: " << config.vertexShaderPath << ", " << config.fragmentShaderPath << std::endl;
-            return nullptr;
-        }
-
-        return CreateShaderFromSource(source);
     }
 
     Shader *Shader::Create(const ShaderSource &source)
@@ -484,19 +466,6 @@ namespace PlutoGE::render
         BindTextureUnit(texture->GetType(), texture->GetTextureID(), slot);
         if (CacheUniformValue(location, 6, &slot, sizeof(slot)))
             glUniform1i(location, slot);
-        return true;
-    }
-
-    bool Shader::TrySetUniform(std::string_view name, const glm::vec2 &value) const
-    {
-        const GLint location = ResolveUniformLocation(name, false);
-        if (location == -1)
-        {
-            return false;
-        }
-
-        if (CacheUniformValue(location, 4, &value[0], sizeof(float) * 2))
-            glUniform2f(location, value.x, value.y);
         return true;
     }
 }

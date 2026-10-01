@@ -1,6 +1,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -2870,28 +2871,6 @@ namespace PlutoGE::scene
         }
     }
 
-    bool AnimationComponent::GetBool(std::string_view parameterName) const
-    {
-        const int index = FindParameterIndex(parameterName);
-        if (index < 0)
-        {
-            return false;
-        }
-
-        const auto &parameter = m_parameters[static_cast<size_t>(index)];
-        switch (parameter.type)
-        {
-        case AnimationParameterType::Bool:
-        case AnimationParameterType::Trigger:
-            return parameter.boolValue;
-        case AnimationParameterType::Int:
-            return parameter.intValue != 0;
-        case AnimationParameterType::Float:
-        default:
-            return std::abs(parameter.floatValue) > 0.0001f;
-        }
-    }
-
     void AnimationComponent::SetTrigger(std::string_view parameterName)
     {
         const int index = FindParameterIndex(parameterName);
@@ -2951,45 +2930,6 @@ namespace PlutoGE::scene
         SetCurrentStateIndex(stateIndex);
         Play();
         return true;
-    }
-
-    int AnimationComponent::FindLayerIndex(std::string_view layerName) const
-    {
-        for (size_t index = 0; index < m_layers.size(); ++index)
-            if (m_layers[index].name == layerName)
-                return static_cast<int>(index);
-        return -1;
-    }
-
-    bool AnimationComponent::PlayLayer(std::string_view layerName, bool restart)
-    {
-        const int index = FindLayerIndex(layerName);
-        if (index < 0)
-            return false;
-        auto &layer = m_layers[static_cast<size_t>(index)];
-        if (restart)
-            layer.time = 0.0f;
-        layer.playing = layer.enabled && layer.clipValid;
-        m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
-        return layer.playing;
-    }
-
-    bool AnimationComponent::StopLayer(std::string_view layerName)
-    {
-        const int index = FindLayerIndex(layerName);
-        if (index < 0)
-            return false;
-        m_layers[static_cast<size_t>(index)].playing = false;
-        m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
-        return true;
-    }
-
-    float AnimationComponent::GetLayerWeight(std::string_view layerName) const
-    {
-        const int index = FindLayerIndex(layerName);
-        return index >= 0 ? m_layers[static_cast<size_t>(index)].currentWeight : 0.0f;
     }
 
     const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton)

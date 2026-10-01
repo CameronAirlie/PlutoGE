@@ -5,6 +5,8 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"

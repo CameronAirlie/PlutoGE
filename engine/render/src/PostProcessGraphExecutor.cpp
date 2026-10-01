@@ -14,11 +14,6 @@ namespace PlutoGE::render
             throw std::invalid_argument("Post-process implementation is already registered");
     }
 
-    bool PostProcessGraphExecutor::HasImplementation(std::string_view name) const
-    {
-        return m_implementations.find(std::string(name)) != m_implementations.end();
-    }
-
     void PostProcessGraphExecutor::Execute(const PostProcessGraph &graph,
                                            const CompiledPostProcessGraph &compiled,
                                            const PostProcessResourcePool &resources,

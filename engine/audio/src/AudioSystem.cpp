@@ -288,11 +288,6 @@ namespace PlutoGE::audio
             return converted;
         }
 
-        bool HasOpenALExtension(const char *name)
-        {
-            return alIsExtensionPresent(name) == AL_TRUE;
-        }
-
         bool HasOpenALDeviceExtension(ALCdevice *device, const char *name)
         {
             return device != nullptr && alcIsExtensionPresent(device, name) == ALC_TRUE;
@@ -320,12 +315,6 @@ namespace PlutoGE::audio
             return X3DAUDIO_VECTOR{value.x, value.y, value.z};
         }
 
-        float OnePoleCoefficient(float cutoffHz, int sampleRate)
-        {
-            const float dt = 1.0f / static_cast<float>((std::max)(sampleRate, 1));
-            const float rc = 1.0f / (2.0f * 3.14159265358979323846f * (std::max)(cutoffHz, 10.0f));
-            return dt / (rc + dt);
-        }
 #endif
     }
 

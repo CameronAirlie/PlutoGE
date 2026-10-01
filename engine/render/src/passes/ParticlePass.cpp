@@ -7,6 +7,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"

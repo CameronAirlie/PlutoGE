@@ -157,9 +157,6 @@ namespace PlutoGE::assets
 
     std::filesystem::path GetRuntimeManifestPathForExecutable(const std::filesystem::path &executablePath);
     std::filesystem::path GetRuntimeContentPackPathForExecutable(const std::filesystem::path &executablePath);
-    bool ExtractStandaloneProjectContent(const std::filesystem::path &contentPackPath,
-                                         const std::filesystem::path &destinationDirectory,
-                                         std::string *errorMessage = nullptr);
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot);
     // Embedded capability metadata: require a matching reader before exporting.
     inline constexpr std::string_view kRuntimeContentPackMarker = "PLUTOGE_RUNTIME_CONTENT_PACK_VERSION=2";

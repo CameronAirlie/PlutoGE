@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/import/MeshImportOptions.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
 
@@ -16,20 +17,6 @@ namespace PlutoGE::assetimport
         Unknown = 0,
         Linear = 1,
         SRGB = 2,
-    };
-
-    struct MeshImportOptions
-    {
-        bool generateLods = false;
-        bool optimizeVertexCache = false;
-        bool optimizeOverdraw = false;
-
-        [[nodiscard]] std::uint32_t ToFlags() const
-        {
-            return (generateLods ? 1u : 0u) |
-                   (optimizeVertexCache ? 2u : 0u) |
-                   (optimizeOverdraw ? 4u : 0u);
-        }
     };
 
     struct ImportedTextureData
@@ -103,8 +90,6 @@ namespace PlutoGE::assetimport
         ImportedMeshAsset GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options = {});
         ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options = {});
         ImportedMeshAsset ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options = {});
-        render::Mesh *ImportMesh(const std::string &filePath);
-        render::MeshData ImportMeshData(const std::string &filePath) const;
         bool SupportsFileType(std::string_view filePath) const;
 
     private:

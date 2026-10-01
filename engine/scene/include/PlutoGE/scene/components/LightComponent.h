@@ -112,7 +112,6 @@ namespace PlutoGE::scene
         void SetStatic(bool isStatic);
         void SetCastsShadows(bool castsShadows);
         void SetDirectionalShadowSettings(const DirectionalShadowSettings &settings);
-        void SetShadowMap(render::Texture *shadowMap);
         void MarkDirty();
         void ClearDirty();
         bool IsDirty() const;

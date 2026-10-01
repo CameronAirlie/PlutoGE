@@ -34,7 +34,6 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         bool SetDestination(const glm::vec3 &destination);
-        void SetTargetEntity(std::uint32_t entityId);
         std::uint32_t GetTargetEntity() const { return m_config.targetEntityId; }
         void Stop();
         // Preserve the destination and vertical motion while discarding topology-dependent steering.

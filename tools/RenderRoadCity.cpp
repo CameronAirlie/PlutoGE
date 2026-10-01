@@ -3,6 +3,7 @@
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"

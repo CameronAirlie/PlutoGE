@@ -1,6 +1,9 @@
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/core/LoadingScreenSession.h"
 #include "PlutoGE/render/Graphics.h"
 #include <algorithm>

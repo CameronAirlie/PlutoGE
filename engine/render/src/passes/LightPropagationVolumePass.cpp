@@ -151,21 +151,6 @@ namespace PlutoGE::render
             return centerInsideHysteresis ? currentOrigin : snappedOrigin;
         }
 
-        void BlendTemporalHistory(std::vector<glm::vec3> &currentRadiance,
-                                  const std::vector<glm::vec3> &historyRadiance,
-                                  float blendFactor)
-        {
-            if (historyRadiance.size() != currentRadiance.size() || blendFactor <= 0.0f)
-            {
-                return;
-            }
-
-            for (std::size_t cellIndex = 0; cellIndex < currentRadiance.size(); ++cellIndex)
-            {
-                currentRadiance[cellIndex] = glm::mix(historyRadiance[cellIndex], currentRadiance[cellIndex], blendFactor);
-            }
-        }
-
         glm::vec3 ComputeCellCenter(const glm::vec3 &origin,
                                     const glm::vec3 &gridSize,
                                     const glm::ivec3 &resolution,
@@ -219,30 +204,6 @@ namespace PlutoGE::render
             return glm::mix(c0, c1, fraction.z);
         }
 
-        std::vector<glm::vec3> ReprojectHistoryRadiance(const std::vector<glm::vec3> &historyRadiance,
-                                                        const glm::vec3 &historyOrigin,
-                                                        const glm::vec3 &historyGridSize,
-                                                        const glm::vec3 &currentOrigin,
-                                                        const glm::vec3 &currentGridSize,
-                                                        const glm::ivec3 &resolution)
-        {
-            std::vector<glm::vec3> reprojected(historyRadiance.size(), glm::vec3(0.0f));
-            for (int z = 0; z < resolution.z; ++z)
-            {
-                for (int y = 0; y < resolution.y; ++y)
-                {
-                    for (int x = 0; x < resolution.x; ++x)
-                    {
-                        const std::size_t cellIndex = FlattenCellIndex(resolution, x, y, z);
-                        const glm::vec3 worldCenter = ComputeCellCenter(currentOrigin, currentGridSize, resolution, x, y, z);
-                        reprojected[cellIndex] = SampleReprojectedRadiance(historyRadiance, historyOrigin, historyGridSize, resolution, worldCenter);
-                    }
-                }
-            }
-
-            return reprojected;
-        }
-
         std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &renderCommands)
         {
             std::size_t hash = HashValue(renderCommands.size(), 1469598103934665603ull);
@@ -281,20 +242,6 @@ namespace PlutoGE::render
             return hash;
         }
 
-        bool WorldToCell(const glm::vec3 &worldPosition, const glm::vec3 &origin, const glm::vec3 &size, const glm::ivec3 &resolution, glm::ivec3 &cell)
-        {
-            const glm::vec3 safeSize = glm::max(size, glm::vec3(0.0001f));
-            const glm::vec3 normalized = (worldPosition - origin) / safeSize;
-            if (glm::any(glm::lessThan(normalized, glm::vec3(0.0f))) || glm::any(glm::greaterThanEqual(normalized, glm::vec3(1.0f))))
-            {
-                return false;
-            }
-
-            const glm::vec3 scaled = normalized * glm::vec3(resolution);
-            cell = glm::clamp(glm::ivec3(scaled), glm::ivec3(0), resolution - glm::ivec3(1));
-            return true;
-        }
-
         float ComputePointAttenuation(const glm::vec3 &fragPos, const scene::Light &light)
         {
             const float distanceToLight = glm::length(light.position - fragPos);
@@ -306,48 +253,6 @@ namespace PlutoGE::render
             const float distanceAttenuation = ComputePointAttenuation(fragPos, light);
             const float spotEffect = glm::dot(-lightDir, glm::normalize(light.direction));
             return distanceAttenuation * glm::smoothstep(0.9f, 0.975f, spotEffect);
-        }
-
-        glm::vec3 ComputeInjectedRadiance(const glm::vec3 &fragPos, const glm::vec3 &normal, const glm::vec3 &albedo, float metallic, const std::vector<scene::Light *> &lights)
-        {
-            glm::vec3 totalRadiance(0.0f);
-            const glm::vec3 surfaceNormal = glm::normalize(normal);
-            const float diffuseReflectance = glm::clamp(1.0f - metallic, 0.0f, 1.0f);
-
-            for (auto *light : lights)
-            {
-                if (!light)
-                {
-                    continue;
-                }
-
-                glm::vec3 lightDir(0.0f);
-                float attenuation = 1.0f;
-                if (light->type == scene::LightType::Directional)
-                {
-                    lightDir = glm::normalize(-light->direction);
-                }
-                else if (light->type == scene::LightType::Point)
-                {
-                    lightDir = glm::normalize(light->position - fragPos);
-                    attenuation = ComputePointAttenuation(fragPos, *light);
-                }
-                else
-                {
-                    lightDir = glm::normalize(light->position - fragPos);
-                    attenuation = ComputeSpotAttenuation(fragPos, lightDir, *light);
-                }
-
-                const float ndotl = glm::max(glm::dot(surfaceNormal, lightDir), 0.0f);
-                if (ndotl <= 0.0f || attenuation <= 0.0f)
-                {
-                    continue;
-                }
-
-                totalRadiance += light->color * light->intensity * attenuation * ndotl;
-            }
-
-            return totalRadiance * albedo * diffuseReflectance;
         }
 
         float ComputeCameraMovementThreshold(const glm::vec3 &gridSize, const glm::ivec3 &resolution)

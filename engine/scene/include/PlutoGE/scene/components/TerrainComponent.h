@@ -48,7 +48,6 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         bool LoadHeightMap(const std::string &filePath);
-        bool SaveHeightMap(const std::string &filePath) const;
         bool PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
         bool Raycast(const glm::vec3 &worldOrigin, const glm::vec3 &worldDirection, glm::vec3 &worldHitPoint) const;
         const std::vector<float> &GetHeightSamples() const { return m_heights; }
@@ -56,14 +55,10 @@ namespace PlutoGE::scene
         void SetSize(int width, int depth);
         int GetWidth() const { return m_width; }
         int GetDepth() const { return m_depth; }
-        void SetCellSize(float cellSize);
         float GetCellSize() const { return m_cellSize; }
-        void SetHeightScale(float heightScale);
         float GetHeightScale() const { return m_heightScale; }
-        void SetSurfaceSmoothing(float smoothing);
         float GetSurfaceSmoothing() const { return m_surfaceSmoothing; }
         float GetHeightAtLocalPosition(float x, float z) const;
-        void SetChunkSize(int chunkSize);
         int GetChunkSize() const { return m_chunkSize; }
         void SetLodCount(int lodCount);
         int GetLodCount() const { return m_lodCount; }

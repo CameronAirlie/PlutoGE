@@ -1,4 +1,5 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"

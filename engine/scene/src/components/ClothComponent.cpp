@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/Entity.h"
@@ -46,17 +47,6 @@ namespace PlutoGE::scene
 
         delete m_runtimeMesh;
         m_runtimeMesh = nullptr;
-    }
-
-    glm::vec3 ClothComponent::GetSimulatedVertexPosition(std::size_t index) const
-    {
-        return index < m_particles.size() ? m_particles[index].position : glm::vec3(0.0f);
-    }
-
-    void ClothComponent::ResetSimulation()
-    {
-        m_simulationTime = 0.0f;
-        RebuildSimulation();
     }
 
     void ClothComponent::Update(float deltaTime)

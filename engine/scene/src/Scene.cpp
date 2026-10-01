@@ -3,6 +3,9 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/Texture.h"
@@ -520,12 +523,6 @@ namespace PlutoGE::scene
             btQuaternion rotation;
             rotationBasis.getRotation(rotation);
             return rotation;
-        }
-
-        glm::vec3 FromBulletRotation(const btQuaternion &rotation)
-        {
-            const glm::quat glmRotation(rotation.w(), rotation.x(), rotation.y(), rotation.z());
-            return DecomposeTransform(glm::mat4_cast(glmRotation)).rotation;
         }
 
         void ApplyWorldPhysicsTransform(Entity &entity, const btTransform &transform)
@@ -2408,26 +2405,6 @@ namespace PlutoGE::scene
 
         m_iblCaptureVolumes.push_back(SanitizeIblCaptureVolume(std::move(captureVolume)));
         return static_cast<int>(m_iblCaptureVolumes.size() - 1);
-    }
-
-    void Scene::SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume)
-    {
-        if (index >= m_iblCaptureVolumes.size())
-        {
-            return;
-        }
-
-        m_iblCaptureVolumes[index] = SanitizeIblCaptureVolume(std::move(captureVolume));
-    }
-
-    void Scene::RemoveIblCaptureVolume(std::size_t index)
-    {
-        if (index >= m_iblCaptureVolumes.size())
-        {
-            return;
-        }
-
-        m_iblCaptureVolumes.erase(m_iblCaptureVolumes.begin() + static_cast<std::ptrdiff_t>(index));
     }
 
     void Scene::ClearIblCaptureVolumes()

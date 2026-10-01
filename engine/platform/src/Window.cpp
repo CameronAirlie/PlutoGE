@@ -1,4 +1,6 @@
 #include "PlutoGE/platform/Window.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include <iostream>
 #include <algorithm>
 
@@ -473,11 +475,6 @@ namespace PlutoGE::platform
         return {m_clientWidth, m_clientHeight};
     }
 
-    const WindowConfig Window::GetConfig() const
-    {
-        return m_config;
-    }
-
     void *Window::GetWindow() const
     {
         return m_window;
@@ -576,14 +573,6 @@ namespace PlutoGE::platform
             {
                 glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, m_isCursorLocked ? GLFW_TRUE : GLFW_FALSE);
             }
-        }
-    }
-
-    void Window::SetContextCurrent()
-    {
-        if (m_window && m_config.clientApi == WindowClientApi::OpenGL)
-        {
-            glfwMakeContextCurrent(static_cast<GLFWwindow *>(m_window));
         }
     }
 

@@ -1,4 +1,10 @@
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
@@ -2831,15 +2837,6 @@ namespace PlutoGE::ui
         return true;
     }
 
-    glm::vec3 randomColour()
-    {
-        // maximum value for each color channel is 255, so we divide by 255 to get a value between 0 and 1
-        return glm::vec3(
-            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
-            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
-            static_cast<float>(rand()) / static_cast<float>(RAND_MAX));
-    }
-
     void EditorShell::Render()
     {
         auto &window = m_engine.GetWindow();
@@ -3196,7 +3193,6 @@ namespace PlutoGE::ui
             frameTimingStats.editorSetupMs = std::chrono::duration<float, std::milli>(sceneUpdateStart - profilingBeginEnd).count();
             if (!isBakeRunning)
             {
-                m_engine.UpdateAsyncMeshImports();
                 if (m_scene)
                 {
                     if (!isRuntimeRunning)

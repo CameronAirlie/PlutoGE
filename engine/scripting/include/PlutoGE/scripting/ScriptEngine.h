@@ -36,7 +36,6 @@ namespace PlutoGE::scripting
         void Shutdown();
 
         [[nodiscard]] ScriptBuildResult BuildProject(const ScriptBuildConfig &config) const;
-        void SetRuntime(std::unique_ptr<IScriptRuntime> runtime);
         [[nodiscard]] bool LoadAssembly(const std::filesystem::path &assemblyPath);
 
         void RegisterManagedClass(const ScriptClassDefinition &scriptClass);

@@ -1,3 +1,21 @@
+# Links the whole engine. MinGW needs the mutually dependent static libraries
+# rescanned; other toolchains resolve them through the transitive link graph.
+function(pluto_link_engine target)
+    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        target_link_libraries(${target} PRIVATE
+            "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
+    else()
+        target_link_libraries(${target} PRIVATE PlutoGE::Scene)
+    endif()
+endfunction()
+
+if (MSVC)
+    # Test executables are never distributed. FASTLINK PDBs reference the
+    # object files instead of copying their debug info, which keeps relinking
+    # every test after an engine change cheap.
+    add_link_options("$<$<CONFIG:Debug,RelWithDebInfo>:/DEBUG:FASTLINK>")
+endif()
+
 add_executable(PlutoGEContentPackTests ContentPackTests.cpp)
 add_executable(PlutoGEProjectBenchmarkTests ProjectBenchmarkTests.cpp)
 target_include_directories(PlutoGEProjectBenchmarkTests PRIVATE ${CMAKE_SOURCE_DIR}/runtime/src)
@@ -31,13 +49,7 @@ target_include_directories(PlutoGERhiTypesTests PRIVATE ${CMAKE_SOURCE_DIR}/engi
 add_test(NAME PlutoGERhiTypesTests COMMAND PlutoGERhiTypesTests)
 
 add_executable(PlutoGERhiPostProcessAdapterTests RhiPostProcessAdapterTests.cpp)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGERhiPostProcessAdapterTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGERhiPostProcessAdapterTests PRIVATE
-        PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene PlutoGE::Import PlutoGE::Scripting)
-endif()
+pluto_link_engine(PlutoGERhiPostProcessAdapterTests)
 add_test(NAME PlutoGERhiPostProcessAdapterTests COMMAND PlutoGERhiPostProcessAdapterTests)
 
 add_executable(PlutoGEPostProcessGraphTests PostProcessGraphTests.cpp)
@@ -56,11 +68,6 @@ add_test(NAME PlutoGEWindowResizeTests COMMAND PlutoGEWindowClientApiTests --res
 add_executable(PlutoGEEngineGraphicsApiTests EngineGraphicsApiTests.cpp)
 target_link_libraries(PlutoGEEngineGraphicsApiTests PRIVATE PlutoGE::Core)
 
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEEngineGraphicsApiTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEngineGraphicsApiTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 add_test(NAME PlutoGEEngineGraphicsApiTests COMMAND PlutoGEEngineGraphicsApiTests)
 
 add_executable(PlutoGEOpenGLRhiTests OpenGLRhiTests.cpp)
@@ -82,22 +89,10 @@ add_test(NAME PlutoGEVulkanBootstrapTests COMMAND PlutoGEVulkanBootstrapTests)
 add_executable(PlutoGEVulkanRhiTests VulkanRhiTests.cpp)
 pluto_attach_slang_runtime(PlutoGEVulkanRhiTests)
 # MinGW needs to rescan the render/import cycle for the stb image implementation.
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEVulkanRhiTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEVulkanRhiTests PRIVATE PlutoGE::Render)
-endif()
+pluto_link_engine(PlutoGEVulkanRhiTests)
 target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
-if (WIN32 AND TARGET OpenAL)
-    foreach(rhi_test IN ITEMS PlutoGEOpenGLRhiTests PlutoGEVulkanRhiTests)
-        add_custom_command(TARGET ${rhi_test} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${rhi_test}>/$<TARGET_FILE_NAME:OpenAL>)
-    endforeach()
-endif()
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)
@@ -125,13 +120,8 @@ add_test(NAME PlutoGEVctRemovedCharacterTests COMMAND PlutoGEVulkanRhiTests --vc
 add_test(NAME PlutoGEVctSecondaryBounceOpenGLTests COMMAND PlutoGEOpenGLRhiTests --vct-secondary)
 
 add_executable(PlutoGEVulkanPresentationTests VulkanPresentationTests.cpp)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
-        PlutoGE::Platform)
-else()
-    target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE PlutoGE::Render PlutoGE::Platform)
-endif()
+pluto_link_engine(PlutoGEVulkanPresentationTests)
+target_link_libraries(PlutoGEVulkanPresentationTests PRIVATE PlutoGE::Platform)
 target_compile_definitions(PlutoGEVulkanPresentationTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanPresentationTests COMMAND PlutoGEVulkanPresentationTests)
@@ -140,16 +130,7 @@ add_executable(PlutoGELargeMeshOptimizationTests
     LargeMeshOptimizationTests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Import,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
-        PlutoGE::Import PlutoGE::Render PlutoGE::Assets PlutoGE::Core
-        PlutoGE::Scene PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGELargeMeshOptimizationTests)
 
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
 add_test(NAME PlutoGEMeshLodGenerationTests COMMAND PlutoGELargeMeshOptimizationTests --lod-only)
@@ -173,19 +154,6 @@ target_link_libraries(PlutoGEFbxImportTests PRIVATE ${pluto_import_test_librarie
 add_test(NAME PlutoGEFbxImportTests COMMAND PlutoGEFbxImportTests)
 set_tests_properties(PlutoGEFbxImportTests PROPERTIES ENVIRONMENT "PLUTOGE_DISABLE_MESH_DISK_CACHE=1")
 
-if (TARGET OpenAL)
-    foreach(import_target PlutoGEInspectMeshImport PlutoGERecookMesh PlutoGEFbxImportTests PlutoGEMaterialReloadTests)
-        add_custom_command(TARGET ${import_target} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${import_target}>/$<TARGET_FILE_NAME:OpenAL>)
-    endforeach()
-    add_custom_command(TARGET PlutoGELargeMeshOptimizationTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL>
-            $<TARGET_FILE_DIR:PlutoGELargeMeshOptimizationTests>/$<TARGET_FILE_NAME:OpenAL>
-    )
-endif()
-
 add_executable(PlutoGEModelAssetTests
     ModelAssetTests.cpp
 )
@@ -200,16 +168,7 @@ add_executable(PlutoGEPostProcessInitializationTests
     PostProcessInitializationTests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
-        PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene
-        PlutoGE::Import PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGEPostProcessInitializationTests)
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
 add_test(NAME PlutoGEVctEmissionCoverageTests COMMAND PlutoGEPostProcessInitializationTests --vct-coverage)
@@ -218,16 +177,7 @@ add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGERuntimeUITests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGERuntimeUITests PRIVATE
-        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
-        PlutoGE::Import PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGERuntimeUITests)
 
 add_test(NAME PlutoGERuntimeUITests COMMAND PlutoGERuntimeUITests)
 
@@ -235,16 +185,7 @@ add_executable(PlutoGESkeletonAttachmentTests
     SkeletonAttachmentTests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESkeletonAttachmentTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGESkeletonAttachmentTests PRIVATE
-        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
-        PlutoGE::Import PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGESkeletonAttachmentTests)
 
 add_test(NAME PlutoGESkeletonAttachmentTests COMMAND PlutoGESkeletonAttachmentTests)
 
@@ -252,16 +193,7 @@ add_executable(PlutoGEFoliageCollisionTests
     FoliageCollisionTests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEFoliageCollisionTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGEFoliageCollisionTests PRIVATE
-        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
-        PlutoGE::Import PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGEFoliageCollisionTests)
 
 add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
 
@@ -269,16 +201,7 @@ add_executable(PlutoGEPrefabMeshExporterTests
     PrefabMeshExporterTests.cpp
 )
 
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEPrefabMeshExporterTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
-    )
-else()
-    target_link_libraries(PlutoGEPrefabMeshExporterTests PRIVATE
-        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
-        PlutoGE::Import PlutoGE::Scripting
-    )
-endif()
+pluto_link_engine(PlutoGEPrefabMeshExporterTests)
 
 add_test(NAME PlutoGEPrefabMeshExporterTests COMMAND PlutoGEPrefabMeshExporterTests)
 
@@ -295,14 +218,6 @@ add_test(NAME PlutoGEScenePortraitPoseTests COMMAND PlutoGEScenePortraitPoseTest
 add_executable(PlutoGECameraStackTests CameraStackTests.cpp)
 target_link_libraries(PlutoGECameraStackTests PRIVATE ${pluto_scene_test_libraries})
 add_test(NAME PlutoGECameraStackTests COMMAND PlutoGECameraStackTests)
-
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL>
-            $<TARGET_FILE_DIR:PlutoGEPostProcessInitializationTests>/$<TARGET_FILE_NAME:OpenAL>
-    )
-endif()
 
 # Editor data tests run without initializing a window or graphics device.
 add_executable(PlutoGEDebugDrawTests DebugDrawTests.cpp ../engine/render/src/DebugDraw.cpp)
@@ -328,33 +243,12 @@ target_include_directories(PlutoGESceneRecoveryTests PRIVATE ../editor/ui/includ
 add_test(NAME PlutoGESceneRecoveryTests COMMAND PlutoGESceneRecoveryTests)
 add_executable(PlutoGESceneHistoryTests SceneHistoryTests.cpp)
 target_include_directories(PlutoGESceneHistoryTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESceneHistoryTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGESceneHistoryTests PRIVATE PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Import PlutoGE::Scripting)
-endif()
+pluto_link_engine(PlutoGESceneHistoryTests)
 add_test(NAME PlutoGESceneHistoryTests COMMAND PlutoGESceneHistoryTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESceneHistoryTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneHistoryTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 add_executable(PlutoGEAssetReferenceCookingTests AssetReferenceCookingTests.cpp)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEAssetReferenceCookingTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEAssetReferenceCookingTests PRIVATE
-        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Import PlutoGE::Scripting)
-endif()
+pluto_link_engine(PlutoGEAssetReferenceCookingTests)
 add_test(NAME PlutoGEAssetReferenceCookingTests COMMAND PlutoGEAssetReferenceCookingTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEAssetReferenceCookingTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEAssetReferenceCookingTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 add_executable(PlutoGEAssetReferencesTests
     AssetReferencesTests.cpp
@@ -378,32 +272,14 @@ add_executable(PlutoGEPlayModeChangesTests
     PlayModeChangesTests.cpp
     ../editor/ui/src/PlayModeChanges.cpp)
 target_include_directories(PlutoGEPlayModeChangesTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEPlayModeChangesTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEPlayModeChangesTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGEPlayModeChangesTests)
 add_test(NAME PlutoGEPlayModeChangesTests COMMAND PlutoGEPlayModeChangesTests)
 add_executable(PlutoGEGroundPlacementTests
     GroundPlacementTests.cpp
     ../editor/ui/src/GroundPlacement.cpp)
 target_include_directories(PlutoGEGroundPlacementTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEGroundPlacementTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEGroundPlacementTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGEGroundPlacementTests)
 add_test(NAME PlutoGEGroundPlacementTests COMMAND PlutoGEGroundPlacementTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEGroundPlacementTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEGroundPlacementTests>/$<TARGET_FILE_NAME:OpenAL>)
-    add_custom_command(TARGET PlutoGEPlayModeChangesTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEPlayModeChangesTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 # Collider sizing is independent of the renderer/engine initialization.
 add_executable(PlutoGEColliderCcdTests
@@ -417,37 +293,16 @@ add_executable(PlutoGEMultiEntityEditTests
     MultiEntityEditTests.cpp
     ../editor/ui/src/MultiEntityEdit.cpp)
 target_include_directories(PlutoGEMultiEntityEditTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEMultiEntityEditTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEMultiEntityEditTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGEMultiEntityEditTests)
 add_test(NAME PlutoGEMultiEntityEditTests COMMAND PlutoGEMultiEntityEditTests)
-
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEMultiEntityEditTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEMultiEntityEditTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 add_executable(PlutoGECameraRigTests
     CameraRigTests.cpp
 )
 target_include_directories(PlutoGECameraRigTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGECameraRigTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGECameraRigTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGECameraRigTests)
 add_test(NAME PlutoGECameraRigTests COMMAND PlutoGECameraRigTests)
 
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGECameraRigTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGECameraRigTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGECameraRigManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.CameraRigSmokeTests/PlutoGE.CameraRigSmokeTests.csproj --configuration Release)
@@ -457,19 +312,9 @@ add_executable(PlutoGESurfaceResponseTests
     SurfaceResponseTests.cpp
 )
 target_include_directories(PlutoGESurfaceResponseTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESurfaceResponseTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGESurfaceResponseTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGESurfaceResponseTests)
 add_test(NAME PlutoGESurfaceResponseTests COMMAND PlutoGESurfaceResponseTests)
 
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESurfaceResponseTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESurfaceResponseTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGESurfaceResponseManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SurfaceResponseSmokeTests/PlutoGE.SurfaceResponseSmokeTests.csproj --configuration Release)
@@ -479,34 +324,15 @@ add_executable(PlutoGEPrefabVariantTests
     PrefabVariantTests.cpp
 )
 target_include_directories(PlutoGEPrefabVariantTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGEPrefabVariantTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGEPrefabVariantTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGEPrefabVariantTests)
 add_test(NAME PlutoGEPrefabVariantTests COMMAND PlutoGEPrefabVariantTests)
-
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGEPrefabVariantTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEPrefabVariantTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 add_test(NAME PlutoGEVirtualShadowPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)
 
 if (TARGET PlutoGEEditorUI)
     add_executable(PlutoGEEditorProfilerTests EditorProfilerTests.cpp)
     target_link_libraries(PlutoGEEditorProfilerTests PRIVATE PlutoGE::EditorUI)
-    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-        target_link_libraries(PlutoGEEditorProfilerTests PRIVATE
-            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
-    endif()
-    if (TARGET OpenAL)
-        add_custom_command(TARGET PlutoGEEditorProfilerTests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorProfilerTests>/$<TARGET_FILE_NAME:OpenAL>)
-    endif()
+    pluto_link_engine(PlutoGEEditorProfilerTests)
     add_test(NAME PlutoGEEditorProfilerTests COMMAND PlutoGEEditorProfilerTests)
 endif()
 
@@ -518,29 +344,13 @@ add_test(NAME PlutoGECpuTraceTests COMMAND PlutoGECpuTraceTests)
 if (TARGET PlutoGEEditorUI)
     add_executable(PlutoGEEditorProfilerPanelTests EditorProfilerPanelTests.cpp)
     target_link_libraries(PlutoGEEditorProfilerPanelTests PRIVATE PlutoGE::EditorUI)
-    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-        target_link_libraries(PlutoGEEditorProfilerPanelTests PRIVATE
-            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
-    endif()
-    if (TARGET OpenAL)
-        add_custom_command(TARGET PlutoGEEditorProfilerPanelTests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorProfilerPanelTests>/$<TARGET_FILE_NAME:OpenAL>)
-    endif()
+    pluto_link_engine(PlutoGEEditorProfilerPanelTests)
     add_test(NAME PlutoGEEditorProfilerPanelTests COMMAND PlutoGEEditorProfilerPanelTests)
     set_tests_properties(PlutoGEEditorProfilerPanelTests PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(PlutoGERuntimeProfilerTests RuntimeProfilerTests.cpp ../runtime/src/RuntimeProfiler.cpp)
     target_include_directories(PlutoGERuntimeProfilerTests PRIVATE ../runtime/src)
     target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE PlutoGE::EditorUI)
-    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-        target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE
-            "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>")
-    endif()
-    if (TARGET OpenAL)
-        add_custom_command(TARGET PlutoGERuntimeProfilerTests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGERuntimeProfilerTests>/$<TARGET_FILE_NAME:OpenAL>)
-    endif()
+    pluto_link_engine(PlutoGERuntimeProfilerTests)
     add_test(NAME PlutoGERuntimeProfilerTests COMMAND PlutoGERuntimeProfilerTests)
     set_tests_properties(PlutoGERuntimeProfilerTests PROPERTIES SKIP_RETURN_CODE 77)
 endif()
@@ -563,12 +373,8 @@ target_link_libraries(PlutoGERmlUiFontRasterTests PRIVATE RmlUi::Core)
 target_include_directories(PlutoGERmlUiFontRasterTests PRIVATE "${CMAKE_SOURCE_DIR}/third_party/rmlui")
 target_compile_definitions(PlutoGERmlUiFontRasterTests PRIVATE PLUTO_FONT_TEST_FILE="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
 add_test(NAME PlutoGERmlUiFontRasterTests COMMAND PlutoGERmlUiFontRasterTests)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>" PlutoGE::Platform)
-else()
-    target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Render PlutoGE::Platform)
-endif()
+pluto_link_engine(PlutoGERmlUiAntialiasingTests)
+target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Platform)
 target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests)
 add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests --opengl)
@@ -576,14 +382,7 @@ add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests 
 if(TARGET PlutoGEEditorUI)
     add_executable(PlutoGEEditorLoadingScreenTests EditorLoadingScreenTests.cpp)
     target_link_libraries(PlutoGEEditorLoadingScreenTests PRIVATE PlutoGE::EditorUI)
-    if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-        target_link_libraries(PlutoGEEditorLoadingScreenTests PRIVATE
-            "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-    endif()
-    if (TARGET OpenAL)
-        add_custom_command(TARGET PlutoGEEditorLoadingScreenTests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEEditorLoadingScreenTests>/$<TARGET_FILE_NAME:OpenAL>)
-    endif()
+    pluto_link_engine(PlutoGEEditorLoadingScreenTests)
     add_test(NAME PlutoGEEditorLoadingScreenTests COMMAND PlutoGEEditorLoadingScreenTests)
     add_executable(PlutoGEEditorVulkanTextureTests EditorVulkanTextureTests.cpp)
     target_link_libraries(PlutoGEEditorVulkanTextureTests PRIVATE PlutoGE::EditorUI)
@@ -600,53 +399,22 @@ add_executable(PlutoGESequencerTests SequencerTests.cpp)
 add_executable(PlutoGESceneStreamingTests SceneStreamingTests.cpp)
 add_executable(PlutoGESceneLoadingTests SceneLoadingTests.cpp)
 target_link_libraries(PlutoGESceneLoadingTests PRIVATE PlutoGE::Scene)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESceneLoadingTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-endif()
+pluto_link_engine(PlutoGESceneLoadingTests)
 add_test(NAME PlutoGESceneLoadingTests COMMAND PlutoGESceneLoadingTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESceneLoadingTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneLoadingTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 add_executable(PlutoGESplineRoadTests SplineRoadTests.cpp)
 target_link_libraries(PlutoGESplineRoadTests PRIVATE PlutoGE::Scene)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESplineRoadTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-endif()
+pluto_link_engine(PlutoGESplineRoadTests)
 add_test(NAME PlutoGESplineRoadTests COMMAND PlutoGESplineRoadTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESplineRoadTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESplineRoadTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEReplicationTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.ReplicationTests/PlutoGE.ReplicationTests.csproj --configuration Release)
 endif()
 target_link_libraries(PlutoGESceneStreamingTests PRIVATE PlutoGE::Scene)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESceneStreamingTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-endif()
+pluto_link_engine(PlutoGESceneStreamingTests)
 add_test(NAME PlutoGESceneStreamingTests COMMAND PlutoGESceneStreamingTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESceneStreamingTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESceneStreamingTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 target_include_directories(PlutoGESequencerTests PRIVATE ../editor/ui/include)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGESequencerTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-else()
-    target_link_libraries(PlutoGESequencerTests PRIVATE PlutoGE::Scene)
-endif()
+pluto_link_engine(PlutoGESequencerTests)
 add_test(NAME PlutoGESequencerTests COMMAND PlutoGESequencerTests)
-if (TARGET OpenAL)
-    add_custom_command(TARGET PlutoGESequencerTests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGESequencerTests>/$<TARGET_FILE_NAME:OpenAL>)
-endif()
 
 add_executable(PlutoGETimelineEditingTests TimelineEditingTests.cpp ../engine/scene/src/Timeline.cpp)
 target_include_directories(PlutoGETimelineEditingTests PRIVATE ../engine/scene/include ../editor/ui/include)
@@ -700,17 +468,8 @@ add_test(NAME PlutoGEAudioBatchLifecycleTests COMMAND PlutoGEAudioBatchLifecycle
 set_tests_properties(PlutoGEAudioBatchLifecycleTests PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null")
 add_executable(PlutoGENavigationPathTests NavigationPathTests.cpp)
 target_link_libraries(PlutoGENavigationPathTests PRIVATE PlutoGE::Scene)
-if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
-    target_link_libraries(PlutoGENavigationPathTests PRIVATE
-        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>")
-endif()
+pluto_link_engine(PlutoGENavigationPathTests)
 add_test(NAME PlutoGENavigationPathTests COMMAND PlutoGENavigationPathTests)
-if (TARGET OpenAL)
-    foreach(test_target IN ITEMS PlutoGEAudioBatchLifecycleTests PlutoGENavigationPathTests)
-        add_custom_command(TARGET ${test_target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:${test_target}>/$<TARGET_FILE_NAME:OpenAL>)
-    endforeach()
-endif()
 
 add_executable(PlutoGESceneCpuCacheTests SceneCpuCacheTests.cpp)
 target_link_libraries(PlutoGESceneCpuCacheTests PRIVATE PlutoGE::Scene)
@@ -726,3 +485,19 @@ add_executable(PlutoGERetainedRenderSceneTests RetainedRenderSceneTests.cpp)
 target_link_libraries(PlutoGERetainedRenderSceneTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGERetainedRenderSceneTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGERetainedRenderSceneTests COMMAND PlutoGERetainedRenderSceneTests)
+
+# Every test shares one output directory. Copy OpenAL there once instead of
+# from a POST_BUILD step per test, which races when tests link in parallel.
+if (TARGET OpenAL)
+    add_custom_target(PlutoGETestOpenAL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEContentPackTests>/$<TARGET_FILE_NAME:OpenAL>
+        VERBATIM)
+    get_property(pluto_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(test_target IN LISTS pluto_test_targets)
+        get_target_property(test_target_type ${test_target} TYPE)
+        if (test_target_type STREQUAL "EXECUTABLE")
+            add_dependencies(${test_target} PlutoGETestOpenAL)
+        endif()
+    endforeach()
+endif()

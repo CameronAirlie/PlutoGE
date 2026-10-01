@@ -6,24 +6,29 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# PlutoGE does not use C++20 modules. Skip the per-source dependency scan that
+# CMake otherwise runs before every C++20 compile (third_party restores it).
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if (MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
 endif()
+set(PLUTO_MSVC_MAX_COMPILES "" CACHE STRING
+    "Maximum concurrent compiles across a Visual Studio build (empty: one per core)")
+if (CMAKE_GENERATOR MATCHES "Visual Studio")
+    # Schedule individual compiles across every project, capped at the core
+    # count, instead of a fixed /MP per project. Large targets like
+    # PlutoGERender otherwise compile on a few cores while dependents wait.
+    set(CMAKE_VS_GLOBALS "UseMultiToolTask=true" "EnforceProcessCountAcrossBuilds=true")
+    if (PLUTO_MSVC_MAX_COMPILES)
+        list(APPEND CMAKE_VS_GLOBALS "CL_MPCount=${PLUTO_MSVC_MAX_COMPILES}")
+    endif()
+endif()
 
 option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
-option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
 option(PLUTO_EDITOR_WINDOWED "Build the Windows editor without a console window" OFF)
 option(PLUTO_ENABLE_PCH "Precompile stable headers for larger PlutoGE targets" ON)
-set(PLUTO_MSVC_COMPILE_JOBS 2 CACHE STRING "Concurrent MSVC compiles per PlutoGE target")
-
-function(pluto_optimize_build target)
-    if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
-        target_compile_options(${target} PRIVATE
-            "$<$<COMPILE_LANGUAGE:CXX>:/MP${PLUTO_MSVC_COMPILE_JOBS}>")
-    endif()
-endfunction()
 
 add_subdirectory(engine)
 
@@ -85,26 +90,28 @@ if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-foreach(target PlutoGECore PlutoGEPlatform PlutoGEAudio PlutoGERender
-        PlutoGEAssets PlutoGEImport PlutoGEScripting PlutoGEScene
-        PlutoGEEditorUI PlutoGEEditor PlutoGERuntime)
-    if (TARGET ${target})
-        pluto_optimize_build(${target})
-    endif()
-endforeach()
 if (PLUTO_ENABLE_PCH)
-    foreach(target PlutoGERender PlutoGEScene PlutoGEEditorUI)
+    # Stable standard-library and third-party headers that most engine sources
+    # parse through Engine.h, Scene.h and the render headers. Single-source
+    # targets are left out: building their PCH would cost as much as it saves.
+    set(PLUTO_PCH_HEADERS
+        <algorithm> <array> <atomic> <chrono> <cmath> <cstddef> <cstdint>
+        <cstring> <filesystem> <fstream> <functional> <future> <iostream>
+        <limits> <map> <memory> <mutex> <optional> <set> <span> <sstream>
+        <stdexcept> <string> <string_view> <unordered_map> <unordered_set>
+        <utility> <variant> <vector>
+        <glad/glad.h>
+        <glm/glm.hpp> <glm/gtc/matrix_transform.hpp> <glm/gtc/quaternion.hpp>
+        <glm/gtc/type_ptr.hpp>)
+    foreach(target PlutoGERender PlutoGEScene PlutoGEAssets PlutoGEEditorUI PlutoGERuntime)
         if (TARGET ${target})
-            target_precompile_headers(${target} PRIVATE
-                <algorithm> <array> <cstdint> <memory> <string>
-                <unordered_map> <utility> <vector>)
+            target_precompile_headers(${target} PRIVATE ${PLUTO_PCH_HEADERS})
         endif()
     endforeach()
+    if (TARGET PlutoGEEditorUI)
+        target_precompile_headers(PlutoGEEditorUI PRIVATE <imgui.h>)
+    endif()
 endif()
-
-# if (PLUTO_BUILD_SAMPLES)
-#     add_subdirectory(samples)
-# endif()
 
 if (WIN32)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")

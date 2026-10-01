@@ -1478,14 +1478,6 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool BasicRenderer::UsesVirtualShadows(const BasicLighting &lighting, std::span<const BasicDraw> draws,
-                                          std::span<const BasicDraw> shadowDraws) const
-    {
-        return ((lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
-            std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; })) &&
-            VirtualShadowUnavailableReason(draws, shadowDraws) == nullptr;
-    }
-
     const char *BasicRenderer::VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
                                                              std::span<const BasicDraw> shadowDraws) const
     {

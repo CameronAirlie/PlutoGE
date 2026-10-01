@@ -1314,14 +1314,6 @@ namespace PlutoGE::assets
         return executablePath.parent_path() / packFileName;
     }
 
-    bool ExtractStandaloneProjectContent(const std::filesystem::path &contentPackPath,
-                                         const std::filesystem::path &destinationDirectory,
-                                         std::string *errorMessage)
-    {
-        const auto pack = content::Pack::Open(contentPackPath, errorMessage);
-        return pack && pack->ExtractTo(destinationDirectory, errorMessage);
-    }
-
     bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath)
     {
         std::ifstream input(runtimeExecutablePath, std::ios::binary);

@@ -121,10 +121,4 @@ namespace PlutoGE::render
     {
         return m_passes.at(index);
     }
-
-    void PostProcessGraph::Clear() noexcept
-    {
-        m_passes.clear();
-        m_resources.clear();
-    }
 }

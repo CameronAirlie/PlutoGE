@@ -1,10 +1,17 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/audio/AudioSystem.h"
+#include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/DebugDraw.h"
 
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
-#include "PlutoGE/scene/components/MeshComponent.h"
-#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/render/rhi/RenderDeviceFactory.h"
 
 #include <chrono>
@@ -83,11 +90,6 @@ namespace PlutoGE::core
                     << std::endl;
             }
         };
-
-        bool IsFutureReady(std::future<assetimport::ImportedMeshSourceAsset> &future)
-        {
-            return future.valid() && future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-        }
 
         void HashCombine(uint64_t &seed, uint64_t value)
         {
@@ -185,6 +187,19 @@ namespace PlutoGE::core
         }
     }
 
+    Engine::Engine()
+        : m_renderer(std::make_unique<render::Renderer>()),
+          m_rhiRenderService(std::make_unique<render::RhiRenderService>()),
+          m_assetManager(std::make_unique<assets::AssetManager>()),
+          m_meshImporter(std::make_unique<assetimport::MeshImporter>()),
+          m_textureManager(std::make_unique<render::TextureManager>()),
+          m_scriptEngine(std::make_unique<scripting::ScriptEngine>()),
+          m_audioSystem(std::make_unique<audio::AudioSystem>())
+    {
+    }
+
+    Engine::~Engine() = default;
+
     bool Engine::Initialize(const EngineConfig &config)
     {
         m_config = config;
@@ -243,7 +258,7 @@ namespace PlutoGE::core
         }
         try
         {
-            if (!m_rhiRenderService.Initialize(*m_renderDevice, *m_swapchain))
+            if (!m_rhiRenderService->Initialize(*m_renderDevice, *m_swapchain))
             {
                 std::cerr << "Failed to initialize the RHI render service." << std::endl;
                 m_swapchain.reset();
@@ -251,7 +266,7 @@ namespace PlutoGE::core
                 m_window.Close();
                 return false;
             }
-            m_rhiRenderService.SetTemporalUpscalerOptions(m_config.temporalUpscaler);
+            m_rhiRenderService->SetTemporalUpscalerOptions(m_config.temporalUpscaler);
         }
         catch (const std::exception &error)
         {
@@ -266,21 +281,21 @@ namespace PlutoGE::core
             m_window.SetResizeCallback([this](int width, int height)
             {
                 if (width > 0 && height > 0)
-                    static_cast<void>(m_rhiRenderService.Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
+                    static_cast<void>(m_rhiRenderService->Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
             });
         }
 
         if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
         {
-            m_textureManager.SetWindow(&m_window);
+            m_textureManager->SetWindow(&m_window);
             render::RendererConfig rendererConfig;
             rendererConfig.window = &m_window;
             rendererConfig.enableProfiling = m_config.isEditorHost || m_config.enableProfiling;
-            if (!m_renderer.Initialize(rendererConfig))
+            if (!m_renderer->Initialize(rendererConfig))
             {
                 std::cerr << "Failed to initialize renderer." << std::endl;
-                m_textureManager.SetWindow(nullptr);
-                m_rhiRenderService.Shutdown();
+                m_textureManager->SetWindow(nullptr);
+                m_rhiRenderService->Shutdown();
                 m_swapchain.reset();
                 m_renderDevice.reset();
                 m_window.Close();
@@ -288,12 +303,12 @@ namespace PlutoGE::core
             }
         }
 
-        if (!m_audioSystem.Initialize())
+        if (!m_audioSystem->Initialize())
         {
             std::cerr << "Failed to initialize audio system." << std::endl;
         }
 
-        m_scriptEngine.Initialize();
+        m_scriptEngine->Initialize();
 
         m_isInitialized = true;
         return true;
@@ -312,7 +327,7 @@ namespace PlutoGE::core
         // The swapchain owns actual presentation. Keep the legacy OpenGL
         // renderer's cached state coherent for its remaining callers.
         if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-            m_renderer.SetVSyncEnabled(enabled);
+            m_renderer->SetVSyncEnabled(enabled);
         return true;
     }
 
@@ -366,7 +381,7 @@ namespace PlutoGE::core
 
                 const auto textureResolveStart = ImportClock::now();
                 auto &texture = (*importedTextures)[textureIndex];
-                if (auto *cachedTexture = m_textureManager.FindTexture(texture.cacheKey))
+                if (auto *cachedTexture = m_textureManager->FindTexture(texture.cacheKey))
                 {
                     profile.textureResolveHits += 1;
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
@@ -376,7 +391,7 @@ namespace PlutoGE::core
 
                 if (!texture.pixels.empty() && texture.width > 0 && texture.height > 0 && texture.channels > 0)
                 {
-                    auto *tex = m_textureManager.LoadTextureFromMemory(
+                    auto *tex = m_textureManager->LoadTextureFromMemory(
                         texture.cacheKey,
                         texture.pixels.data(),
                         texture.width,
@@ -390,7 +405,7 @@ namespace PlutoGE::core
                 }
                 if (!texture.sourcePath.empty())
                 {
-                    auto *tex = m_textureManager.LoadTextureFromFile(
+                    auto *tex = m_textureManager->LoadTextureFromFile(
                         texture.sourcePath.c_str(),
                         ResolveTextureColorSpace(texture.colorSpace));
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
@@ -463,152 +478,18 @@ namespace PlutoGE::core
         return importedRenderMeshAsset;
     }
 
-    ImportedRenderMeshAsset Engine::FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset, const assetimport::MeshImportOptions &options)
-    {
-        const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.FinalizeImportedMeshAsset(normalizedPath, std::move(importedMeshSourceAsset), options);
-        return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
-    }
-
     ImportedRenderMeshAsset Engine::ImportMeshAsset(const std::string &filePath, const assetimport::MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.ImportMeshAsset(normalizedPath, options);
+        const auto importedMeshAsset = m_meshImporter->ImportMeshAsset(normalizedPath, options);
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
     }
 
     ImportedRenderMeshAsset Engine::GenerateMeshAssetLods(const std::string &filePath, const assetimport::MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.GenerateMeshLods(normalizedPath, options);
+        const auto importedMeshAsset = m_meshImporter->GenerateMeshLods(normalizedPath, options);
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
-    }
-
-    render::Mesh *Engine::ImportMesh(const std::string &filePath)
-    {
-        return m_meshImporter.ImportMesh(filePath);
-    }
-
-    void Engine::QueueMeshImport(scene::EntityID entityId, const std::string &filePath)
-    {
-        const auto normalizedPath = NormalizePath(filePath);
-        if (m_pendingMeshImports.find(entityId) != m_pendingMeshImports.end())
-        {
-            return;
-        }
-
-        m_meshImportErrors.erase(entityId);
-        m_pendingMeshImports.emplace(entityId, PendingMeshImportJob{
-                                                   .entityId = entityId,
-                                                   .normalizedPath = normalizedPath,
-                                                   .future = std::async(std::launch::async, [normalizedPath]()
-                                                                        {
-                                                                        assetimport::MeshImporter importer;
-                                                                        return importer.ImportMeshSourceAsset(normalizedPath); }),
-                                               });
-    }
-
-    void Engine::UpdateAsyncMeshImports()
-    {
-        for (auto iterator = m_pendingMeshImports.begin(); iterator != m_pendingMeshImports.end();)
-        {
-            auto &job = iterator->second;
-            if (!IsFutureReady(job.future))
-            {
-                ++iterator;
-                continue;
-            }
-
-            try
-            {
-                auto importedRenderMeshAsset = FinalizeImportedMeshAsset(job.normalizedPath, job.future.get());
-                if (!importedRenderMeshAsset.mesh)
-                {
-                    m_meshImportErrors[job.entityId] = "Mesh import finished without creating a mesh.";
-                }
-                else if (!m_scene)
-                {
-                    m_meshImportErrors[job.entityId] = "No active scene to receive the imported mesh.";
-                }
-                else
-                {
-                    auto *entity = m_scene->FindEntityByID(job.entityId);
-                    if (!entity)
-                    {
-                        m_meshImportErrors[job.entityId] = "The target entity no longer exists.";
-                    }
-                    else if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
-                    {
-                        meshComponent->SetMesh(importedRenderMeshAsset.mesh);
-                        meshComponent->SetMaterials(importedRenderMeshAsset.materials);
-                        meshComponent->SetSourceMeshPath(job.normalizedPath);
-                        if (importedRenderMeshAsset.animations && !importedRenderMeshAsset.animations->empty())
-                        {
-                            auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();
-                            if (!animationComponent)
-                            {
-                                animationComponent = entity->CreateComponent<scene::AnimationComponent>();
-                            }
-
-                            animationComponent->SetClipsFromImportedAnimations(*importedRenderMeshAsset.animations);
-                            animationComponent->SetSourceAnimationPath(job.normalizedPath);
-                        }
-                    }
-                    else
-                    {
-                        m_meshImportErrors[job.entityId] = "The target entity no longer has a mesh component.";
-                    }
-                }
-            }
-            catch (const std::exception &exception)
-            {
-                m_meshImportErrors[job.entityId] = exception.what();
-            }
-
-            iterator = m_pendingMeshImports.erase(iterator);
-        }
-    }
-
-    MeshImportStatus Engine::GetMeshImportStatus(scene::EntityID entityId) const
-    {
-        MeshImportStatus status;
-        const auto pendingImport = m_pendingMeshImports.find(entityId);
-        if (pendingImport != m_pendingMeshImports.end())
-        {
-            status.pending = true;
-            status.filePath = pendingImport->second.normalizedPath;
-        }
-
-        const auto importError = m_meshImportErrors.find(entityId);
-        if (importError != m_meshImportErrors.end())
-        {
-            status.errorMessage = importError->second;
-        }
-
-        return status;
-    }
-
-    void Engine::Run()
-    {
-        auto previousFrame = std::chrono::steady_clock::now();
-
-        while (m_isInitialized && (!m_window.IsOpen() || !m_window.ShouldClose()))
-        {
-            const auto currentFrame = std::chrono::steady_clock::now();
-            const float deltaTime = std::chrono::duration<float>(currentFrame - previousFrame).count();
-            previousFrame = currentFrame;
-
-            if (m_window.IsOpen())
-            {
-                m_window.PollEvents();
-            }
-
-            if (m_scene)
-            {
-                render::DebugDraw::Get().Advance(deltaTime * m_scene->GetTimeScale());
-                m_scene->Update(deltaTime);
-            }
-        }
     }
 
     void Engine::SetScene(scene::Scene *scene)
@@ -625,7 +506,7 @@ namespace PlutoGE::core
 
         // Scene updates may already have submitted commands containing pointers
         // into the outgoing scene. Never carry those across a scene transition.
-        m_renderer.ClearRenderCommands();
+        m_renderer->ClearRenderCommands();
         render::DebugDraw::Get().Clear();
         m_scene = scene;
 
@@ -656,10 +537,10 @@ namespace PlutoGE::core
         if (extents.width <= 0 || extents.height <= 0) return;
         if (m_swapchain->GetWidth() != static_cast<unsigned>(extents.width) ||
             m_swapchain->GetHeight() != static_cast<unsigned>(extents.height))
-            static_cast<void>(m_rhiRenderService.Resize(static_cast<unsigned>(extents.width), static_cast<unsigned>(extents.height)));
+            static_cast<void>(m_rhiRenderService->Resize(static_cast<unsigned>(extents.width), static_cast<unsigned>(extents.height)));
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const float elapsed = static_cast<float>(std::fmod(seconds, 1000.0));
-        if (!m_rhiRenderService.PresentLoading(elapsed, static_cast<unsigned>(status.stage), style))
+        if (!m_rhiRenderService->PresentLoading(elapsed, static_cast<unsigned>(status.stage), style))
             throw std::runtime_error("Could not present loading screen");
     }
 
@@ -725,12 +606,12 @@ namespace PlutoGE::core
     void Engine::Shutdown()
     {
         StopRuntime();
-        m_scriptEngine.Shutdown();
-        m_audioSystem.Shutdown();
+        m_scriptEngine->Shutdown();
+        m_audioSystem->Shutdown();
         if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-            m_renderer.Shutdown();
-        m_textureManager.SetWindow(nullptr);
-        m_rhiRenderService.Shutdown();
+            m_renderer->Shutdown();
+        m_textureManager->SetWindow(nullptr);
+        m_rhiRenderService->Shutdown();
         m_swapchain.reset();
         m_renderDevice.reset();
         m_window.Close();

@@ -51,7 +51,6 @@ namespace PlutoGE::ui
         };
 
         scene::Entity *FindCanvasRoot(scene::Entity *entity) const;
-        scene::CanvasComponent *FindCanvas(scene::Entity *entity) const;
         void BeginDrag(scene::Entity &entity, scene::RectTransformComponent &rect, int handle,
                        const glm::vec2 &canvasMouse);
         void UpdateDrag(scene::Entity &entity, scene::RectTransformComponent &rect,

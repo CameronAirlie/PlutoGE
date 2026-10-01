@@ -10,7 +10,6 @@
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "ON",
                 "PLUTO_BUILD_RUNTIME": "ON",
-                "PLUTO_BUILD_SAMPLES": "OFF",
                 "BUILD_TESTING": "ON",
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "CMAKE_BUILD_TYPE": "Debug"
@@ -56,7 +55,7 @@
             "name": "msvc",
             "displayName": "Visual Studio Community 2022 Release - amd64",
             "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
-            "generator": "Visual Studio 18 2026",
+            "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
             "architecture": "x64",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
@@ -74,7 +73,6 @@
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "ON",
                 "PLUTO_BUILD_RUNTIME": "ON",
-                "PLUTO_BUILD_SAMPLES": "OFF",
                 "BUILD_TESTING": "ON",
                 "PLUTO_ENABLE_FSR2": "ON",
                 "PLUTO_ENABLE_STREAMLINE": "ON",
@@ -93,7 +91,6 @@
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "OFF",
                 "PLUTO_BUILD_RUNTIME": "ON",
-                "PLUTO_BUILD_SAMPLES": "OFF",
                 "BUILD_TESTING": "OFF",
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
             }

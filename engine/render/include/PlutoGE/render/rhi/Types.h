@@ -41,13 +41,6 @@ namespace PlutoGE::render::rhi
         ColorAttachment,
         DepthStencilAttachment
     };
-    enum class ShaderStage : std::uint8_t
-    {
-        Vertex,
-        Fragment,
-        Geometry,
-        Compute
-    };
     enum class ShaderStageMask : std::uint8_t
     {
         Vertex = 1,
@@ -139,7 +132,6 @@ namespace PlutoGE::render::rhi
     using TextureHandle = Handle<struct TextureTag>;
     using SamplerHandle = Handle<struct SamplerTag>;
     using PipelineHandle = Handle<struct PipelineTag>;
-    using RenderPassHandle = Handle<struct RenderPassTag>;
 
     // Backend-neutral inputs for temporal reconstruction. Matrices are stored
     // row-major so SDK adapters do not depend on the engine's math library.

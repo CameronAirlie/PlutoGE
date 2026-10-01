@@ -44,7 +44,6 @@ namespace PlutoGE::scene
     public:
         void Update(Scene &scene, const UIInputContext &input, float deltaTime);
         void RebuildLayout(Scene &scene, const glm::vec2 &viewportSize);
-        void Clear();
 
         [[nodiscard]] const std::vector<UIResolvedElement> &GetElements() const { return m_elements; }
         [[nodiscard]] const UIResolvedElement *FindElement(std::uint32_t entityId) const;

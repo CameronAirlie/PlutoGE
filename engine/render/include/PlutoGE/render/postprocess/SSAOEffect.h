@@ -38,7 +38,6 @@ namespace PlutoGE::render
 
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
-        void RenderAmbientOcclusion(const RenderContext &renderContext, RenderTarget *destinationRenderTarget);
         std::string GetTypeName() const override { return m_typeName; }
         std::string GetDisplayName() const override { return m_displayName; }
         std::vector<PostProcessParameter> GetParameters() const override;

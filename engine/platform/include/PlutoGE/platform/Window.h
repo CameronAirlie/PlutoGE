@@ -4,8 +4,7 @@
 #include <functional>
 #include "PlutoGE/platform/InputState.h"
 
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
+struct GLFWwindow;
 
 namespace PlutoGE::platform
 {
@@ -51,7 +50,6 @@ namespace PlutoGE::platform
         [[nodiscard]] bool IsOpen() const;
         [[nodiscard]] bool ShouldClose() const;
         [[nodiscard]] WindowExtents GetExtents() const;
-        [[nodiscard]] const WindowConfig GetConfig() const;
         [[nodiscard]] void *GetWindow() const;
         [[nodiscard]] WindowClientApi GetClientApi() const { return m_config.clientApi; }
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
@@ -66,7 +64,6 @@ namespace PlutoGE::platform
         void SetCursorLockOverride(bool forceVisible);
         void SetScriptInputEnabled(bool enabled);
 
-        void SetContextCurrent();
         bool EnsureOpenGLContextCurrent(bool reloadFunctions = false);
 
         std::function<void(int, int)> GetResizeCallback() const

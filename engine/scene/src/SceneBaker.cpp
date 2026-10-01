@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/SceneBaker.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Texture.h"
@@ -278,31 +279,6 @@ namespace PlutoGE::scene
                     // Instanced foliage cannot share a conventional lightmap
                     // atlas, so it receives baked irradiance from probes even
                     // when its geometry is marked Static.
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        bool HasUsablePrimaryUvs(const render::MeshData &meshData)
-        {
-            for (size_t triangleStart = 0; triangleStart + 2 < meshData.indices.size(); triangleStart += 3)
-            {
-                const auto index0 = meshData.indices[triangleStart];
-                const auto index1 = meshData.indices[triangleStart + 1];
-                const auto index2 = meshData.indices[triangleStart + 2];
-                if (index0 >= meshData.vertices.size() || index1 >= meshData.vertices.size() || index2 >= meshData.vertices.size())
-                {
-                    continue;
-                }
-
-                const glm::vec2 uv0(meshData.vertices[index0].uv[0], meshData.vertices[index0].uv[1]);
-                const glm::vec2 uv1(meshData.vertices[index1].uv[0], meshData.vertices[index1].uv[1]);
-                const glm::vec2 uv2(meshData.vertices[index2].uv[0], meshData.vertices[index2].uv[1]);
-                const float signedArea = (uv1.x - uv0.x) * (uv2.y - uv0.y) - (uv1.y - uv0.y) * (uv2.x - uv0.x);
-                if (std::abs(signedArea) > 1e-6f)
-                {
                     return true;
                 }
             }
@@ -2199,49 +2175,6 @@ namespace PlutoGE::scene
             }
 
             return accumulatedIrradiance / static_cast<float>(localDirections.size());
-        }
-
-        glm::vec3 SampleProbeVolume(const BakedProbeVolume &probeVolume, const glm::vec3 &worldPosition)
-        {
-            if (!probeVolume.IsValid())
-            {
-                return glm::vec3(0.0f);
-            }
-
-            const glm::vec3 safeSize = glm::max(probeVolume.size, glm::vec3(0.0001f));
-            const glm::vec3 uvw = (worldPosition - probeVolume.origin) / safeSize;
-            if (glm::any(glm::lessThan(uvw, glm::vec3(0.0f))) || glm::any(glm::greaterThanEqual(uvw, glm::vec3(1.0f))))
-            {
-                return glm::vec3(0.0f);
-            }
-
-            const glm::ivec3 resolution = probeVolume.resolution;
-            const auto flatten = [&resolution](const glm::ivec3 &cell)
-            {
-                return static_cast<std::size_t>(cell.x + resolution.x * (cell.y + resolution.y * cell.z));
-            };
-
-            const glm::vec3 scaled = uvw * glm::vec3(resolution) - glm::vec3(0.5f);
-            const glm::ivec3 minCell = glm::clamp(glm::ivec3(glm::floor(scaled)), glm::ivec3(0), resolution - glm::ivec3(1));
-            const glm::ivec3 maxCell = glm::clamp(minCell + glm::ivec3(1), glm::ivec3(0), resolution - glm::ivec3(1));
-            const glm::vec3 fraction = glm::clamp(scaled - glm::floor(scaled), glm::vec3(0.0f), glm::vec3(1.0f));
-
-            const glm::vec3 c000 = probeVolume.irradiance[flatten(glm::ivec3(minCell.x, minCell.y, minCell.z))];
-            const glm::vec3 c100 = probeVolume.irradiance[flatten(glm::ivec3(maxCell.x, minCell.y, minCell.z))];
-            const glm::vec3 c010 = probeVolume.irradiance[flatten(glm::ivec3(minCell.x, maxCell.y, minCell.z))];
-            const glm::vec3 c110 = probeVolume.irradiance[flatten(glm::ivec3(maxCell.x, maxCell.y, minCell.z))];
-            const glm::vec3 c001 = probeVolume.irradiance[flatten(glm::ivec3(minCell.x, minCell.y, maxCell.z))];
-            const glm::vec3 c101 = probeVolume.irradiance[flatten(glm::ivec3(maxCell.x, minCell.y, maxCell.z))];
-            const glm::vec3 c011 = probeVolume.irradiance[flatten(glm::ivec3(minCell.x, maxCell.y, maxCell.z))];
-            const glm::vec3 c111 = probeVolume.irradiance[flatten(glm::ivec3(maxCell.x, maxCell.y, maxCell.z))];
-
-            const glm::vec3 c00 = glm::mix(c000, c100, fraction.x);
-            const glm::vec3 c10 = glm::mix(c010, c110, fraction.x);
-            const glm::vec3 c01 = glm::mix(c001, c101, fraction.x);
-            const glm::vec3 c11 = glm::mix(c011, c111, fraction.x);
-            const glm::vec3 c0 = glm::mix(c00, c10, fraction.y);
-            const glm::vec3 c1 = glm::mix(c01, c11, fraction.y);
-            return glm::mix(c0, c1, fraction.z);
         }
 
         bool WritePfm(const std::filesystem::path &path, const std::vector<glm::vec3> &pixels, int width, int height)

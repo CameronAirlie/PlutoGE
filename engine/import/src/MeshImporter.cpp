@@ -1368,23 +1368,6 @@ namespace PlutoGE::assetimport
         }
 
         template <size_t ComponentCount>
-        void ReadFloatTupleInto(const AccessorView &view, size_t elementIndex, float *destination)
-        {
-            if (view.accessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
-            {
-                throw std::runtime_error("Only floating-point glTF vertex attributes are supported.");
-            }
-
-            if (elementIndex >= view.accessor->count)
-            {
-                throw std::runtime_error("glTF accessor read out of bounds.");
-            }
-
-            const auto *elementData = view.data + (view.stride * elementIndex);
-            std::memcpy(destination, elementData, sizeof(float) * ComponentCount);
-        }
-
-        template <size_t ComponentCount>
         void ReadFloatTupleIntoUnchecked(const AccessorView &view, size_t elementIndex, float *destination)
         {
             const auto *elementData = view.data + (view.stride * elementIndex);
@@ -2152,118 +2135,6 @@ namespace PlutoGE::assetimport
             else if (!uniqueSubmeshes.empty())
             {
                 optimizeSubmesh(uniqueSubmeshes.front());
-            }
-        }
-
-        void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
-        {
-            if (submeshes.empty())
-            {
-                return;
-            }
-
-            std::vector<render::Submesh> mergedSubmeshes;
-            mergedSubmeshes.reserve(submeshes.size());
-            mergedSubmeshes.push_back(submeshes.front());
-
-            for (size_t index = 1; index < submeshes.size(); ++index)
-            {
-                auto &previous = mergedSubmeshes.back();
-                const auto &current = submeshes[index];
-                const bool isAdjacent = previous.indexOffset + previous.indexCount == current.indexOffset;
-                if (isAdjacent &&
-                    previous.materialIndex == current.materialIndex &&
-                    previous.animatedNodeIndex == current.animatedNodeIndex)
-                {
-                    previous.indexCount += current.indexCount;
-                    previous.name = MergeDisplayNames(previous.name, current.name);
-                    continue;
-                }
-
-                mergedSubmeshes.push_back(current);
-            }
-
-            submeshes = std::move(mergedSubmeshes);
-        }
-
-        void CompactSubmeshesByMaterialAndNode(render::MeshData &meshData, std::vector<render::Submesh> &submeshes)
-        {
-            if (submeshes.size() < 2 || meshData.indices.empty())
-            {
-                return;
-            }
-
-            struct GroupKey
-            {
-                uint32_t materialIndex = 0;
-                int animatedNodeIndex = -1;
-            };
-
-            std::vector<GroupKey> groups;
-            std::vector<std::string> groupNames;
-            std::vector<std::vector<unsigned int>> groupedIndices;
-            groups.reserve(submeshes.size());
-            groupNames.reserve(submeshes.size());
-            groupedIndices.reserve(submeshes.size());
-
-            for (const auto &submesh : submeshes)
-            {
-                if (submesh.indexCount == 0 || submesh.indexOffset + submesh.indexCount > meshData.indices.size())
-                {
-                    continue;
-                }
-
-                const GroupKey key{submesh.materialIndex, submesh.animatedNodeIndex};
-                auto groupIt = std::find_if(groups.begin(), groups.end(), [&](const GroupKey &group)
-                                            { return group.materialIndex == key.materialIndex && group.animatedNodeIndex == key.animatedNodeIndex; });
-                size_t groupIndex = 0;
-                if (groupIt == groups.end())
-                {
-                    groupIndex = groups.size();
-                    groups.push_back(key);
-                    groupNames.push_back(submesh.name);
-                    groupedIndices.emplace_back();
-                }
-                else
-                {
-                    groupIndex = static_cast<size_t>(std::distance(groups.begin(), groupIt));
-                    groupNames[groupIndex] = MergeDisplayNames(groupNames[groupIndex], submesh.name);
-                }
-
-                auto &indices = groupedIndices[groupIndex];
-                indices.insert(
-                    indices.end(),
-                    meshData.indices.begin() + static_cast<std::ptrdiff_t>(submesh.indexOffset),
-                    meshData.indices.begin() + static_cast<std::ptrdiff_t>(submesh.indexOffset + submesh.indexCount));
-            }
-
-            std::vector<unsigned int> compactedIndices;
-            std::vector<render::Submesh> compactedSubmeshes;
-            compactedIndices.reserve(meshData.indices.size());
-            compactedSubmeshes.reserve(groups.size());
-            for (size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex)
-            {
-                auto &indices = groupedIndices[groupIndex];
-                if (indices.empty())
-                {
-                    continue;
-                }
-
-                const uint32_t indexOffset = static_cast<uint32_t>(compactedIndices.size());
-                compactedIndices.insert(compactedIndices.end(), indices.begin(), indices.end());
-                compactedSubmeshes.push_back(render::Submesh{
-                    .indexOffset = indexOffset,
-                    .indexCount = static_cast<uint32_t>(indices.size()),
-                    .materialIndex = groups[groupIndex].materialIndex,
-                    .animatedNodeIndex = groups[groupIndex].animatedNodeIndex,
-                    .name = groupNames[groupIndex].empty() ? MakeFallbackSubmeshName(groupIndex) : groupNames[groupIndex],
-                });
-            }
-
-            if (!compactedSubmeshes.empty())
-            {
-                meshData.indices = std::move(compactedIndices);
-                submeshes = std::move(compactedSubmeshes);
             }
         }
 
@@ -3878,37 +3749,6 @@ namespace PlutoGE::assetimport
             return animatedNodes;
         }
 
-        void ReserveAssimpMeshStorage(const aiScene &scene, ImportedMeshSourceAsset &asset)
-        {
-            size_t vertexCount = 0;
-            size_t indexCount = 0;
-            size_t submeshCount = 0;
-
-            for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex)
-            {
-                const aiMesh *mesh = scene.mMeshes[meshIndex];
-                if (!mesh || !mesh->HasPositions())
-                {
-                    continue;
-                }
-
-                vertexCount += mesh->mNumVertices;
-                ++submeshCount;
-                for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; ++faceIndex)
-                {
-                    const aiFace &face = mesh->mFaces[faceIndex];
-                    if (face.mNumIndices == 3)
-                    {
-                        indexCount += 3;
-                    }
-                }
-            }
-
-            asset.meshData.vertices.reserve(vertexCount);
-            asset.meshData.indices.reserve(indexCount);
-            asset.submeshes.reserve(submeshCount);
-        }
-
         uint32_t CountAssimpTriangleIndices(const aiMesh &mesh)
         {
             uint32_t indexCount = 0;
@@ -4983,11 +4823,6 @@ namespace PlutoGE::assetimport
         return iterator->second.ToImportedMeshAsset();
     }
 
-    render::MeshData MeshImporter::ImportMeshData(const std::string &filePath) const
-    {
-        return ParseMeshAsset(filePath).meshData;
-    }
-
     ImportedMeshAsset MeshImporter::ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
@@ -5023,10 +4858,5 @@ namespace PlutoGE::assetimport
             std::cerr << "Failed to import mesh '" << filePath << "': " << exception.what() << std::endl;
             return {};
         }
-    }
-
-    render::Mesh *MeshImporter::ImportMesh(const std::string &filePath)
-    {
-        return ImportMeshAsset(filePath).mesh;
     }
 }

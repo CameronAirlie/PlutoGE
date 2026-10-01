@@ -1,4 +1,6 @@
 #include "PlutoGE/core/LoadingScreenSession.h"
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include "RuntimeProfiler.h"
 #include "ProjectBenchmark.h"
 #include "RuntimeViewportInput.h"
@@ -7,6 +9,12 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"

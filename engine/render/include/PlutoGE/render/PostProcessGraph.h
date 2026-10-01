@@ -85,7 +85,6 @@ namespace PlutoGE::render
         [[nodiscard]] const PostProcessPassDescriptor &GetPass(std::size_t index) const;
         [[nodiscard]] std::span<const PostProcessResourceDescriptor> GetResources() const noexcept { return m_resources; }
         [[nodiscard]] std::span<const PostProcessPassDescriptor> GetPasses() const noexcept { return m_passes; }
-        void Clear() noexcept;
 
     private:
         std::vector<PostProcessResourceDescriptor> m_resources;

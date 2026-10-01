@@ -32,7 +32,6 @@ namespace PlutoGE::render
         void Execute(const PostProcessGraph &graph, const CompiledPostProcessGraph &compiled,
                      const PostProcessResourcePool &resources,
                      std::uint32_t viewportWidth, std::uint32_t viewportHeight) const;
-        [[nodiscard]] bool HasImplementation(std::string_view name) const;
 
     private:
         std::unordered_map<std::string, Implementation> m_implementations;

@@ -263,18 +263,6 @@ ShaderGraphData runtimeShaderGraph() {
                 return float(h >> 8) * (1.0 / 16777216.0);
             }
 
-            float ShaderGraphNoise(vec2 value)
-            {
-                vec2 cell = floor(value);
-                vec2 local = fract(value);
-                vec2 curve = local * local * (3.0 - 2.0 * local);
-                float bottomLeft = ShaderGraphHash(cell);
-                float bottomRight = ShaderGraphHash(cell + vec2(1.0, 0.0));
-                float topLeft = ShaderGraphHash(cell + vec2(0.0, 1.0));
-                float topRight = ShaderGraphHash(cell + vec2(1.0, 1.0));
-                return mix(mix(bottomLeft, bottomRight, curve.x), mix(topLeft, topRight, curve.x), curve.y);
-            }
-
             void main()
             {
                 ApplyLodDither();

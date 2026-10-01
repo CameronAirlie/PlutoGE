@@ -9,6 +9,10 @@
 #include <fstream>
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/RhiRenderService.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"

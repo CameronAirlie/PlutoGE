@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/assets/AssetReferences.h"

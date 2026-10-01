@@ -1,3 +1,7 @@
+# Dependencies keep CMake's default C++20 module scanning; OpenAL Soft relies
+# on it. The top-level project disables scanning only for PlutoGE targets.
+unset(CMAKE_CXX_SCAN_FOR_MODULES)
+
 add_library(PlutoGE_glad STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/glad/src/glad.c
 )
@@ -238,6 +242,7 @@ if (MSVC)
     # RmlUi core translation units are compiled concurrently.
     set_property(TARGET rmlui_core PROPERTY CXX_SCAN_FOR_MODULES OFF)
     set_property(TARGET rmlui_core PROPERTY VS_GLOBAL_MultiProcessorCompilation "false")
+    set_property(TARGET rmlui_core PROPERTY VS_GLOBAL_UseMultiToolTask "false")
     target_compile_options(rmlui_core PRIVATE /FS)
 endif()
 add_library(PlutoGE_rmlui STATIC

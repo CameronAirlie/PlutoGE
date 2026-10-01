@@ -100,13 +100,6 @@ namespace PlutoGE::scene
         return RefreshPath(destination);
     }
 
-    void NavAgentComponent::SetTargetEntity(std::uint32_t entityId)
-    {
-        m_config.targetEntityId = entityId;
-        m_repathTimer = 0.0f;
-        m_hasPreviousPosition = false;
-    }
-
     void NavAgentComponent::Stop()
     {
         m_path.clear();

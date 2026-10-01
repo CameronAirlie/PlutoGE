@@ -42,6 +42,7 @@ namespace PlutoGE::scene
                 .cameraData = camera.GetCameraData(width, height),
                 .commands = storage.filter.Apply(scene, camera.GetTagFilter(), commands),
                 .postProcessEffects = storage.postProcessEffects,
+                .shadowCommands = commands,
             };
         }
     }

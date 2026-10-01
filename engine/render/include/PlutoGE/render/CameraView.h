@@ -15,5 +15,8 @@ namespace PlutoGE::render
         CameraData cameraData;
         RenderCommandView commands;
         std::span<IPostProcessEffect *const> postProcessEffects;
+        // Unfiltered scene geometry: camera visibility filters do not exclude
+        // objects from casting shadows onto this view. Empty uses commands.
+        RenderCommandView shadowCommands;
     };
 }

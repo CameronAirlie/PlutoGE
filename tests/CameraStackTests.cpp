@@ -172,6 +172,9 @@ namespace
         Require(layers.size() == 1, "Each overlay camera must produce one layer");
         const auto &layer = layers.front();
         Require(layer.commands.size() == 1 && &layer.commands[0] == &commands[1], "Layers must contain filtered commands");
+        Require(layer.shadowCommands.size() == commands.size() &&
+                    &layer.shadowCommands[0] == &commands[0] && &layer.shadowCommands[1] == &commands[1],
+                "Overlay shadow casters must include world meshes excluded by its visibility filter");
         Require(layer.postProcessEffects.size() == 2 &&
                     layer.postProcessEffects[0]->GetTypeName() == "ToneMapping" &&
                     layer.postProcessEffects[1]->GetTypeName() == "FXAA",
@@ -267,6 +270,9 @@ void TextureCameras()
     const auto views = builder.Build(scene, stack.textureCameras, commands);
     Require(views.size() == 2 && views[0].target == &monitor && views[0].view.commands.size() == 1,
             "Each texture camera must produce a view of its target");
+    Require(views[0].view.shadowCommands.size() == commands.size() &&
+                &views[0].view.shadowCommands[0] == &commands[0],
+            "Render texture views must retain the scene shadow commands");
     const auto expected = securityCamera->GetCameraData(256, 128);
     Require(views[0].view.cameraData.projection == expected.projection, "Views must use the target texture's aspect");
 

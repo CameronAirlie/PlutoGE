@@ -30,8 +30,8 @@ namespace PlutoGE::render
         while (m_overlayRenderers.size() <= index)
         {
             auto shaders = ShaderArtifactLibrary{}.LoadBasicRendererPackage();
-            // The virtual shadow page pool is sized for the whole scene. Overlay
-            // casters are few, so overlays use cascaded shadows instead.
+            // Avoid allocating another full virtual shadow page pool for each
+            // overlay; fit cascades to its camera while retaining scene casters.
             shaders.virtualShadows = {};
             auto renderer = std::make_unique<RhiSceneRenderer>();
             renderer->SetSubmissionLabel("Camera overlay");
@@ -103,7 +103,8 @@ namespace PlutoGE::render
                 lighting.shadowMethod = ShadowMethod::Cascaded;
             // The last overlay stays recording; the composite is appended to it.
             const bool lastOverlay = index + 1 == overlays.size();
-            if (!renderer->Render(width, height, layer.cameraData, lighting, layer.commands, layer.commands,
+            const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;
+            if (!renderer->Render(width, height, layer.cameraData, lighting, layer.commands, shadowCommands,
                                   layer.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
                                   !lastOverlay, scene))
                 return false;

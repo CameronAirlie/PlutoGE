@@ -3,6 +3,9 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include <array>
 #include <iostream>
 #include <memory>
@@ -85,4 +88,46 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     require(overlayPixels > size * size / 8 && overlayPixels < size * size / 3,
             "Overlay coverage was not the expected triangle");
     std::cout << "Camera stack composite placed " << overlayPixels << " overlay pixels over the base camera" << std::endl;
+
+    // The overlay sees a receiver, but a world mesh excluded from its visible
+    // commands must still cast onto it. A bright red caster also makes any
+    // accidental leak into the overlay's color pass obvious.
+    auto receiverMesh = makeMesh({{-2, -2}, {2, -2}, {2, 2}, {-2, -2}, {2, 2}, {-2, 2}}, -5);
+    auto casterMesh = makeMesh({{-.6f, -.6f}, {.6f, -.6f}, {.6f, .6f},
+                               {-.6f, -.6f}, {.6f, .6f}, {-.6f, .6f}}, -3);
+    Material white({.color = {1, 1, 1, 1}});
+    const std::array receiverCommands{RenderCommand{.material = &white, .mesh = receiverMesh.get(), .castsShadow = false}};
+    std::array sceneCommands{receiverCommands[0], RenderCommand{.material = &red, .mesh = casterMesh.get()}};
+    const Camera overlayCamera({.nearPlane = .1f, .farPlane = 20,
+                                .projection = CameraProjection::Orthographic, .orthographicHeight = 4});
+    const auto shadowCamera = overlayCamera.GetCameraDataForTransform(glm::mat4(1), size, size);
+    PlutoGE::scene::Scene shadowScene;
+    auto *sunEntity = shadowScene.AddEntity(std::make_unique<PlutoGE::scene::Entity>());
+    auto &sun = sunEntity->CreateComponent<PlutoGE::scene::LightComponent>()->GetLight();
+    sun.type = PlutoGE::scene::LightType::Directional;
+    sun.direction = {0, 0, -1};
+    sun.castsShadows = true;
+    sun.directionalShadowSettings.cascadeCount = 1;
+    sun.directionalShadowSettings.resolution = 512;
+    sun.directionalShadowSettings.maxDistance = 20;
+    const std::array shadowOverlays{CameraView{.cameraData = shadowCamera, .commands = receiverCommands,
+                                              .shadowCommands = sceneCommands}};
+    const auto drawOverlay = [&] {
+        require(compositor.Composite(device, base.GetColorTexture(), size, size, shadowOverlays, {}, &shadowScene),
+                "Shadow-receiving overlay composite failed");
+        return device.ReadTextureRgba8(base.GetColorTexture());
+    };
+    sceneCommands[1].castsShadow = false;
+    const auto lit = drawOverlay();
+    sceneCommands[1].castsShadow = true;
+    const auto shadowed = drawOverlay();
+    const auto center = (size / 2) * size + size / 2;
+    require(channel(lit, center, 1) > 40 && channel(shadowed, center, 1) + 30 < channel(lit, center, 1),
+            "World geometry excluded from the overlay did not shadow its receiver");
+    require(channel(shadowed, center, 0) < channel(lit, center, 0) - 30,
+            "Shadow-only caster leaked into overlay color");
+    const auto outside = (size / 8) * size + size / 8;
+    require(std::abs(channel(shadowed, outside, 1) - channel(lit, outside, 1)) <= 3,
+            "World shadow changed pixels outside its footprint");
+    std::cout << "Overlay receives shadows from hidden world casters" << std::endl;
 }

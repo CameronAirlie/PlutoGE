@@ -1,9 +1,32 @@
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/ShaderGraphCodegen.h"
+#include "PlutoGE/render/ShaderGraphVariants.h"
 #include <cmath>
 #include <algorithm>
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        // The specialised BasicLit fragment for a graph draw, or null to keep
+        // the interpreter. Variants are SPIR-V, so they apply to Vulkan only.
+        ShaderGraphVariantCache::Code GraphFragmentVariant(ShaderGraphVariantCache *variants, rhi::GraphicsApi api,
+            const BasicDraw &draw, GeometryOutputLayout layout, bool coverage)
+        {
+            if (!variants || api != rhi::GraphicsApi::Vulkan || !draw.shaderGraphProgram) return {};
+            const auto shading = layout == GeometryOutputLayout::Color ? ShaderGraphVariantStage::Color
+                : layout == GeometryOutputLayout::ColorMotion ? ShaderGraphVariantStage::ColorMotion
+                : ShaderGraphVariantStage::Surface;
+            auto code = variants->Find(*draw.shaderGraphProgram, coverage ? ShaderGraphVariantStage::Coverage : shading);
+            // Coverage and shading must discard identical fragments, so a draw
+            // that can discard switches both passes in the same frame.
+            if (code && draw.alphaMode != 0 &&
+                !variants->Find(*draw.shaderGraphProgram, coverage ? shading : ShaderGraphVariantStage::Coverage))
+                return {};
+            return code;
+        }
+    }
+
     void BasicRenderer::EnsureGeometryTargets(GeometryOutputLayout layout)
     {
         const auto ensure = [&](rhi::Texture &target, rhi::Format format, const char *name)
@@ -56,8 +79,18 @@ namespace PlutoGE::render
             }
         }
         const auto depthResources = depthOnly ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
-        const unsigned key = static_cast<unsigned>(layout) | (unsigned(instanced) << 2) | (unsigned(standard) << 3) |
-            (unsigned(cull) << 4) | (unsigned(depthOnly) << 6) | (unsigned(prepassed) << 7) | (unsigned(depthResources) << 8);
+        // Material-free depth shaders evaluate no graph; every other graph
+        // pipeline replaces an interpreter fragment entry point.
+        const auto graphFragment = standard || (depthOnly && depthResources != DepthResources::Full)
+            ? ShaderGraphVariantCache::Code{}
+            : GraphFragmentVariant(m_graphVariants.get(), m_device->GetApi(), draw, layout, depthOnly);
+        const GeometryPipelineKey key{
+            static_cast<unsigned>(layout) | (unsigned(instanced) << 2) | (unsigned(standard) << 3) |
+                (unsigned(cull) << 4) | (unsigned(depthOnly) << 6) | (unsigned(prepassed) << 7) | (unsigned(depthResources) << 8),
+            graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
+        if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
+            !(depthOnly && depthResources != DepthResources::Full))
+            ++(graphFragment ? m_frameStats.graphSpecializedDraws : m_frameStats.graphInterpretedDraws);
         auto found = m_geometryPipelines.find(key);
         if (found != m_geometryPipelines.end()) return found->second.Get();
         auto descriptor = m_geometryDescriptors[instanced ? 1 : 0];
@@ -106,6 +139,7 @@ namespace PlutoGE::render
             }
             descriptor.depthWrite = !prepassed;
         }
+        if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
         descriptor.debugName = depthOnly ? "Geometry coverage" : "Geometry required outputs";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();

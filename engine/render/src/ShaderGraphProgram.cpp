@@ -1,4 +1,5 @@
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/ShaderGraphCodegen.h"
 #include "ShaderGraphExpression.h"
 #include <algorithm>
 #include <atomic>
@@ -448,6 +449,7 @@ namespace PlutoGE::render
                 // Program is fixed-layout, fully initialized and contains no pointers or padding.
                 for(auto b:std::as_bytes(std::span(&program.data,1))) { h^=std::to_integer<unsigned char>(b);h*=1099511628211ull; }
                 program.hash=h;
+                program.structureHash=ShaderGraphStructureHash(program.data);
             }
         };
     }

@@ -19,12 +19,13 @@ Parameter 1 "Samples" "16" 0
 Parameter 1 "Blur Radius" "1" 0
 Parameter 3 "Half Resolution" "true" 0
 Parameter 3 "AO Only" "false" 0
-Effect "VCTGI" 0 23
+Effect "VCTGI" 0 24
 Parameter 4 "Resolution" "0" 2 "64" "128"
 Parameter 1 "Cascade Count" "2" 0
 Parameter 0 "Volume Size" "40.000000" 0
 Parameter 3 "World Cache" "true" 0
 Parameter 0 "Cache Size" "432.000000" 0
+Parameter 0 "Update Speed" "1.000000" 0
 Parameter 1 "Cache Updates" "64" 0
 Parameter 0 "Intensity" "8.000000" 0
 Parameter 1 "Cone Count" "2" 0
@@ -37,7 +38,7 @@ Parameter 1 "Voxelization Command Budget" "8" 0
 Parameter 0 "Cone Aperture" "1.200000" 0
 Parameter 0 "Max Distance" "105.000000" 0
 Parameter 0 "Normal Bias" "0.350000" 0
-Parameter 1 "Update Interval" "1" 0
+Parameter 1 "Refresh Interval (frames)" "1" 0
 Parameter 0 "Temporal Blend" "0.920000" 0
 Parameter 0 "History Depth Threshold" "0.250000" 0
 Parameter 0 "History Normal Threshold" "0.900000" 0
@@ -63,8 +64,8 @@ Parameter 0 "Color R" "1.000000" 0
 Parameter 0 "Color G" "1.000000" 0
 Parameter 0 "Color B" "1.000000" 0
 Effect "Bloom" 1 5
-Parameter 0 "Intensity" "0.100000" 0
-Parameter 0 "Threshold" "1.000000" 0
+Parameter 0 "Intensity" "0.050000" 0
+Parameter 0 "Threshold" "2.000000" 0
 Parameter 0 "Soft Knee" "0.500000" 0
 Parameter 0 "Radius" "0.850000" 0
 Parameter 1 "Iterations" "6" 0

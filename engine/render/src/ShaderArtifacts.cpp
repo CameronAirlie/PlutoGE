@@ -1,4 +1,5 @@
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/render/ShaderGraphVariants.h"
 
 #include <fstream>
 #include <cstdlib>
@@ -136,6 +137,7 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < vctModules.size(); ++index)
             result.vctPostProcess[index] = {.vertex = Load(vctModules[index], "vertex"),
                                             .fragment = Load(vctModules[index], "fragment")};
+        result.graphVariants = ShaderGraphVariantCache::ForShaderPackage(m_root);
         return result;
     }
 

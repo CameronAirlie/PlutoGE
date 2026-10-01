@@ -148,6 +148,8 @@ namespace PlutoGE::render
         ShaderGraphProgramData data;
         std::vector<ShaderGraphTextureParameter> textures;
         std::uint64_t hash = 0;
+        // ShaderGraphStructureHash(data): identifies generated code, excluding values.
+        std::uint64_t structureHash = 0;
         bool requiresSceneTextures=false, usesTime=false, usesViewDirection=false;
     };
     std::shared_ptr<const ShaderGraphProgram> BuildShaderGraphProgram(

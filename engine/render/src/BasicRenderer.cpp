@@ -622,6 +622,7 @@ namespace PlutoGE::render
             m_compactFragments = shaders.compactFragments;
             m_coverageFragments = shaders.coverageFragments;
             m_opaqueDepth = shaders.opaqueDepth;
+            m_graphVariants = shaders.graphVariants;
             m_standardFragment = shaders.standardFragment;
             m_colorVertices = {shaders.colorVertex, shaders.colorInstancedVertex};
             m_standardVertices = shaders.standardVertices;
@@ -1191,6 +1192,7 @@ namespace PlutoGE::render
         m_compactFragments = {};
         m_coverageFragments = {};
         m_opaqueDepth = {};
+        m_graphVariants.reset();
         m_standardFragment = {};
         m_colorVertices = {};
         m_standardVertices = {};

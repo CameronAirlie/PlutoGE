@@ -80,6 +80,7 @@ target_link_libraries(PlutoGEVulkanBootstrapTests PRIVATE PlutoGE::Render)
 add_test(NAME PlutoGEVulkanBootstrapTests COMMAND PlutoGEVulkanBootstrapTests)
 
 add_executable(PlutoGEVulkanRhiTests VulkanRhiTests.cpp)
+pluto_attach_slang_runtime(PlutoGEVulkanRhiTests)
 # MinGW needs to rescan the render/import cycle for the stb image implementation.
 if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGEVulkanRhiTests PRIVATE

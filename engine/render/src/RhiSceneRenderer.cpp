@@ -1334,6 +1334,8 @@ namespace PlutoGE::render
         m_timingStats.pointShadowDraws = frameStats.pointShadowDraws;
         m_timingStats.materialPreparations = frameStats.materialPreparations;
         m_timingStats.materialPreparationHits = frameStats.materialPreparationHits;
+        m_timingStats.graphSpecializedDraws = frameStats.graphSpecializedDraws;
+        m_timingStats.graphInterpretedDraws = frameStats.graphInterpretedDraws;
         m_timingStats.geometryTriangles = frameStats.geometryTriangles;
         m_timingStats.renderSize = renderSize;
         m_timingStats.outputSize = outputSize;

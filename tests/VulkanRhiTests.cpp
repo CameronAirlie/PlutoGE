@@ -15,6 +15,7 @@
 #include "PreparationCacheChecks.h"
 #include "RenderOptimizationChecks.h"
 #include "ShaderGraphRenderingChecks.h"
+#include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SkinningRenderingChecks.h"
 #include "SkyQuadratureChecks.h"
@@ -163,6 +164,10 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--shader-graphs")
         {
             CheckShaderGraphRendering(renderer, device, [&](auto texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            CheckShaderGraphVariantRendering(device, shaders, [&](auto texture)
             {
                 return device.ReadTextureRgba8(texture);
             });

@@ -1,5 +1,11 @@
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang")
+# The legacy GLSL path has no #include: inline the shared instruction semantics.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" PLUTO_SHADER_GRAPH_COMMON)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" PLUTO_SHADER_GRAPH_EVALUATION)
+string(REPLACE "#include \"ShaderGraphCommon.slang\"" "${PLUTO_SHADER_GRAPH_COMMON}"
+    PLUTO_SHADER_GRAPH_EVALUATION "${PLUTO_SHADER_GRAPH_EVALUATION}")
 configure_file(src/ShaderGraphEvaluation.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/ShaderGraphEvaluation.h" @ONLY)
 # Use one coverage implementation in Slang and the legacy runtime GLSL shader.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang")
@@ -37,6 +43,9 @@ add_library(PlutoGERender
     src/Texture.cpp
     src/ShaderGraph.cpp
     src/ShaderGraphProgram.cpp
+    src/ShaderGraphCodegen.cpp
+    src/ShaderGraphVariants.cpp
+    src/SlangShaderGraphCompiler.cpp
     src/ShaderGraphCpu.cpp
     src/ShaderGraphTessellation.cpp
     src/Graphics.cpp
@@ -115,7 +124,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -144,7 +153,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl.raw"
         COMMAND ${CMAKE_COMMAND} ${normalize_arguments} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.spv"
-        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang compute shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -174,7 +183,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${GEOMETRY_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.geometry.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang geometry pipeline for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -269,6 +278,24 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(VCTConeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTConeTrace.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTTemporal.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTMetadata "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTMetadata.slang" vertexMain fragmentMain)
+    # Runtime shader-graph specialisation recompiles BasicLit.slang with
+    # per-graph generated code (ShaderGraphVariantCache), so the package
+    # carries its sources in the layout their relative includes expect.
+    file(GLOB PLUTO_RHI_SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang")
+    set(PLUTO_RHI_SHADER_SOURCE_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h")
+    set(PLUTO_RHI_SHADER_SOURCE_STAMP "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/.stamp")
+    add_custom_command(
+        OUTPUT "${PLUTO_RHI_SHADER_SOURCE_STAMP}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/shaders"
+            "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/include/PlutoGE/render"
+        COMMAND ${CMAKE_COMMAND} -E copy ${PLUTO_RHI_SHADER_SOURCES} "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy ${PLUTO_RHI_SHADER_SOURCE_HEADERS} "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/include/PlutoGE/render"
+        COMMAND ${CMAKE_COMMAND} -E touch "${PLUTO_RHI_SHADER_SOURCE_STAMP}"
+        DEPENDS ${PLUTO_RHI_SHADER_SOURCES} ${PLUTO_RHI_SHADER_SOURCE_HEADERS}
+        COMMENT "Staging Slang sources for runtime shader-graph specialisation"
+        VERBATIM)
+    set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS "${PLUTO_RHI_SHADER_SOURCE_STAMP}")
     get_property(PLUTO_RHI_SHADER_OUTPUTS GLOBAL PROPERTY PLUTO_RHI_SHADER_OUTPUTS)
     add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_RHI_SHADER_OUTPUTS})
     add_dependencies(PlutoGERender PlutoGERhiShaders)
@@ -370,6 +397,32 @@ target_link_libraries(PlutoGERender PUBLIC
 )
 
 target_include_directories(PlutoGERender PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# Optional Slang runtime for shader-graph specialisation. It is loaded
+# dynamically, so only its headers are needed to build; executables copy the
+# DLLs beside themselves (pluto_attach_slang_runtime).
+if (PLUTO_SLANGC_EXECUTABLE)
+    get_filename_component(_pluto_slang_bin "${PLUTO_SLANGC_EXECUTABLE}" DIRECTORY)
+endif()
+find_path(PLUTO_SLANG_INCLUDE_DIR slang.h HINTS "${_pluto_slang_bin}/../include")
+set(_pluto_slang_runtime_dlls)
+if (PLUTO_SLANG_INCLUDE_DIR AND WIN32)
+    # slang-llvm (CPU targets) and slang-rt are not needed for SPIR-V.
+    foreach(runtime_dll IN ITEMS slang.dll slang-compiler.dll slang-glslang.dll slang-glsl-module.dll)
+        if (EXISTS "${_pluto_slang_bin}/${runtime_dll}")
+            list(APPEND _pluto_slang_runtime_dlls "${_pluto_slang_bin}/${runtime_dll}")
+        endif()
+    endforeach()
+endif()
+if (PLUTO_SLANG_INCLUDE_DIR)
+    target_include_directories(PlutoGERender PRIVATE "${PLUTO_SLANG_INCLUDE_DIR}")
+    target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_SLANG_RUNTIME=1)
+else()
+    message(STATUS "slang.h was not found; shader graphs will always be interpreted")
+    target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_SLANG_RUNTIME=0)
+endif()
+set(PLUTO_SLANG_RUNTIME_DLLS "${_pluto_slang_runtime_dlls}"
+    CACHE INTERNAL "Slang runtime modules for shader-graph specialisation" FORCE)
 
 # Keep the vertex math kernel optimized even in editor debugging builds. Skip
 # the PCH because MSVC requires matching optimization/runtime-check options.

@@ -1,10 +1,11 @@
 # RocketLeg shader-graph and post-process performance pass — 2026-10-01
 
 RocketLeg shades almost every opaque surface with the custom `Toon` shader graph,
-which uses the **Direct Lighting** output. The RHI renderer interprets graphs per
+which uses the **Direct Lighting** output. The RHI renderer interpreted graphs per
 pixel (`ShaderGraphEvaluation.slang`), and that interpreter dominated the frame.
-Two retained changes reduce geometry GPU time by **39%** (68.6 → 42.0 ms) at
-1600×900. The interpreter still costs roughly 37 ms; see "Remaining work".
+A first pass reduced geometry GPU time by 39% (68.6 → 42.0 ms) at 1600×900. A
+second pass replaces interpretation with per-graph generated shaders on Vulkan:
+the opaque pass falls from **42.7 to 6.5 ms** and the frame from **70.4 to 33.9 ms**.
 
 ## Workload and measurement
 
@@ -56,28 +57,95 @@ Post-process scopes were unchanged between arms (within 0.4 ms).
   `GL_MAX_TEXTURE_IMAGE_UNITS`. The unmodified baseline fails identically; this
   predates the change (also noted on 2026-09-24).
 
-## Remaining work: the interpreter itself
+## Generated shader-graph variants (second pass)
 
-With the same candidate build, replacing `Toon` with `default-lit` on a scratch
-copy of the project reduces Opaque and alpha-tested from **41.8 ms to 5.0 ms**.
-The interpreter loop and its runtime-indexed `float4 registers[64]` remain the
-dominant cost. On GCN/Vega a 256-VGPR dynamically indexed array cannot stay in
-registers; it is very likely placed in scratch memory (inferred, not confirmed
-from driver ISA). Options, in increasing effort:
+With the first pass applied, replacing `Toon` with `default-lit` on a scratch
+copy reduced the opaque pass from 41.8 to 5.0 ms: the bytecode interpreter, with
+its runtime-indexed `float4 registers[64]`, was still the dominant cost.
 
-- **Register allocation in the graph compiler.** Instruction index currently
-  equals register index. Liveness-based reuse would let Toon (~35–40
-  instructions) fit a small register file (for example 16), which drivers can
-  keep in VGPRs. Requires a destination field in `ShaderGraphData`, which is
-  shared with C++, the legacy GLSL path, shadows and VCT voxelization.
-- **Generated shaders per graph.** Emit Slang per graph hash, compile offline or
-  at cook time, and keep the interpreter as a fallback while compiling. This
-  removes the interpreter for shipped content; it needs pipeline caching keyed
-  by graph hash and an editor compile path.
+### Architecture
+
+- **One definition of graph semantics.** `ShaderGraphCommon.slang` holds the
+  bytecode layout, operand table and `shaderGraphInstruction`. The interpreter
+  (`ShaderGraphEvaluation.slang`), generated code and the legacy GLSL path (CMake
+  inlines the include) all use it.
+- **Code generation** (`ShaderGraphCodegen.h/.cpp`). `GenerateShaderGraphSlang`
+  emits straight-line code with the interpreter's API: one `const float4 rN` per
+  instruction, calling `shaderGraphInstruction` with literal opcodes so the
+  driver folds each call to its operation. The lighting stage carries only the
+  surface registers it reads. Bytecode is validated (opcodes, topological
+  operands, output registers) before emission.
+- **Structure hash.** `ShaderGraphStructureHash` covers instructions, stage counts
+  and outputs but not constant or parameter values, which generated code still
+  reads from the material buffer. Materials that differ only in parameters (Arena,
+  Ball, Blue, Orange, goals, pads) share one variant. It is cached on
+  `ShaderGraphProgram::structureHash`.
+- **Variant cache** (`ShaderGraphVariants.h/.cpp`). `Find` never blocks: a missing
+  variant is queued for a worker thread, and the renderer keeps using the
+  interpreter until it is ready. The worker writes `ShaderGraphGenerated.slang`
+  and the SPIR-V atomically under
+  `%TEMP%/PlutoGE/ShaderGraphVariants/<package>/<structure>/`. The package
+  directory hashes the staged shader sources, the generator version and the
+  compiler build, so stale variants are never reused. Failures are logged and
+  leave that graph interpreted. One cache is shared per shader package.
+- **Compiler backend** (`SlangShaderGraphCompiler.cpp`), behind the
+  `ShaderGraphVariantCompiler` interface. It loads `slang.dll` dynamically, so
+  builds or installs without it simply interpret, and compiles `BasicLit.slang`
+  with `PLUTO_SHADER_GRAPH_GENERATED` using the build's settings (SPIR-V 1.3,
+  column-major). CMake stages the shader sources in `shaders/source/` and copies
+  the Slang DLLs beside the editor, runtime and Vulkan tests.
+- **Renderer.** `GeometryPipeline` requests the `fragmentMain`, `colorMain`,
+  `colorMotionMain` or `coverageMain` variant on Vulkan and keys pipelines by
+  state plus graph structure. Draws that can discard switch coverage and shading
+  together, so both passes always discard identically. The material-free opaque
+  depth path is unchanged. The editor profiler reports
+  `RHI shader graph draws: N specialised / M interpreted`.
+- **Shader fix.** Slang's API linker faults (a null dereference in
+  `getEntryPointCode`) when an entry point calls another entry point; the build's
+  slangc path happens to avoid it. `colorMain`, `colorMotionMain` and
+  `coverageMain` now call a plain `shadeFragment` helper instead of `fragmentMain`.
+- `PLUTOGE_SHADER_GRAPH_VARIANTS=0` disables specialisation for A/B comparisons.
+
+### Results
+
+Same executable and shaders, alternating `PLUTOGE_SHADER_GRAPH_VARIANTS=0` and the
+default, 600 frames after 300 warm-up frames (covering background compilation):
+
+| Scope (mean ms) | Interpreter | Generated variants |
+|---|---:|---:|
+| Geometry / Opaque and alpha-tested | 42.45 / 42.88 | 6.46 / 6.46 |
+| Geometry | 42.58 / 43.01 | 6.58 / 6.58 |
+| Post Process | 24.15 / 24.28 | 24.40 / 24.27 |
+| CPU frame | 69.91 / 70.82 | 33.93 / 33.82 |
+
+### Validation
+
+- `ShaderGraphVariantChecks.h` (Vulkan `--shader-graphs`): codegen invariants
+  (parameters excluded from the structure, no register file, malformed bytecode
+  rejected); cache semantics with a fake compiler (asynchronous resolution, disk
+  reuse across instances, failures fall back); and GPU comparisons of the
+  interpreter against generated variants for five graphs: parameters, toon Direct
+  Lighting with a directional and two point lights, shared lighting registers, a
+  graph covering nearly every opcode, and masked coverage. Each comparison
+  asserts the draws used their variant.
+- The renderer suites listed above pass on Vulkan and OpenGL.
+  `PlutoGEOpenGLShaderGraphTests` still fails with the pre-existing
+  `GL_MAX_TEXTURE_IMAGE_UNITS` link error, after the legacy GLSL compiles.
+
+### Limitations and follow-ups
+
+- Vulkan only. OpenGL, transparent/glass graphs (one shared transparent
+  pipeline), shadow casters and VCT voxelization still interpret.
+- Shipping: installs need the Slang DLLs and staged sources to specialise at
+  runtime; no install rules were added. A cook step could precompile variants
+  for each project graph through the same `ShaderGraphVariantCompiler` interface.
+- The first use of a graph renders interpreted for the seconds that compilation
+  takes; later runs load SPIR-V from the cache.
 
 ## Post-process investigation
 
-Candidate build, 1600×900. Post Process is 24.3 ms.
+First-pass build, 1600×900. Post Process is 24.3 ms and is unchanged by the
+second pass.
 
 | Effect | GPU ms | Finding |
 |---|---:|---|

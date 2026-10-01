@@ -464,6 +464,8 @@ namespace PlutoGE::ui
                << rhiScene.rebuiltOpaqueBatchGroups << " rebuilt (when the visible packet list changes)\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
                << rhiScene.materialPreparationHits << " reused\n";
+        report << "RHI shader graph draws: " << rhiScene.graphSpecializedDraws << " specialised / "
+               << rhiScene.graphInterpretedDraws << " interpreted (pending, unsupported backend or no Slang runtime)\n";
         report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)
                << " (0 off, 1 measure, 2 cull), active: " << rhiScene.occlusionActive << "\n";
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)

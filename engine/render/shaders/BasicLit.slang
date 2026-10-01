@@ -1,5 +1,11 @@
 float4 shaderGraphTexture(int slot, float2 uv);
+#ifdef PLUTO_SHADER_GRAPH_GENERATED
+// Runtime specialisation (ShaderGraphVariantCache) supplies one graph's
+// straight-line code with the same API as the interpreter.
+#include "ShaderGraphGenerated.slang"
+#else
 #include "ShaderGraphEvaluation.slang"
+#endif
 #include "VirtualShadowCommon.slang"
 [[vk::binding(1, 0)]]
 cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
@@ -1047,8 +1053,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     return output;
 }
 
-[shader("fragment")]
-FragmentOutput fragmentMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
+// Shared by every opaque fragment entry point. Entry points call this helper
+// rather than each other: Slang cannot link an entry point that calls another.
+FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
 {
     // The shared opaque pipeline has culling disabled. Preserve the culling
     // used by the transparent pipeline when rendering its solid coverage.
@@ -1081,6 +1088,12 @@ FragmentOutput fragmentMain(VertexOutput input, bool frontFacing : SV_IsFrontFac
 }
 
 [shader("fragment")]
+FragmentOutput fragmentMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
+{
+    return shadeFragment(input, frontFacing);
+}
+
+[shader("fragment")]
 float4 transparentMain(VertexOutput input) : SV_Target0
 {
     const float4 color = shadeSurface(input, true).color;
@@ -1092,7 +1105,7 @@ float4 transparentMain(VertexOutput input) : SV_Target0
 [shader("fragment")]
 float4 colorMain(VertexOutput input, bool frontFacing : SV_IsFrontFace) : SV_Target0
 {
-    return fragmentMain(input, frontFacing).color;
+    return shadeFragment(input, frontFacing).color;
 }
 struct ColorMotionOutput
 {
@@ -1102,7 +1115,7 @@ struct ColorMotionOutput
 [shader("fragment")]
 ColorMotionOutput colorMotionMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
-    FragmentOutput surface = fragmentMain(input, frontFacing);
+    FragmentOutput surface = shadeFragment(input, frontFacing);
     ColorMotionOutput result;
     result.color = surface.color;
     result.motion = surface.motion.xy;
@@ -1118,7 +1131,7 @@ void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 #ifndef PLUTO_STANDARD_MATERIAL
     if (shaderGraph.header.x != 0)
     {
-        fragmentMain(input, frontFacing);
+        shadeFragment(input, frontFacing);
         return;
     }
 #endif

@@ -71,6 +71,7 @@ namespace PlutoGE::render
         std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
         std::array<std::size_t, 4> pointShadowInvalidations{};
         std::size_t materialPreparations = 0, materialPreparationHits = 0;
+        std::size_t graphSpecializedDraws = 0, graphInterpretedDraws = 0;
         std::array<std::uint64_t, 4> geometryTriangles{};
         rhi::Extent2D renderSize{}, outputSize{};
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;

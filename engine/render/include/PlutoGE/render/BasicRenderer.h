@@ -31,6 +31,7 @@ namespace PlutoGE::render
     class PostProcessResourcePool;
     class PersistentParameterCache;
     class MaterialPreparationCache;
+    class ShaderGraphVariantCache;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -203,6 +204,9 @@ namespace PlutoGE::render
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
         std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
+        // Optional per-graph specialisations of fragment, compactFragments[0]
+        // and coverageFragments[0]. Null keeps graphs interpreted.
+        std::shared_ptr<ShaderGraphVariantCache> graphVariants;
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
@@ -484,6 +488,8 @@ namespace PlutoGE::render
         std::uint64_t glassSnapshotPixels = 0;
         std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
         std::size_t materialPreparations = 0, materialPreparationHits = 0;
+        // Graph draws using a generated variant vs the bytecode interpreter.
+        std::size_t graphSpecializedDraws = 0, graphInterpretedDraws = 0;
         // Submitted triangles including instances: opaque, alpha-tested, transparent, outline.
         std::array<std::uint64_t, 4> geometryTriangles{};
         std::size_t shadowCandidates = 0;
@@ -591,7 +597,20 @@ namespace PlutoGE::render
         DepthResources GeometryDepthResources(const BasicDraw &draw, bool instanced) const;
         rhi::GraphicsPipelineDescriptor::ShaderCode m_standardFragment;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
-        std::unordered_map<unsigned, rhi::GraphicsPipeline> m_geometryPipelines;
+        // Pipeline state flags plus the specialised graph structure (0 = interpreter or standard).
+        struct GeometryPipelineKey
+        {
+            unsigned state = 0;
+            std::uint64_t graphStructure = 0;
+            bool operator==(const GeometryPipelineKey &) const = default;
+        };
+        struct GeometryPipelineKeyHash
+        {
+            std::size_t operator()(const GeometryPipelineKey &key) const noexcept
+            { return std::hash<std::uint64_t>{}(key.graphStructure ^ (std::uint64_t(key.state) << 48)); }
+        };
+        std::unordered_map<GeometryPipelineKey, rhi::GraphicsPipeline, GeometryPipelineKeyHash> m_geometryPipelines;
+        std::shared_ptr<ShaderGraphVariantCache> m_graphVariants;
         [[nodiscard]] rhi::TextureHandle RenderFusedColor(rhi::TextureHandle source,
             std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
             std::size_t bufferIndex, std::size_t &targetIndex);

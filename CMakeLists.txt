@@ -56,6 +56,17 @@ function(pluto_attach_streamline_runtime runtime_target)
     endif()
 endfunction()
 
+# Shader-graph specialisation loads Slang dynamically (ShaderGraphVariantCache);
+# without these modules graphs stay interpreted.
+function(pluto_attach_slang_runtime runtime_target)
+    if (PLUTO_SLANG_RUNTIME_DLLS)
+        add_custom_command(TARGET ${runtime_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${PLUTO_SLANG_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${runtime_target}>"
+            COMMAND_EXPAND_LISTS VERBATIM)
+    endif()
+endfunction()
+
 if (PLUTO_BUILD_EDITOR)
     add_subdirectory(editor)
 endif()

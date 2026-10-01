@@ -1126,8 +1126,15 @@ PROPERTY	Direction	3	-0.573576,-0.671010,-0.469846	0
 PROPERTY	LightType	6	1	3	Point	Directional	Spot
 PROPERTY	Static	4	true	0
 PROPERTY	Shadow Method	6	1	2	Cascaded Shadow Maps (Legacy)	Virtual Shadow Maps (Default)
+PROPERTY	VSM Cluster Culling	4	true	0
+PROPERTY	VSM Pool Pages	1	256	0
+PROPERTY	VSM Spotlight Resolution	1	2048	0
+PROPERTY	VSM Maximum Page Age	1	8	0
+PROPERTY	VSM Allow Oversized Pages	4	true	0
+PROPERTY	VSM Coarse Minimum Caster Texels	0	0.500000	0
 PROPERTY	VSM Page Updates per Frame	1	64	0
 PROPERTY	VSM Triangle Budget per Frame	1	1000000	0
+PROPERTY	VSM Adaptive Triangle Budget	4	false	0
 PROPERTY	Shadow Cascade Count	1	4	0
 PROPERTY	Shadow Resolution	1	2048	0
 PROPERTY	Shadow Cascade Resolution Falloff	0	0.750000	0

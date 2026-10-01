@@ -36,45 +36,88 @@ float4 shaderGraphSafeDivisor(float4 v)
                   v.z<0.0?-max(abs(v.z),0.0001):max(v.z,0.0001),
                   v.w<0.0?-max(abs(v.w),0.0001):max(v.w,0.0001));
 }
-float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
-                         float3 viewDirection, float time, float2 uv,
-                         inout float4 color, inout float3 normal, inout float metallicValue,
-                         inout float roughnessValue, inout float3 emissionValue, bool vertexOnly,
-                         bool lightingOnly, float3 lightDirection, float3 lightColor,
-                         float lightAttenuation, float shadowAttenuation)
+// Interpreter state for one surface sample. The register file holds every
+// instruction result; the inputs are the material values before the graph ran.
+// A Direct Lighting program is compiled after the surface instructions and may
+// read their registers, so the state outlives the surface stage and each light
+// executes only the lighting instructions. Re-running the whole program per
+// light also inlined a separate 64-register array at every call site.
+struct ShaderGraphState
 {
-    int count = vertexOnly ? graph.header.z : graph.header.x;
-    if(!vertexOnly && !lightingOnly && graph.outputs1.w!=0) count=graph.outputs1.w>>8;
-    if(count==0) return float3(0.0);
-    float4 r[64];
-    for(int i=0;i<count;++i)
+    float4 registers[64];
+    float3 worldPosition;
+    float3 worldNormal;
+    float3 viewDirection;
+    float time;
+    float2 uv;
+    float4 inputColor;
+    float3 inputNormal;
+    float inputMetallic;
+    float inputRoughness;
+    float3 inputEmission;
+    float3 lightDirection;
+    float3 lightColor;
+    float lightAttenuation;
+    float shadowAttenuation;
+};
+
+void beginShaderGraph(out ShaderGraphState state, float3 worldPosition, float3 worldNormal,
+                      float3 viewDirection, float time, float2 uv, float4 color, float3 normal,
+                      float metallicValue, float roughnessValue, float3 emissionValue)
+{
+    state.worldPosition=worldPosition;
+    state.worldNormal=worldNormal;
+    state.viewDirection=viewDirection;
+    state.time=time;
+    state.uv=uv;
+    state.inputColor=color;
+    state.inputNormal=normal;
+    state.inputMetallic=metallicValue;
+    state.inputRoughness=roughnessValue;
+    state.inputEmission=emissionValue;
+    state.lightDirection=float3(0.0);
+    state.lightColor=float3(0.0);
+    state.lightAttenuation=0.0;
+    state.shadowAttenuation=1.0;
+}
+
+// Direct Lighting programs record the surface instruction count in bits 8+.
+int shaderGraphSurfaceCount(ShaderGraphData graph)
+{
+    return graph.outputs1.w!=0 ? graph.outputs1.w>>8 : graph.header.x;
+}
+
+// Executes instructions [first, last) into state.registers.
+void executeShaderGraph(ShaderGraphData graph, int first, int last, inout ShaderGraphState state)
+{
+    for(int i=first;i<last;++i)
     {
         int4 op=graph.instructions[i];
         // Input/constant instructions do not read registers. Every other operand
         // was checked and topologically ordered by the CPU compiler.
         float4 a=float4(0.0), b=float4(0.0), c=float4(0.0), v=float4(0.0);
-        if((op.x>=2 && op.x<=16) || op.x==18 || op.x==19 || op.x==20 || op.x==21) a=r[op.y];
-        if((op.x>=2 && op.x<=7) || op.x==9 || op.x==10 || op.x==12 || op.x==18 || op.x==19 || op.x==21) b=r[op.z];
-        if(op.x==6 || op.x==7 || op.x==9 || op.x==18 || op.x==21) c=r[op.w];
+        if((op.x>=2 && op.x<=16) || op.x==18 || op.x==19 || op.x==20 || op.x==21) a=state.registers[op.y];
+        if((op.x>=2 && op.x<=7) || op.x==9 || op.x==10 || op.x==12 || op.x==18 || op.x==19 || op.x==21) b=state.registers[op.z];
+        if(op.x==6 || op.x==7 || op.x==9 || op.x==18 || op.x==21) c=state.registers[op.w];
         if(op.x==0 || op.x==17) v=graph.values[i];
         else if(op.x==1)
         {
-            if(op.y==0) v=color;
-            else if(op.y==1) v=float4(normal,1.0);
-            else if(op.y==2) v=float4(metallicValue);
-            else if(op.y==3) v=float4(roughnessValue);
-            else if(op.y==4) v=float4(color.a);
-            else if(op.y==5) v=float4(uv,0.0,1.0);
-            else if(op.y==6) v=float4(emissionValue,1.0);
-            else if(op.y==7) v=float4(time);
-            else if(op.y==8) v=float4(worldPosition,1.0);
-            else if(op.y==9) v=float4(worldNormal,1.0);
-            else if(op.y==10) v=float4(viewDirection,1.0);
-            else if(op.y==12)v=float4(lightDirection,1.0);
-            else if(op.y==13)v=float4(lightColor,1.0);
-            else if(op.y==14)v=float4(lightAttenuation);
-            else if(op.y==15)v=float4(shadowAttenuation);
-            else if(op.y==11)v=float4(shaderGraphScreenUV(worldPosition),0.0,1.0);
+            if(op.y==0) v=state.inputColor;
+            else if(op.y==1) v=float4(state.inputNormal,1.0);
+            else if(op.y==2) v=float4(state.inputMetallic);
+            else if(op.y==3) v=float4(state.inputRoughness);
+            else if(op.y==4) v=float4(state.inputColor.a);
+            else if(op.y==5) v=float4(state.uv,0.0,1.0);
+            else if(op.y==6) v=float4(state.inputEmission,1.0);
+            else if(op.y==7) v=float4(state.time);
+            else if(op.y==8) v=float4(state.worldPosition,1.0);
+            else if(op.y==9) v=float4(state.worldNormal,1.0);
+            else if(op.y==10) v=float4(state.viewDirection,1.0);
+            else if(op.y==12)v=float4(state.lightDirection,1.0);
+            else if(op.y==13)v=float4(state.lightColor,1.0);
+            else if(op.y==14)v=float4(state.lightAttenuation);
+            else if(op.y==15)v=float4(state.shadowAttenuation);
+            else if(op.y==11)v=float4(shaderGraphScreenUV(state.worldPosition),0.0,1.0);
         }
         else if(op.x==2) v=a+b;
         else if(op.x==3) v=a-b;
@@ -99,7 +142,7 @@ float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, f
         else if(op.x==14) v=shaderGraphTexture(op.z,a.xy);
         else if(op.x==15) v=float4(a[op.z]);
         else if(op.x==16) v=float4(a.xyz,1.0);
-        else if(op.x==18) v=float4(a.x,b.x,c.x,r[int(graph.values[i].x)].x);
+        else if(op.x==18) v=float4(a.x,b.x,c.x,state.registers[int(graph.values[i].x)].x);
         else if(op.x==19) v=step(a,b);
         else if(op.x==20) v=floor(a);
         else if(op.x==21)
@@ -110,17 +153,29 @@ float3 evaluateShaderGraphProgram(ShaderGraphData graph, float3 worldPosition, f
             v=t*t*(3.0-2.0*t);
             for(int j=0;j<4;++j) if(high[j]==low[j]) v[j]=step(low[j],c[j]);
         }
-        r[i]=v;
+        state.registers[i]=v;
     }
-    if(lightingOnly) return max(r[(graph.outputs1.w & 255)-1].xyz,float3(0.0));
-    if(vertexOnly) return r[graph.outputs1.z].xyz;
-    color=float4(r[graph.outputs0.x].xyz,clamp(r[graph.outputs1.x].x,0.0,1.0));
-    float3 finalNormal=r[graph.outputs0.y].xyz;
+}
+
+// Evaluates the surface stage. `state` retains its registers for
+// evaluateShaderGraphLighting; the material values passed in are the graph inputs.
+void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
+                         float3 viewDirection, float time, float2 uv,
+                         inout float4 color, inout float3 normal, inout float metallicValue,
+                         inout float roughnessValue, inout float3 emissionValue,
+                         out ShaderGraphState state)
+{
+    beginShaderGraph(state,worldPosition,worldNormal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue);
+    int count=shaderGraphSurfaceCount(graph);
+    if(count==0) return;
+    executeShaderGraph(graph,0,count,state);
+    color=float4(state.registers[graph.outputs0.x].xyz,clamp(state.registers[graph.outputs1.x].x,0.0,1.0));
+    float3 finalNormal=state.registers[graph.outputs0.y].xyz;
     if(dot(finalNormal,finalNormal)>0.000001) normal=normalize(finalNormal);
-    metallicValue=clamp(r[graph.outputs0.z].x,0.0,1.0);
-    roughnessValue=clamp(r[graph.outputs0.w].x,0.04,1.0);
-    emissionValue=max(r[graph.outputs1.y].xyz,float3(0.0));
-    return float3(0.0);
+    metallicValue=clamp(state.registers[graph.outputs0.z].x,0.0,1.0);
+    roughnessValue=clamp(state.registers[graph.outputs0.w].x,0.04,1.0);
+    emissionValue=max(state.registers[graph.outputs1.y].xyz,float3(0.0));
 }
 
 void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 worldNormal,
@@ -128,27 +183,34 @@ void evaluateShaderGraph(ShaderGraphData graph, float3 worldPosition, float3 wor
                          inout float4 color, inout float3 normal, inout float metallicValue,
                          inout float roughnessValue, inout float3 emissionValue)
 {
-    evaluateShaderGraphProgram(graph,worldPosition,worldNormal,viewDirection,time,uv,
-        color,normal,metallicValue,roughnessValue,emissionValue,false,false,float3(0.0),float3(0.0),0.0,1.0);
+    ShaderGraphState state;
+    evaluateShaderGraph(graph,worldPosition,worldNormal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue,state);
 }
 
 float3 shaderGraphVertexOffset(ShaderGraphData graph, float3 position, float3 normal,
     float3 viewDirection, float time, float2 uv, float4 color, float metallicValue,
     float roughnessValue, float3 emissionValue)
 {
-    return evaluateShaderGraphProgram(graph,position,normal,viewDirection,time,uv,
-        color,normal,metallicValue,roughnessValue,emissionValue,true,false,float3(0.0),float3(0.0),0.0,1.0);
+    if(graph.header.z==0) return float3(0.0);
+    ShaderGraphState state;
+    beginShaderGraph(state,position,normal,viewDirection,time,uv,
+        color,normal,metallicValue,roughnessValue,emissionValue);
+    executeShaderGraph(graph,0,graph.header.z,state);
+    return state.registers[graph.outputs1.z].xyz;
 }
 
 // Returns the graph's complete RGB contribution for one light. The graph owns
 // N.L, radiance, distance attenuation and shadow response; none are applied twice.
-float3 evaluateShaderGraphLighting(ShaderGraphData graph, float3 position, float3 worldNormal,
-    float3 viewDirection, float time, float2 uv, float4 color, float3 normal,
-    float metallicValue, float roughnessValue, float3 emissionValue,
+// `state` must come from the surface-stage evaluateShaderGraph of the same sample.
+float3 evaluateShaderGraphLighting(ShaderGraphData graph, inout ShaderGraphState state,
     float3 lightDirection, float3 lightColor, float lightAttenuation, float shadowAttenuation)
 {
     if(graph.outputs1.w==0) return float3(0.0);
-    return evaluateShaderGraphProgram(graph,position,worldNormal,viewDirection,time,uv,
-        color,normal,metallicValue,roughnessValue,emissionValue,false,true,
-        lightDirection,lightColor,lightAttenuation,shadowAttenuation);
+    state.lightDirection=lightDirection;
+    state.lightColor=lightColor;
+    state.lightAttenuation=lightAttenuation;
+    state.shadowAttenuation=shadowAttenuation;
+    executeShaderGraph(graph,shaderGraphSurfaceCount(graph),graph.header.x,state);
+    return max(state.registers[(graph.outputs1.w & 255)-1].xyz,float3(0.0));
 }

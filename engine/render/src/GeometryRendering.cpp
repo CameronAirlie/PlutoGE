@@ -24,7 +24,11 @@ namespace PlutoGE::render
     BasicRenderer::DepthResources BasicRenderer::GeometryDepthResources(const BasicDraw &draw, bool instanced) const
     {
         const auto available = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
-        if (draw.shaderGraphProgram) return DepthResources::Full;
+        // Opaque fragment graphs cannot change depth or coverage, so without
+        // vertex deformation they rasterize exactly like a standard surface.
+        // Graph alpha and vertex offsets need the graph-aware coverage shader.
+        if (draw.shaderGraphProgram && (draw.alphaMode != 0 || draw.shaderGraphProgram->data.header.z != 0))
+            return DepthResources::Full;
         const auto &opaque = m_opaqueDepth[instanced ? 1 : 0];
         if (draw.alphaMode == 0 && available(opaque.vertex) && available(opaque.fragment))
             return DepthResources::Opaque;

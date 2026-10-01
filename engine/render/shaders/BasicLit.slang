@@ -743,21 +743,21 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                        + emissionSample.g * emissionChannels[1].rgb * emissionChannels[1].a
                        + emissionSample.b * emissionChannels[2].rgb * emissionChannels[2].a;
     float3 surfaceEmission = emission * emissionSample;
-    // Preserve material inputs so the per-light graph sees the same values as
-    // the surface graph (tints/textures must not be multiplied a second time).
-    const float4 graphInputColor=sampledColor;
-    const float3 graphInputNormal=normal;
-    const float graphInputMetallic=materialMetallic, graphInputRoughness=materialRoughness;
-    const float3 graphInputEmission=surfaceEmission;
+    // The graph state keeps the pre-graph material inputs and the surface
+    // registers, so per-light graph evaluation neither repeats the surface
+    // instructions nor sees already tinted values a second time.
+    ShaderGraphState graphState;
 #ifdef PLUTO_STANDARD_MATERIAL
     // The renderer selects this variant only for materials without a graph.
-    // Keep the interpreter's temporary register array out of that shader.
+    // customLighting is constant, so the interpreter and its register array
+    // are eliminated from this shader.
     const bool customLighting = false;
 #else
     const bool customLighting=shaderGraph.outputs1.w!=0 && !glass;
     evaluateShaderGraph(shaderGraph, input.worldPosition, normalize(input.worldNormal),
                         normalize(cameraPositionAmbient.xyz-input.worldPosition), shaderGraphFrame.x,
-                        input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission);
+                        input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission,
+                        graphState);
 #endif
 #include "SurfaceCoverage.slang"
     if (!transparentPass && (pointParameters.w == 4.0 || pointParameters.w == 10.0))
@@ -839,9 +839,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
         if(customLighting)
-            pointLighting += evaluateShaderGraphLighting(shaderGraph,input.worldPosition,normalize(input.worldNormal),
-                viewDirection,shaderGraphFrame.x,input.uv*uvScale,graphInputColor,graphInputNormal,
-                graphInputMetallic,graphInputRoughness,graphInputEmission,l,
+            pointLighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
                 pointColorIntensity[light].rgb*pointColorIntensity[light].w,attenuation,visibility);
         else pointLighting += brdf * pointRadiance;
         pointSpecularLighting += distributionPoint * geometryView * geometryPoint * f /
@@ -976,9 +974,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     {
         directionalLighting=float3(0.0);
         if(directionalDirectionIntensity.w>0.0)
-            directionalLighting=evaluateShaderGraphLighting(shaderGraph,input.worldPosition,normalize(input.worldNormal),
-                viewDirection,shaderGraphFrame.x,input.uv*uvScale,graphInputColor,graphInputNormal,
-                graphInputMetallic,graphInputRoughness,graphInputEmission,lightDirection,
+            directionalLighting=evaluateShaderGraphLighting(shaderGraph,graphState,lightDirection,
                 directionalColor.rgb*directionalDirectionIntensity.w,1.0,shadowVisibility);
     }
     FragmentOutput output;
@@ -1115,8 +1111,10 @@ ColorMotionOutput colorMotionMain(VertexOutput input, bool frontFacing : SV_IsFr
 [shader("fragment")]
 void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
-    // Ordinary opaque depth has no material texture or lighting work. Graph
-    // alpha can depend on any material input, so keep its exact evaluation.
+    // Opaque coverage is the rasterized footprint: no material input, graph or
+    // lighting can discard it. Vertex graphs are already applied by the vertex stage.
+    if (alphaMode == 0) return;
+    // Graph alpha can depend on any material input, so keep its exact evaluation.
 #ifndef PLUTO_STANDARD_MATERIAL
     if (shaderGraph.header.x != 0)
     {
@@ -1124,7 +1122,6 @@ void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
         return;
     }
 #endif
-    if (alphaMode == 0) return;
     if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;
     const float alpha = baseColorTexture.Sample(input.uv * uvScale).a * baseColor.a;
     float4 sampledColor = float4(0, 0, 0, alpha);

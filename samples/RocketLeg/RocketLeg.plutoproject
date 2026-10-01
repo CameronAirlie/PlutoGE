@@ -3,11 +3,12 @@ NAME	RocketLeg
 ASSET_DIR	Assets
 STARTUP_SCENE	project://Scenes/Main.plutoscene
 SCRIPT_ASSEMBLY	project://Managed/RocketLeg.Scripts.dll
+LOADING_ACCENT	0.65	0.68	0.72
 WINDOW_TITLE	RocketLeg - Two Player Arena
 WINDOW_SIZE	1600	900
 VSYNC	0
 GRAPHICS_API	Vulkan
-RUNTIME_UPSCALER	FSR2
+RUNTIME_UPSCALER	None
 RUNTIME_UPSCALER_QUALITY	Quality
 RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
@@ -60,7 +61,7 @@ ASSET	project://Models/.plutoge-cache/meshes/7220158127216076340.pmesh	406928	Un
 ASSET	project://Models/ArenaBanks.glb	161496	Model
 ASSET	project://Models/ArenaShell.glb	174224	Model
 ASSET	project://PostProcessing/main.plutopostprocess	5571	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	51663	Scene
+ASSET	project://Scenes/Main.plutoscene	51966	Scene
 ASSET	project://Scripts/ArcadeCarController.cs	28243	Script
 ASSET	project://Scripts/BoostPad.cs	1960	Script
 ASSET	project://Scripts/RocketBall.cs	1918	Script

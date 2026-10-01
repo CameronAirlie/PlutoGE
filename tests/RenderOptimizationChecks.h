@@ -176,20 +176,48 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
                 "Standard material variant differs from interpreter shader");
     }
+    // An opaque graph with custom lighting: its depth prepass uses the
+    // material-free depth shader, and Direct Lighting reuses the surface
+    // registers it shares with Albedo. Masked graphs keep graph coverage.
+    const auto litGraph = [&]
+    {
+        ShaderGraph graph;
+        graph.nodes = {{.id = 1, .kind = ShaderGraphNodeKind::MaterialInput},
+            {.id = 2, .kind = ShaderGraphNodeKind::Float, .value = glm::vec4(.5f)},
+            {.id = 3, .kind = ShaderGraphNodeKind::Multiply},
+            {.id = 4, .kind = ShaderGraphNodeKind::ShadowAttenuation},
+            {.id = 5, .kind = ShaderGraphNodeKind::Multiply},
+            {.id = 100, .kind = ShaderGraphNodeKind::Output}};
+        graph.links = {{1, 1, "Out", 3, "A"}, {2, 2, "Out", 3, "B"}, {3, 3, "Out", 100, "Albedo"},
+            {4, 3, "Out", 5, "A"}, {5, 4, "Out", 5, "B"}, {6, 5, "Out", 100, "Direct Lighting"}};
+        auto program = BuildShaderGraphProgram(graph);
+        require(program && program->data.outputs1.w != 0 && program->data.header.z == 0,
+            "Lit coverage graph did not compile as an opaque Direct Lighting program");
+        return program;
+    }();
     // Requirements must follow consumers on every frame, including transitions
     // at an unchanged viewport size. Compare against full-output forward rendering.
-    for (int scenario = 0; scenario < 7; ++scenario)
+    for (int scenario = 0; scenario < 9; ++scenario)
     {
         auto surface = draw;
         if (scenario == 1) surface.model[0][0] = -1; // mirrored rigid winding
         if (scenario == 2) { surface.twoSided = true; surface.model[0][0] = -1; }
         if (scenario == 3) { surface.alphaMode = 1; surface.baseColor.a = 0; }
+        if (scenario >= 7) surface.shaderGraphProgram = litGraph;
+        if (scenario == 8) { surface.alphaMode = 1; surface.baseColor.a = 0; }
+        auto surfaceLighting = lighting;
+        if (scenario >= 7)
+        {
+            surfaceLighting.directionalIntensity = 1;
+            surfaceLighting.directionalDirection = {-.2f, -.4f, -1};
+            surfaceLighting.pointLights = {{{.5f, .5f, 2}, 5, {1, .5f, .25f}, 2}};
+        }
         std::vector<BasicPostProcessEffect> requiredEffects;
         if (scenario == 4) requiredEffects.push_back({BasicPostProcessEffectType::MotionBlur});
         const auto debug = scenario == 5 ? PostProcessDebugView::Normal : PostProcessDebugView::None;
-        reference.Render(glm::mat4(1), lighting, {&surface, 1}, requiredEffects, {}, debug);
+        reference.Render(glm::mat4(1), surfaceLighting, {&surface, 1}, requiredEffects, {}, debug);
         const auto original = readPixels(reference.GetColorTexture());
-        renderer.Render(glm::mat4(1), lighting, {&surface, 1}, requiredEffects, {}, debug);
+        renderer.Render(glm::mat4(1), surfaceLighting, {&surface, 1}, requiredEffects, {}, debug);
         compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
                 "Geometry coverage/output layout changed the reference image");
         const auto &stats = renderer.GetFrameStats();

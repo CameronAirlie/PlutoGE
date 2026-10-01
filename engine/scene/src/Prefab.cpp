@@ -1085,7 +1085,7 @@ namespace PlutoGE::scene
         std::unordered_map<EntityID, std::vector<std::string>> overrides;
         for (auto *entity : entities) overrides[entity->GetID()] = entity->GetPrefabOverrides();
         instance.ClearPrefabOverridesRecursive();
-        if (UpdateInstance(instance, error)) return true;
+        if (UpdateInstance(instance, error, false)) return true;
         for (auto *entity : entities) for (const auto &path : overrides[entity->GetID()]) entity->AddPrefabOverride(path);
         return false;
     }
@@ -1168,7 +1168,7 @@ namespace PlutoGE::scene
         return duplicateRoot;
     }
 
-    bool Prefab::UpdateInstance(Entity &instanceRoot, std::string *errorMessage)
+    bool Prefab::UpdateInstance(Entity &instanceRoot, std::string *errorMessage, bool preserveAddedChildren)
     {
         if (!instanceRoot.IsPrefabInstanceRoot() || instanceRoot.GetPrefabSource().empty())
         {
@@ -1209,7 +1209,41 @@ namespace PlutoGE::scene
         std::unordered_map<EntityID, std::vector<std::pair<std::string, std::string>>> overrideValues;
         std::unordered_map<EntityID, EntityID> previousInstanceToPrefabId;
         std::vector<Entity *> existingEntities;
-        CollectEntitiesRecursive(&instanceRoot, existingEntities);
+        std::vector<Entity *> addedChildren;
+        std::vector<std::pair<EntityID, EntityID>> parentOverrides;
+        const auto isInherited = [&](const Entity *entity)
+        {
+            return entity == &instanceRoot || (entity && !entity->IsPrefabInstanceRoot() &&
+                entity->GetPrefabSource() == prefabReference && entity->GetPrefabEntityID() != 0);
+        };
+        // Local parents can contain reparented inherited children. Traverse
+        // through them, but treat nested prefab instances as separate trees.
+        const auto collectInherited = [&](auto &&self, Entity *entity) -> void
+        {
+            if (isInherited(entity))
+            {
+                existingEntities.push_back(entity);
+                if (entity != &instanceRoot)
+                {
+                    const auto *source = FindPrefabEntity(*prefabScene, entity->GetPrefabEntityID());
+                    const auto *parent = entity->GetParent();
+                    if (!source || !source->GetParent() || !isInherited(parent) ||
+                        parent->GetPrefabEntityID() != source->GetParent()->GetID())
+                        parentOverrides.emplace_back(entity->GetID(), parent->GetID());
+                }
+            }
+            else
+            {
+                addedChildren.push_back(entity);
+                parentOverrides.emplace_back(entity->GetID(), entity->GetParent()->GetID());
+                if (entity->IsPrefabInstanceRoot()) return;
+            }
+            for (auto *child : entity->GetChildren())
+            {
+                if (child) self(self, child);
+            }
+        };
+        collectInherited(collectInherited, &instanceRoot);
         for (auto *entity : existingEntities)
         {
             if (!entity || entity->GetPrefabEntityID() == 0)
@@ -1228,10 +1262,21 @@ namespace PlutoGE::scene
             }
         }
 
-        const auto previousChildren = instanceRoot.GetChildren();
-        for (auto *child : previousChildren)
+        if (preserveAddedChildren)
         {
-            scene->RemoveEntity(child);
+            // Separate every inherited node from retained local nodes before
+            // deleting it, including inherited nodes below a local wrapper.
+            for (auto *child : addedChildren)
+                child->SetParent(nullptr);
+            for (auto *entity : existingEntities)
+                if (entity != &instanceRoot) entity->SetParent(nullptr);
+            for (auto *entity : existingEntities)
+                if (entity != &instanceRoot) scene->RemoveEntity(entity);
+        }
+        else
+        {
+            const auto previousChildren = instanceRoot.GetChildren();
+            for (auto *child : previousChildren) scene->RemoveEntity(child);
         }
 
         CopyEntityFields(instanceRoot, *prefabRoot);
@@ -1272,6 +1317,26 @@ namespace PlutoGE::scene
             {
                 previousToUpdatedEntityId[previousEntityId] = updatedEntity->GetID();
             }
+        }
+        // Resolve identities before changing the cloned hierarchy. Parent
+        // overrides refer to scene IDs, so local and nested-prefab IDs cannot
+        // accidentally match a source-prefab ID.
+        if (preserveAddedChildren)
+        {
+            const auto resolveEntity = [&](EntityID previousId) -> Entity *
+            {
+                const auto found = previousToUpdatedEntityId.find(previousId);
+                return scene->FindEntityByID(found == previousToUpdatedEntityId.end() ? previousId : found->second);
+            };
+            std::vector<std::pair<Entity *, Entity *>> parents;
+            for (const auto &[childId, parentId] : parentOverrides)
+                if (auto *child = resolveEntity(childId))
+                    parents.emplace_back(child, resolveEntity(parentId));
+            // Detach first so valid parent/child reversals are not rejected
+            // as cycles against the prefab's original hierarchy.
+            for (const auto &[child, parent] : parents) child->SetParent(nullptr);
+            for (const auto &[child, parent] : parents)
+                child->SetParent(parent ? parent : &instanceRoot);
         }
         RemapScriptEntityReferences(instanceRoot, previousToUpdatedEntityId);
 

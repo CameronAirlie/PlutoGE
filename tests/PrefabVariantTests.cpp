@@ -13,9 +13,14 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <source_location>
 
 using namespace PlutoGE;
-void Require(bool value, const std::string &message) { if (!value) throw std::runtime_error(message); }
+void Require(bool value, const std::string &message,
+             const std::source_location location = std::source_location::current())
+{
+    if (!value) throw std::runtime_error("Line " + std::to_string(location.line()) + ": " + message);
+}
 struct Scratch
 {
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("PlutoGE-variants-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -66,6 +71,98 @@ int main()
         Require(scene::Prefab::RevertInstance(*nested, &error) && nested->GetName() == "Applied" && nested->GetPrefabOverrides().empty(), error);
         auto restored = ui::LoadSceneSnapshot(snapshot, error);
         Require(restored && restored->FindEntityByID(nested->GetID())->GetName() == "Local", "Undo snapshot failed");
+        // Scene reload refreshes prefab instances after deserialization.
+        // Keep local trees under both the root and inherited descendants.
+        {
+            scene::Scene localScene;
+            auto *root = scene::Prefab::Instantiate(localScene, "project://Base.plutoprefab", nullptr, &error);
+            Require(root != nullptr, error);
+            const auto rootId = root->GetID();
+            auto *local = localScene.AddEntity(std::make_unique<scene::Entity>(), root->GetChildren()[0]);
+            const auto localId = local->GetID();
+            local->SetName("Scene child");
+            local->SetPosition({7,8,9});
+            local->CreateComponent<scene::ColliderComponent>()->SetRadius(3);
+            auto *grandchild = localScene.AddEntity(std::make_unique<scene::Entity>(), local);
+            const auto grandchildId = grandchild->GetID();
+            auto *nestedPrefab = scene::Prefab::Instantiate(localScene, "project://Base.plutoprefab", root, &error);
+            Require(nestedPrefab != nullptr, error);
+            const auto nestedId = nestedPrefab->GetID();
+            nestedPrefab->SetName("Local nested prefab"); nestedPrefab->AddPrefabOverride("Name");
+            Require(scene::SceneSerializer::SaveToString(localScene, snapshot, &error), error);
+            for (int reload = 0; reload < 2; ++reload)
+            {
+                auto loaded = scene::SceneSerializer::LoadFromString(snapshot, &error);
+                Require(loaded != nullptr, error);
+                Require(scene::Prefab::UpdateInstances(*loaded, {}, &error) == 1, error);
+                auto *saved = loaded->FindEntityByID(localId);
+                Require(saved && saved->GetName() == "Scene child" && saved->GetPosition().x == 7 &&
+                        saved->GetComponent<scene::ColliderComponent>()->GetRadius() == 3,
+                        "Scene-added child lost its identity or properties on refresh");
+                Require(saved->GetParent()->GetPrefabEntityID() == child->GetID() &&
+                        loaded->FindEntityByID(grandchildId)->GetParent() == saved,
+                        "Scene-added hierarchy was lost on refresh");
+                Require(loaded->FindEntityByID(nestedId)->GetParent() == loaded->FindEntityByID(rootId) &&
+                        loaded->FindEntityByID(nestedId)->GetName() == "Local nested prefab",
+                        "Nested prefab addition was lost on refresh");
+                Require(scene::SceneSerializer::SaveToString(*loaded, snapshot, &error), error);
+                Require(scene::Prefab::RevertInstance(*loaded->FindEntityByID(rootId), &error), error);
+                Require(!loaded->FindEntityByID(localId) && !loaded->FindEntityByID(nestedId),
+                        "Revert did not discard added children");
+            }
+        }
+        {
+            scene::Scene sourceScene;
+            auto *sourceRoot = sourceScene.AddEntity(std::make_unique<scene::Entity>());
+            auto *sourceA = sourceScene.AddEntity(std::make_unique<scene::Entity>(), sourceRoot);
+            auto *sourceB = sourceScene.AddEntity(std::make_unique<scene::Entity>(), sourceA);
+            Require(scene::Prefab::SaveFromEntity(*sourceRoot, assetsPath / "Reparent.plutoprefab", &error), error);
+            for (bool localParent : {false, true})
+            {
+                scene::Scene edited;
+                auto *root = scene::Prefab::Instantiate(edited, "project://Reparent.plutoprefab", nullptr, &error);
+                Require(root != nullptr, error);
+                const auto rootId = root->GetID();
+                auto *a = root->GetChildren()[0];
+                auto *b = a->GetChildren()[0];
+                b->SetParent(root);
+                auto *parent = localParent ? edited.AddEntity(std::make_unique<scene::Entity>(), b) : b;
+                const auto localId = parent->GetID();
+                a->SetParent(parent); // Reverse inherited ancestry, optionally through a local wrapper.
+                a->SetName("Reparented override"); a->AddPrefabOverride("Name");
+                Require(scene::SceneSerializer::SaveToString(edited, snapshot, &error), error);
+                for (int reload = 0; reload < 3; ++reload)
+                {
+                    auto loaded = scene::SceneSerializer::LoadFromString(snapshot, &error);
+                    Require(loaded && scene::Prefab::UpdateInstances(*loaded, {}, &error) == 1, error);
+                    auto *savedRoot = loaded->FindEntityByID(rootId);
+                    scene::Entity *savedA = nullptr, *savedB = nullptr;
+                    int count = 0, countA = 0, countB = 0;
+                    const auto inspect = [&](auto &&self, scene::Entity *entity) -> void
+                    {
+                        ++count;
+                        if (entity->GetPrefabEntityID() == sourceA->GetID()) { savedA = entity; ++countA; }
+                        if (entity->GetPrefabEntityID() == sourceB->GetID()) { savedB = entity; ++countB; }
+                        for (auto *childEntity : entity->GetChildren()) self(self, childEntity);
+                    };
+                    inspect(inspect, savedRoot);
+                    Require(countA == 1 && countB == 1 && count == (localParent ? 4 : 3),
+                            "Reparenting duplicated inherited entities on reload");
+                    auto *savedParent = localParent ? loaded->FindEntityByID(localId) : savedB;
+                    Require(savedA->GetParent() == savedParent && savedB->GetParent() == savedRoot &&
+                            (!localParent || savedParent->GetParent() == savedB),
+                            "Reparented hierarchy reverted on reload");
+                    Require(savedA->GetName() == "Reparented override", "Reparenting lost property overrides");
+                    Require(scene::SceneSerializer::SaveToString(*loaded, snapshot, &error), error);
+                    Require(scene::Prefab::RevertInstance(*savedRoot, &error), error);
+                    Require(savedRoot->GetChildren().size() == 1 &&
+                            savedRoot->GetChildren()[0]->GetPrefabEntityID() == sourceA->GetID() &&
+                            savedRoot->GetChildren()[0]->GetChildren().size() == 1 &&
+                            savedRoot->GetChildren()[0]->GetChildren()[0]->GetPrefabEntityID() == sourceB->GetID(),
+                            "Revert did not restore the source hierarchy");
+                }
+            }
+        }
         std::ofstream(assetsPath / "Cycle.plutoprefab") << "VARIANT\t1\nBASE\t\"project://Cycle.plutoprefab\"\n";
         Require(!scene::Prefab::Instantiate(instances, "project://Cycle.plutoprefab", nullptr, &error) && error.find("cycle") != std::string::npos, "Cycle accepted");
         std::ofstream(assetsPath / "Missing.plutoprefab") << "VARIANT\t1\nBASE\t\"project://Absent.plutoprefab\"\n";

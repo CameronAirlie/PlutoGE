@@ -29,8 +29,8 @@ namespace RenderTextureChecks
 }
 
 // A camera sees red above the horizon and green below. Shown on a material,
-// its render texture must match a screenshot of that view (red rows first)
-// on the same material, proving orientation and colour encoding.
+// its render texture must keep red above green on a quad with v = 1 at
+// the top. Compare against a material-UV reference and check visible sides.
 template <class Device>
 void CheckRenderTextureMaterial(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders)
 {
@@ -72,14 +72,14 @@ void CheckRenderTextureMaterial(Device &device, const PlutoGE::render::BasicRend
     require(static_cast<bool>(renderTexture.GetGpuTexture(device)), "Render texture image was not published");
     require(renderTexture.GetContentRevision() != revisionBefore, "Publishing must invalidate sampling materials");
 
-    // The screenshot: red rows first, like an image decoded from a file.
+    // Material UV space: v = 0 is the bottom (green), v = 1 the top (red).
     std::vector<unsigned char> pixels(size * size * 4);
     for (int y = 0; y < size; ++y)
         for (int x = 0; x < size; ++x)
         {
             auto *pixel = &pixels[(y * size + x) * 4];
-            pixel[0] = y < size / 2 ? 255 : 0;
-            pixel[1] = y < size / 2 ? 0 : 255;
+            pixel[0] = y < size / 2 ? 0 : 255;
+            pixel[1] = y < size / 2 ? 255 : 0;
             pixel[3] = 255;
         }
     RenderTextureChecks::PixelTexture screenshot(size, size, std::move(pixels));
@@ -111,6 +111,11 @@ void CheckRenderTextureMaterial(Device &device, const PlutoGE::render::BasicRend
         return r > 128 && g < 64 ? 'r' : g > 128 && r < 64 ? 'g' : '?';
     };
     std::size_t mismatches = 0, redPixels = 0, greenPixels = 0;
+    // DisplayOutput is bottom-up on both backends, as used by the editor's
+    // flipped display UVs. Assert orientation independently of the reference.
+    require(dominant(actual, (size / 4) * size + size / 2) == 'g' &&
+            dominant(actual, (size * 3 / 4) * size + size / 2) == 'r',
+            "Render texture material shows the camera view upside down");
     for (std::size_t pixel = 0; pixel < static_cast<std::size_t>(size * size); ++pixel)
     {
         const char want = dominant(expected, pixel);

@@ -131,8 +131,11 @@ namespace PlutoGE::render
                 return false;
 
             commands.BeginGpuScope("Render texture resolve");
+            // DisplayOutput already stores the view in material UV space
+            // (v = 1 is the top). SV_Position addresses texels directly on
+            // both backends; flipping Vulkan here inverted material images.
             const std::array<float, 4> parameters{
-                device.GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f,
+                0.0f, 0.0f,
                 1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height)};
             device.UpdateBuffer(m_parameters.Get(), 0,
                                 {reinterpret_cast<const std::byte *>(parameters.data()), sizeof(parameters)});

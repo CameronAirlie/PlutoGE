@@ -67,7 +67,8 @@ namespace PlutoGE::scene
                                        const Entity &source,
                                        Entity *parent = nullptr,
                                        bool preservePrefabLink = true);
-        static bool UpdateInstance(Entity &instanceRoot, std::string *errorMessage = nullptr);
+        static bool UpdateInstance(Entity &instanceRoot, std::string *errorMessage = nullptr,
+                                   bool preserveAddedChildren = true);
         static int UpdateInstances(Scene &scene,
                                    std::string_view prefabReference = {},
                                    std::string *errorMessage = nullptr);

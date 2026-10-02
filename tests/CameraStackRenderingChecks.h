@@ -3,10 +3,13 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
-#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include <array>
+#include <optional>
+#include <span>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -130,4 +133,58 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     require(std::abs(channel(shadowed, outside, 1) - channel(lit, outside, 1)) <= 3,
             "World shadow changed pixels outside its footprint");
     std::cout << "Overlay receives shadows from hidden world casters" << std::endl;
+}
+
+// A view given its own light list must ignore every other scene light: the
+// surface is lit by the scene's point light only when that light is supplied.
+template <class Device>
+void CheckCameraLightFiltering(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders)
+{
+    using namespace PlutoGE;
+    using namespace PlutoGE::render;
+    const auto require = [](bool ok, const std::string &message) {
+        if (!ok)
+            throw std::runtime_error(message);
+    };
+    MeshConfig config;
+    for (const auto &corner : std::array<std::array<float, 2>, 6>{{{-1, -1}, {1, -1}, {1, 1}, {-1, -1}, {1, 1}, {-1, 1}}})
+        config.data.vertices.push_back({{corner[0], corner[1], 0.5f}, {0, 0, 1}, {0, 0}, {1, 0, 0, 1}});
+    for (std::uint32_t index = 0; index < 6; ++index)
+        config.data.indices.push_back(index);
+    auto surface = std::make_unique<Mesh>(config);
+    Material white({.color = {1, 1, 1, 1}});
+    const std::array commands{RenderCommand{.material = &white, .mesh = surface.get()}};
+    const CameraData camera{.view = glm::mat4(1), .projection = glm::mat4(1)};
+
+    scene::Scene scene;
+    auto *lamp = scene.AddEntity(std::make_unique<scene::Entity>());
+    lamp->SetPosition({0, 0, 1.5f});
+    auto *light = lamp->CreateComponent<scene::LightComponent>();
+    light->SetLightType(scene::LightType::Point);
+    light->SetIntensity(40.0f);
+    light->Update(0.0f);
+    require(scene.GetLights().size() == 1, "Light filtering fixture needs one scene light");
+
+    constexpr std::uint32_t size = 32;
+    RhiSceneRenderer renderer;
+    require(renderer.Initialize(device, shaders), "Light filtering renderer initialization failed");
+    const auto brightness = [&](std::optional<std::span<scene::Light *const>> lights) {
+        const auto lighting = lights ? BuildSceneLighting(camera, &scene, *lights) : BuildSceneLighting(camera, &scene);
+        require(renderer.Render(size, size, camera, lighting, commands, commands, {}, {}, {},
+                                PostProcessDebugView::None, true, &scene, lights),
+                "Light filtering render failed");
+        const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+        const auto centre = (size / 2 * size + size / 2) * 4;
+        return std::to_integer<int>(pixels[centre]) + std::to_integer<int>(pixels[centre + 1]) +
+               std::to_integer<int>(pixels[centre + 2]);
+    };
+    const int allLights = brightness(std::nullopt);
+    const auto sceneLights = scene.GetLights();
+    const int suppliedLight = brightness(std::span<scene::Light *const>(sceneLights));
+    const int noLights = brightness(std::span<scene::Light *const>{});
+    require(allLights > 60, "The scene light did not illuminate the reference view: " + std::to_string(allLights));
+    require(std::abs(suppliedLight - allLights) <= 3, "Supplying the scene's own light changed the result");
+    require(noLights < allLights / 4, "A view without lights was still lit by the scene: " + std::to_string(noLights) +
+                                          " vs " + std::to_string(allLights));
+    std::cout << "Camera light filtering: lit " << allLights << ", filtered out " << noLights << std::endl;
 }

@@ -7,6 +7,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -14,6 +15,7 @@
 namespace PlutoGE::scene
 {
     class Scene;
+    struct Light;
     struct ParticleCpuData;
 }
 
@@ -167,7 +169,9 @@ namespace PlutoGE::render
                     std::span<const BasicPostProcessEffect> atmosphereEffects = {},
                     const TexturePixelReader &texturePixelReader = {},
                     PostProcessDebugView debugView = PostProcessDebugView::None, bool submit = true,
-                    const scene::Scene *scene = nullptr);
+                    const scene::Scene *scene = nullptr,
+                    // When set, only these lights illuminate the view instead of every scene light.
+                    std::optional<std::span<scene::Light *const>> lights = std::nullopt);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept;

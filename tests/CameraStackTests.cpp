@@ -2,12 +2,14 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/render/RenderTexture.h"
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <array>
 #include <filesystem>
@@ -283,6 +285,46 @@ void TextureCameras()
             "Texture cameras must render even when no camera draws to the screen");
 }
 
+void LightsFollowTagFilter()
+{
+    Scene scene;
+    auto *weapon = scene.AddEntity(std::make_unique<Entity>());
+    weapon->AddTag("Weapon");
+    auto *weaponLamp = scene.AddEntity(std::make_unique<Entity>(), weapon);
+    auto *weaponLight = weaponLamp->CreateComponent<LightComponent>();
+    auto *world = scene.AddEntity(std::make_unique<Entity>());
+    world->CreateComponent<LightComponent>();
+    auto *sun = scene.AddEntity(std::make_unique<Entity>())->CreateComponent<LightComponent>();
+    sun->SetLightType(LightType::Directional);
+    sun->SetIntensity(3.0f);
+    AddCamera(scene, CameraRenderType::Base);
+    auto *overlay = AddCamera(scene, CameraRenderType::Overlay);
+    overlay->SetTagFilter(CameraTagFilter({"Weapon"}, {}));
+    const std::array commands{render::RenderCommand{.ownerEntity = world->GetID()},
+                              render::RenderCommand{.ownerEntity = weapon->GetID()}};
+    const auto stack = ResolveCameraStack(scene);
+
+    CameraOverlayLayerBuilder builder;
+    auto layer = builder.Build(scene, stack.overlays, commands, 64, 64).front();
+    Require(!layer.lights && layer.shadowCommands.size() == 2,
+            "By default overlays use every scene light and receive world shadows");
+
+    overlay->SetFilterLightsByTags(true);
+    layer = builder.Build(scene, stack.overlays, commands, 64, 64).front();
+    Require(layer.lights && layer.lights->size() == 1 && (*layer.lights)[0] == &weaponLight->GetLight(),
+            "Tag-filtered lighting must keep only lights on tagged entities (inherited by children)");
+    Require(layer.shadowCommands.size() == 1 && &layer.shadowCommands[0] == &commands[1],
+            "Tag-filtered lighting must limit shadow casters to the camera's own geometry");
+    Require(render::BuildSceneLighting(layer.cameraData, &scene, *layer.lights).directionalIntensity == 0.0f &&
+                render::BuildSceneLighting(layer.cameraData, &scene).directionalIntensity > 0.0f,
+            "An untagged sun must not light a tag-filtered camera");
+
+    Scene restoredScene;
+    auto *restored = AddCamera(restoredScene, CameraRenderType::Overlay);
+    restored->Deserialize(overlay->Serialize());
+    Require(restored->FiltersLightsByTags(), "Tag-filtered lighting must round-trip");
+}
+
 int main()
 {
     try
@@ -295,6 +337,7 @@ int main()
         Serialization();
         RenderTextureAssets();
         TextureCameras();
+        LightsFollowTagFilter();
         std::cout << "PASS: camera stack resolution, tag filtering, overlay layers and serialization\n";
         return 0;
     }

@@ -27,6 +27,7 @@ both.
 | OverlayOrder | Overlays are drawn in ascending order, so higher values appear on top. Overlays with the same value are drawn in hierarchy order. |
 | RenderTags | Comma-separated. If set, the camera renders only entities that have one of these tags or have an ancestor with one. |
 | IgnoredTags | Comma-separated. The camera never renders entities that have one of these tags or have an ancestor with one. This takes precedence over RenderTags. |
+| FilterLightsByTags | Off by default. When on, RenderTags and IgnoredTags also choose which lights illuminate this camera, and only the camera's own tagged geometry casts shadows onto it. |
 
 The base camera is the enabled **Main Camera** with RenderType Base. If no
 base camera is marked as main, the first one in the hierarchy is used. Overlay
@@ -40,10 +41,19 @@ the main camera therefore casts no shadows into the world.
 
 ## Lighting and post-processing
 
-Overlays use the scene's lights. When the scene uses virtual shadow maps,
-overlays use cascaded shadows instead, so the weapon shadows itself but does
-not receive shadows from world geometry. Oceans, particle systems and the sky
-are left to the base camera.
+By default, overlays use all of the scene's lights and receive shadows from
+world geometry, even though that geometry isn't drawn on the overlay. When the
+scene uses virtual shadow maps, overlays use cascaded shadows instead. Oceans,
+particle systems and the sky are left to the base camera.
+
+To light an overlay separately, turn on **FilterLightsByTags**. The overlay is
+then lit only by lights on entities its tags accept, including the sun, and
+shadowed only by its own tagged geometry. For example, give a weapon camera
+RenderTags `Weapon` and add a light under the weapon (or tag a light
+`Weapon`) so the weapon looks the same in a dark corridor or bright sunlight.
+World lights and shadows then no longer affect the weapon. Sky lighting still
+applies to render-texture cameras, which draw the sky. The same setting works
+for render-texture cameras.
 
 Each overlay runs its own post-process chain. An overlay has no background, so
 **AutoExposure**, **TAA** and **MotionBlur** are skipped on overlays. Give

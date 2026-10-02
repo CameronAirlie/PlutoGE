@@ -98,7 +98,8 @@ namespace PlutoGE::render
             if (!renderer)
                 return false;
             const auto &layer = overlays[index];
-            auto lighting = BuildSceneLighting(layer.cameraData, scene);
+            auto lighting = layer.lights ? BuildSceneLighting(layer.cameraData, scene, *layer.lights)
+                                         : BuildSceneLighting(layer.cameraData, scene);
             if (lighting.shadowMethod == ShadowMethod::Virtual)
                 lighting.shadowMethod = ShadowMethod::Cascaded;
             // The last overlay stays recording; the composite is appended to it.
@@ -106,7 +107,7 @@ namespace PlutoGE::render
             const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;
             if (!renderer->Render(width, height, layer.cameraData, lighting, layer.commands, shadowCommands,
                                   layer.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
-                                  !lastOverlay, scene))
+                                  !lastOverlay, scene, layer.lights))
                 return false;
             renderers.push_back(renderer);
         }

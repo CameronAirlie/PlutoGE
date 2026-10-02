@@ -304,6 +304,7 @@ namespace PlutoGE::scene
         properties.push_back({"IgnoredTags", scene::PropertyType::String, CameraTagFilter::FormatTagList(m_tagFilter.GetExcludedTags())});
         properties.push_back({"TargetTexture", scene::PropertyType::String, m_targetTextureReference});
         properties.push_back({"TransparentBackground", scene::PropertyType::Bool, m_transparentBackground ? "true" : "false"});
+        properties.push_back({"FilterLightsByTags", scene::PropertyType::Bool, m_filterLightsByTags ? "true" : "false"});
 
         properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
 
@@ -395,6 +396,10 @@ namespace PlutoGE::scene
             else if (property.name == "TransparentBackground")
             {
                 m_transparentBackground = property.value == "true";
+            }
+            else if (property.name == "FilterLightsByTags")
+            {
+                m_filterLightsByTags = property.value == "true";
             }
             else if (property.name == "TargetTexture")
             {

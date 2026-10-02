@@ -100,23 +100,29 @@ namespace PlutoGE::render
 
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene)
     {
+        const auto lights = scene ? scene->GetLights() : std::vector<scene::Light *>{};
+        return BuildSceneLighting(cameraData, scene, lights);
+    }
+
+    BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene,
+                                     std::span<scene::Light *const> lights)
+    {
         render::BasicLighting lighting;
         lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         lighting.view = cameraData.view;
         lighting.ambientIntensity = 0.0f;
         lighting.directionalIntensity = 0.0f;
         lighting.directionalDirection = -glm::normalize(glm::vec3(0.25f, 0.8f, 0.4f));
-        if (scene)
-            for (const auto *light : scene->GetLights())
-                if (light && light->type == scene::LightType::Directional)
-                {
-                    lighting.directionalDirection = light->direction;
-                    lighting.directionalColor = light->color;
-                    lighting.directionalIntensity = light->intensity;
-                    lighting.shadowsEnabled = light->castsShadows;
-                    scene::ApplyDirectionalShadowSettings(lighting, light->directionalShadowSettings);
-                    break;
-                }
+        for (const auto *light : lights)
+            if (light && light->type == scene::LightType::Directional)
+            {
+                lighting.directionalDirection = light->direction;
+                lighting.directionalColor = light->color;
+                lighting.directionalIntensity = light->intensity;
+                lighting.shadowsEnabled = light->castsShadows;
+                scene::ApplyDirectionalShadowSettings(lighting, light->directionalShadowSettings);
+                break;
+            }
 
         if (const auto *sky = FindPhysicalSky(scene); sky && lighting.directionalIntensity > 0.0f)
         {

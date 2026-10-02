@@ -124,12 +124,14 @@ namespace PlutoGE::render
                     return false;
             }
 
-            const auto lighting = BuildSceneLighting(view.view.cameraData, scene);
+            const auto lighting = view.view.lights ? BuildSceneLighting(view.view.cameraData, scene, *view.view.lights)
+                                                   : BuildSceneLighting(view.view.cameraData, scene);
             const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
             if (!target->renderer->Render(width, height, view.view.cameraData, lighting, view.view.commands,
                                           view.view.shadowCommands.empty() ? view.view.commands : view.view.shadowCommands,
                                           view.view.postProcessEffects, atmosphere,
-                                          texturePixelReader, PostProcessDebugView::None, false, scene))
+                                          texturePixelReader, PostProcessDebugView::None, false, scene,
+                                          view.view.lights))
                 return false;
 
             commands.BeginGpuScope("Render texture resolve");

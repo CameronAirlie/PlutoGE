@@ -239,8 +239,15 @@ namespace PlutoGE::render
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
                                   const TexturePixelReader &texturePixelReader, PostProcessDebugView debugView,
-                                  bool submit, const scene::Scene *scene)
+                                  bool submit, const scene::Scene *scene,
+                                  std::optional<std::span<scene::Light *const>> lights)
     {
+        // A tag-filtered view supplies its own lights; otherwise every scene light applies.
+        std::vector<scene::Light *> allSceneLights;
+        if (!lights && scene)
+            allSceneLights = scene->GetLights();
+        const std::span<scene::Light *const> sceneLights = lights ? *lights : std::span<scene::Light *const>(allSceneLights);
+        const bool hasSceneLights = scene || lights;
         core::CpuScope renderScope("RHI.Scene", core::CpuCategory::Rendering);
         core::CpuScope translationScope("Command translation", core::CpuCategory::Rendering);
         const auto totalStart = std::chrono::steady_clock::now();
@@ -486,8 +493,8 @@ namespace PlutoGE::render
             return entry;
         };
 
-        const bool localShadows = scene
-            ? std::ranges::any_of(scene->GetLights(), [](const auto *light) {
+        const bool localShadows = hasSceneLights
+            ? std::ranges::any_of(sceneLights, [](const auto *light) {
                 return light && light->type != scene::LightType::Directional && light->castsShadows;
             })
             : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
@@ -847,11 +854,11 @@ namespace PlutoGE::render
         // element edits below.
         const glm::mat4 unjitteredProjection = projection;
         BasicLighting effectiveLighting = lighting;
-        if (scene)
+        if (hasSceneLights)
         {
             effectiveLighting.pointLights.clear();
             effectiveLighting.spotLights.clear();
-            for (const auto *light : scene->GetLights())
+            for (const auto *light : sceneLights)
             {
                 if (!light || light->intensity <= 0 || light->GetRange() <= 0) continue;
                 const BasicPointLight local{light->position, light->GetRange(), light->color,
@@ -1192,7 +1199,7 @@ namespace PlutoGE::render
                 v[8].x = system->GetVolumeSelfShadow();
                 std::vector<const scene::Light *> smokeLights;
                 if (system->GetSmokeLightingEnabled())
-                    for (const auto *light : scene->GetLights())
+                    for (const auto *light : sceneLights)
                         if (light && light->type != scene::LightType::Directional && light->GetRange() > 0 && light->intensity > 0)
                             smokeLights.push_back(light);
                 const auto emitterPosition = system->GetOwner()->GetWorldPosition();

@@ -18,6 +18,7 @@ namespace PlutoGE::scene
 {
     class CameraComponent;
     class CameraTagFilter;
+    struct Light;
     class Scene;
 
     // The cameras that produce one frame: a base camera plus the overlay
@@ -60,6 +61,7 @@ namespace PlutoGE::scene
     {
         CameraCommandFilter filter;
         std::vector<render::IPostProcessEffect *> postProcessEffects;
+        std::vector<Light *> lights;
     };
 
     // Translates a stack's overlay cameras into render layers for one frame.

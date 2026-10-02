@@ -2465,11 +2465,17 @@ namespace PlutoGE::scene
 
     std::vector<Light *> Scene::GetLights() const
     {
+        return GetLights([](const Entity &) { return true; });
+    }
+
+    std::vector<Light *> Scene::GetLights(const std::function<bool(const Entity &)> &include) const
+    {
         RefreshEnvironmentComponents();
         std::vector<Light *> lights;
         lights.reserve(m_environmentLights.size());
         for (auto *component : m_environmentLights)
-            if (component->IsEnabled() && component->GetOwner() && component->GetOwner()->IsActiveInHierarchy())
+            if (component->IsEnabled() && component->GetOwner() && component->GetOwner()->IsActiveInHierarchy() &&
+                include(*component->GetOwner()))
                 lights.push_back(&component->GetLight());
         return lights;
     }

@@ -2,7 +2,13 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
+#include <optional>
 #include <span>
+
+namespace PlutoGE::scene
+{
+    struct Light;
+}
 
 namespace PlutoGE::render
 {
@@ -21,5 +27,8 @@ namespace PlutoGE::render
         // Render textures only: pixels without geometry stay transparent
         // (premultiplied alpha), so the subject can be shown as a cutout.
         bool transparentBackground = false;
+        // When set, only these lights illuminate the view (sun, point and spot);
+        // otherwise every scene light does. Sky and atmosphere still apply.
+        std::optional<std::span<scene::Light *const>> lights;
     };
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include <algorithm>
 #include <cstdint>
@@ -197,6 +199,8 @@ namespace PlutoGE::scene
                            float fadeDuration = 0.0f);
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
+        // Active lights whose owning entity passes `include` (for example a camera tag filter).
+        std::vector<Light *> GetLights(const std::function<bool(const Entity &)> &include) const;
         const std::vector<PhysicalSkyComponent *> &GetPhysicalSkyComponents() const;
         const std::vector<VolumetricCloudComponent *> &GetVolumetricCloudComponents() const;
         void MarkShadowLightsDirty();

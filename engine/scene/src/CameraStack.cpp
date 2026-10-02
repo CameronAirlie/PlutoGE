@@ -38,12 +38,22 @@ namespace PlutoGE::scene
             for (const auto &effect : camera.GetPostProcessEffects())
                 if (effect && (!overlay || SupportsOverlay(*effect)))
                     storage.postProcessEffects.push_back(effect.get());
-            return {
+            render::CameraView view{
                 .cameraData = camera.GetCameraData(width, height),
                 .commands = storage.filter.Apply(scene, camera.GetTagFilter(), commands),
                 .postProcessEffects = storage.postProcessEffects,
                 .shadowCommands = commands,
             };
+            // Tag-filtered lighting: the camera's tags also select its lights,
+            // and only its own (tagged) geometry casts shadows onto it.
+            if (camera.FiltersLightsByTags())
+            {
+                const auto &filter = camera.GetTagFilter();
+                storage.lights = scene.GetLights([&filter](const Entity &owner) { return filter.Accepts(&owner); });
+                view.lights = std::span<Light *const>(storage.lights);
+                view.shadowCommands = view.commands;
+            }
+            return view;
         }
     }
 

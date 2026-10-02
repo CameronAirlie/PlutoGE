@@ -205,6 +205,7 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--camera-stack")
         {
             CheckCameraStackComposite(device, shaders);
+            CheckCameraLightFiltering(device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--render-texture")

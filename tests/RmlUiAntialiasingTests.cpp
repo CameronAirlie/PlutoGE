@@ -4,6 +4,11 @@
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/ScenePortrait.h"
+#include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/RenderTexture.h"
+#include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Scene.h"
@@ -400,8 +405,117 @@ body { margin: 0; width: 100%; height: 100%; font-family: Martian Mono; font-siz
     }
     std::cout<<"Native border partial-coverage pixels: "<<aliased<<" -> "<<smooth<<"; resize, clipping, transparency and shared submission passed.\n";
 }
+// An <img> of a render texture must look exactly like a screenshot of its
+// camera's on-screen view: same orientation and the same display colour.
+template<class Reader>
+void CheckRenderTextureImage(vulkan::VulkanDevice& device, Reader read)
+{
+    constexpr int size = 32;
+    const auto makeMesh = [](float bottom, float top) {
+        MeshConfig config;
+        for (const auto& corner : std::array<std::array<float,2>,6>{{{-10,bottom},{10,bottom},{10,top},{-10,bottom},{10,top},{-10,top}}})
+            config.data.vertices.push_back({{corner[0], corner[1], -5}, {0, 0, 1}, {0, 0}, {1, 0, 0, 1}});
+        for (std::uint32_t index = 0; index < 6; ++index) config.data.indices.push_back(index);
+        return std::make_unique<Mesh>(config);
+    };
+    // Red sky over mid-grey ground: grey exposes any sRGB encoding mismatch.
+    auto sky = makeMesh(0, 10), ground = makeMesh(-10, 0);
+    Material red({.color = {0, 0, 0, 1}, .emission = {1, 0, 0}});
+    Material grey({.color = {0, 0, 0, 1}, .emission = {.5f, .5f, .5f}});
+    const std::array world{RenderCommand{.material = &red, .mesh = sky.get()}, RenderCommand{.material = &grey, .mesh = ground.get()}};
+    const auto camera = Camera(CameraConfig{.fovY = 90.f}).GetCameraDataForTransform(glm::mat4(1), size, size);
+    BasicLighting lighting; lighting.ambientIntensity = lighting.directionalIntensity = 0;
+
+    RenderTexture monitor("Monitor.plutorendertexture", {.width = size, .height = size});
+    RhiRenderTextureRenderer textures;
+    const std::array views{RenderTextureView{&monitor, {.cameraData = camera, .commands = world}}};
+    Require(textures.Render(device, views, {}, nullptr), "Render texture pass failed");
+
+    // The screenshot: the camera's display output as the swapchain presents it.
+    RhiSceneRenderer direct;
+    Require(direct.Initialize(device, ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).LoadBasicRendererPackage()) &&
+            direct.Render(size, size, camera, lighting, world, world), "Reference render failed");
+    const auto display = device.ReadTextureRgba8(direct.GetColorTexture());
+    const auto shotPath = (std::filesystem::temp_directory_path() / "PlutoGE-render-texture-shot.tga").string();
+    {
+        std::ofstream tga(shotPath, std::ios::binary);
+        const unsigned char header[18]{0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, size, 0, size, 0, 32, 8 | 32};
+        tga.write(reinterpret_cast<const char*>(header), sizeof(header));
+        for (int row = 0; row < size; ++row)
+        {
+            // Vulkan presents the display output flipped: its last row is the top.
+            const int source = size - 1 - row;
+            for (int x = 0; x < size; ++x)
+            {
+                const auto* pixel = &display[(source * size + x) * 4];
+                const char bgra[4]{char(pixel[2]), char(pixel[1]), char(pixel[0]), char(255)};
+                tga.write(bgra, 4);
+            }
+        }
+    }
+
+    struct TestLog final : Rml::SystemInterface {
+        bool LogMessage(Rml::Log::Type, const Rml::String& message) override { std::cerr << message << '\n'; return true; }
+    } log;
+    Rml::SetSystemInterface(&log);
+    RmlUiRhiRenderer ui(device, ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).Load("RmlUi","vertex"),
+                        ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).Load("RmlUi","fragment"));
+    ui.SetRenderTextureResolver([&](const std::string& source) {
+        return RenderTexture::IsAssetPath(source) ? &monitor : nullptr; });
+    ui.SetAntialiasingEnabled(false);
+    Rml::SetRenderInterface(&ui);
+    Require(Rml::Initialise(), "RmlUi initialization failed");
+    struct RmlScope { ~RmlScope() { Rml::Shutdown(); Rml::SetRenderInterface(nullptr); Rml::SetSystemInterface(nullptr); } } scope;
+    auto* context = Rml::CreateContext("RenderTexture", {size * 2, size});
+    const std::string document = R"(<rml><head><style>body { margin: 0; } img { position: absolute; top: 0; width: 32px; height: 32px; }</style></head><body>
+<img id="live" style="left: 0;" src="UI/Monitor.plutorendertexture"/><img id="shot" style="left: 32px;" src=")" + shotPath + R"("/></body></rml>)";
+    auto* doc = context->LoadDocumentFromMemory(document);
+    Require(doc != nullptr, "Render texture document failed to load");
+    doc->Show(); context->Update(); ui.SetViewport(size * 2, size);
+
+    rhi::Texture target(device, device.CreateTexture({size * 2, size, Format::R8G8B8A8Unorm, TextureUsage::ColorAttachment, "UI render texture test", true, 1, false, 1}));
+    auto& commands = device.GetImmediateContext();
+    commands.BeginFrame("UI render texture test");
+    RenderingInfo clear; clear.colorAttachments = {target.Get()}; clear.width = size * 2; clear.height = size; clear.clearDepth = false;
+    commands.BeginRendering(clear); commands.EndRendering();
+    ui.BeginFrame(target.Get(), false); context->Render(); ui.EndFrame(false);
+    commands.Submit();
+    const auto pixels = read(target.Get(), size * 2, size);
+
+    int mismatches = 0, redPixels = 0, greyPixels = 0;
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x)
+        {
+            const auto* live = &pixels[(y * size * 2 + x) * 4];
+            const auto* shot = &pixels[(y * size * 2 + x + size) * 4];
+            for (int c = 0; c < 3; ++c)
+                if (std::abs(std::to_integer<int>(live[c]) - std::to_integer<int>(shot[c])) > 2) { ++mismatches; break; }
+            const int r = std::to_integer<int>(shot[0]), g = std::to_integer<int>(shot[1]);
+            redPixels += r > 200 && g < 30;
+            greyPixels += g > 60 && std::abs(r - g) < 4;
+        }
+    Require(redPixels > size * size / 3 && greyPixels > size * size / 3, "Screenshot did not show both halves");
+    // Allow the horizon row to differ by filtering.
+    const auto sample = [&](int x, int y) {
+        const auto* pixel = &pixels[(y * size * 2 + x) * 4];
+        return "(" + std::to_string(std::to_integer<int>(pixel[0])) + "," + std::to_string(std::to_integer<int>(pixel[1])) + "," +
+               std::to_string(std::to_integer<int>(pixel[2])) + ")";
+    };
+    Require(mismatches <= size * 2, ("Render texture image differs from its screenshot in " + std::to_string(mismatches) +
+        " pixels; first row live " + sample(4, 2) + " shot " + sample(size + 4, 2) + ", last row live " +
+        sample(4, size - 3) + " shot " + sample(size + 4, size - 3)).c_str());
+    std::filesystem::remove(shotPath);
+    std::cout << "UI render texture image matched its screenshot (" << mismatches << " horizon pixels differ)\n";
+}
+
 int main(int argc,char** argv) try
 {
+    if(argc>1 && std::string_view(argv[1])=="--render-texture")
+    {
+        vulkan::VulkanDevice device;
+        CheckRenderTextureImage(device,[&](TextureHandle texture,int,int) {return device.ReadTextureRgba8(texture);});
+        return 0;
+    }
     if(argc>1 && std::string_view(argv[1])=="--opengl")
     {
         platform::Window window;

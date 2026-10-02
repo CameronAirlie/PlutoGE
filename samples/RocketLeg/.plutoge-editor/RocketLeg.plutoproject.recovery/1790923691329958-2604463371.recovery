@@ -1,3 +1,4 @@
+PLUTORECOVERY1 1790923691329958 59059 2870519687772301308 "C:\\Users\\Cameron.Airlie\\dev\\PlutoGE\\samples\\RocketLeg\\Assets\\Scenes\\Main.plutoscene"
 SCENE	1
 ENTITY	1	0	1	Arena Floor	0.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	70.000000,0.500000,42.000000
 TAGS	1	1	ground
@@ -1344,18 +1345,18 @@ PROPERTY	PostProcessEffects.10.Enabled	4	true	0
 PROPERTY	PostProcessEffects.10.Params.Enable SSGI	4	true	0
 PROPERTY	PostProcessEffects.10.Params.Indirect Debug View	6	0	5	None	LPV Only	SSGI Only	Combined Indirect	RSM Only
 END_COMPONENT
-ENTITY	209	0	1	ArenaTV	0.000000,17.891432,-19.821785	21.019314,0.000000,0.000000	16.426798,16.426794,16.426794
+ENTITY	209	0	1	ArenaTV	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	209	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/plane	0
-PROPERTY	ModelObjectId	2	1	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/plane	0
+PROPERTY	ModelAssetId	2		0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/TV.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	engine://builtin/material/default-shaded	0
 END_COMPONENT

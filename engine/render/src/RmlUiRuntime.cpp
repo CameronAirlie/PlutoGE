@@ -5,6 +5,7 @@
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/RmlLoadingDocument.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/ScenePortrait.h"
@@ -566,6 +567,11 @@ namespace PlutoGE::render
             const ShaderArtifactLibrary shaders;
             m_rhiRenderer = std::make_unique<RmlUiRhiRenderer>(
                 *rhiDevice, shaders.Load("RmlUi", "vertex"), shaders.Load("RmlUi", "fragment"));
+            // <img src> and image decorators accept render texture assets; the
+            // texture manager returns the instance cameras render into.
+            m_rhiRenderer->SetRenderTextureResolver([](const std::string &source) {
+                return dynamic_cast<RenderTexture *>(Texture::LoadFromFile(source.c_str()));
+            });
         }
         else
         {

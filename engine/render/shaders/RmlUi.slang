@@ -21,8 +21,15 @@ cbuffer RmlUiParameters : register(b0, space0)
     float maskMode;
     float2 inverseSize;
     float flipTextureY;
-    float padding;
+    float encodeSrgb;
 };
+
+float3 linearToSrgb(float3 value)
+{
+    const float3 low = value * 12.92;
+    const float3 high = 1.055 * pow(value, 1.0 / 2.4) - 0.055;
+    return select(value <= 0.0031308, low, high);
+}
 
 [[vk::binding(0, 1)]] Sampler2D sourceTexture : register(t0, space1);
 
@@ -49,5 +56,9 @@ float4 fragmentMain(VertexOutput input) : SV_Target0
     float coverage = (maskMode == 2.0 || maskMode == 4.0)
         ? clipTexture.Sample(input.position.xy * inverseSize).r : 1.0;
     if (maskMode == 2.0) return float4(coverage); // Intersection.
-    return input.color * sourceTexture.Sample(input.uv) * coverage;
+    float4 source = sourceTexture.Sample(input.uv);
+    // Render textures hold display colour in an sRGB image; sampling decoded
+    // it, so encode again to match how the camera looks on screen.
+    if (encodeSrgb > 0.5) source.rgb = linearToSrgb(saturate(source.rgb));
+    return input.color * source * coverage;
 }

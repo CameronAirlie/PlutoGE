@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
+#include "PlutoGE/render/RenderTexture.h"
 
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/FileInterface.h>
@@ -57,6 +58,8 @@ namespace PlutoGE::render
     {
         rhi::Texture resource;
         std::shared_ptr<ExternalTexture> external;
+        RenderTexture *renderTexture = nullptr;
+        std::weak_ptr<const void> renderTextureLifetime;
     };
 
     struct alignas(16) RmlUiRhiRenderer::Parameters
@@ -67,7 +70,8 @@ namespace PlutoGE::render
         float maskMode = 0.0f;
         float inverseSize[2]{};
         float flipTextureY = 0;
-        float padding = 0;
+        // Render textures store display colour in an sRGB image; re-encode on sampling.
+        float encodeSrgb = 0;
     };
 
     RmlUiRhiRenderer::RmlUiRhiRenderer(
@@ -134,6 +138,7 @@ namespace PlutoGE::render
             commands.BeginFrame("Runtime UI");
         m_outputTarget = target;
         m_renderScale = 1;
+        PrepareRenderTextures();
         // Bound the allocation at very large display sizes. Target reuse avoids
         // allocating UI textures every frame; the device retires resized targets.
         if (m_antialiasingEnabled && m_compositeVertices && m_width <= 4096 && m_height <= 4096)
@@ -259,7 +264,7 @@ namespace PlutoGE::render
             return;
         auto *geometry = reinterpret_cast<Geometry *>(handle);
         auto *texture = textureHandle ? reinterpret_cast<Texture *>(textureHandle) : m_whiteTexture.get();
-        const auto resource = texture->external ? texture->external->resource.Get() : texture->resource.Get();
+        const auto resource = ResolveTexture(*texture);
         if (!resource)
             return;
         Parameters parameters{
@@ -268,7 +273,11 @@ namespace PlutoGE::render
             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? -1.0f : 1.0f,
             0.0f};
         parameters.maskMode = m_maskMode != 0 ? m_maskMode : (m_clipEnabled && m_clipValid ? 4.0f : 0.0f);
-        parameters.flipTextureY = texture->external && texture->external->flipY ? 1.0f : 0.0f;
+        // Render textures, like portraits, store display output bottom-up
+        // (material UVs put v = 1 at the top); RmlUi images are top-down.
+        parameters.flipTextureY =
+            texture->renderTexture || (texture->external && texture->external->flipY) ? 1.0f : 0.0f;
+        parameters.encodeSrgb = texture->renderTexture ? 1.0f : 0.0f;
         parameters.inverseSize[0] = 1.0f / (m_width * m_renderScale);
         parameters.inverseSize[1] = 1.0f / (m_height * m_renderScale);
         auto &parameterBuffer = AcquireParameterBuffer(parameters);
@@ -287,8 +296,45 @@ namespace PlutoGE::render
         delete reinterpret_cast<Geometry *>(geometry);
     }
 
+    rhi::TextureHandle RmlUiRhiRenderer::ResolveTexture(const Texture &texture) const
+    {
+        if (texture.renderTexture)
+            return texture.renderTextureLifetime.expired() ? rhi::TextureHandle{}
+                                                           : texture.renderTexture->GetGpuTexture(*m_device);
+        return texture.external ? texture.external->resource.Get() : texture.resource.Get();
+    }
+
+    void RmlUiRhiRenderer::PrepareRenderTextures()
+    {
+        auto &commands = m_device->GetImmediateContext();
+        bool pipelineBound = false;
+        for (const auto *texture : m_renderTextureImages)
+        {
+            const auto resource = ResolveTexture(*texture);
+            if (!resource)
+                continue;
+            if (!pipelineBound)
+                commands.BindPipeline(m_pipeline.Get());
+            pipelineBound = true;
+            commands.BindTexture(8, resource, m_sampler.Get());
+        }
+    }
+
     Rml::TextureHandle RmlUiRhiRenderer::LoadTexture(Rml::Vector2i &dimensions, const Rml::String &source)
     {
+        if (m_renderTextureResolver && RenderTexture::IsAssetPath(source))
+        {
+            auto *renderTexture = m_renderTextureResolver(source);
+            if (!renderTexture)
+                return {};
+            auto texture = std::make_unique<Texture>();
+            texture->renderTexture = renderTexture;
+            texture->renderTextureLifetime = renderTexture->GetLifetimeToken();
+            // Fixed at load; size elements in RCSS so resizing the asset reflows nothing.
+            dimensions = {renderTexture->GetWidth(), renderTexture->GetHeight()};
+            m_renderTextureImages.insert(texture.get());
+            return reinterpret_cast<Rml::TextureHandle>(texture.release());
+        }
         if (const auto found = m_externalTextures.find(source); found != m_externalTextures.end())
         {
             auto texture = std::make_unique<Texture>();
@@ -347,6 +393,7 @@ namespace PlutoGE::render
 
     void RmlUiRhiRenderer::ReleaseTexture(Rml::TextureHandle texture)
     {
+        m_renderTextureImages.erase(reinterpret_cast<const Texture *>(texture));
         delete reinterpret_cast<Texture *>(texture);
     }
 

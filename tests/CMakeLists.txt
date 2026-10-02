@@ -378,6 +378,7 @@ target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Platform)
 target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests)
 add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests --opengl)
+add_test(NAME PlutoGEVulkanUiRenderTexture COMMAND PlutoGERmlUiAntialiasingTests --render-texture)
 
 if(TARGET PlutoGEEditorUI)
     add_executable(PlutoGEEditorLoadingScreenTests EditorLoadingScreenTests.cpp)

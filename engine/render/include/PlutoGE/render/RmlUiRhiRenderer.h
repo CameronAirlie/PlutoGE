@@ -6,13 +6,17 @@
 #include <RmlUi/Core/Matrix4.h>
 #include <RmlUi/Core/RenderInterface.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 
 namespace PlutoGE::render
 {
+    class RenderTexture;
+
     // Basic RmlUi renderer used by both RHI backends. It intentionally
     // implements RmlUi's core geometry, texture, transform, and scissor
     // and clip-mask contract; advanced layer filters remain on the legacy GL3 renderer.
@@ -28,6 +32,11 @@ namespace PlutoGE::render
         };
         void RegisterExternalTexture(const std::string &source, std::shared_ptr<ExternalTexture> texture);
         void UnregisterExternalTexture(const std::string &source);
+        // Maps an image source naming a render texture asset to its shared
+        // instance. Such images show the texture's latest frame and are drawn
+        // empty until it is first rendered.
+        using RenderTextureResolver = std::function<RenderTexture *(const std::string &source)>;
+        void SetRenderTextureResolver(RenderTextureResolver resolver) { m_renderTextureResolver = std::move(resolver); }
         RmlUiRhiRenderer(rhi::IRenderDevice &device,
                          const rhi::GraphicsPipelineDescriptor::ShaderCode &vertexShader,
                          const rhi::GraphicsPipelineDescriptor::ShaderCode &fragmentShader);
@@ -66,6 +75,10 @@ namespace PlutoGE::render
         struct Parameters;
         rhi::Buffer &AcquireParameterBuffer(const Parameters &parameters);
         void ApplyScissor();
+        [[nodiscard]] rhi::TextureHandle ResolveTexture(const Texture &texture) const;
+        // Render texture images were last written as attachments; transition
+        // them before the UI rendering scope opens.
+        void PrepareRenderTextures();
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
@@ -83,6 +96,8 @@ namespace PlutoGE::render
         bool m_antialiasingEnabled = true;
         std::unique_ptr<Texture> m_whiteTexture;
         std::unordered_map<std::string, std::shared_ptr<ExternalTexture>> m_externalTextures;
+        RenderTextureResolver m_renderTextureResolver;
+        std::unordered_set<const Texture *> m_renderTextureImages;
         std::vector<rhi::Buffer> m_parameterBuffers;
         std::vector<Parameters> m_parameterValues;
         std::size_t m_parameterCursor = 0;

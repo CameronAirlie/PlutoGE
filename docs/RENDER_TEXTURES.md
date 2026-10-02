@@ -34,6 +34,30 @@ in-world screens. This works like Unity's RenderTexture.
   idle. It never takes over the screen.
 - In the editor, render textures update in both the Scene and Game views.
 
+## Showing a render texture in UI
+
+RML documents can show a render texture wherever they can show an image. Give
+the asset's path in `src`, relative to the document like any other image:
+
+```html
+<img id="minimap" src="../Textures/Minimap.plutorendertexture"/>
+```
+
+```css
+#minimap { width: 256px; height: 256px; border-radius: 128px; }
+.monitor { decorator: image(../Textures/Monitor.plutorendertexture); }
+```
+
+- The image updates every frame, and its colours match how the camera looks
+  on screen. It shows nothing until the camera renders its first frame.
+- The camera must still have this asset as its **Target Texture**; the UI
+  only displays the texture.
+- Give the element an explicit size in RCSS. The texture's natural size is
+  read when the document loads, so later changes to **Texture Size** do not
+  resize elements that rely on it.
+- This needs the RHI UI renderer; the legacy OpenGL UI renderer leaves the
+  image blank.
+
 ## Limitations
 
 - Render textures have no mipmaps, so a small, distant screen can shimmer.

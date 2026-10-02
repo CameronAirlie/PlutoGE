@@ -367,8 +367,13 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadRenderTexture(const std::string &assetPath)
     {
-        const std::string cacheKey =
-            std::filesystem::path(assetPath).lexically_normal().generic_string() + "#render";
+        // Materials, cameras and UI documents spell the same asset differently
+        // (normalized asset paths vs. canonical document-relative paths).
+        std::error_code canonicalError;
+        auto canonicalPath = std::filesystem::weakly_canonical(assetPath, canonicalError);
+        if (canonicalError)
+            canonicalPath = std::filesystem::path(assetPath).lexically_normal();
+        const std::string cacheKey = canonicalPath.generic_string() + "#render";
         if (const auto cached = m_textureCache.find(cacheKey); cached != m_textureCache.end())
             return cached->second;
         const auto descriptor = RenderTexture::LoadDescriptor(assetPath);

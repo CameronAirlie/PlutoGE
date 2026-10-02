@@ -3,6 +3,10 @@
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/SceneEnvironment.h"
+#include "PlutoGE/render/RhiOcean.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
@@ -375,10 +379,36 @@ void IgnoredTagsAlwaysExcludeLights()
             "Ignore tags must take precedence over include tags for lights");
 }
 
+void EnvironmentFollowsCameraTags()
+{
+    Scene scene;
+    auto *environment = scene.AddEntity(std::make_unique<Entity>());
+    environment->CreateComponent<PhysicalSkyComponent>();
+    environment->CreateComponent<VolumetricCloudComponent>();
+    auto *water = scene.AddEntity(std::make_unique<Entity>(), environment);
+    water->CreateComponent<OceanComponent>();
+    auto *camera = AddCamera(scene, CameraRenderType::Base);
+    camera->SetTagFilter(CameraTagFilter({"Weapon"}, {"Ignore"}));
+    const auto data = camera->GetCameraData(64, 64);
+    Require(data.tagFilter == &camera->GetTagFilter(), "Camera data must carry environment visibility");
+    const render::BasicLighting lighting;
+    Require(render::BuildSceneAtmosphere(&scene, lighting).size() == 2, "Unfiltered views must retain sky and clouds");
+    Require(render::CollectRhiOceans(scene, lighting).size() == 1, "Unfiltered views must retain oceans");
+    Require(render::BuildSceneAtmosphere(&scene, lighting, data.tagFilter).empty(), "Weapon camera must exclude untagged sky and clouds");
+    Require(render::CollectRhiOceans(scene, lighting, data.tagFilter).empty(), "Weapon camera must exclude untagged oceans");
+    environment->AddTag("Weapon");
+    Require(render::BuildSceneAtmosphere(&scene, lighting, data.tagFilter).size() == 2, "Matching environment must render");
+    Require(render::CollectRhiOceans(scene, lighting, data.tagFilter).size() == 1, "Ocean must inherit matching parent tags");
+    environment->AddTag("Ignore");
+    Require(render::BuildSceneAtmosphere(&scene, lighting, data.tagFilter).empty(), "Excluded environment tags must win");
+    Require(render::CollectRhiOceans(scene, lighting, data.tagFilter).empty(), "Oceans must inherit excluded parent tags");
+}
+
 int main()
 {
     try
     {
+        EnvironmentFollowsCameraTags();
         TagListsParseAndFormat();
         TagFilterInheritsAndExcludes();
         StackResolution();

@@ -8,6 +8,7 @@
 namespace PlutoGE::scene
 {
     class CameraComponent;
+    class CameraTagFilter;
 }
 
 namespace PlutoGE::render
@@ -20,6 +21,8 @@ namespace PlutoGE::render
         glm::mat4 projection; // Projection matrix
         float nearPlane = 0.1f;
         float farPlane = 100.0f;
+        // Borrowed from the camera component for the lifetime of this view.
+        const scene::CameraTagFilter *tagFilter = nullptr;
     };
 
     struct CameraConfig

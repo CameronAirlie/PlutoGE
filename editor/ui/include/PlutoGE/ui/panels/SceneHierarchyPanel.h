@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <unordered_set>
 
 namespace PlutoGE::scene
 {
@@ -64,5 +66,9 @@ namespace PlutoGE::ui
         bool m_groupSelectionRequested = false;
         bool m_focusRenameInput = false;
         std::array<char, 256> m_renameBuffer{};
+        std::array<char, 256> m_searchBuffer{};
+        std::string m_componentFilter;
+        std::unordered_set<std::uint32_t> m_filteredEntityIds;
+        bool m_filterActive = false;
     };
 }

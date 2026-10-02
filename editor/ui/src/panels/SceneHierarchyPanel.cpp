@@ -18,6 +18,7 @@
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/HierarchyTransforms.h"
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <set>
 
 namespace PlutoGE::ui
 {
@@ -163,7 +165,7 @@ namespace PlutoGE::ui
 
     void SceneHierarchyPanel::RenderEntityNode(scene::Entity *entity)
     {
-        if (!entity)
+        if (!entity || (m_filterActive && !m_filteredEntityIds.contains(entity->GetID())))
         {
             return;
         }
@@ -182,6 +184,7 @@ namespace PlutoGE::ui
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
 
+        if (m_filterActive) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         ImGui::PushID(static_cast<int>(entity->GetID()));
         bool nodeOpen = false;
         if (isRenaming)
@@ -897,6 +900,62 @@ namespace PlutoGE::ui
             ImGui::Text("No scene loaded");
             return;
         }
+
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##HierarchySearch", "Search entities...", m_searchBuffer.data(), m_searchBuffer.size());
+        std::set<std::string> componentTypes;
+        const auto collectTypes = [&](auto &&self, const scene::Entity *entity) -> void
+        {
+            for (const auto &bucket : entity->GetComponentBuckets())
+                for (const auto *component : bucket)
+                    if (component)
+                    {
+                        auto name = scene::SceneSerializer::GetComponentTypeName(*component);
+                        if (!name.empty()) componentTypes.insert(std::move(name));
+                    }
+            for (const auto *child : entity->GetChildren()) self(self, child);
+        };
+        for (const auto *root : scene->GetRootEntities()) collectTypes(collectTypes, root);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##HierarchyComponent", m_componentFilter.empty() ? "All components" : m_componentFilter.c_str()))
+        {
+            if (ImGui::Selectable("All components", m_componentFilter.empty())) m_componentFilter.clear();
+            for (const auto &type : componentTypes)
+                if (ImGui::Selectable(type.c_str(), m_componentFilter == type)) m_componentFilter = type;
+            ImGui::EndCombo();
+        }
+        m_filterActive = m_searchBuffer[0] != '\0' || !m_componentFilter.empty();
+        if (m_filterActive && ImGui::Button("Clear filters"))
+        {
+            m_searchBuffer.fill(0);
+            m_componentFilter.clear();
+            m_filterActive = false;
+        }
+        m_filteredEntityIds.clear();
+        const auto lowercase = [](std::string text)
+        {
+            for (auto &character : text) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+            return text;
+        };
+        const auto query = lowercase(m_searchBuffer.data());
+        const auto filterTree = [&](auto &&self, const scene::Entity *entity) -> bool
+        {
+            bool componentMatches = m_componentFilter.empty();
+            if (!componentMatches)
+                for (const auto &bucket : entity->GetComponentBuckets())
+                    for (const auto *component : bucket)
+                        if (component && scene::SceneSerializer::GetComponentTypeName(*component) == m_componentFilter)
+                            componentMatches = true;
+            bool visible = componentMatches && lowercase(entity->GetName()).find(query) != std::string::npos;
+            for (const auto *child : entity->GetChildren())
+                visible = self(self, child) || visible;
+            if (visible) m_filteredEntityIds.insert(entity->GetID());
+            return visible;
+        };
+        if (m_filterActive)
+            for (const auto *root : scene->GetRootEntities()) filterTree(filterTree, root);
+        ImGui::Separator();
+        if (m_filterActive && m_filteredEntityIds.empty()) ImGui::TextDisabled("No matching entities");
 
         m_selectedEntityIds.clear();
         for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())

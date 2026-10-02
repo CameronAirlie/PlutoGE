@@ -1,6 +1,7 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
@@ -20,11 +21,11 @@ namespace PlutoGE::render
             float distanceSquared = 0.0f;
         };
 
-        const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Scene *scene)
+        const scene::PhysicalSkyComponent *FindPhysicalSky(const scene::Scene *scene, const scene::CameraTagFilter *filter = nullptr)
         {
             if (scene)
                 for (const auto *sky : scene->GetPhysicalSkyComponents())
-                    if (sky->IsEnabled() && sky->GetOwner() && sky->GetOwner()->IsActiveInHierarchy())
+                    if (sky->IsEnabled() && sky->GetOwner() && sky->GetOwner()->IsActiveInHierarchy() && (!filter || filter->Accepts(sky->GetOwner())))
                         return sky;
             return nullptr;
         }
@@ -40,11 +41,12 @@ namespace PlutoGE::render
 
         void CollectAtmosphere(const scene::Scene *scene, const glm::vec3 &cameraPosition,
                                const render::BasicLighting &lighting,
-                               std::vector<render::BasicPostProcessEffect> &effects, std::vector<CloudPacket> &clouds)
+                               std::vector<render::BasicPostProcessEffect> &effects, std::vector<CloudPacket> &clouds,
+                               const scene::CameraTagFilter *filter)
         {
             if (!scene)
                 return;
-            if (const auto *sky = FindPhysicalSky(scene))
+            if (const auto *sky = FindPhysicalSky(scene, filter))
             {
                 render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
                 // Horizon attenuation can make a valid sun's intensity zero.
@@ -65,7 +67,7 @@ namespace PlutoGE::render
 
             for (const auto *cloud : scene->GetVolumetricCloudComponents())
                 if (cloud && cloud->IsEnabled() && cloud->GetOwner() && cloud->GetOwner()->IsActiveInHierarchy() &&
-                    cloud->GetDensity() > 0.0f && cloud->GetCoverage() > 0.0f)
+                    (!filter || filter->Accepts(cloud->GetOwner())) && cloud->GetDensity() > 0.0f && cloud->GetCoverage() > 0.0f)
                 {
                     render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::VolumetricCloud};
                     glm::vec3 lightDirection = -lighting.directionalDirection;
@@ -138,11 +140,12 @@ namespace PlutoGE::render
         return lighting;
     }
 
-    std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene, const BasicLighting &lighting)
+    std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene, const BasicLighting &lighting,
+                                                             const scene::CameraTagFilter *filter)
     {
         std::vector<render::BasicPostProcessEffect> atmosphereEffects;
         std::vector<CloudPacket> clouds;
-        CollectAtmosphere(scene, lighting.cameraPosition, lighting, atmosphereEffects, clouds);
+        CollectAtmosphere(scene, lighting.cameraPosition, lighting, atmosphereEffects, clouds, filter);
         std::sort(clouds.begin(), clouds.end(), [](const CloudPacket &lhs, const CloudPacket &rhs) {
             return lhs.distanceSquared > rhs.distanceSquared;
         });

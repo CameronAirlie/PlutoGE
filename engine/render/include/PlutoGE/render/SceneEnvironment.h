@@ -9,6 +9,7 @@
 namespace PlutoGE::scene
 {
     class Scene;
+    class CameraTagFilter;
     struct Light;
 }
 
@@ -21,5 +22,6 @@ namespace PlutoGE::render
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene,
                                      std::span<scene::Light *const> lights);
     std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene,
-                                                           const BasicLighting &lighting);
+                                                           const BasicLighting &lighting,
+                                                           const scene::CameraTagFilter *filter = nullptr);
 }

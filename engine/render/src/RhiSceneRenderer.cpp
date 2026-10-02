@@ -969,7 +969,7 @@ namespace PlutoGE::render
         std::vector<BasicPostProcessEffect> basicEffects(atmosphereEffects.begin(), atmosphereEffects.end());
         if (scene && m_sceneEffectsEnabled)
         {
-            auto oceans = CollectRhiOceans(*scene, effectiveLighting);
+            auto oceans = CollectRhiOceans(*scene, effectiveLighting, cameraData.tagFilter);
             basicEffects.insert(basicEffects.end(), std::make_move_iterator(oceans.begin()), std::make_move_iterator(oceans.end()));
         }
         for (const auto *effect : postProcessEffects)

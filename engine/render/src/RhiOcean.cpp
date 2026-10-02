@@ -1,12 +1,14 @@
 #include "PlutoGE/render/RhiOcean.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include <algorithm>
 #include <cmath>
 namespace PlutoGE::render
 {
-    std::vector<BasicPostProcessEffect> CollectRhiOceans(const scene::Scene &scene, const BasicLighting &lighting)
+    std::vector<BasicPostProcessEffect> CollectRhiOceans(const scene::Scene &scene, const BasicLighting &lighting,
+                                                        const scene::CameraTagFilter *filter)
     {
         std::vector<BasicPostProcessEffect> result;
         const auto visit = [&](auto &&self, const scene::Entity *entity) -> void
@@ -14,7 +16,7 @@ namespace PlutoGE::render
             if (!entity->IsActive()) return;
             const auto transform = entity->GetWorldTransform();
             const float determinant = glm::determinant(transform);
-            if (std::isfinite(determinant) && std::abs(determinant) > 1e-8f)
+            if ((!filter || filter->Accepts(entity)) && std::isfinite(determinant) && std::abs(determinant) > 1e-8f)
                 for (const auto *ocean : entity->GetComponents<scene::OceanComponent>())
                 {
                     if (!ocean->IsEnabled()) continue;

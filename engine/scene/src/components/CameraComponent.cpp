@@ -153,7 +153,9 @@ namespace PlutoGE::scene
             auto entity = GetOwner();
             glm::mat4 transform = entity->GetWorldTransform();
 
-            return m_camera->GetCameraData(transform, width, height);
+            auto data = m_camera->GetCameraData(transform, width, height);
+            data.tagFilter = &m_tagFilter;
+            return data;
         }
         return render::CameraData{}; // Return default camera data if no camera is set
     }

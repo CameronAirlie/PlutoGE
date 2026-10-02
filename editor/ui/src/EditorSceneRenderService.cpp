@@ -168,7 +168,7 @@ namespace PlutoGE::ui
         lighting.occlusionMode = m_occlusionMode;
 
 
-        auto atmosphereEffects = render::BuildSceneAtmosphere(scene, lighting);
+        auto atmosphereEffects = render::BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
 
         preparationScope.End();
         try

@@ -76,7 +76,7 @@ namespace PlutoGE::render
                                                 RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
-        const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
+        const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
         BasicRenderer::BeforeTemporalResolve compose;
         if (!overlays.empty())
             compose = [&](BasicRenderer &base, glm::vec2 jitter)

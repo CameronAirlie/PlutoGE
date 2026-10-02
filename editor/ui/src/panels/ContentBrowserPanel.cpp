@@ -736,7 +736,11 @@ namespace PlutoGE::ui
         void OpenAsset(EditorShell &editorShell, const assets::Project &project, const assets::ProjectAssetEntry &asset)
         {
             const auto resolvedPath = project.ResolveAssetReference(asset.reference);
-            if (resolvedPath.extension() == ".plutoscene")
+            if (resolvedPath.extension() == ".rml")
+            {
+                editorShell.OpenRmlDocument(asset.reference);
+            }
+            else if (resolvedPath.extension() == ".plutoscene")
             {
                 editorShell.OpenSceneFromPath(resolvedPath);
             }
@@ -3011,6 +3015,8 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginPopupContextItem("AssetContext"))
             {
+                if (project->ResolveAssetReference(asset.reference).extension() == ".rml" && ImGui::MenuItem("Open in UI Editor"))
+                    editorShell.OpenRmlDocument(asset.reference);
                 if (ImGui::MenuItem("Find References..."))
                 {
                     if (!m_referenceSearch) m_referenceSearch = std::make_unique<AssetReferenceSearchPanel>();

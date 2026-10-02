@@ -92,6 +92,30 @@ button:hover {
 URLs in RML and RCSS are relative to the file containing the URL. Keep the
 font and stylesheet paths consistent if the files are moved.
 
+## Edit without a scene
+
+Double-click an `.rml` asset in the Content Browser, or right-click it and
+choose **Open in UI Editor**. The **UI Document Editor** also accepts a project
+reference such as `project://UI/hello.rml` through **Open RML**.
+
+The source tabs contain the RML, linked RCSS.
+Changes update an isolated preview after a 200 ms typing pause; previewing does
+not save files or change a document running in the scene. Choose a resolution,
+zoom, and background to inspect different layouts. RCSS animations run in the
+preview, while gameplay controllers and scene data bindings do not.
+
+Use **Save all** or Ctrl+S to save the open source buffers. **Undo** / **Redo**
+also support Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z). External edits reload clean buffers;
+modified buffers show a conflict and saving is blocked. Copy edits you need to
+keep before choosing **Reload from disk** and confirming the discard. Missing
+stylesheets and parser errors appear beside the preview. Failed document loads
+retain the previous valid preview and mark it as outdated.
+
+Closing a dirty document or opening another prompts to save, discard, or cancel.
+Switching projects and exiting the editor includes UI edits in the existing
+unsaved-change guard. This first version edits source; element picking, property
+inspectors, sample data, and visual authoring are future extensions.
+
 ## 2. Add the Canvas
 
 In the scene:

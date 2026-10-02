@@ -1,5 +1,9 @@
 add_library(PlutoGEEditorUI
     src/MultiEntityEdit.cpp
+    src/RmlDocumentEditSession.cpp
+    src/SourceTextEditor.cpp
+    src/RmlDocumentPreview.cpp
+    src/panels/RmlDocumentEditorPanel.cpp
     src/EditorShell.cpp
     src/SceneRecovery.cpp
     src/SceneRecoveryUI.cpp

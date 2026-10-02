@@ -28,8 +28,10 @@ For a minimal setup walkthrough and copyable example, see the
 - Managed scripts can use `RmlDocument`, `RmlElement`, `RmlEvent`, and
   `RmlBindings` for DOM state, CSS classes/styles, native DOM events, and
   observable bindings.
-- The Content Browser can create paired RML/RCSS assets, and the normal game
-  viewport provides the live preview with source hot reload.
+- The Content Browser can create paired RML/RCSS assets and open RML directly
+  in the UI Document Editor. Its isolated offscreen preview updates from unsaved
+  RML and linked RCSS without an active scene or Canvas. The normal game
+  viewport also supports saved-source hot reload.
 - UI-captured pointer/keyboard input is withheld from gameplay input polling.
 
 ## Try the sample
@@ -82,8 +84,25 @@ This is the next required slice for migrating `FpsHudController` and
 ### Phase 3 — editor authoring (initial workflow implemented)
 
 Asset templates, viewport preview, and RML/RCSS hot reload are implemented.
-DOM picking and source-linked diagnostic presentation remain optional editor
-enhancements rather than runtime migration blockers.
+The standalone UI Document Editor provides unsaved-source live preview,
+resolution/zoom controls, parser diagnostics, source undo/redo, and external-file
+conflict detection. DOM picking and visual property editing remain future work.
+
+Its source session (`RmlDocumentEditSession`) owns file state and history without
+an engine or GPU dependency. Visual authoring should submit source changes through
+this session. The preview service (`RmlDocumentPreview`) owns an independent
+RmlUi document/context and RHI target; the panel owns editor texture registration
+and calls preview rendering before host frame recording. Unsaved sources enter
+RmlUi through a synchronous scoped overlay during document construction. Global
+stylesheet/template caches are cleared on scope exit so later runtime loads
+cannot reuse preview-only source. No overlay survives a frame boundary.
+
+Sources remain authoritative and saving does not serialize the rendered DOM.
+Linked files stay open when links are removed, preserving unsaved work. Saves
+check disk conflicts and replace individual files atomically; saving multiple
+files is not a single filesystem transaction. The offscreen preview uses the RHI
+renderer on both OpenGL and Vulkan, so legacy GL3-only advanced effects may differ
+from the game viewport.
 
 ### Phase 4 — native UI compatibility
 

@@ -54,30 +54,77 @@
 
 namespace
 {
+    const std::unordered_map<std::string, std::string> *PreviewSources = nullptr;
+    std::vector<std::string> *PreviewDiagnostics = nullptr;
+    bool *PreviewLoadFailed = nullptr;
+
+    std::unique_ptr<std::istream> OpenUiSource(const std::filesystem::path &path)
+    {
+        if (PreviewSources)
+        {
+            const auto key = std::filesystem::weakly_canonical(path).generic_string();
+            if (const auto it = PreviewSources->find(key); it != PreviewSources->end())
+                return std::make_unique<std::istringstream>(it->second);
+        }
+        return std::make_unique<PlutoGE::content::InputFile>(path, std::ios::binary);
+    }
+
+    class PreviewAwareSystemInterface final : public SystemInterface_GLFW
+    {
+        bool LogMessage(Rml::Log::Type type, const Rml::String &message) override
+        {
+            if (PreviewLoadFailed && (type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT)) *PreviewLoadFailed = true;
+            if (PreviewDiagnostics && type <= Rml::Log::LT_WARNING)
+                PreviewDiagnostics->push_back(message);
+            return SystemInterface_GLFW::LogMessage(type, message);
+        }
+    };
+
+    // Scope never spans a frame boundary. RmlUi APIs are used on the editor's
+    // render thread; restoring both pointers also protects exceptional loads.
+    struct PreviewSourceScope
+    {
+        const std::unordered_map<std::string, std::string> *previousSources;
+        std::vector<std::string> *previousDiagnostics;
+        bool *previousLoadFailed;
+        PreviewSourceScope(const std::unordered_map<std::string, std::string> &sources, std::vector<std::string> &diagnostics, bool &failed)
+            : previousSources(std::exchange(PreviewSources, &sources)),
+              previousDiagnostics(std::exchange(PreviewDiagnostics, &diagnostics)),
+              previousLoadFailed(std::exchange(PreviewLoadFailed, &failed)) {}
+        ~PreviewSourceScope()
+        {
+            PreviewSources = previousSources;
+            PreviewDiagnostics = previousDiagnostics;
+            PreviewLoadFailed = previousLoadFailed;
+            Rml::Factory::ClearStyleSheetCache();
+            Rml::Factory::ClearTemplateCache();
+        }
+    };
+
     class ContentFileInterface final : public Rml::FileInterface
     {
         Rml::FileHandle Open(const Rml::String &path) override
         {
-            auto stream = std::make_unique<PlutoGE::content::InputFile>(path, std::ios::binary);
+            auto stream = OpenUiSource(path);
             if (!*stream) return {};
             return reinterpret_cast<Rml::FileHandle>(stream.release());
         }
-        void Close(Rml::FileHandle file) override { delete reinterpret_cast<PlutoGE::content::InputFile *>(file); }
+        void Close(Rml::FileHandle file) override { delete reinterpret_cast<std::istream *>(file); }
         size_t Read(void *buffer, size_t size, Rml::FileHandle file) override
         {
-            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file);
+            auto &stream = *reinterpret_cast<std::istream *>(file);
             stream.read(static_cast<char *>(buffer), static_cast<std::streamsize>(size));
             return static_cast<size_t>(stream.gcount());
         }
         bool Seek(Rml::FileHandle file, long offset, int origin) override
         {
-            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file); stream.clear();
+            auto &stream = *reinterpret_cast<std::istream *>(file); stream.clear();
             stream.seekg(offset, origin == SEEK_SET ? std::ios::beg : origin == SEEK_CUR ? std::ios::cur : std::ios::end);
             return bool(stream);
         }
         size_t Tell(Rml::FileHandle file) override
         {
-            auto &stream = *reinterpret_cast<PlutoGE::content::InputFile *>(file);
+            auto &stream = *reinterpret_cast<std::istream *>(file);
             stream.clear(); return static_cast<size_t>(stream.tellg());
         }
     };
@@ -590,7 +637,7 @@ namespace PlutoGE::render
             return false;
         }
 
-        m_system = std::make_unique<SystemInterface_GLFW>();
+        m_system = std::make_unique<PreviewAwareSystemInterface>();
         m_system->SetWindow(static_cast<GLFWwindow *>(window.GetWindow()));
         Rml::SetRenderInterface(renderInterface);
         Rml::SetSystemInterface(m_system.get());
@@ -649,12 +696,30 @@ namespace PlutoGE::render
         result->m_context = Rml::CreateContext("PlutoGE.Loading." + std::to_string(++serial),
             {1, 1}, result->m_renderer.get());
         if (!result->m_context) return {};
-        result->m_document = result->m_context->LoadDocument(ToRmlDocumentPath(path));
+        if (PreviewSources)
+        {
+            const auto source = PreviewSources->find(std::filesystem::weakly_canonical(path).generic_string());
+            if (source == PreviewSources->end()) return {};
+            result->m_document = result->m_context->LoadDocumentFromMemory(source->second, ToRmlMemoryDocumentUrl(path));
+        }
+        else result->m_document = result->m_context->LoadDocument(ToRmlDocumentPath(path));
         if (!result->m_document) return {};
         result->m_document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         std::erase_if(m_loadingDocuments, [](const auto &weak) { return weak.expired(); });
         m_loadingDocuments.push_back(result);
         return result;
+    }
+
+    std::shared_ptr<RmlLoadingDocument> RmlUiRuntime::CreatePreviewDocument(
+        const std::string &documentPath, const std::unordered_map<std::string, std::string> &sources,
+        platform::Window &window, rhi::IRenderDevice &device, std::vector<std::string> &diagnostics)
+    {
+        // Initialize before installing a scope whose cleanup calls RmlUi APIs.
+        if (!m_context && !Initialize(window, &device)) return {};
+        bool failed = false;
+        PreviewSourceScope scope(sources, diagnostics, failed);
+        auto document = CreateLoadingDocument(documentPath, window, device);
+        return failed ? std::shared_ptr<RmlLoadingDocument>{} : document;
     }
 
     void RmlUiRuntime::Shutdown()
@@ -1157,7 +1222,8 @@ namespace PlutoGE::render
         // RmlUi requires fonts to be registered through LoadFontFace; RCSS
         // @font-face rules are a PlutoGE authoring convenience parsed here.
         // Keep the byte buffers alive until Rml::Shutdown as required by RmlUi.
-        PlutoGE::content::InputFile documentStream(documentPath, std::ios::binary);
+        auto documentOwner = OpenUiSource(documentPath);
+        auto &documentStream = *documentOwner;
         if (!documentStream)
             return;
         const std::string documentSource(
@@ -1168,21 +1234,28 @@ namespace PlutoGE::render
         // sibling RCSS produced misleading missing-font warnings from
         // unrelated documents stored in the same UI directory.
         static const std::regex styleLinkRule(
-            R"rml(<link\b[^>]*\bhref\s*=\s*(?:"([^"]+\.rcss)"|'([^']+\.rcss)')[^>]*>)rml",
+            R"rml(<link\b[^>]*\s+href\s*=\s*(?:"([^"]+\.rcss)"|'([^']+\.rcss)'|([^\s>]+))[^>]*>)rml",
             std::regex::icase);
         std::vector<std::filesystem::path> styleSheets;
         for (std::sregex_iterator link(documentSource.begin(), documentSource.end(), styleLinkRule), end;
              link != end; ++link)
         {
-            const std::string relativePath =
-                (*link)[1].matched ? (*link)[1].str() : (*link)[2].str();
+            std::string relativePath = (*link)[1].matched ? (*link)[1].str()
+                : (*link)[2].matched ? (*link)[2].str() : (*link)[3].str();
+            if ((*link)[3].matched && relativePath.ends_with('/')) relativePath.pop_back();
+            if (std::filesystem::path(relativePath).extension() != ".rcss") continue;
             styleSheets.push_back(
                 (documentPath.parent_path() / relativePath).lexically_normal());
         }
 
-        for (const auto &styleSheetPath : styleSheets)
+        // Include inline font declarations as well as linked RCSS. The
+        // same loader serves disk documents and scoped unsaved editor sources.
+        styleSheets.push_back(documentPath);
+        for (std::size_t styleIndex = 0; styleIndex < styleSheets.size(); ++styleIndex)
         {
-            PlutoGE::content::InputFile stream(styleSheetPath, std::ios::binary);
+            const auto styleSheetPath = styleSheets[styleIndex];
+            auto sourceOwner = OpenUiSource(styleSheetPath);
+            auto &stream = *sourceOwner;
             if (!stream)
                 continue;
             const std::string source((std::istreambuf_iterator<char>(stream)),
@@ -1234,7 +1307,7 @@ namespace PlutoGE::render
                     std::cerr << "[RmlUi] Font '" << family << "' was not found at '"
                               << fontPath.string() << "' (declared in '"
                               << styleSheetPath.string() << "').\n";
-                    m_loadedFontFaces.insert(key);
+                    if (PreviewDiagnostics) PreviewDiagnostics->push_back("Font not found: " + fontPath.generic_string());
                     continue;
                 }
 

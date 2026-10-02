@@ -81,6 +81,11 @@ namespace PlutoGE::render
         void ResetRuntimeState();
         std::shared_ptr<RmlLoadingDocument> CreateLoadingDocument(const std::string &reference,
             platform::Window &window, rhi::IRenderDevice &device);
+        // Editor-only, synchronous source overlay. It is scoped to document
+        // construction and never changes files or runtime document sources.
+        std::shared_ptr<RmlLoadingDocument> CreatePreviewDocument(
+            const std::string &documentPath, const std::unordered_map<std::string, std::string> &sources,
+            platform::Window &window, rhi::IRenderDevice &device, std::vector<std::string> &diagnostics);
         // Scoped by the loading session around controller callbacks only.
         Rml::ElementDocument *SetLoadingDocumentTarget(Rml::ElementDocument *document);
         // Run before the host begins scene recording; cached previews submit only when dirty.

@@ -19,6 +19,7 @@
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
 #include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
+#include "PlutoGE/ui/panels/RmlDocumentEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
@@ -1901,7 +1902,8 @@ namespace PlutoGE::ui
     void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel)
     {
         const ImGuiIO &io = ImGui::GetIO();
-        if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        if (io.WantTextInput || (m_rmlDocumentEditor && m_rmlDocumentEditor->OwnsKeyboardFocus()) ||
+            ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
         }
@@ -1970,9 +1972,14 @@ namespace PlutoGE::ui
         m_consoleMessages.clear();
     }
 
+    void EditorShell::OpenRmlDocument(std::string reference)
+    {
+        if (m_rmlDocumentEditor) m_rmlDocumentEditor->RequestOpen(reference);
+    }
+
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
-        if (!m_sceneDirty && !m_projectDirty)
+        if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()))
         {
             return true;
         }
@@ -1984,6 +1991,12 @@ namespace PlutoGE::ui
                                        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
         return result == IDYES;
 #else
+        if (m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges())
+        {
+            m_rmlDocumentEditor->SetOpen(true);
+            Log(ConsoleSeverity::Warning, "Save or discard UI document edits before switching projects or exiting.");
+            return false;
+        }
         return true;
 #endif
     }
@@ -2938,6 +2951,8 @@ namespace PlutoGE::ui
 
         auto loadingScreenEditorPanel = new LoadingScreenEditorPanel(PanelConfig{"Loading Screen Editor", false});
         m_panelManager.AddPanel(loadingScreenEditorPanel);
+        m_rmlDocumentEditor = new RmlDocumentEditorPanel(PanelConfig{"UI Document Editor", false});
+        m_panelManager.AddPanel(m_rmlDocumentEditor);
 
         auto inputMappingEditorPanel = new InputMappingEditorPanel(PanelConfig{"Input Mapping Editor", false});
         inputMappingEditorPanel->Initialize();
@@ -3014,8 +3029,13 @@ namespace PlutoGE::ui
         static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
         bool vulkanEditorHost = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
 
-        while (!window.ShouldClose())
+        while (true)
         {
+            if (window.ShouldClose())
+            {
+                if (ConfirmContinueWithUnsavedChanges()) break;
+                glfwSetWindowShouldClose(static_cast<GLFWwindow *>(window.GetWindow()), GLFW_FALSE);
+            }
             const auto viewportGraphicsApi = m_project ? m_project->GetManifest().graphicsApi
                                                        : m_engine.GetConfig().graphicsApi;
             viewportPanel->SetGraphicsApi(viewportGraphicsApi);
@@ -3439,6 +3459,7 @@ namespace PlutoGE::ui
             // UI
 
             loadingScreenEditorPanel->PreparePreview();
+            m_rmlDocumentEditor->PreparePreview();
             core::CpuScope rendererScope("Renderer.BeginFrame", core::CpuCategory::Rendering);
             const auto beginFrameStart = std::chrono::high_resolution_clock::now();
             renderer.BeginFrame();
@@ -3642,7 +3663,7 @@ namespace PlutoGE::ui
 
                 // Use the same actions for menu clicks and keyboard shortcuts.
                 const ImGuiIO &fileShortcutIO = ImGui::GetIO();
-                if (!isBakeRunning && !fileShortcutIO.WantTextInput &&
+                if (!isBakeRunning && !fileShortcutIO.WantTextInput && !m_rmlDocumentEditor->OwnsKeyboardFocus() &&
                     !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
                     (fileShortcutIO.KeyCtrl || fileShortcutIO.KeySuper))
                 {
@@ -4355,6 +4376,7 @@ namespace PlutoGE::ui
                 // Release every resource tied to the old device/context before
                 // Engine::Shutdown destroys the native window.
                 loadingScreenEditorPanel->Shutdown();
+                m_rmlDocumentEditor->Shutdown();
                 viewportPanel->Shutdown();
                 viewportPanel2->Shutdown();
                 m_editorSceneRenderService->Shutdown();

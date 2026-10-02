@@ -44,6 +44,7 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    class RmlDocumentEditorPanel;
     class ProfilerPanel;
     class ViewportPanel;
     class EditorSceneRenderService;
@@ -201,6 +202,7 @@ namespace PlutoGE::ui
         void OpenAnimationClipAsset(std::string animationClipAssetReference);
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         void OpenInputMappingAsset(std::string inputMappingAssetReference);
+        void OpenRmlDocument(std::string reference);
         void OpenLoadingScreenAsset(std::string reference)
         { m_activeLoadingScreenAssetReference = std::move(reference); m_openLoadingScreenEditorRequested = true; }
         const std::string &GetActiveLoadingScreenAssetReference() const { return m_activeLoadingScreenAssetReference; }
@@ -397,6 +399,7 @@ namespace PlutoGE::ui
         std::string m_activeInputMappingAssetReference;
         std::string m_activeLoadingScreenAssetReference;
         bool m_openLoadingScreenEditorRequested = false;
+        RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;

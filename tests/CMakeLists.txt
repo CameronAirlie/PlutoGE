@@ -507,3 +507,27 @@ if (TARGET OpenAL)
         endif()
     endforeach()
 endif()
+
+# Source-session regressions need neither an engine singleton nor a GPU.
+add_executable(PlutoGERmlDocumentEditSessionTests
+    RmlDocumentEditSessionTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/RmlDocumentEditSession.cpp)
+target_include_directories(PlutoGERmlDocumentEditSessionTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+target_compile_features(PlutoGERmlDocumentEditSessionTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGERmlDocumentEditSessionTests COMMAND PlutoGERmlDocumentEditSessionTests)
+if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGERmlDocumentPreviewTests RmlDocumentPreviewTests.cpp)
+    target_link_libraries(PlutoGERmlDocumentPreviewTests PRIVATE PlutoGE::EditorUI)
+    target_compile_definitions(PlutoGERmlDocumentPreviewTests PRIVATE
+        PLUTO_RML_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
+    pluto_link_engine(PlutoGERmlDocumentPreviewTests)
+    add_test(NAME PlutoGERmlDocumentPreviewOpenGLTests COMMAND PlutoGERmlDocumentPreviewTests)
+    add_test(NAME PlutoGERmlDocumentPreviewVulkanTests COMMAND PlutoGERmlDocumentPreviewTests --vulkan)
+endif()
+
+add_executable(PlutoGESourceTextEditorTests SourceTextEditorTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/SourceTextEditor.cpp)
+target_include_directories(PlutoGESourceTextEditorTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+target_link_libraries(PlutoGESourceTextEditorTests PRIVATE PlutoGE::imgui)
+target_compile_features(PlutoGESourceTextEditorTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGESourceTextEditorTests COMMAND PlutoGESourceTextEditorTests)

@@ -88,6 +88,15 @@ int main() try
     std::filesystem::remove(sheet);
     session.PollExternalChanges();
     Check(session.HasConflicts(), "Deleted source was not detected");
+    Write(fixture.root / "UI" / "frame.rml", "<template name='frame' content='host'><head><link href='styles/shared.rcss'/><link href='screen.rml'/></head><body><div id='host'/></body></template>");
+    Write(document, "<rml><head><link type='text/template' href='frame.rml'/></head><body template='frame'/></rml>");
+    Write(sheet, "body { color: red; }");
+    RmlDocumentEditSession templates;
+    templates.Open(document, fixture.root);
+    Check(templates.GetBuffers().size() == 3, "Template dependencies or cycle deduplication failed");
+    templates.SetSource(1, "<template name='frame' content='host'><body><div id='host'>Unsaved frame</div></body></template>");
+    Check(templates.GetSourceOverlay().at(std::filesystem::weakly_canonical(fixture.root / "UI" / "frame.rml").generic_string()).find("Unsaved frame") != std::string::npos,
+        "Unsaved template was absent from preview overlay");
     std::cout << "RML edit session regressions passed\n";
     return 0;
 }

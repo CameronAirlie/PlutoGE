@@ -8,6 +8,7 @@
 #include <RmlUi/Core.h>
 #include <glad/glad.h>
 #include <chrono>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -96,6 +97,28 @@ int main(int argc, char **argv) try
     Check(preview.GetTexture() == previous && preview.Render(engine, 64, 64, {0, 1, 0, 1}), "Last valid preview was lost");
     session.SetSource(0, markup);
     Check(preview.Rebuild(engine, session) && preview.Render(engine, 120, 90, {0, 0, 0, 1}), "Preview did not recover or resize");
+    const auto frame = fixture.root / "UI" / "frame.rml";
+    std::ofstream(frame) << "<template name='frame' content='host'><head></head><body><div id='disk-frame'/><div id='host'/></body></template>";
+    const std::string templated = "<rml><head><link type='text/template' href='frame.rml'/></head><body template='frame'><div id='box'/></body></rml>";
+    session.SetSource(0, templated);
+    session.RefreshDependencies();
+    const auto &buffers = session.GetBuffers();
+    const auto frameBuffer = std::find_if(buffers.begin(), buffers.end(), [&](const auto &buffer) { return buffer.path == std::filesystem::weakly_canonical(frame); });
+    Check(frameBuffer != buffers.end(), "Linked template buffer missing");
+    session.SetSource(static_cast<std::size_t>(frameBuffer - buffers.begin()),
+        "<template name='frame' content='host'><head></head><body><div id='preview-frame'/><div id='host'/></body></template>");
+    const bool templateBuilt = preview.Rebuild(engine, session);
+    if (!templateBuilt) for (const auto &message : preview.GetDiagnostics()) std::cerr << message << '\n';
+    Check(templateBuilt && preview.Render(engine, 64, 64, {0, 0, 0, 1}), "Unsaved template preview failed");
+    std::vector<std::string> templateDiagnostics;
+    auto overlayDocument = runtime.CreatePreviewDocument(path.generic_string(), session.GetSourceOverlay(), engine.GetWindow(), *device, templateDiagnostics);
+    Check(overlayDocument && overlayDocument->GetDocument()->GetElementById("preview-frame") && overlayDocument->GetDocument()->GetElementById("box"),
+        "Template source overlay did not inject the preview body");
+    std::ofstream(path) << templated;
+    auto diskTemplate = runtime.CreateLoadingDocument(path.generic_string(), engine.GetWindow(), *device);
+    Check(diskTemplate && diskTemplate->GetDocument()->GetElementById("disk-frame") && !diskTemplate->GetDocument()->GetElementById("preview-frame"),
+        "Unsaved template leaked into runtime cache");
+    overlayDocument.reset(); diskTemplate.reset();
     preview.Reset(); diskAfterPreview.reset(); original.reset();
     std::cout << "RML preview isolation, recovery and rendering passed\n";
     return 0;

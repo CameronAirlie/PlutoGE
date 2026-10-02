@@ -2,6 +2,7 @@
 #include "PlutoGE/render/RmlElementLookup.h"
 #include "PlutoGE/render/RmlTextUpdate.h"
 #include <fstream>
+#include <filesystem>
 #include <cmath>
 #include <iostream>
 #include <iterator>
@@ -401,13 +402,16 @@ int main(int argc, char** argv) try
             if (inspectionBottom > document->GetElementById("item-actions")->GetAbsoluteOffset().y)
                 throw std::runtime_error("Item stats overlap equip/drop actions");
             inventoryPage->SetProperty("display", "none");
-            auto* quests = document->GetElementById("quests-page");
+            auto* questDocument = context->LoadDocument((std::filesystem::path(argv[1]).parent_path() / "quests.rml").string());
+            if (!questDocument) throw std::runtime_error("Quest document failed to load");
+            questDocument->Show();
+            auto* quests = questDocument->GetElementById("quests-page");
             quests->SetProperty("display", "block");
-            document->GetElementById("quests")->SetInnerRML(longContent);
+            questDocument->GetElementById("quests")->SetInnerRML(longContent);
             context->Update();
             quests->SetScrollTop(10000); context->Update();
             if (quests->GetScrollTop() <= 0) throw std::runtime_error("Quest tab cannot scroll");
-            quests->SetProperty("display", "none"); inventoryPage->SetProperty("display", "block");
+            questDocument->Close(); inventoryPage->SetProperty("display", "block");
         }
         scroll->SetScrollTop(10000);
         context->Update();

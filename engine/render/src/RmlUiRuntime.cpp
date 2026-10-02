@@ -384,6 +384,9 @@ namespace PlutoGE::render
                                int viewportWidth, int viewportHeight,
                                bool updateTransform, bool updateDimensions)
         {
+            // Authored documents can distinguish a scene canvas from an isolated
+            // editor preview without scripts or preview-only source rewrites.
+            document.SetClass("pluto-runtime", true);
             const float scale = std::max(request.scale, 0.0001f);
             if (updateTransform)
             {

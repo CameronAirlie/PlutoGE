@@ -56,9 +56,9 @@ namespace PlutoGE::ui
             }
         }
 
-        std::vector<std::string> StyleSheetReferences(const std::string &source)
+        std::vector<std::string> LinkedSourceReferences(const std::string &source)
         {
-            // Discover stylesheet links, preserving all original source bytes.
+            // Discover stylesheet and native template links, preserving all original source bytes.
             // This is dependency discovery, not a markup serializer.
             static const std::regex comments(R"(<!--[\s\S]*?-->|/\*[\s\S]*?\*/)");
             static const std::regex links(R"rml(<link\b[^>]*\s+href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>)rml", std::regex::icase);
@@ -105,20 +105,24 @@ namespace PlutoGE::ui
         m_diagnostics.clear();
         // Keep detached buffers: removing a link must never discard unsaved edits.
         if (m_buffers.empty()) return;
-        const auto base = m_buffers.front().path.parent_path();
-        const auto references = StyleSheetReferences(m_buffers.front().source);
-        for (const auto &reference : references)
+        for (std::size_t index = 0; index < m_buffers.size(); ++index)
         {
-            try
+            if (m_buffers[index].path.extension() != ".rml") continue;
+            const auto base = m_buffers[index].path.parent_path();
+            const auto references = LinkedSourceReferences(m_buffers[index].source);
+            for (const auto &reference : references)
             {
-                const auto path = Resolve(base, reference);
-                if (path.extension() != ".rcss") continue;
-                if (std::any_of(m_buffers.begin(), m_buffers.end(), [&](const Buffer &buffer) { return buffer.path == path; })) continue;
-                auto text = Read(path);
-                m_buffers.push_back({path, text, text});
-                ++m_revision;
+                try
+                {
+                    const auto path = Resolve(base, reference);
+                    if (path.extension() != ".rcss" && path.extension() != ".rml") continue;
+                    if (std::any_of(m_buffers.begin(), m_buffers.end(), [&](const Buffer &buffer) { return buffer.path == path; })) continue;
+                    auto text = Read(path);
+                    m_buffers.push_back({path, text, text});
+                    ++m_revision;
+                }
+                catch (const std::exception &error) { m_diagnostics.push_back(error.what()); }
             }
-            catch (const std::exception &error) { m_diagnostics.push_back(error.what()); }
         }
     }
 

@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/assets/Project.h"
@@ -200,23 +201,6 @@ namespace PlutoGE::ui
             std::filesystem::path sourcePath;
             bool classLoaded = false;
             bool engineBuiltin = false;
-        };
-
-        struct AssetReferenceOption
-        {
-            std::string reference;
-            std::string displayName;
-        };
-
-        struct AssetReferenceOptionsCacheEntry
-        {
-            const assets::Project *project = nullptr;
-            const assets::ProjectAssetEntry *assetEntriesData = nullptr;
-            std::size_t assetEntryCount = 0;
-            std::string firstReference;
-            std::string middleReference;
-            std::string lastReference;
-            std::vector<AssetReferenceOption> options;
         };
 
         struct ScriptAssetOptionsCacheEntry
@@ -721,109 +705,6 @@ namespace PlutoGE::ui
             cache.lastReference = lastReference;
             cache.loadedClassNames = loadedClassNames;
             return cache.options;
-        }
-
-        std::vector<AssetReferenceOption> CollectAssetReferenceOptions(const assets::Project *project, assets::ProjectAssetType type)
-        {
-            std::vector<AssetReferenceOption> options;
-            if (!project)
-            {
-                for (const auto &reference : assets::Project::GetBuiltinAssetReferences())
-                {
-                    if (assets::Project::GetAssetTypeForReference(reference) != type)
-                    {
-                        continue;
-                    }
-
-                    options.push_back(AssetReferenceOption{.reference = reference, .displayName = reference});
-                }
-                return options;
-            }
-
-            for (const auto &assetEntry : project->GetManifest().assetEntries)
-            {
-                if (assetEntry.type != type)
-                {
-                    continue;
-                }
-
-                std::string displayName = assetEntry.reference;
-                if (StartsWith(displayName, assets::Project::kProjectAssetScheme))
-                {
-                    displayName.erase(0, assets::Project::kProjectAssetScheme.size());
-                }
-                else if (StartsWith(displayName, assets::Project::kEngineAssetScheme))
-                {
-                    displayName.erase(0, assets::Project::kEngineAssetScheme.size());
-                }
-
-                options.push_back(AssetReferenceOption{.reference = assetEntry.reference, .displayName = std::move(displayName)});
-            }
-
-            std::sort(options.begin(), options.end(),
-                      [](const AssetReferenceOption &left, const AssetReferenceOption &right)
-                      {
-                          return left.displayName < right.displayName;
-                      });
-            return options;
-        }
-
-        const std::vector<AssetReferenceOption> &GetCachedAssetReferenceOptions(const assets::Project *project,
-                                                                                assets::ProjectAssetType type)
-        {
-            static std::array<AssetReferenceOptionsCacheEntry,
-                              static_cast<std::size_t>(assets::ProjectAssetType::Count)>
-                cacheEntries;
-
-            const auto typeIndex = static_cast<std::size_t>(type);
-            if (typeIndex >= cacheEntries.size())
-            {
-                static const std::vector<AssetReferenceOption> emptyOptions;
-                return emptyOptions;
-            }
-            auto &cacheEntry = cacheEntries[typeIndex];
-            if (!project)
-            {
-                if (cacheEntry.project == nullptr && !cacheEntry.options.empty())
-                {
-                    return cacheEntry.options;
-                }
-
-                cacheEntry.options = CollectAssetReferenceOptions(nullptr, type);
-                cacheEntry.project = nullptr;
-                cacheEntry.assetEntriesData = nullptr;
-                cacheEntry.assetEntryCount = 0;
-                cacheEntry.firstReference.clear();
-                cacheEntry.middleReference.clear();
-                cacheEntry.lastReference.clear();
-                return cacheEntry.options;
-            }
-
-            const auto &assetEntries = project->GetManifest().assetEntries;
-            const auto *assetEntriesData = assetEntries.data();
-            const std::size_t assetEntryCount = assetEntries.size();
-            const std::string_view firstReference = assetEntryCount > 0 ? assetEntries.front().reference : std::string_view{};
-            const std::string_view middleReference = assetEntryCount > 0 ? assetEntries[assetEntryCount / 2].reference : std::string_view{};
-            const std::string_view lastReference = assetEntryCount > 0 ? assetEntries.back().reference : std::string_view{};
-
-            if (cacheEntry.project == project &&
-                cacheEntry.assetEntriesData == assetEntriesData &&
-                cacheEntry.assetEntryCount == assetEntryCount &&
-                cacheEntry.firstReference == firstReference &&
-                cacheEntry.middleReference == middleReference &&
-                cacheEntry.lastReference == lastReference)
-            {
-                return cacheEntry.options;
-            }
-
-            cacheEntry.options = CollectAssetReferenceOptions(project, type);
-            cacheEntry.project = project;
-            cacheEntry.assetEntriesData = assetEntriesData;
-            cacheEntry.assetEntryCount = assetEntryCount;
-            cacheEntry.firstReference = firstReference;
-            cacheEntry.middleReference = middleReference;
-            cacheEntry.lastReference = lastReference;
-            return cacheEntry.options;
         }
 
         std::string GetAssetReferencePreview(const std::vector<AssetReferenceOption> &options,

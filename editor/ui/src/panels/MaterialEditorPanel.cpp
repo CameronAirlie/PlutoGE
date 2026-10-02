@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
@@ -19,30 +20,11 @@
 #include <vector>
 
 #include <imgui.h>
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
-#ifdef max
-#undef max
-#endif
 
 namespace PlutoGE::ui
 {
     namespace
     {
-        constexpr std::size_t kTexturePathBufferSize = 512;
-        std::unordered_map<std::string, std::array<char, kTexturePathBufferSize>> texturePathBuffers;
-        std::unordered_map<std::string, std::array<char, 512>> shaderGraphPathBuffers;
-        std::unordered_map<std::string, std::string> shaderGraphReferences;
-        std::unordered_map<std::string, std::string> texturePaths;
-
-        std::array<char, kTexturePathBufferSize> &GetTexturePathBuffer(const std::string &materialReference, const char *slotName)
-        {
-            return texturePathBuffers[materialReference + ":" + slotName];
-        }
-
         const char *TextureChannelLabel(render::TextureChannel channel)
         {
             switch (channel)
@@ -88,229 +70,28 @@ namespace PlutoGE::ui
             return changed;
         }
 
-        std::optional<std::string> AcceptDroppedTextureAssetReference()
+        // Engine defaults are the only shader graphs that are not project assets.
+        bool RenderShaderGraphReferenceControl(std::string &reference)
         {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Texture)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            return droppedReference;
+            static const std::array builtins{
+                AssetReferenceOption{std::string(assets::Project::kBuiltinDefaultShaderGraphReference), "Default Lit"},
+                AssetReferenceOption{std::string(assets::Project::kBuiltinDefaultUnlitShaderGraphReference), "Default Unlit"}};
+            std::string effective = reference.empty()
+                                        ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
+                                        : reference;
+            if (!RenderProjectAssetPicker("Shader Graph", EditorShell::GetInstance().GetProject(),
+                                          assets::ProjectAssetType::ShaderGraph, effective,
+                                          {.noneLabel = nullptr, .builtinOptions = builtins}))
+                return false;
+            reference = std::move(effective);
+            return true;
         }
 
-        std::optional<std::string> AcceptDroppedShaderGraphAssetReference()
+        // Texture slots accept only project textures, including render textures.
+        bool RenderTextureReferenceControl(const char *label, std::string &reference)
         {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ShaderGraph)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            return droppedReference;
-        }
-
-        bool RenderShaderGraphReferenceControl(const std::string &materialReference, std::string &reference)
-        {
-            bool changed = false;
-            auto &buffers = shaderGraphPathBuffers;
-            auto &cachedReferences = shaderGraphReferences;
-
-            std::vector<std::pair<std::string, std::string>> shaderGraphs;
-            shaderGraphs.emplace_back("Default Lit", std::string(assets::Project::kBuiltinDefaultShaderGraphReference));
-            shaderGraphs.emplace_back("Default Unlit", std::string(assets::Project::kBuiltinDefaultUnlitShaderGraphReference));
-            if (auto *project = EditorShell::GetInstance().GetProject())
-            {
-                for (const auto &asset : project->GetManifest().assetEntries)
-                {
-                    if (asset.type != assets::ProjectAssetType::ShaderGraph)
-                    {
-                        continue;
-                    }
-
-                    std::string displayName = asset.reference;
-                    if (displayName.rfind(assets::Project::kProjectAssetScheme, 0) == 0)
-                    {
-                        displayName.erase(0, assets::Project::kProjectAssetScheme.size());
-                    }
-                    else if (displayName == assets::Project::kBuiltinDefaultShaderGraphReference ||
-                             displayName == assets::Project::kBuiltinDefaultUnlitShaderGraphReference)
-                    {
-                        continue;
-                    }
-                    shaderGraphs.emplace_back(std::move(displayName), asset.reference);
-                }
-            }
-
-            const std::string effectiveReference = reference.empty()
-                                                       ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
-                                                       : reference;
-            std::string currentDisplay = effectiveReference;
-            for (const auto &[displayName, shaderGraphReference] : shaderGraphs)
-            {
-                if (shaderGraphReference == effectiveReference)
-                {
-                    currentDisplay = displayName;
-                    break;
-                }
-            }
-
-            if (ImGui::BeginCombo("Shader Graph", currentDisplay.c_str()))
-            {
-                for (const auto &[displayName, shaderGraphReference] : shaderGraphs)
-                {
-                    const bool selected = shaderGraphReference == effectiveReference;
-                    if (ImGui::Selectable(displayName.c_str(), selected))
-                    {
-                        reference = shaderGraphReference;
-                        changed = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            if (auto droppedReference = AcceptDroppedShaderGraphAssetReference())
-            {
-                reference = *droppedReference;
-                changed = true;
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Default##ShaderGraph"))
-            {
-                reference = std::string(assets::Project::kBuiltinDefaultShaderGraphReference);
-                changed = true;
-            }
-
-            auto &buffer = buffers[materialReference + ":ShaderGraph"];
-            auto &cachedReference = cachedReferences[materialReference];
-            if (cachedReference != reference)
-            {
-                std::fill(buffer.begin(), buffer.end(), '\0');
-                strncpy_s(buffer.data(), buffer.size(), reference.c_str(), _TRUNCATE);
-                cachedReference = reference;
-            }
-
-            ImGui::InputText("Shader Graph Reference", buffer.data(), buffer.size());
-            if (ImGui::IsItemDeactivatedAfterEdit())
-            {
-                reference = buffer.data();
-                cachedReference = reference;
-                changed = true;
-            }
-            if (auto droppedReference = AcceptDroppedShaderGraphAssetReference())
-            {
-                reference = *droppedReference;
-                std::fill(buffer.begin(), buffer.end(), '\0');
-                strncpy_s(buffer.data(), buffer.size(), reference.c_str(), _TRUNCATE);
-                cachedReference = reference;
-                changed = true;
-            }
-            return changed;
-        }
-
-        bool BrowseTexturePath(std::array<char, kTexturePathBufferSize> &buffer)
-        {
-#ifdef _WIN32
-            OPENFILENAMEA ofn = {};
-            char fileName[MAX_PATH] = "";
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = nullptr;
-            ofn.lpstrFilter = "Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files\0*.*\0";
-            ofn.lpstrFile = fileName;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-            if (GetOpenFileNameA(&ofn))
-            {
-                strncpy_s(buffer.data(), buffer.size(), fileName, _TRUNCATE);
-                return true;
-            }
-#else
-            (void)buffer;
-#endif
-            return false;
-        }
-
-        bool RenderTexturePathControl(const std::string &materialReference,
-                                      const char *slotName,
-                                      const char *label,
-                                      std::string &path)
-        {
-            bool changed = false;
-            const std::string key = materialReference + ":" + slotName;
-            auto &buffer = GetTexturePathBuffer(materialReference, slotName);
-            auto &cachedPaths = texturePaths;
-            auto &cachedPath = cachedPaths[key];
-            if (cachedPath != path)
-            {
-                std::fill(buffer.begin(), buffer.end(), '\0');
-                strncpy_s(buffer.data(), buffer.size(), path.c_str(), _TRUNCATE);
-                cachedPath = path;
-            }
-
-            ImGui::InputText(label, buffer.data(), buffer.size());
-            if (ImGui::IsItemDeactivatedAfterEdit())
-            {
-                path = buffer.data();
-                cachedPath = path;
-                changed = true;
-            }
-            if (auto droppedReference = AcceptDroppedTextureAssetReference())
-            {
-                path = *droppedReference;
-                std::fill(buffer.begin(), buffer.end(), '\0');
-                strncpy_s(buffer.data(), buffer.size(), path.c_str(), _TRUNCATE);
-                cachedPath = path;
-                changed = true;
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button((std::string("...##") + slotName).c_str()))
-            {
-                if (BrowseTexturePath(buffer))
-                {
-                    path = buffer.data();
-                    cachedPath = path;
-                    changed = true;
-                }
-            }
-
-            ImGui::SameLine();
-            ImGui::BeginDisabled(path.empty());
-            if (ImGui::Button((std::string("Clear##") + slotName).c_str()))
-            {
-                path.clear();
-                std::fill(buffer.begin(), buffer.end(), '\0');
-                cachedPath = path;
-                changed = true;
-            }
-            ImGui::EndDisabled();
-            return changed;
+            return RenderProjectAssetPicker(label, EditorShell::GetInstance().GetProject(),
+                                            assets::ProjectAssetType::Texture, reference);
         }
 
         render::Texture *LoadMaterialEditorTexture(const std::string &path, render::TextureColorSpace colorSpace)
@@ -404,10 +185,6 @@ namespace PlutoGE::ui
     {
         m_loadedReference.clear();
         m_dirty = false;
-        texturePathBuffers.clear();
-        shaderGraphPathBuffers.clear();
-        shaderGraphReferences.clear();
-        texturePaths.clear();
     }
 
     void MaterialEditorPanel::LoadActiveMaterial()
@@ -457,29 +234,40 @@ namespace PlutoGE::ui
         }
 
         const auto &config = material->GetConfig();
+        // Loaded textures report resolved file paths; edit them as project
+        // references. Paths outside the project stay visible as invalid.
+        const auto *project = editorShell.GetProject();
+        const auto toReference = [project](const std::string &path) {
+            return project ? ToProjectAssetReference(*project, path) : path;
+        };
+        const auto textureReference = [&](const render::Texture *texture) {
+            return texture ? toReference(texture->GetFilePath()) : std::string{};
+        };
         m_shaderGraphVariables = config.shaderGraphVariables;
-        m_shaderGraphTextures=config.shaderGraphTextures;
+        m_shaderGraphTextures = config.shaderGraphTextures;
+        for (auto &texture : m_shaderGraphTextures)
+            texture.reference = toReference(texture.reference);
         m_shaderGraphReference = config.shaderGraphReference.empty()
                                      ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
-                                     : config.shaderGraphReference;
+                                     : toReference(config.shaderGraphReference);
         m_color = config.color;
         m_surfaceType = config.surfaceType;
         m_alphaMode = config.alphaMode;
         m_alphaCutoff = config.alphaCutoff;
         m_castsShadow = config.castsShadow;
         m_twoSided = config.twoSided;
-        m_albedoTexturePath = config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{};
-        m_normalTexturePath = config.normalTexture ? config.normalTexture->GetFilePath() : std::string{};
+        m_albedoTexturePath = textureReference(config.albedoTexture);
+        m_normalTexturePath = textureReference(config.normalTexture);
         m_metallic = config.metallic;
-        m_metallicTexturePath = config.metallicTexture ? config.metallicTexture->GetFilePath() : std::string{};
+        m_metallicTexturePath = textureReference(config.metallicTexture);
         m_metallicTextureChannel = config.metallicTextureChannel;
         m_roughness = config.roughness;
         m_emission = config.emission;
-        m_emissionTexturePath = config.emissionTexture ? config.emissionTexture->GetFilePath() : std::string{};
+        m_emissionTexturePath = textureReference(config.emissionTexture);
         m_emissionTexCoord = config.emissionTexCoord;
         m_emissionChannelMask = config.emissionChannelMask;
         m_emissionChannels = config.emissionChannels;
-        m_roughnessTexturePath = config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{};
+        m_roughnessTexturePath = textureReference(config.roughnessTexture);
         m_roughnessTextureChannel = config.roughnessTextureChannel;
         m_transmission = config.transmission;
         m_ior = config.ior;
@@ -604,7 +392,7 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled();
         }
 
-        if (RenderShaderGraphReferenceControl(reference, m_shaderGraphReference))
+        if (RenderShaderGraphReferenceControl(m_shaderGraphReference))
         {
             m_dirty = true;
         }
@@ -644,7 +432,7 @@ namespace PlutoGE::ui
             }
             auto path=overridden?replacement->reference:parameter.reference;
             ImGui::BeginDisabled(!overridden);
-            if(RenderTexturePathControl(reference,parameter.name.c_str(),parameter.name.c_str(),path)) {replacement->reference=path;m_dirty=true;}
+            if(RenderTextureReferenceControl(parameter.name.c_str(),path)) {replacement->reference=path;m_dirty=true;}
             ImGui::EndDisabled();ImGui::PopID();
         }
         float color[4] = {m_color.r, m_color.g, m_color.b, m_color.a};
@@ -696,11 +484,11 @@ namespace PlutoGE::ui
         }
 
         ImGui::SeparatorText("Textures");
-        if (RenderTexturePathControl(reference, "Albedo", "Albedo", m_albedoTexturePath))
+        if (RenderTextureReferenceControl("Albedo", m_albedoTexturePath))
         {
             m_dirty = true;
         }
-        if (RenderTexturePathControl(reference, "Normal", "Normal", m_normalTexturePath))
+        if (RenderTextureReferenceControl("Normal", m_normalTexturePath))
         {
             m_dirty = true;
         }
@@ -709,7 +497,7 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
-        if (RenderTexturePathControl(reference, "Metallic", "Metallic Texture", m_metallicTexturePath))
+        if (RenderTextureReferenceControl("Metallic Texture", m_metallicTexturePath))
         {
             m_dirty = true;
         }
@@ -722,7 +510,7 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
-        if (RenderTexturePathControl(reference, "EmissionMap", "Emission Texture", m_emissionTexturePath))
+        if (RenderTextureReferenceControl("Emission Texture", m_emissionTexturePath))
             m_dirty = true;
         const char *emissionUvs[] = {"UV 0 (primary)", "UV 1 (secondary)"};
         if (ImGui::Combo("Emission UV Set", &m_emissionTexCoord, emissionUvs, 2))
@@ -749,7 +537,7 @@ namespace PlutoGE::ui
             m_emission = glm::max(glm::vec3(emission[0], emission[1], emission[2]), glm::vec3(0.0f));
             m_dirty = true;
         }
-        if (RenderTexturePathControl(reference, "Roughness", "Roughness Texture", m_roughnessTexturePath))
+        if (RenderTextureReferenceControl("Roughness Texture", m_roughnessTexturePath))
         {
             m_dirty = true;
         }

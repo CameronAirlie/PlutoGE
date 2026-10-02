@@ -6,6 +6,7 @@
 #include "PlutoGE/render/RmlLoadingDocument.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTexture.h"
+#include "PlutoGE/render/RmlDocumentPath.h"
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/ScenePortrait.h"
@@ -648,7 +649,7 @@ namespace PlutoGE::render
         result->m_context = Rml::CreateContext("PlutoGE.Loading." + std::to_string(++serial),
             {1, 1}, result->m_renderer.get());
         if (!result->m_context) return {};
-        result->m_document = result->m_context->LoadDocument(path);
+        result->m_document = result->m_context->LoadDocument(ToRmlDocumentPath(path));
         if (!result->m_document) return {};
         result->m_document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         std::erase_if(m_loadingDocuments, [](const auto &weak) { return weak.expired(); });
@@ -1123,7 +1124,7 @@ namespace PlutoGE::render
             }
 
             LoadDocumentFonts(path);
-            if (auto *document = m_context->LoadDocument(path))
+            if (auto *document = m_context->LoadDocument(ToRmlDocumentPath(path)))
             {
                 const float scale = std::max(request.scale, 0.0001f);
                 ConfigureDocument(*document, request, m_width, m_height, true, true);
@@ -1425,7 +1426,7 @@ namespace PlutoGE::render
         Rml::Factory::ClearStyleSheetCache();
         Rml::Factory::ClearTemplateCache();
 
-        auto *loaded = m_context->LoadDocument(path);
+        auto *loaded = m_context->LoadDocument(ToRmlDocumentPath(path));
         if (!loaded)
             return false;
         loaded->Show();

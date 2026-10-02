@@ -9,6 +9,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
+#include "PlutoGE/render/RmlDocumentPath.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Scene.h"
@@ -460,18 +461,29 @@ void CheckRenderTextureImage(vulkan::VulkanDevice& device, Reader read)
     Rml::SetSystemInterface(&log);
     RmlUiRhiRenderer ui(device, ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).Load("RmlUi","vertex"),
                         ShaderArtifactLibrary(PLUTO_RHI_TEST_SHADER_DIR).Load("RmlUi","fragment"));
+    // Like a project: the document lives in UI/ and names the texture relatively.
+    const auto projectAssets = std::filesystem::temp_directory_path() / "PlutoGE-ui-render-texture" / "Assets";
+    const auto documentPath = (projectAssets / "UI" / "preview.rml").make_preferred(); // Native backslashes.
+    const auto texturePath = projectAssets / "Textures" / "Monitor.plutorendertexture";
+    std::string requestedSource;
+    // Only the correctly joined absolute path resolves, as with the real texture manager.
     ui.SetRenderTextureResolver([&](const std::string& source) {
-        return RenderTexture::IsAssetPath(source) ? &monitor : nullptr; });
+        requestedSource = source;
+        return std::filesystem::path(source).lexically_normal() == texturePath.lexically_normal() ? &monitor : nullptr; });
     ui.SetAntialiasingEnabled(false);
     Rml::SetRenderInterface(&ui);
     Require(Rml::Initialise(), "RmlUi initialization failed");
     struct RmlScope { ~RmlScope() { Rml::Shutdown(); Rml::SetRenderInterface(nullptr); Rml::SetSystemInterface(nullptr); } } scope;
     auto* context = Rml::CreateContext("RenderTexture", {size * 2, size});
     const std::string document = R"(<rml><head><style>body { margin: 0; } img { position: absolute; top: 0; width: 32px; height: 32px; }</style></head><body>
-<img id="live" style="left: 0;" src="UI/Monitor.plutorendertexture"/><img id="shot" style="left: 32px;" src=")" + shotPath + R"("/></body></rml>)";
-    auto* doc = context->LoadDocumentFromMemory(document);
+<img id="live" style="left: 0;" src="../Textures/Monitor.plutorendertexture"/><img id="shot" style="left: 32px;" src=")" + shotPath + R"("/></body></rml>)";
+    std::filesystem::create_directories(documentPath.parent_path());
+    { std::ofstream(documentPath) << document; }
+    auto* doc = context->LoadDocument(ToRmlDocumentPath(documentPath));
     Require(doc != nullptr, "Render texture document failed to load");
     doc->Show(); context->Update(); ui.SetViewport(size * 2, size);
+    Require(std::filesystem::path(requestedSource).lexically_normal() == texturePath.lexically_normal(),
+            ("A relative <img src> must reach the renderer joined to its document's folder; got '" + requestedSource + "'").c_str());
 
     rhi::Texture target(device, device.CreateTexture({size * 2, size, Format::R8G8B8A8Unorm, TextureUsage::ColorAttachment, "UI render texture test", true, 1, false, 1}));
     auto& commands = device.GetImmediateContext();
@@ -505,6 +517,7 @@ void CheckRenderTextureImage(vulkan::VulkanDevice& device, Reader read)
         " pixels; first row live " + sample(4, 2) + " shot " + sample(size + 4, 2) + ", last row live " +
         sample(4, size - 3) + " shot " + sample(size + 4, size - 3)).c_str());
     std::filesystem::remove(shotPath);
+    std::filesystem::remove_all(projectAssets.parent_path());
     std::cout << "UI render texture image matched its screenshot (" << mismatches << " horizon pixels differ)\n";
 }
 

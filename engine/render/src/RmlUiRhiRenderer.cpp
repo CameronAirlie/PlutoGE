@@ -265,6 +265,10 @@ namespace PlutoGE::render
         auto *geometry = reinterpret_cast<Geometry *>(handle);
         auto *texture = textureHandle ? reinterpret_cast<Texture *>(textureHandle) : m_whiteTexture.get();
         const auto resource = ResolveTexture(*texture);
+        if (texture->renderTexture)
+        {
+            static int logged = 0;
+        }
         if (!resource)
             return;
         Parameters parameters{

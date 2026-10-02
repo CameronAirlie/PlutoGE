@@ -120,6 +120,7 @@ namespace PlutoGE::scripting
         using register_scriptable_object_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
         using register_camera_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_entity_tag_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -175,6 +176,7 @@ namespace PlutoGE::scripting
         using set_entity_active_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
         using get_entity_tag_count_fn = int(PLUTO_HOST_CALL *)(uint32_t);
         using get_entity_tag_fn = const char *(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using change_entity_tag_fn = int32_t(PLUTO_HOST_CALL *)(uint32_t, const char *);
         using destroy_entity_fn = int(PLUTO_HOST_CALL *)(uint32_t);
         using get_entity_name_fn = const char *(PLUTO_HOST_CALL *)(uint32_t);
         using find_entity_by_name_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
@@ -1153,6 +1155,21 @@ namespace PlutoGE::scripting
 
             tagStorage = entity->GetTags()[static_cast<std::size_t>(tagIndex)];
             return tagStorage.c_str();
+        }
+
+        int32_t AddEntityTag(uint32_t entityId, const char *tag)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity || !tag || *tag == '\0' || entity->HasTag(tag))
+                return 0;
+            entity->AddTag(tag);
+            return 1;
+        }
+
+        int32_t RemoveEntityTag(uint32_t entityId, const char *tag)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity && tag && entity->RemoveTag(tag) ? 1 : 0;
         }
 
         int32_t DestroyEntity(uint32_t entityId)
@@ -3404,6 +3421,7 @@ namespace PlutoGE::scripting
         register_component_api_fn registerComponentApi = nullptr;
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_camera_component_api_fn registerCameraProjectionApi = nullptr;
+        register_entity_tag_api_fn registerEntityTagApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
@@ -3519,6 +3537,7 @@ namespace PlutoGE::scripting
             impl.registerComponentApi = nullptr;
             impl.registerCameraComponentApi = nullptr;
             impl.registerCameraProjectionApi = nullptr;
+            impl.registerEntityTagApi = nullptr;
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
@@ -3873,6 +3892,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraComponentApi"), impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraProjectionApi"), impl.registerCameraProjectionApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterEntityTagApi"), impl.registerEntityTagApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterLightComponentApi"), impl.registerLightComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterMeshComponentApi"), impl.registerMeshComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAnimationComponentApi"), impl.registerAnimationComponentApi) &&
@@ -4266,6 +4286,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_camera_fov_fn>(&SetCameraOrthographicHeight))) == 0)
         {
             setManagedBridgeFailure("RegisterCameraProjectionApi");
+            return false;
+        }
+
+        if (!m_impl->registerEntityTagApi ||
+            m_impl->registerEntityTagApi(
+                reinterpret_cast<void *>(static_cast<change_entity_tag_fn>(&AddEntityTag)),
+                reinterpret_cast<void *>(static_cast<change_entity_tag_fn>(&RemoveEntityTag))) == 0)
+        {
+            setManagedBridgeFailure("RegisterEntityTagApi");
             return false;
         }
 

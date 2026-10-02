@@ -122,8 +122,9 @@ namespace PlutoGE::scene
             if (!target)
                 continue;
             const auto &size = target->GetDescriptor();
-            m_views.push_back({target, BuildCameraView(scene, camera, m_storage[index], commands,
-                                                       size.width, size.height, false)});
+            auto view = BuildCameraView(scene, camera, m_storage[index], commands, size.width, size.height, false);
+            view.transparentBackground = camera.HasTransparentBackground();
+            m_views.push_back({target, view});
         }
         return m_views;
     }

@@ -63,6 +63,10 @@ namespace PlutoGE::scene
         // True while a target is assigned, even if its asset is missing, so an
         // offscreen camera never takes over the screen.
         bool RendersToTexture() const { return m_targetTexture || !m_targetTextureReference.empty(); }
+        // Render texture cameras only: leave pixels without geometry transparent,
+        // so a tag-filtered subject (such as a character preview) is a cutout.
+        void SetTransparentBackground(bool transparent) { m_transparentBackground = transparent; }
+        bool HasTransparentBackground() const { return m_transparentBackground; }
 
         render::CameraData GetCameraData(int width, int height) const;
 
@@ -96,6 +100,7 @@ namespace PlutoGE::scene
         CameraTagFilter m_tagFilter;
         std::string m_targetTextureReference;
         render::RenderTexture *m_targetTexture = nullptr;
+        bool m_transparentBackground = false;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
         std::string m_postProcessPresetAssetReference;
     };

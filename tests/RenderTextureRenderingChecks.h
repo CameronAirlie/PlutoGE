@@ -132,6 +132,28 @@ void CheckRenderTextureMaterial(Device &device, const PlutoGE::render::BasicRend
     require(renderTexture.GetWidth() == size * 2, "Resizing must update the texture size");
     require(textureRenderer.Render(device, views, {}, nullptr) && renderTexture.GetGpuTexture(device),
             "Resized render texture was not republished");
+
+    // A transparent background keeps only drawn geometry: with the ground
+    // removed, coverage must sit exactly where the red sky is drawn.
+    RenderTexture cutout("Cutout.plutorendertexture", {.width = size, .height = size});
+    const std::array skyOnly{RenderCommand{.material = &red, .mesh = sky.get()}};
+    const std::array cutoutViews{RenderTextureView{
+        &cutout, {.cameraData = worldCamera, .commands = skyOnly, .transparentBackground = true}}};
+    require(textureRenderer.Render(device, cutoutViews, {}, nullptr), "Transparent render texture pass failed");
+    const auto cutoutPixels = device.ReadTextureRgba8(cutout.GetGpuTexture(device));
+    std::size_t covered = 0, misplaced = 0;
+    for (std::size_t pixel = 0; pixel < static_cast<std::size_t>(size * size); ++pixel)
+    {
+        const int r = std::to_integer<int>(cutoutPixels[pixel * 4]);
+        const int a = std::to_integer<int>(cutoutPixels[pixel * 4 + 3]);
+        covered += a == 255;
+        // Premultiplied: covered pixels are red, uncovered ones fully empty.
+        misplaced += a == 255 ? r < 200 : (a != 0 || r != 0);
+    }
+    require(covered > size * size / 3 && covered < size * size * 2 / 3,
+            "Transparent background coverage was " + std::to_string(covered) + " pixels, not the sky half");
+    require(misplaced <= static_cast<std::size_t>(size * 2),
+            "Transparent coverage misaligned with colour in " + std::to_string(misplaced) + " pixels");
     textureRenderer.Shutdown();
     require(!renderTexture.GetGpuTexture(device), "Shutdown must unpublish destroyed images");
     std::cout << "Render texture matched its screenshot (" << mismatches << " filtered horizon pixels)" << std::endl;

@@ -69,6 +69,12 @@ public sealed class GameObject
         return ScriptBridge.HasEntityTag(EntityId, tag);
     }
 
+    /// <summary>Adds a tag. Returns false if it was already present or the object no longer exists.</summary>
+    public bool AddTag(string tag) => ScriptBridge.AddEntityTag(EntityId, tag);
+
+    /// <summary>Removes a tag. Returns false if it was not present.</summary>
+    public bool RemoveTag(string tag) => ScriptBridge.RemoveEntityTag(EntityId, tag);
+
     public bool TryInvoke(string methodName, params object?[] args)
     {
         return ScriptBridge.InvokeEntityMethod(EntityId, methodName, args);

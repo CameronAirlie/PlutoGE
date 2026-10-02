@@ -5,9 +5,12 @@
 {
     // x: flip Y, zw: reciprocal target size.
     float4 options;
+    // x: transparent background, y: flip depth Y relative to the display output.
+    float4 coverageOptions;
 };
 
 [[vk::binding(1, 0)]] Sampler2D source : register(t1, space0);
+[[vk::binding(2, 0)]] Sampler2D depth : register(t2, space0);
 
 float3 srgbToLinear(float3 value)
 {
@@ -28,5 +31,12 @@ float3 srgbToLinear(float3 value)
     // Display output is already encoded for the screen. Decoding here lets
     // the sRGB target store those exact values, so materials sample the
     // render texture like an imported screenshot.
-    return float4(srgbToLinear(saturate(source.SampleLevel(uv, 0).rgb)), 1.0);
+    const float3 color = srgbToLinear(saturate(source.SampleLevel(uv, 0).rgb));
+    if (coverageOptions.x < 0.5)
+        return float4(color, 1.0);
+    // Reversed depth clears to zero, so any written depth is drawn geometry.
+    // Premultiplied, matching UI images and blended material sampling.
+    const float2 depthUv = float2(uv.x, coverageOptions.y > 0.5 ? 1.0 - uv.y : uv.y);
+    const float coverage = depth.SampleLevel(depthUv, 0).r > 0.000001 ? 1.0 : 0.0;
+    return float4(color * coverage, coverage);
 }

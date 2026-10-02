@@ -154,27 +154,65 @@ namespace PlutoGE::ui
         return assets::Project::IsProjectAssetReference(reference) ? reference : pathOrReference;
     }
 
-    std::vector<AssetReferenceOption> CollectProjectAssetChoices(const assets::Project *project, assets::ProjectAssetType type,
+    std::vector<AssetReferenceOption> CollectProjectAssetChoices(const assets::Project *project,
+                                                                 std::span<const assets::ProjectAssetType> types,
                                                                  const ProjectAssetPickerOptions &options)
     {
+        std::vector<AssetReferenceOption> assetsOffered;
+        const auto offer = [&](const AssetReferenceOption &option) {
+            const bool allowed = assets::Project::IsProjectAssetReference(option.reference)
+                                     ? project != nullptr
+                                     : options.includeEngineAssets && assets::Project::IsEngineAssetReference(option.reference);
+            const bool duplicate = std::any_of(assetsOffered.begin(), assetsOffered.end(),
+                                               [&](const auto &offered) { return offered.reference == option.reference; });
+            if (allowed && !duplicate && (!options.filter || options.filter(option)))
+                assetsOffered.push_back(option);
+        };
+        for (const auto type : types)
+        {
+            for (const auto &option : GetCachedAssetReferenceOptions(project, type))
+                offer(option);
+            // Built-ins stay available even when the manifest does not list them.
+            if (options.includeEngineAssets && project)
+                for (const auto &option : GetCachedAssetReferenceOptions(nullptr, type))
+                    offer(option);
+        }
+        std::stable_sort(assetsOffered.begin(), assetsOffered.end(),
+                         [](const auto &left, const auto &right) { return left.displayName < right.displayName; });
+
         std::vector<AssetReferenceOption> choices(options.builtinOptions.begin(), options.builtinOptions.end());
-        if (!project)
-            return choices;
-        for (const auto &option : GetCachedAssetReferenceOptions(project, type))
-            if (assets::Project::IsProjectAssetReference(option.reference) && (!options.filter || options.filter(option)))
-                choices.push_back(option);
+        choices.insert(choices.end(), std::make_move_iterator(assetsOffered.begin()),
+                       std::make_move_iterator(assetsOffered.end()));
         return choices;
     }
 
-    bool RenderProjectAssetPicker(const char *label, const assets::Project *project, assets::ProjectAssetType type,
-                                  std::string &reference, const ProjectAssetPickerOptions &options)
+    std::vector<AssetReferenceOption> CollectProjectAssetChoices(const assets::Project *project, assets::ProjectAssetType type,
+                                                                 const ProjectAssetPickerOptions &options)
     {
-        const auto choices = CollectProjectAssetChoices(project, type, options);
+        return CollectProjectAssetChoices(project, std::span(&type, 1), options);
+    }
+
+    bool RenderProjectAssetPicker(const char *label, const assets::Project *project,
+                                  std::span<const assets::ProjectAssetType> types, std::string &reference,
+                                  const ProjectAssetPickerOptions &options)
+    {
+        const auto choices = CollectProjectAssetChoices(project, types, options);
         const auto current = std::find_if(choices.begin(), choices.end(),
                                           [&](const auto &choice) { return choice.reference == reference; });
         const bool invalid = !reference.empty() && current == choices.end();
-        const std::string preview = reference.empty()          ? (options.noneLabel ? options.noneLabel : "")
+        // Distinguish an existing asset the site's filter rejects (for example
+        // the wrong scriptable object class) from one deleted or renamed.
+        const bool incompatible = invalid && options.filter &&
+            std::ranges::any_of(CollectProjectAssetChoices(project, types, {.includeEngineAssets = options.includeEngineAssets}),
+                                [&](const auto &choice) { return choice.reference == reference; });
+        const bool missing = invalid && !incompatible && assets::Project::IsProjectAssetReference(reference);
+        const char *emptyPreview = options.emptyPreview ? options.emptyPreview
+                                   : options.noneLabel  ? options.noneLabel
+                                                        : "None";
+        const std::string preview = reference.empty()          ? emptyPreview
                                     : current != choices.end() ? current->displayName
+                                    : incompatible             ? "Incompatible: " + reference
+                                    : missing                  ? "Missing: " + reference
                                                                : "Not a project asset: " + reference;
 
         bool changed = false;
@@ -191,7 +229,9 @@ namespace PlutoGE::ui
         {
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Only assets inside the project can be used. Choose a replacement.");
+                ImGui::SetTooltip(incompatible ? "This asset is not valid here. Choose a replacement."
+                                  : missing    ? "This asset is no longer in the project. Choose a replacement."
+                                               : "Only assets inside the project can be used. Choose a replacement.");
         }
         if (open)
         {
@@ -234,5 +274,11 @@ namespace PlutoGE::ui
             ImGui::EndDragDropTarget();
         }
         return changed;
+    }
+
+    bool RenderProjectAssetPicker(const char *label, const assets::Project *project, assets::ProjectAssetType type,
+                                  std::string &reference, const ProjectAssetPickerOptions &options)
+    {
+        return RenderProjectAssetPicker(label, project, std::span(&type, 1), reference, options);
     }
 }

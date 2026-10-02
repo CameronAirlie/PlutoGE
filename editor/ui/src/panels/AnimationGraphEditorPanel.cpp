@@ -5,6 +5,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/GraphEditorPanelUtils.h"
 
@@ -22,68 +23,9 @@ namespace PlutoGE::ui
         constexpr float kStateNodeWidth = 190.0f;
         constexpr float kStateNodeHeight = 92.0f;
 
-        struct ClipAssetOption
-        {
-            std::string reference;
-            std::string displayName;
-        };
-
-        bool StartsWith(std::string_view text, std::string_view prefix)
-        {
-            return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
-        }
-
-        std::vector<ClipAssetOption> CollectClipAssetOptions(const assets::Project *project)
-        {
-            std::vector<ClipAssetOption> options;
-            if (!project)
-            {
-                return options;
-            }
-
-            for (const auto &asset : project->GetManifest().assetEntries)
-            {
-                if (asset.type != assets::ProjectAssetType::AnimationClip)
-                {
-                    continue;
-                }
-
-                std::string displayName = asset.reference;
-                if (StartsWith(displayName, assets::Project::kProjectAssetScheme))
-                {
-                    displayName.erase(0, assets::Project::kProjectAssetScheme.size());
-                }
-                options.push_back(ClipAssetOption{.reference = asset.reference, .displayName = std::move(displayName)});
-            }
-
-            std::sort(options.begin(), options.end(),
-                      [](const ClipAssetOption &left, const ClipAssetOption &right)
-                      {
-                          return left.displayName < right.displayName;
-                      });
-            return options;
-        }
-
-        std::vector<ClipAssetOption> CollectAnimationGraphAssetOptions(const assets::Project *project,
-                                                                        std::string_view excludedReference)
-        {
-            std::vector<ClipAssetOption> options;
-            if (!project)
-                return options;
-            for (const auto &asset : project->GetManifest().assetEntries)
-            {
-                if (asset.type != assets::ProjectAssetType::AnimationGraph || asset.reference == excludedReference)
-                    continue;
-                std::string displayName = asset.reference;
-                if (StartsWith(displayName, assets::Project::kProjectAssetScheme))
-                    displayName.erase(0, assets::Project::kProjectAssetScheme.size());
-                options.push_back({.reference = asset.reference, .displayName = std::move(displayName)});
-            }
-            std::sort(options.begin(), options.end(),
-                      [](const ClipAssetOption &left, const ClipAssetOption &right)
-                      { return left.displayName < right.displayName; });
-            return options;
-        }
+        // Clip and graph pickers list project assets plus engine built-ins.
+        const ProjectAssetPickerOptions kClipPicker{.includeEngineAssets = true};
+        const ProjectAssetPickerOptions kRequiredClipPicker{.noneLabel = nullptr, .includeEngineAssets = true};
 
         std::string ClipNameFromReference(const std::string &reference)
         {
@@ -710,7 +652,7 @@ namespace PlutoGE::ui
                 m_dirty = true;
             }
 
-            const auto clipOptions = CollectClipAssetOptions(editorShell.GetProject());
+            const auto *project = editorShell.GetProject();
             int motionType = state->blendSpacePoints.empty() ? 0 : 1;
             constexpr const char *motionTypes[] = {"Animation Clip", "2D Blend Space"};
             if (ImGui::Combo("Motion", &motionType, motionTypes, IM_ARRAYSIZE(motionTypes)))
@@ -730,36 +672,11 @@ namespace PlutoGE::ui
 
             if (state->blendSpacePoints.empty())
             {
-                std::string clipPreview = state->clipReference.empty() ? "None" : state->clipReference;
-                for (const auto &option : clipOptions)
+                if (RenderProjectAssetPicker("Clip Asset", project, assets::ProjectAssetType::AnimationClip,
+                                             state->clipReference, kClipPicker))
                 {
-                    if (option.reference == state->clipReference)
-                    {
-                        clipPreview = option.displayName;
-                        break;
-                    }
-                }
-
-                if (ImGui::BeginCombo("Clip Asset", clipPreview.c_str()))
-                {
-                    if (ImGui::Selectable("None", state->clipReference.empty()))
-                    {
-                        state->clipReference.clear();
-                        m_dirty = true;
-                    }
-                    for (const auto &option : clipOptions)
-                    {
-                        const bool selected = option.reference == state->clipReference;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            state->clipReference = option.reference;
-                            state->clipName = ClipNameFromReference(option.reference);
-                            m_dirty = true;
-                        }
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
+                    state->clipName = ClipNameFromReference(state->clipReference);
+                    m_dirty = true;
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(state->clipReference.empty());
@@ -807,9 +724,10 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Add Blend Point"))
                 {
                     assets::AnimationGraphBlendSpacePoint point;
-                    if (!clipOptions.empty())
+                    if (const auto clips = CollectProjectAssetChoices(project, assets::ProjectAssetType::AnimationClip, kClipPicker);
+                        !clips.empty())
                     {
-                        point.clipReference = clipOptions.front().reference;
+                        point.clipReference = clips.front().reference;
                         point.clipName = ClipNameFromReference(point.clipReference);
                     }
                     state->blendSpacePoints.push_back(std::move(point));
@@ -825,23 +743,11 @@ namespace PlutoGE::ui
                                                 " (" + std::to_string(point.positionX) + ", " + std::to_string(point.positionY) + ")";
                     if (ImGui::TreeNode(heading.c_str()))
                     {
-                        std::string pointPreview = point.clipReference.empty() ? "None" : point.clipReference;
-                        for (const auto &option : clipOptions)
-                            if (option.reference == point.clipReference)
-                                pointPreview = option.displayName;
-                        if (ImGui::BeginCombo("Clip Asset", pointPreview.c_str()))
+                        if (RenderProjectAssetPicker("Clip Asset", project, assets::ProjectAssetType::AnimationClip,
+                                                     point.clipReference, kRequiredClipPicker))
                         {
-                            for (const auto &option : clipOptions)
-                            {
-                                const bool selected = option.reference == point.clipReference;
-                                if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                {
-                                    point.clipReference = option.reference;
-                                    point.clipName = ClipNameFromReference(option.reference);
-                                    m_dirty = true;
-                                }
-                            }
-                            ImGui::EndCombo();
+                            point.clipName = ClipNameFromReference(point.clipReference);
+                            m_dirty = true;
                         }
                         m_dirty |= ImGui::DragFloat("X", &point.positionX, 0.05f);
                         m_dirty |= ImGui::DragFloat("Y", &point.positionY, 0.05f);
@@ -1054,8 +960,12 @@ namespace PlutoGE::ui
 
         ImGui::SeparatorText("Layered Animation");
         ImGui::TextWrapped("Stack reusable animation graphs or clips, then restrict each result with a bone mask. Later layers can partially or completely override earlier layers.");
-        const auto layerClipOptions = CollectClipAssetOptions(editorShell.GetProject());
-        const auto layerGraphOptions = CollectAnimationGraphAssetOptions(editorShell.GetProject(), reference);
+        const auto *layerProject = editorShell.GetProject();
+        const ProjectAssetPickerOptions layerGraphPicker{
+            .noneLabel = "None (use clip)",
+            .includeEngineAssets = true,
+            .filter = [&reference](const AssetReferenceOption &option) { return option.reference != reference; }};
+        const auto layerGraphOptions = CollectProjectAssetChoices(layerProject, assets::ProjectAssetType::AnimationGraph, layerGraphPicker);
         if (ImGui::Button("Add Graph Layer"))
         {
             m_graph.layers.push_back(assets::AnimationGraphLayer{
@@ -1127,53 +1037,17 @@ namespace PlutoGE::ui
                     m_dirty = true;
                 }
 
-                std::string graphPreview = layer.graphReference.empty() ? "None (use clip)" : layer.graphReference;
-                for (const auto &option : layerGraphOptions)
-                    if (option.reference == layer.graphReference)
-                        graphPreview = option.displayName;
-                if (ImGui::BeginCombo("Animation Graph", graphPreview.c_str()))
-                {
-                    if (ImGui::Selectable("None (use clip)", layer.graphReference.empty()))
-                    {
-                        layer.graphReference.clear();
-                        m_dirty = true;
-                    }
-                    for (const auto &option : layerGraphOptions)
-                    {
-                        const bool selected = option.reference == layer.graphReference;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            layer.graphReference = option.reference;
-                            m_dirty = true;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
+                if (RenderProjectAssetPicker("Animation Graph", layerProject, assets::ProjectAssetType::AnimationGraph,
+                                             layer.graphReference, layerGraphPicker))
+                    m_dirty = true;
 
                 if (layer.graphReference.empty())
                 {
-                    std::string clipPreview = layer.clipReference.empty() ? "None" : layer.clipReference;
-                    for (const auto &option : layerClipOptions)
-                        if (option.reference == layer.clipReference)
-                            clipPreview = option.displayName;
-                    if (ImGui::BeginCombo("Clip Asset", clipPreview.c_str()))
+                    if (RenderProjectAssetPicker("Clip Asset", layerProject, assets::ProjectAssetType::AnimationClip,
+                                                 layer.clipReference, kClipPicker))
                     {
-                        if (ImGui::Selectable("None", layer.clipReference.empty()))
-                        {
-                            layer.clipReference.clear();
-                            m_dirty = true;
-                        }
-                        for (const auto &option : layerClipOptions)
-                        {
-                            const bool selected = option.reference == layer.clipReference;
-                            if (ImGui::Selectable(option.displayName.c_str(), selected))
-                            {
-                                layer.clipReference = option.reference;
-                                layer.clipName = ClipNameFromReference(option.reference);
-                                m_dirty = true;
-                            }
-                        }
-                        ImGui::EndCombo();
+                        layer.clipName = ClipNameFromReference(layer.clipReference);
+                        m_dirty = true;
                     }
                     char clipNameBuffer[128]{};
                     strncpy_s(clipNameBuffer, layer.clipName.c_str(), _TRUNCATE);

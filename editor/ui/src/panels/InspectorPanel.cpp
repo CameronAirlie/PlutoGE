@@ -707,26 +707,6 @@ namespace PlutoGE::ui
             return cache.options;
         }
 
-        std::string GetAssetReferencePreview(const std::vector<AssetReferenceOption> &options,
-                                             const std::string &reference,
-                                             std::string fallback)
-        {
-            if (reference.empty())
-            {
-                return fallback;
-            }
-
-            for (const auto &option : options)
-            {
-                if (option.reference == reference)
-                {
-                    return option.displayName;
-                }
-            }
-
-            return reference;
-        }
-
         std::optional<std::string> AcceptDroppedMaterialAssetReference()
         {
             std::optional<std::string> droppedReference;
@@ -750,51 +730,6 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
-        std::optional<std::string> AcceptDroppedPrefabAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Prefab)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
-        std::optional<std::string> AcceptDroppedScriptableObjectReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ScriptableObject)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            return droppedReference;
-        }
-
         std::string ReadScriptableObjectType(const assets::Project *project, const std::string &reference)
         {
             if (!project)
@@ -806,100 +741,6 @@ namespace PlutoGE::ui
             std::getline(input, header);
             constexpr std::string_view prefix = "SCRIPTABLE\t";
             return header.rfind(prefix, 0) == 0 ? header.substr(prefix.size()) : std::string{};
-        }
-
-        std::optional<std::string> AcceptDroppedMeshAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Mesh)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
-        std::optional<std::string> AcceptDroppedAnimationAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        const auto assetType = assets::Project::GetAssetTypeForReference(reference);
-                        if (assetType == assets::ProjectAssetType::Animation ||
-                            assetType == assets::ProjectAssetType::AnimationClip)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
-        std::optional<std::string> AcceptDroppedAnimationGraphAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::AnimationGraph)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
-        std::optional<std::string> AcceptDroppedParticleSystemAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ParticleSystem)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
         }
 
         std::optional<std::string> AcceptDroppedTextureAssetReference()
@@ -914,29 +755,6 @@ namespace PlutoGE::ui
                         const auto *data = static_cast<const char *>(payload->Data);
                         const std::string reference(data, data + payload->DataSize - 1);
                         if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Texture)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
-        std::optional<std::string> AcceptDroppedAudioAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Audio)
                         {
                             droppedReference = reference;
                         }
@@ -2626,115 +2444,31 @@ namespace PlutoGE::ui
             }
             case scripting::ScriptFieldType::MaterialAsset:
             {
-                const auto &options = GetCachedAssetReferenceOptions(
-                    editorShell.GetProject(), assets::ProjectAssetType::Material);
-                const auto &value = std::get<std::string>(*fieldValue);
-                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
-                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
-                {
-                    const bool noneSelected = value.empty();
-                    if (ImGui::Selectable("<None>", noneSelected))
-                    {
-                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
-                    }
-                    if (noneSelected)
-                        ImGui::SetItemDefaultFocus();
-
-                    for (const auto &option : options)
-                    {
-                        const bool selected = option.reference == value;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
-                        }
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (auto droppedReference = AcceptDroppedMaterialAssetReference())
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
-                }
+                auto value = std::get<std::string>(*fieldValue);
+                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::Material,
+                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
                 break;
             }
             case scripting::ScriptFieldType::InputMappingAsset:
             {
-                const auto &options = GetCachedAssetReferenceOptions(
-                    editorShell.GetProject(), assets::ProjectAssetType::InputMapping);
-                const auto &value = std::get<std::string>(*fieldValue);
-                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
-                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
-                {
-                    if (ImGui::Selectable("<None>", value.empty()))
-                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
-                    for (const auto &option : options)
-                    {
-                        const bool selected = option.reference == value;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-                if (ImGui::BeginDragDropTarget())
-                {
-                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload);
-                        payload && payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::InputMapping)
-                            changed |= scriptComponent.SetFieldValue(field.name, reference);
-                    }
-                    ImGui::EndDragDropTarget();
-                }
+                auto value = std::get<std::string>(*fieldValue);
+                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::InputMapping,
+                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
                 break;
             }
             case scripting::ScriptFieldType::PrefabAsset:
             {
-                const auto &options = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Prefab);
-                const auto &value = std::get<std::string>(*fieldValue);
-                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
-                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
-                {
-                    const bool noneSelected = value.empty();
-                    if (ImGui::Selectable("<None>", noneSelected))
-                    {
-                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
-                    }
-                    if (noneSelected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-
-                    for (const auto &option : options)
-                    {
-                        const bool selected = option.reference == value;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
-                        }
-                        if (selected)
-                        {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (auto droppedReference = AcceptDroppedPrefabAssetReference())
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
-                }
+                auto value = std::get<std::string>(*fieldValue);
+                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::Prefab,
+                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
                 break;
             }
             case scripting::ScriptFieldType::ScriptableObjectAsset:
             {
-                const auto &allOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ScriptableObject);
-                const auto &value = std::get<std::string>(*fieldValue);
+                auto value = std::get<std::string>(*fieldValue);
                 const auto matchesType = [&](const AssetReferenceOption &option)
                 {
                     if (field.referenceTypeName.empty())
@@ -2744,39 +2478,9 @@ namespace PlutoGE::ui
                     return actualType == field.referenceTypeName ||
                            (actualDefinition && std::find(actualDefinition->assignableTypeNames.begin(), actualDefinition->assignableTypeNames.end(), field.referenceTypeName) != actualDefinition->assignableTypeNames.end());
                 };
-                std::string preview = value.empty() ? "<None>" : value;
-                for (const auto &option : allOptions)
-                {
-                    if (option.reference == value)
-                    {
-                        preview = option.displayName;
-                        break;
-                    }
-                }
-                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
-                {
-                    if (ImGui::Selectable("<None>", value.empty()))
-                    {
-                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
-                    }
-                    for (const auto &option : allOptions)
-                    {
-                        if (!matchesType(option))
-                        {
-                            continue;
-                        }
-                        const bool selected = option.reference == value;
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                if (auto droppedReference = AcceptDroppedScriptableObjectReference(); droppedReference && matchesType({*droppedReference, *droppedReference}))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
-                }
+                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::ScriptableObject,
+                                             value, {.noneLabel = "<None>", .includeEngineAssets = true, .filter = matchesType}))
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
                 break;
             }
             case scripting::ScriptFieldType::Vector2:
@@ -2936,23 +2640,16 @@ namespace PlutoGE::ui
         {
             auto &editorShell = EditorShell::GetInstance();
             const std::string &reference = camera.GetTargetTextureAssetReference();
-            if (ImGui::BeginCombo("Target Texture", reference.empty() ? "None (screen)" : reference.c_str()))
+            auto selection = reference;
+            if (RenderProjectAssetPicker("Target Texture", editorShell.GetProject(), assets::ProjectAssetType::Texture, selection,
+                                         {.noneLabel = "None (screen)",
+                                          .filter = [](const AssetReferenceOption &option)
+                                          { return render::RenderTexture::IsAssetPath(option.reference); }}))
             {
-                if (ImGui::Selectable("None (screen)", reference.empty()) && camera.SetTargetTextureAssetReference({}))
+                if (camera.SetTargetTextureAssetReference(selection))
                     editorShell.MarkSceneDirty();
-                for (const auto &option : GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Texture))
-                {
-                    if (!render::RenderTexture::IsAssetPath(option.reference))
-                        continue;
-                    if (ImGui::Selectable(option.displayName.c_str(), option.reference == reference))
-                    {
-                        if (camera.SetTargetTextureAssetReference(option.reference))
-                            editorShell.MarkSceneDirty();
-                        else
-                            editorShell.Log(EditorShell::ConsoleSeverity::Error, "Cannot load render texture: " + option.reference);
-                    }
-                }
-                ImGui::EndCombo();
+                else
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Cannot load render texture: " + selection);
             }
             auto *texture = camera.GetTargetTexture();
             if (!reference.empty() && !texture)
@@ -2989,27 +2686,12 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto &presetOptions = GetCachedAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
         const std::string &presetReference = cameraComponent.GetPostProcessPresetAssetReference();
-        const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
-        if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
-        {
-            if (ImGui::Selectable("None", presetReference.empty()))
-            {
-                if (cameraComponent.SetPostProcessPresetAssetReference({}))
-                    EditorShell::GetInstance().MarkSceneDirty();
-            }
-            for (const auto &option : presetOptions)
-            {
-                const bool selected = option.reference == presetReference;
-                if (ImGui::Selectable(option.displayName.c_str(), selected))
-                {
-                    if (cameraComponent.SetPostProcessPresetAssetReference(option.reference))
-                        EditorShell::GetInstance().MarkSceneDirty();
-                }
-            }
-            ImGui::EndCombo();
-        }
+        if (auto selection = presetReference;
+            RenderProjectAssetPicker("Preset", EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset,
+                                     selection, {.includeEngineAssets = true}) &&
+            cameraComponent.SetPostProcessPresetAssetReference(selection))
+            EditorShell::GetInstance().MarkSceneDirty();
         if (!presetReference.empty())
         {
             ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
@@ -3237,27 +2919,12 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto &presetOptions = GetCachedAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
         const std::string &presetReference = camera.GetPostProcessPresetAssetReference();
-        const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
-        if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
-        {
-            if (ImGui::Selectable("None", presetReference.empty()))
-            {
-                if (camera.SetPostProcessPresetAssetReference({}))
-                    EditorShell::GetInstance().MarkProjectDirty();
-            }
-            for (const auto &option : presetOptions)
-            {
-                const bool selected = option.reference == presetReference;
-                if (ImGui::Selectable(option.displayName.c_str(), selected))
-                {
-                    if (camera.SetPostProcessPresetAssetReference(option.reference))
-                        EditorShell::GetInstance().MarkProjectDirty();
-                }
-            }
-            ImGui::EndCombo();
-        }
+        if (auto selection = presetReference;
+            RenderProjectAssetPicker("Preset", EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset,
+                                     selection, {.includeEngineAssets = true}) &&
+            camera.SetPostProcessPresetAssetReference(selection))
+            EditorShell::GetInstance().MarkProjectDirty();
         if (!presetReference.empty())
         {
             ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
@@ -3783,45 +3450,11 @@ namespace PlutoGE::ui
 
                 ImGui::Separator();
                 ImGui::Text("Static Mesh");
-                const auto &meshAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
-                std::string meshPreview = meshComponent->GetMeshAssetReference().empty() ? "None" : meshComponent->GetMeshAssetReference();
-                for (const auto &option : meshAssetOptions)
-                {
-                    if (option.reference == meshComponent->GetMeshAssetReference())
-                    {
-                        meshPreview = option.displayName;
-                        break;
-                    }
-                }
-
-                if (ImGui::BeginCombo("Mesh Asset", meshPreview.c_str()))
-                {
-                    for (const auto &option : meshAssetOptions)
-                    {
-                        const bool selected = option.reference == meshComponent->GetMeshAssetReference();
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            if (AssignMeshAsset(*meshComponent, option.reference, engine))
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-
-                        if (selected)
-                        {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (auto droppedMeshReference = AcceptDroppedMeshAssetReference())
-                {
-                    if (AssignMeshAsset(*meshComponent, *droppedMeshReference, engine))
-                    {
-                        editorShell.MarkSceneDirty();
-                    }
-                }
+                if (auto selection = meshComponent->GetMeshAssetReference();
+                    RenderProjectAssetPicker("Mesh Asset", editorShell.GetProject(), assets::ProjectAssetType::Mesh, selection,
+                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
+                    AssignMeshAsset(*meshComponent, selection, engine))
+                    editorShell.MarkSceneDirty();
 
                 if (meshComponent->GetMesh())
                 {
@@ -3908,7 +3541,6 @@ namespace PlutoGE::ui
                 }
                 ImGui::EndDisabled();
 
-                const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                 const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
                 const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
                                                     static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
@@ -3954,27 +3586,11 @@ namespace PlutoGE::ui
                         }
 
                         const std::string materialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(materialSlotIndex);
-                        const std::string materialPreview = GetAssetReferencePreview(materialAssetOptions, materialAssetReference, "Inline / Imported");
-                        if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
-                        {
-                            for (const auto &option : materialAssetOptions)
-                            {
-                                const bool selected = option.reference == materialAssetReference;
-                                if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                {
-                                    if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, option.reference, engine))
-                                    {
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                }
-
-                                if (selected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
+                        if (auto selection = materialAssetReference;
+                            RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material,
+                                                     selection, {.noneLabel = nullptr, .emptyPreview = "Inline / Imported", .includeEngineAssets = true}) &&
+                            AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, selection, engine))
+                            editorShell.MarkSceneDirty();
                         ImGui::BeginDisabled(materialAssetReference.empty() ||
                                              assets::Project::IsEngineAssetReference(materialAssetReference));
                         if (ImGui::Button("Open Material Editor"))
@@ -4083,31 +3699,15 @@ namespace PlutoGE::ui
                                     const std::string submeshMaterialAssetReference = meshComponent->GetMaterialAssetForSubmesh(submeshIndex);
                                     const std::string inheritedMaterialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex);
                                     const std::string activeMaterialAssetReference = submeshMaterialAssetReference.empty() ? inheritedMaterialAssetReference : submeshMaterialAssetReference;
-                                    const std::string materialPreview = GetAssetReferencePreview(
-                                        materialAssetOptions,
-                                        activeMaterialAssetReference,
-                                        submeshMaterialAssetReference.empty() ? "Inherits Material Slot" : "Inline Override");
-
-                                    if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                                    if (auto selection = activeMaterialAssetReference;
+                                        RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
+                                                                 {.noneLabel = nullptr,
+                                                                  .emptyPreview = submeshMaterialAssetReference.empty() ? "Inherits Material Slot" : "Inline Override",
+                                                                  .includeEngineAssets = true}) &&
+                                        AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, selection, engine))
                                     {
-                                        for (const auto &option : materialAssetOptions)
-                                        {
-                                            const bool selected = option.reference == activeMaterialAssetReference;
-                                            if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                            {
-                                                if (AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, option.reference, engine))
-                                                {
-                                                    editorShell.MarkSceneDirty();
-                                                    material = meshComponent->GetMaterialForSubmesh(submeshIndex);
-                                                }
-                                            }
-
-                                            if (selected)
-                                            {
-                                                ImGui::SetItemDefaultFocus();
-                                            }
-                                        }
-                                        ImGui::EndCombo();
+                                        editorShell.MarkSceneDirty();
+                                        material = meshComponent->GetMaterialForSubmesh(submeshIndex);
                                     }
                                     ImGui::BeginDisabled(activeMaterialAssetReference.empty() ||
                                                          assets::Project::IsEngineAssetReference(activeMaterialAssetReference));
@@ -4258,80 +3858,23 @@ namespace PlutoGE::ui
             {
                 ImGui::Separator();
                 ImGui::Text("Animation");
-                auto animationAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Animation);
-                const auto &animationClipAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationClip);
-                animationAssetOptions.insert(animationAssetOptions.end(), animationClipAssetOptions.begin(), animationClipAssetOptions.end());
-                std::sort(animationAssetOptions.begin(), animationAssetOptions.end(),
-                          [](const AssetReferenceOption &left, const AssetReferenceOption &right)
-                          {
-                              return left.displayName < right.displayName;
-                          });
-                std::string animationPreview = GetAssetReferencePreview(animationAssetOptions,
-                                                                        animationComponent->GetSourceAnimationPath(),
-                                                                        "None");
-                if (ImGui::BeginCombo("Animation Asset", animationPreview.c_str()))
+                static constexpr std::array animationTypes{assets::ProjectAssetType::Animation, assets::ProjectAssetType::AnimationClip};
+                if (auto selection = animationComponent->GetSourceAnimationPath();
+                    RenderProjectAssetPicker("Animation Asset", editorShell.GetProject(), animationTypes, selection,
+                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
+                    AssignAnimationAsset(*animationComponent, selection))
                 {
-                    for (const auto &option : animationAssetOptions)
-                    {
-                        const bool selected = option.reference == animationComponent->GetSourceAnimationPath();
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            if (AssignAnimationAsset(*animationComponent, option.reference))
-                            {
-                                entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-
-                        if (selected)
-                        {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
+                    entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
+                    editorShell.MarkSceneDirty();
                 }
 
-                if (auto droppedAnimationReference = AcceptDroppedAnimationAssetReference())
+                if (auto selection = animationComponent->GetAnimationGraphAssetReference();
+                    RenderProjectAssetPicker("Animation Graph", editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph, selection,
+                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
+                    AssignAnimationGraphAsset(*animationComponent, selection))
                 {
-                    if (AssignAnimationAsset(*animationComponent, *droppedAnimationReference))
-                    {
-                        entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
-                        editorShell.MarkSceneDirty();
-                    }
-                }
-
-                const auto &animationGraphAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph);
-                std::string animationGraphPreview = GetAssetReferencePreview(animationGraphAssetOptions,
-                                                                             animationComponent->GetAnimationGraphAssetReference(),
-                                                                             "None");
-                if (ImGui::BeginCombo("Animation Graph", animationGraphPreview.c_str()))
-                {
-                    for (const auto &option : animationGraphAssetOptions)
-                    {
-                        const bool selected = option.reference == animationComponent->GetAnimationGraphAssetReference();
-                        if (ImGui::Selectable(option.displayName.c_str(), selected))
-                        {
-                            if (AssignAnimationGraphAsset(*animationComponent, option.reference))
-                            {
-                                entity->AddPrefabOverride("Component:AnimationComponent:AnimationGraph");
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-
-                        if (selected)
-                        {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                if (auto droppedAnimationGraphReference = AcceptDroppedAnimationGraphAssetReference())
-                {
-                    if (AssignAnimationGraphAsset(*animationComponent, *droppedAnimationGraphReference))
-                    {
-                        entity->AddPrefabOverride("Component:AnimationComponent:AnimationGraph");
-                        editorShell.MarkSceneDirty();
-                    }
+                    entity->AddPrefabOverride("Component:AnimationComponent:AnimationGraph");
+                    editorShell.MarkSceneDirty();
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(animationComponent->GetAnimationGraphAssetReference().empty());
@@ -4922,31 +4465,13 @@ namespace PlutoGE::ui
                                 }
                                 if (canvas->GetContentSource() == scene::RmlUiContentSource::Document)
                                 {
-                                    const auto &documentOptions = GetCachedAssetReferenceOptions(
-                                        editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
-                                    const std::string documentPreview = GetAssetReferencePreview(
-                                        documentOptions, canvas->GetDocumentPath(), "None");
-                                    if (ImGui::BeginCombo("Document", documentPreview.c_str()))
+                                    if (auto selection = canvas->GetDocumentPath();
+                                        RenderProjectAssetPicker("Document", editorShell.GetProject(), assets::ProjectAssetType::RmlDocument,
+                                                                 selection, {.includeEngineAssets = true}))
                                     {
-                                        if (ImGui::Selectable("None", canvas->GetDocumentPath().empty()))
-                                        {
-                                            canvas->SetDocumentPath({});
-                                            entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
-                                            editorShell.MarkSceneDirty();
-                                        }
-                                        for (const auto &option : documentOptions)
-                                        {
-                                            const bool selected = option.reference == canvas->GetDocumentPath();
-                                            if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                            {
-                                                canvas->SetDocumentPath(option.reference);
-                                                entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
-                                                editorShell.MarkSceneDirty();
-                                            }
-                                            if (selected)
-                                                ImGui::SetItemDefaultFocus();
-                                        }
-                                        ImGui::EndCombo();
+                                        canvas->SetDocumentPath(selection);
+                                        entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
+                                        editorShell.MarkSceneDirty();
                                     }
                                 }
                                 else if (auto *text = entity->GetComponent<scene::UITextComponent>())
@@ -4992,31 +4517,13 @@ namespace PlutoGE::ui
                                           { return property.name == "Source"; });
                             propertiesProvided = true;
 
-                            const auto &sourceOptions = GetCachedAssetReferenceOptions(
-                                editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
-                            const std::string sourcePreview = GetAssetReferencePreview(
-                                sourceOptions, rmlWidget->GetSource(), "None");
-                            if (ImGui::BeginCombo("Source", sourcePreview.c_str()))
+                            if (auto selection = rmlWidget->GetSource();
+                                RenderProjectAssetPicker("Source", editorShell.GetProject(), assets::ProjectAssetType::RmlDocument,
+                                                         selection, {.includeEngineAssets = true}))
                             {
-                                if (ImGui::Selectable("None", rmlWidget->GetSource().empty()))
-                                {
-                                    rmlWidget->SetSource({});
-                                    entity->AddPrefabOverride("Component:RmlWidgetComponent:Source");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                for (const auto &option : sourceOptions)
-                                {
-                                    const bool selected = option.reference == rmlWidget->GetSource();
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        rmlWidget->SetSource(option.reference);
-                                        entity->AddPrefabOverride("Component:RmlWidgetComponent:Source");
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                    if (selected)
-                                        ImGui::SetItemDefaultFocus();
-                                }
-                                ImGui::EndCombo();
+                                rmlWidget->SetSource(selection);
+                                entity->AddPrefabOverride("Component:RmlWidgetComponent:Source");
+                                editorShell.MarkSceneDirty();
                             }
                         }
                         else if (auto *decalComponent = dynamic_cast<scene::DecalComponent *>(componentPtr))
@@ -5026,32 +4533,11 @@ namespace PlutoGE::ui
                                           { return property.name == "MaterialAsset"; });
                             propertiesProvided = true;
 
-                            const auto &materialOptions = GetCachedAssetReferenceOptions(
-                                editorShell.GetProject(), assets::ProjectAssetType::Material);
-                            const std::string materialPreview = GetAssetReferencePreview(
-                                materialOptions,
-                                decalComponent->GetMaterialAssetReference(),
-                                "None");
-                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            if (auto selection = decalComponent->GetMaterialAssetReference();
+                                RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material,
+                                                         selection, {.noneLabel = nullptr, .includeEngineAssets = true}))
                             {
-                                for (const auto &option : materialOptions)
-                                {
-                                    const bool selected = option.reference == decalComponent->GetMaterialAssetReference();
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        decalComponent->SetMaterialAssetReference(option.reference);
-                                        entity->AddPrefabOverride("Component:DecalComponent:MaterialAsset");
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                    if (selected)
-                                        ImGui::SetItemDefaultFocus();
-                                }
-                                ImGui::EndCombo();
-                            }
-
-                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
-                            {
-                                decalComponent->SetMaterialAssetReference(*droppedReference);
+                                decalComponent->SetMaterialAssetReference(selection);
                                 entity->AddPrefabOverride("Component:DecalComponent:MaterialAsset");
                                 editorShell.MarkSceneDirty();
                             }
@@ -5137,40 +4623,13 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndDisabled();
 
-                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
-                            const std::string materialPreview = GetAssetReferencePreview(
-                                materialAssetOptions,
-                                terrainComponent->GetMaterialAssetReference(),
-                                "Default Shaded");
-                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            if (auto selection = terrainComponent->GetMaterialAssetReference();
+                                RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
+                                                         {.noneLabel = nullptr, .emptyPreview = "Default Shaded", .includeEngineAssets = true}) &&
+                                AssignMaterialAssetToTerrain(*terrainComponent, selection, core::Engine::GetInstance()))
                             {
-                                for (const auto &option : materialAssetOptions)
-                                {
-                                    const bool selected = option.reference == terrainComponent->GetMaterialAssetReference();
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        if (AssignMaterialAssetToTerrain(*terrainComponent, option.reference, core::Engine::GetInstance()))
-                                        {
-                                            entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
-                                            editorShell.MarkSceneDirty();
-                                        }
-                                    }
-
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-
-                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
-                            {
-                                if (AssignMaterialAssetToTerrain(*terrainComponent, *droppedReference, core::Engine::GetInstance()))
-                                {
-                                    entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
-                                    editorShell.MarkSceneDirty();
-                                }
+                                entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
+                                editorShell.MarkSceneDirty();
                             }
                         }
                         else if (auto *sequencer = dynamic_cast<scene::SequencerComponent *>(componentPtr))
@@ -5211,40 +4670,13 @@ namespace PlutoGE::ui
                                 {"GenerateCollision", scene::PropertyType::Bool, splineComponent->ShouldGenerateCollision() ? "true" : "false"},
                             };
 
-                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
-                            const std::string materialPreview = GetAssetReferencePreview(
-                                materialAssetOptions,
-                                splineComponent->GetMaterialAssetReference(),
-                                "Default Shaded");
-                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            if (auto selection = splineComponent->GetMaterialAssetReference();
+                                RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
+                                                         {.noneLabel = nullptr, .emptyPreview = "Default Shaded", .includeEngineAssets = true}) &&
+                                AssignMaterialAssetToSpline(*splineComponent, selection, core::Engine::GetInstance()))
                             {
-                                for (const auto &option : materialAssetOptions)
-                                {
-                                    const bool selected = option.reference == splineComponent->GetMaterialAssetReference();
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        if (AssignMaterialAssetToSpline(*splineComponent, option.reference, core::Engine::GetInstance()))
-                                        {
-                                            entity->AddPrefabOverride("Component:SplineComponent:MaterialAsset");
-                                            editorShell.MarkSceneDirty();
-                                        }
-                                    }
-
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-
-                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
-                            {
-                                if (AssignMaterialAssetToSpline(*splineComponent, *droppedReference, core::Engine::GetInstance()))
-                                {
-                                    entity->AddPrefabOverride("Component:SplineComponent:MaterialAsset");
-                                    editorShell.MarkSceneDirty();
-                                }
+                                entity->AddPrefabOverride("Component:SplineComponent:MaterialAsset");
+                                editorShell.MarkSceneDirty();
                             }
 
                             const auto &points = splineComponent->GetPoints();
@@ -5632,54 +5064,33 @@ namespace PlutoGE::ui
                             }
 
                             auto &engine = core::Engine::GetInstance();
-                            const auto &meshAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
-                            std::string meshPreview = !selectedType || selectedType->sourceMeshPath.empty() ? "None" : selectedType->sourceMeshPath;
-                            for (const auto &option : meshAssetOptions)
+                            if (auto selection = selectedType ? selectedType->sourceMeshPath : std::string{};
+                                RenderProjectAssetPicker("Foliage Mesh", editorShell.GetProject(), assets::ProjectAssetType::Mesh,
+                                                         selection, {.noneLabel = nullptr, .includeEngineAssets = true}))
                             {
-                                if (selectedType && option.reference == selectedType->sourceMeshPath)
+                                if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(selection))
                                 {
-                                    meshPreview = option.displayName;
-                                    break;
-                                }
-                            }
-
-                            if (ImGui::BeginCombo("Foliage Mesh", meshPreview.c_str()))
-                            {
-                                for (const auto &option : meshAssetOptions)
-                                {
-                                    const bool selected = selectedType && option.reference == selectedType->sourceMeshPath;
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(selection);
+                                    std::vector<render::Material *> loadedMaterials;
+                                    loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+                                    for (const auto &materialReference : materialReferences)
                                     {
-                                        if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
-                                        {
-                                            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(option.reference);
-                                            std::vector<render::Material *> loadedMaterials;
-                                            loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
-                                            for (const auto &materialReference : materialReferences)
-                                            {
-                                                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
-                                            }
-                                            if (loadedMaterials.empty())
-                                            {
-                                                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
-                                            }
-                                            foliageComponent->SetTypeMeshAndMaterials(
-                                                selectedTypeIndex,
-                                                mesh,
-                                                loadedMaterials,
-                                                option.reference);
-                                            foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
-                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
-                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
-                                            editorShell.MarkSceneDirty();
-                                        }
+                                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
                                     }
-                                    if (selected)
+                                    if (loadedMaterials.empty())
                                     {
-                                        ImGui::SetItemDefaultFocus();
+                                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
                                     }
+                                    foliageComponent->SetTypeMeshAndMaterials(
+                                        selectedTypeIndex,
+                                        mesh,
+                                        loadedMaterials,
+                                        selection);
+                                    foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
+                                    editorShell.MarkSceneDirty();
                                 }
-                                ImGui::EndCombo();
                             }
 
                             selectedType = foliageComponent->GetSelectedType();
@@ -5774,29 +5185,15 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndDisabled();
 
-                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
-                            const std::string materialPreview = GetAssetReferencePreview(
-                                materialAssetOptions,
-                                selectedType ? selectedType->materialAssetReference : std::string{},
-                                selectedType && selectedType->materialAssetReference.empty() ? "Auto From Mesh" : "Default Shaded");
-                            if (ImGui::BeginCombo("Material Override", materialPreview.c_str()))
+                            if (auto selection = selectedType ? selectedType->materialAssetReference : std::string{};
+                                RenderProjectAssetPicker("Material Override", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
+                                                         {.noneLabel = nullptr,
+                                                          .emptyPreview = selectedType ? "Auto From Mesh" : "Default Shaded",
+                                                          .includeEngineAssets = true}))
                             {
-                                for (const auto &option : materialAssetOptions)
-                                {
-                                    const bool selected = selectedType && option.reference == selectedType->materialAssetReference;
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        foliageComponent->SetTypeMaterialAssetReference(selectedTypeIndex, option.reference);
-                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".MaterialAsset");
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
+                                foliageComponent->SetTypeMaterialAssetReference(selectedTypeIndex, selection);
+                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".MaterialAsset");
+                                editorShell.MarkSceneDirty();
                             }
                             ImGui::SameLine();
                             ImGui::BeginDisabled(!selectedType || selectedType->materialAssetReference.empty());
@@ -5984,50 +5381,14 @@ namespace PlutoGE::ui
 
                         if (auto *particleSystemComponent = dynamic_cast<scene::ParticleSystemComponent *>(componentPtr))
                         {
-                            const auto &particleAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ParticleSystem);
                             const std::string currentReference = particleSystemComponent->GetParticleSystemAssetReference();
-                            const std::string preview = GetAssetReferencePreview(particleAssetOptions, currentReference, "None");
-                            if (ImGui::BeginCombo("Particle System Asset", preview.c_str()))
+                            if (auto selection = currentReference;
+                                RenderProjectAssetPicker("Particle System Asset", editorShell.GetProject(), assets::ProjectAssetType::ParticleSystem,
+                                                         selection, {.includeEngineAssets = true}) &&
+                                particleSystemComponent->SetParticleSystemAssetReference(selection))
                             {
-                                const bool noneSelected = currentReference.empty();
-                                if (ImGui::Selectable("None", noneSelected))
-                                {
-                                    if (particleSystemComponent->SetParticleSystemAssetReference({}))
-                                    {
-                                        entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                }
-                                if (noneSelected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-
-                                for (const auto &option : particleAssetOptions)
-                                {
-                                    const bool selected = option.reference == currentReference;
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        if (particleSystemComponent->SetParticleSystemAssetReference(option.reference))
-                                        {
-                                            entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
-                                            editorShell.MarkSceneDirty();
-                                        }
-                                    }
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-                            if (auto droppedParticleReference = AcceptDroppedParticleSystemAssetReference())
-                            {
-                                if (particleSystemComponent->SetParticleSystemAssetReference(*droppedParticleReference))
-                                {
-                                    entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
-                                    editorShell.MarkSceneDirty();
-                                }
+                                entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
+                                editorShell.MarkSceneDirty();
                             }
                             if (!currentReference.empty())
                             {
@@ -6044,43 +5405,11 @@ namespace PlutoGE::ui
 
                         if (auto *soundEmitterComponent = dynamic_cast<scene::SoundEmitterComponent *>(componentPtr))
                         {
-                            const auto &audioOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Audio);
-                            const std::string currentReference = soundEmitterComponent->GetClipReference();
-                            const std::string preview = GetAssetReferencePreview(audioOptions, currentReference, "None");
-                            if (ImGui::BeginCombo("Audio Clip", preview.c_str()))
+                            if (auto selection = soundEmitterComponent->GetClipReference();
+                                RenderProjectAssetPicker("Audio Clip", editorShell.GetProject(), assets::ProjectAssetType::Audio,
+                                                         selection, {.includeEngineAssets = true}))
                             {
-                                const bool noneSelected = currentReference.empty();
-                                if (ImGui::Selectable("None", noneSelected))
-                                {
-                                    soundEmitterComponent->SetClipReference({});
-                                    entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                if (noneSelected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-
-                                for (const auto &option : audioOptions)
-                                {
-                                    const bool selected = option.reference == currentReference;
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        soundEmitterComponent->SetClipReference(option.reference);
-                                        entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-
-                            if (auto droppedAudioReference = AcceptDroppedAudioAssetReference())
-                            {
-                                soundEmitterComponent->SetClipReference(*droppedAudioReference);
+                                soundEmitterComponent->SetClipReference(selection);
                                 entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
                                 editorShell.MarkSceneDirty();
                             }
@@ -6090,43 +5419,11 @@ namespace PlutoGE::ui
 
                         if (auto *imageComponent = dynamic_cast<scene::UIImageComponent *>(componentPtr))
                         {
-                            const auto &textureOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Texture);
-                            const std::string currentReference = imageComponent->GetTexturePath();
-                            const std::string preview = GetAssetReferencePreview(textureOptions, currentReference, "None");
-                            if (ImGui::BeginCombo("Texture", preview.c_str()))
+                            if (auto selection = imageComponent->GetTexturePath();
+                                RenderProjectAssetPicker("Texture", editorShell.GetProject(), assets::ProjectAssetType::Texture,
+                                                         selection, {.includeEngineAssets = true}))
                             {
-                                const bool noneSelected = currentReference.empty();
-                                if (ImGui::Selectable("None", noneSelected))
-                                {
-                                    imageComponent->SetTexturePath({});
-                                    entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                if (noneSelected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-
-                                for (const auto &option : textureOptions)
-                                {
-                                    const bool selected = option.reference == currentReference;
-                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                                    {
-                                        imageComponent->SetTexturePath(option.reference);
-                                        entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    if (selected)
-                                    {
-                                        ImGui::SetItemDefaultFocus();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-                            if (auto droppedTextureReference = AcceptDroppedTextureAssetReference())
-                            {
-                                imageComponent->SetTexturePath(*droppedTextureReference);
+                                imageComponent->SetTexturePath(selection);
                                 entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
                                 editorShell.MarkSceneDirty();
                             }
@@ -6181,22 +5478,13 @@ namespace PlutoGE::ui
                             {
                                 if (property.name == "Surface Asset")
                                 {
-                                    const auto &options = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::SurfaceResponse);
-                                    const auto &current = colliderComponent->GetSurfaceAssetReference();
-                                    if (ImGui::BeginCombo("Surface Asset", current.empty() ? "None (rigidbody friction)" : current.c_str()))
+                                    if (auto selection = colliderComponent->GetSurfaceAssetReference();
+                                        RenderProjectAssetPicker("Surface Asset", editorShell.GetProject(), assets::ProjectAssetType::SurfaceResponse,
+                                                                 selection, {.emptyPreview = "None (rigidbody friction)", .includeEngineAssets = true}))
                                     {
-                                        auto assign = [&](const std::string &reference)
-                                        {
-                                            colliderComponent->SetSurfaceAssetReference(reference);
-                                            entity->AddPrefabOverride("Component:ColliderComponent:Surface Asset");
-                                            editorShell.MarkSceneDirty();
-                                        };
-                                        if (ImGui::Selectable("None", current.empty()))
-                                            assign({});
-                                        for (const auto &option : options)
-                                            if (ImGui::Selectable(option.reference.c_str(), option.reference == current))
-                                                assign(option.reference);
-                                        ImGui::EndCombo();
+                                        colliderComponent->SetSurfaceAssetReference(selection);
+                                        entity->AddPrefabOverride("Component:ColliderComponent:Surface Asset");
+                                        editorShell.MarkSceneDirty();
                                     }
                                     continue;
                                 }

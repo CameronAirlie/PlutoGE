@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/ModelAsset.h"
@@ -3457,14 +3458,7 @@ namespace PlutoGE::ui
                 ImGui::SliderFloat("Friction", &m_surfaceDraft.friction, 0.0f, 10.0f);
                 const auto choose = [&](const char *label, std::string &value, assets::ProjectAssetType type)
                 {
-                    if (ImGui::BeginCombo(label, value.empty() ? "None" : value.c_str()))
-                    {
-                        if (ImGui::Selectable("None", value.empty())) value.clear();
-                        for (const auto &candidate : project->GetManifest().assetEntries)
-                            if (candidate.type == type && ImGui::Selectable(candidate.reference.c_str(), candidate.reference == value))
-                                value = candidate.reference;
-                        ImGui::EndCombo();
-                    }
+                    (void)RenderProjectAssetPicker(label, project, type, value, {.includeEngineAssets = true});
                 };
                 for (int event = 0; event < 2; ++event)
                 {

@@ -1,5 +1,7 @@
 #include "PlutoGE/ui/AssetReferencePicker.h"
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -55,6 +57,33 @@ namespace
                 "Without a project, no texture can be chosen");
     }
 
+    void EngineAssetsAndMultipleTypes()
+    {
+        const auto root = std::filesystem::temp_directory_path() / "PlutoGE-picker-tests";
+        const auto project = MakeProject(root);
+        const auto has = [](const std::vector<ui::AssetReferenceOption> &choices, std::string_view reference) {
+            return std::ranges::any_of(choices, [&](const auto &choice) { return choice.reference == reference; });
+        };
+
+        const auto withEngine = ui::CollectProjectAssetChoices(&project, ProjectAssetType::Texture, {.includeEngineAssets = true});
+        Require(withEngine.size() == 3 && has(withEngine, "engine://textures/checker.png"),
+                "Engine textures listed by the manifest must be offered when requested");
+
+        // Built-ins remain selectable even when the manifest omits them.
+        const std::string defaultMaterial(assets::Project::kBuiltinDefaultShadedMaterialReference);
+        Require(has(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Material, {.includeEngineAssets = true}), defaultMaterial),
+                "Engine default materials must be offered when engine assets are allowed");
+        Require(!has(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Material), defaultMaterial),
+                "Engine assets must not be offered by default");
+        Require(has(ui::CollectProjectAssetChoices(nullptr, ProjectAssetType::Material, {.includeEngineAssets = true}), defaultMaterial),
+                "Engine built-ins must be offered without a project");
+
+        const std::array types{ProjectAssetType::ShaderGraph, ProjectAssetType::Texture};
+        const auto mixed = ui::CollectProjectAssetChoices(&project, types);
+        Require(mixed.size() == 3 && std::ranges::is_sorted(mixed, {}, &ui::AssetReferenceOption::displayName),
+                "Several asset types must be merged into one sorted list");
+    }
+
     void ReferencesNormalizeToTheProject()
     {
         const auto root = std::filesystem::temp_directory_path() / "PlutoGE-picker-tests";
@@ -81,6 +110,7 @@ int main()
     try
     {
         OnlyProjectAssetsAreOffered();
+        EngineAssetsAndMultipleTypes();
         ReferencesNormalizeToTheProject();
         std::cout << "PASS: material asset pickers offer and normalize project assets only\n";
         return 0;

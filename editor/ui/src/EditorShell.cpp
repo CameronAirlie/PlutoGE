@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
@@ -3985,15 +3986,8 @@ namespace PlutoGE::ui
 
                     ImGui::InputText("Project Name", projectNameBuffer.data(), projectNameBuffer.size());
                     ImGui::InputText("Window Title", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
-                    if (ImGui::BeginCombo("Loading Screen", projectLoadingScreen.empty() ? "Engine default" : projectLoadingScreen.c_str()))
-                    {
-                        if (ImGui::Selectable("Engine default", projectLoadingScreen.empty())) projectLoadingScreen.clear();
-                        for (const auto &asset : manifest.assetEntries)
-                            if (asset.type == assets::ProjectAssetType::LoadingScreen &&
-                                ImGui::Selectable(asset.reference.c_str(), projectLoadingScreen == asset.reference))
-                                projectLoadingScreen = asset.reference;
-                        ImGui::EndCombo();
-                    }
+                    (void)RenderProjectAssetPicker("Loading Screen", m_project.get(), assets::ProjectAssetType::LoadingScreen,
+                                                   projectLoadingScreen, {.noneLabel = "Engine default", .includeEngineAssets = true});
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
@@ -4117,22 +4111,8 @@ namespace PlutoGE::ui
                     ImGui::Separator();
                     ImGui::Text("Manifest: %s", m_project->GetManifestPath().string().c_str());
                     ImGui::Text("Asset Directory: %s", manifest.assetDirectory.c_str());
-                    if (ImGui::BeginCombo("Startup Scene", projectStartupScene.empty() ? "<none>" : projectStartupScene.c_str()))
-                    {
-                        if (ImGui::Selectable("<none>", projectStartupScene.empty()))
-                            projectStartupScene.clear();
-                        for (const auto &entry : manifest.assetEntries)
-                        {
-                            if (entry.type != assets::ProjectAssetType::Scene)
-                                continue;
-                            const bool selected = projectStartupScene == entry.reference;
-                            if (ImGui::Selectable(entry.reference.c_str(), selected))
-                                projectStartupScene = entry.reference;
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
+                    (void)RenderProjectAssetPicker("Startup Scene", m_project.get(), assets::ProjectAssetType::Scene,
+                                                   projectStartupScene, {.noneLabel = "<none>", .includeEngineAssets = true});
                     ImGui::TextWrapped("The startup scene is used when opening the project and launching the runtime. Saving another scene does not change it.");
 
                     if (ImGui::Button("Save"))

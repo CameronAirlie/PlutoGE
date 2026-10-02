@@ -5,6 +5,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
@@ -42,19 +43,6 @@ namespace PlutoGE::ui
             default:
                 return "Kill";
             }
-        }
-
-        std::string AssetDisplayName(std::string reference)
-        {
-            if (reference.rfind(assets::Project::kProjectAssetScheme, 0) == 0)
-            {
-                reference.erase(0, assets::Project::kProjectAssetScheme.size());
-            }
-            else if (reference.rfind(assets::Project::kEngineAssetScheme, 0) == 0)
-            {
-                reference.erase(0, assets::Project::kEngineAssetScheme.size());
-            }
-            return reference;
         }
     }
 
@@ -217,37 +205,10 @@ namespace PlutoGE::ui
         ImGui::EndDisabled();
 
         auto *project = editorShell.GetProject();
-        std::string materialPreview = m_asset.materialAssetReference.empty() ? "Default" : AssetDisplayName(m_asset.materialAssetReference);
-        if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
-        {
-            if (ImGui::Selectable("Default", m_asset.materialAssetReference.empty()))
-            {
-                m_asset.materialAssetReference.clear();
-                m_dirty = true;
-            }
-            if (project)
-            {
-                for (const auto &entry : project->GetManifest().assetEntries)
-                {
-                    if (entry.type != assets::ProjectAssetType::Material)
-                    {
-                        continue;
-                    }
-                    const bool selected = entry.reference == m_asset.materialAssetReference;
-                    const std::string displayName = AssetDisplayName(entry.reference);
-                    if (ImGui::Selectable(displayName.c_str(), selected))
-                    {
-                        m_asset.materialAssetReference = entry.reference;
-                        m_dirty = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-            }
-            ImGui::EndCombo();
-        }
+        const ProjectAssetPickerOptions materialPicker{.noneLabel = "Default", .includeEngineAssets = true};
+        if (RenderProjectAssetPicker("Material Asset", project, assets::ProjectAssetType::Material,
+                                     m_asset.materialAssetReference, materialPicker))
+            m_dirty = true;
 
         ImGui::SeparatorText("Collision");
         if (ImGui::Checkbox("Collision Enabled", &m_asset.collisionEnabled)) m_dirty = true;
@@ -273,104 +234,24 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Trail Lifetime", &m_asset.trailLifetime, 0.01f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Trail Width", &m_asset.trailWidth, 0.005f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::Checkbox("Inherit Particle Color", &m_asset.trailInheritParticleColor)) m_dirty = true;
-        std::string trailMaterialPreview = m_asset.trailMaterialAssetReference.empty() ? "Default" : AssetDisplayName(m_asset.trailMaterialAssetReference);
-        if (ImGui::BeginCombo("Trail Material Asset", trailMaterialPreview.c_str()))
-        {
-            if (ImGui::Selectable("Default", m_asset.trailMaterialAssetReference.empty()))
-            {
-                m_asset.trailMaterialAssetReference.clear();
-                m_dirty = true;
-            }
-            if (project)
-            {
-                for (const auto &entry : project->GetManifest().assetEntries)
-                {
-                    if (entry.type != assets::ProjectAssetType::Material)
-                    {
-                        continue;
-                    }
-                    const bool selected = entry.reference == m_asset.trailMaterialAssetReference;
-                    const std::string displayName = AssetDisplayName(entry.reference);
-                    if (ImGui::Selectable(displayName.c_str(), selected))
-                    {
-                        m_asset.trailMaterialAssetReference = entry.reference;
-                        m_dirty = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-            }
-            ImGui::EndCombo();
-        }
+        if (RenderProjectAssetPicker("Trail Material Asset", project, assets::ProjectAssetType::Material,
+                                     m_asset.trailMaterialAssetReference, materialPicker))
+            m_dirty = true;
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Sub Emitters");
-        std::string collisionSubPreview = m_asset.collisionSubEmitterAssetReference.empty() ? "None" : AssetDisplayName(m_asset.collisionSubEmitterAssetReference);
-        if (ImGui::BeginCombo("Collision Sub Emitter", collisionSubPreview.c_str()))
-        {
-            if (ImGui::Selectable("None", m_asset.collisionSubEmitterAssetReference.empty()))
-            {
-                m_asset.collisionSubEmitterAssetReference.clear();
-                m_dirty = true;
-            }
-            if (project)
-            {
-                for (const auto &entry : project->GetManifest().assetEntries)
-                {
-                    if (entry.type != assets::ProjectAssetType::ParticleSystem || entry.reference == reference)
-                    {
-                        continue;
-                    }
-                    const bool selected = entry.reference == m_asset.collisionSubEmitterAssetReference;
-                    const std::string displayName = AssetDisplayName(entry.reference);
-                    if (ImGui::Selectable(displayName.c_str(), selected))
-                    {
-                        m_asset.collisionSubEmitterAssetReference = entry.reference;
-                        m_dirty = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-            }
-            ImGui::EndCombo();
-        }
+        // A system cannot spawn itself as a sub emitter.
+        const ProjectAssetPickerOptions subEmitterPicker{
+            .includeEngineAssets = true,
+            .filter = [&reference](const AssetReferenceOption &option) { return option.reference != reference; }};
+        if (RenderProjectAssetPicker("Collision Sub Emitter", project, assets::ProjectAssetType::ParticleSystem,
+                                     m_asset.collisionSubEmitterAssetReference, subEmitterPicker))
+            m_dirty = true;
         if (ImGui::DragInt("Collision Burst Count", &m_asset.collisionSubEmitterCount, 1.0f, 0, 200000)) m_dirty = true;
 
-        std::string deathSubPreview = m_asset.deathSubEmitterAssetReference.empty() ? "None" : AssetDisplayName(m_asset.deathSubEmitterAssetReference);
-        if (ImGui::BeginCombo("Death Sub Emitter", deathSubPreview.c_str()))
-        {
-            if (ImGui::Selectable("None", m_asset.deathSubEmitterAssetReference.empty()))
-            {
-                m_asset.deathSubEmitterAssetReference.clear();
-                m_dirty = true;
-            }
-            if (project)
-            {
-                for (const auto &entry : project->GetManifest().assetEntries)
-                {
-                    if (entry.type != assets::ProjectAssetType::ParticleSystem || entry.reference == reference)
-                    {
-                        continue;
-                    }
-                    const bool selected = entry.reference == m_asset.deathSubEmitterAssetReference;
-                    const std::string displayName = AssetDisplayName(entry.reference);
-                    if (ImGui::Selectable(displayName.c_str(), selected))
-                    {
-                        m_asset.deathSubEmitterAssetReference = entry.reference;
-                        m_dirty = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-            }
-            ImGui::EndCombo();
-        }
+        if (RenderProjectAssetPicker("Death Sub Emitter", project, assets::ProjectAssetType::ParticleSystem,
+                                     m_asset.deathSubEmitterAssetReference, subEmitterPicker))
+            m_dirty = true;
         if (ImGui::DragInt("Death Burst Count", &m_asset.deathSubEmitterCount, 1.0f, 0, 200000)) m_dirty = true;
 
         ImGui::Separator();

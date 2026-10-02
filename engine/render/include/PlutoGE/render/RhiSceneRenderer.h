@@ -157,6 +157,8 @@ namespace PlutoGE::render
         }
         void ResetTemporalHistory() noexcept
         {
+            if (m_renderer)
+                m_renderer->ResetTemporalHistory();
             ++m_skinningHistoryEpoch;
             m_upscalerHistoryValid = false;
             m_temporalFrameIndex = 0;
@@ -171,13 +173,19 @@ namespace PlutoGE::render
                     PostProcessDebugView debugView = PostProcessDebugView::None, bool submit = true,
                     const scene::Scene *scene = nullptr,
                     // When set, only these lights illuminate the view instead of every scene light.
-                    std::optional<std::span<scene::Light *const>> lights = std::nullopt);
+                    std::optional<std::span<scene::Light *const>> lights = std::nullopt,
+                    const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
+                    std::optional<glm::vec2> sharedClipJitter = std::nullopt);
+
+        [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept;
+        [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept;
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetNormalTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetMaterialTexture() const noexcept;
         [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept;
+        [[nodiscard]] rhi::TextureHandle GetCoverageTexture() const noexcept;
         [[nodiscard]] std::size_t GetSceneCommandCount() const noexcept { return m_sceneCommandCount; }
         [[nodiscard]] std::size_t GetDrawCount() const noexcept { return m_drawCount; }
         [[nodiscard]] const RhiSceneTimingStats &GetTimingStats() const noexcept { return m_timingStats; }

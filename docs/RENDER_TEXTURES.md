@@ -25,6 +25,8 @@ in-world screens. This works like Unity's RenderTexture.
 - Render-texture cameras draw before the screen cameras each frame, so
   materials show the current frame. They use their own post-processing,
   lighting, sky and tag filters, just like a normal camera.
+- TAA resolves both colour and geometry coverage. Transparent backgrounds keep
+  fractional alpha at silhouette edges when the final texture is published.
 - A material samples a render texture exactly like a screenshot of the
   camera's view imported as an image. The texture holds the camera's final,
   tone-mapped colour, so slots that read colour (albedo, emission) look right.

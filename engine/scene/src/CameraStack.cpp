@@ -44,17 +44,27 @@ namespace PlutoGE::scene
                 .postProcessEffects = storage.postProcessEffects,
                 .shadowCommands = commands,
             };
-            // Tag-filtered lighting: the camera's tags also select its lights,
-            // and only its own (tagged) geometry casts shadows onto it.
-            if (camera.FiltersLightsByTags())
+            view.historyKey = &camera;
+            // Ignore tags always exclude lights. Include-tag lighting also
+            // restricts shadow casters to the camera's visible geometry.
+            if (camera.FiltersLightsByTags() || !camera.GetTagFilter().GetExcludedTags().empty())
             {
-                const auto &filter = camera.GetTagFilter();
-                storage.lights = scene.GetLights([&filter](const Entity &owner) { return filter.Accepts(&owner); });
+                storage.lights = CollectCameraLights(scene, camera);
                 view.lights = std::span<Light *const>(storage.lights);
-                view.shadowCommands = view.commands;
+                if (camera.FiltersLightsByTags())
+                    view.shadowCommands = view.commands;
             }
             return view;
         }
+    }
+
+    std::vector<Light *> CollectCameraLights(const Scene &scene, const CameraComponent &camera)
+    {
+        const auto &filter = camera.GetTagFilter();
+        return scene.GetLights([&](const Entity &owner)
+        {
+            return camera.FiltersLightsByTags() ? filter.Accepts(&owner) : !filter.Excludes(&owner);
+        });
     }
 
     CameraStack ResolveCameraStack(const Scene &scene)

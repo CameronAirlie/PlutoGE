@@ -800,6 +800,14 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::Motion, 5);
                 addInput(BasicPostProcessInput::History, 6);
                 addInput(BasicPostProcessInput::Albedo, 7);
+                if (type == BasicPostProcessEffectType::TAA)
+                {
+                    postDescriptor.colorFormats = {rhi::Format::R32G32B32A32Float, rhi::Format::R32Float};
+                    postDescriptor.resourceBindings.push_back(
+                        {8, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    postDescriptor.resourceBindings.push_back(
+                        {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                }
                 if (type == BasicPostProcessEffectType::SSR)
                     postDescriptor.resourceBindings.push_back(
                         {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
@@ -1206,6 +1214,9 @@ namespace PlutoGE::render
         m_postProcessPassTargetDescriptions.clear();
         for (auto &target : m_taaHistoryTargets)
             target.Reset();
+        for (auto &target : m_taaCoverageHistoryTargets)
+            target.Reset();
+        m_outputCoverage = {};
         for (auto &target : m_exposureHistoryTargets)
             target.Reset();
         m_ssaoRawTarget.Reset();
@@ -1317,6 +1328,8 @@ namespace PlutoGE::render
         m_frameIndex = 0;
         m_previousModels.clear();
         m_hasPreviousFrame = false;
+        m_hadCameraComposition = false;
+        m_temporalMetadata = {};
         m_previousMotionViewProjection = glm::mat4(1.0f);
         m_outputColor = {};
         m_postProcessBufferCursor = 0;
@@ -1421,6 +1434,7 @@ namespace PlutoGE::render
                                               "BasicRenderer depth", true}));
         m_glassDepthCopy.Reset();
         m_colorTarget = std::move(newColor);
+        m_outputCoverage = {};
         m_displayTarget = std::move(newDisplay);
         m_normalTarget.Reset();
         m_materialTarget.Reset();
@@ -1431,9 +1445,14 @@ namespace PlutoGE::render
         m_postProcessPassTargets.clear();
         m_postProcessPassTargetDescriptions.clear();
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
+        {
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
                                                                      {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
                                                                       index == 0 ? "TAA history A" : "TAA history B", true}));
+            m_taaCoverageHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                 index == 0 ? "TAA coverage A" : "TAA coverage B", true}));
+        }
         m_taaHistoryIndex = 0;
         m_taaHistoryValid = false;
         for (std::size_t index = 0; index < m_exposureHistoryTargets.size(); ++index)
@@ -1540,7 +1559,9 @@ namespace PlutoGE::render
                                std::span<const BasicDraw> shadowDraws, PostProcessDebugView debugView,
                                const rhi::TemporalUpscalerFrame *upscalerFrame, const glm::mat4 *motionViewProjection,
                                bool submit, std::span<const BasicDraw> giDraws,
-                               std::span<const BasicParticleDraw> particles)
+                               std::span<const BasicParticleDraw> particles,
+                               const BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
+                               std::optional<glm::vec2> sharedClipJitter)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -1555,6 +1576,11 @@ namespace PlutoGE::render
             m_geometrySweepFrame = 0;
         m_frameStats.geometryDiagnosticMode = geometryMode;
         m_temporalUpscalerEvaluatedLastFrame = false;
+        m_temporalMetadata = {};
+        if (m_hadCameraComposition != static_cast<bool>(beforeTemporalResolve))
+            ResetTemporalHistory();
+        m_hadCameraComposition = static_cast<bool>(beforeTemporalResolve);
+        m_outputCoverage = {};
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
@@ -1697,6 +1723,12 @@ namespace PlutoGE::render
             temporalClipOffset.x = -2.0f * taaEffect->parameters[2].x;
             temporalClipOffset.y = -2.0f * taaEffect->parameters[2].y;
         }
+        if (sharedClipJitter)
+        {
+            temporalClipOffset.x = sharedClipJitter->x;
+            temporalClipOffset.y = sharedClipJitter->y;
+        }
+        m_framePreviousViewProjection = m_hasPreviousFrame ? m_previousMotionViewProjection : currentMotionViewProjection;
         BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -2196,6 +2228,8 @@ namespace PlutoGE::render
         rhi::RenderingInfo renderingInfo;
         const bool geometryDebug = debugView != PostProcessDebugView::None;
         BasicPostProcessInput geometryInputs = lighting.requiredGeometryInputs;
+        if (beforeTemporalResolve || linearOutput)
+            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
         for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
         if (upscalerFrame && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
             geometryInputs = geometryInputs | BasicPostProcessInput::Motion;
@@ -2931,13 +2965,31 @@ namespace PlutoGE::render
         if (!hasSsao)
             m_ssaoHistoryValid = false;
         std::size_t fusedBufferIndex = 0;
+        bool compositionPending = static_cast<bool>(beforeTemporalResolve);
+        const auto composeCameras = [&]()
+        {
+            if (!compositionPending)
+                return;
+            compositionPending = false;
+            renderParticles();
+            renderTransparency();
+            // Secondary scene renderers begin their own command buffers. Finish
+            // the base segment, then resume on the compositor's open recording.
+            commands.EndGpuScope();
+            commands.Submit();
+            beforeTemporalResolve(*this, glm::vec2(temporalClipOffset));
+            commands.BeginGpuScope("RHI Camera Stack Post Process");
+        };
         for (std::size_t effectCursor = 0; effectCursor < postProcessEffects.size(); ++effectCursor)
         {
             const auto &effect = postProcessEffects[effectCursor];
+            if (linearOutput && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
+                continue;
             if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
             {
                 renderParticles();
                 renderTransparency();
+                composeCameras();
             }
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
                 evaluateTemporalUpscaler();
@@ -3008,6 +3060,7 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
+                effectParameters[4].w = m_temporalMetadata ? 1.0f : 0.0f;
             }
             BasicPostProcessParameters parameters{
                 effect.exposure,
@@ -3115,6 +3168,8 @@ namespace PlutoGE::render
                     drawParameterBuffer = depthBuffer.Get();
                 }
                 postInfo.colorAttachments = {drawPass == 0 ? colorDestination : depthDestination};
+                if (effect.type == BasicPostProcessEffectType::TAA)
+                    postInfo.colorAttachments.push_back(m_taaCoverageHistoryTargets[1u - m_taaHistoryIndex].Get());
                 postInfo.width = passWidth;
                 postInfo.height = passHeight;
                 postInfo.clearDepth = false;
@@ -3137,6 +3192,11 @@ namespace PlutoGE::render
                 if (HasInput(inputs, BasicPostProcessInput::History))
                     commands.BindTexture(6, m_taaHistoryValid ? m_taaHistoryTargets[m_taaHistoryIndex].Get() : m_outputColor,
                                          m_screenSampler.Get());
+                if (effect.type == BasicPostProcessEffectType::TAA)
+                {
+                    commands.BindTexture(8, m_temporalMetadata ? m_temporalMetadata : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+                    commands.BindTexture(9, m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
+                }
                 if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
                 {
                     commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
@@ -3162,12 +3222,14 @@ namespace PlutoGE::render
             {
                 m_taaHistoryIndex = 1u - m_taaHistoryIndex;
                 m_taaHistoryValid = true;
+                m_outputCoverage = m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get();
             }
         }
         renderParticles();
         renderTransparency();
+        composeCameras();
         evaluateTemporalUpscaler();
-        if (m_displayPipeline && m_displayTarget)
+        if (!linearOutput && m_displayPipeline && m_displayTarget)
         {
             const BasicDebugViewParameters debugParameters{
                 m_inverseViewProjection,

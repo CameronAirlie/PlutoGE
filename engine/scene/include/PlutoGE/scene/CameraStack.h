@@ -21,6 +21,10 @@ namespace PlutoGE::scene
     struct Light;
     class Scene;
 
+    // Ignore tags always exclude lights. Include tags select lights only when
+    // the camera enables FilterLightsByTags.
+    [[nodiscard]] std::vector<Light *> CollectCameraLights(const Scene &scene, const CameraComponent &camera);
+
     // The cameras that produce one frame: a base camera plus the overlay
     // cameras composited over it, and the cameras rendering into textures.
     struct CameraStack

@@ -5,6 +5,7 @@
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
 #include <array>
 #include <iostream>
 #include <memory>
@@ -154,6 +155,33 @@ void CheckRenderTextureMaterial(Device &device, const PlutoGE::render::BasicRend
             "Transparent background coverage was " + std::to_string(covered) + " pixels, not the sky half");
     require(misplaced <= static_cast<std::size_t>(size * 2),
             "Transparent coverage misaligned with colour in " + std::to_string(misplaced) + " pixels");
+
+    // Resolving color and then replacing alpha with binary depth loses AA on
+    // cutouts. The published image must retain TAA's fractional coverage.
+    auto triangle = makeMesh({{-.7f, -.7f, .5f, 0, 0}, {.8f, -.55f, .5f, 0, 0}, {-.6f, .75f, .5f, 0, 0}});
+    const std::array triangleCommands{RenderCommand{.material = &red, .mesh = triangle.get()}};
+    TAAEffect taa;
+    const std::array<IPostProcessEffect *, 1> effects{&taa};
+    const CameraData identity{.view = glm::mat4(1), .projection = glm::mat4(1)};
+    const std::array aaViews{RenderTextureView{&cutout,
+        {.cameraData = identity, .commands = triangleCommands, .postProcessEffects = effects, .transparentBackground = true}}};
+    for (int frame = 0; frame < 32; ++frame)
+        require(textureRenderer.Render(device, aaViews, {}, nullptr), "Antialiased cutout render failed");
+    const auto aaPixels = device.ReadTextureRgba8(cutout.GetGpuTexture(device));
+    std::size_t partialAlpha = 0;
+    for (std::size_t pixel = 0; pixel < static_cast<std::size_t>(size * size); ++pixel)
+    {
+        const int alpha = std::to_integer<int>(aaPixels[pixel * 4 + 3]);
+        partialAlpha += alpha > 8 && alpha < 247;
+        if (alpha > 247)
+            require(std::to_integer<int>(aaPixels[pixel * 4]) > 180,
+                    "TAA cutout coverage is misaligned with its resolved color");
+        if (alpha == 0)
+            require(aaPixels[pixel * 4] == std::byte{0} && aaPixels[pixel * 4 + 1] == std::byte{0} &&
+                    aaPixels[pixel * 4 + 2] == std::byte{0}, "Empty cutout pixels must remain premultiplied");
+    }
+    require(partialAlpha > 10, "Render texture resolve discarded TAA's fractional alpha coverage");
+    std::cout << "Render texture TAA retained " << partialAlpha << " fractional alpha pixels" << std::endl;
     textureRenderer.Shutdown();
     require(!renderTexture.GetGpuTexture(device), "Shutdown must unpublish destroyed images");
     std::cout << "Render texture matched its screenshot (" << mismatches << " filtered horizon pixels)" << std::endl;

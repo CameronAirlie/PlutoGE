@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/SceneEnvironment.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -19,9 +20,19 @@
 // composited on top, exactly where it rasterizes alone, leaving the rest of
 // the base image untouched.
 template <class Device>
-void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders)
+void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders,
+    const std::function<std::vector<std::byte>(PlutoGE::render::rhi::TextureHandle)> &pixelReader = {})
 {
     using namespace PlutoGE::render;
+    const auto readPixels = [&](rhi::TextureHandle texture)
+    {
+        if (pixelReader)
+            return pixelReader(texture);
+        if constexpr (requires { device.ReadTextureRgba8(texture); })
+            return device.ReadTextureRgba8(texture);
+        else
+            throw std::runtime_error("Camera stack checks require a pixel reader");
+    };
     const auto require = [](bool ok, const std::string &message) {
         if (!ok)
             throw std::runtime_error(message);
@@ -51,7 +62,7 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     require(reference.Initialize(device, shaders), "Camera stack reference renderer initialization failed");
     require(reference.Render(size, size, camera, lighting, overlayCommands, overlayCommands),
             "Camera stack reference render failed");
-    const auto overlayAlone = device.ReadTextureRgba8(reference.GetColorTexture());
+    const auto overlayAlone = readPixels(reference.GetColorTexture());
 
     RhiSceneRenderer base;
     require(base.Initialize(device, shaders), "Camera stack base renderer initialization failed");
@@ -59,12 +70,12 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     RhiCameraStackCompositor compositor;
     require(compositor.Composite(device, base.GetColorTexture(), size, size, {}, {}, nullptr),
             "An empty camera stack must be a no-op");
-    const auto baseAlone = device.ReadTextureRgba8(base.GetColorTexture());
+    const auto baseAlone = readPixels(base.GetColorTexture());
 
     const std::array overlays{CameraView{.cameraData = camera, .commands = overlayCommands}};
     require(compositor.Composite(device, base.GetColorTexture(), size, size, overlays, {}, nullptr),
             "Camera stack composite failed");
-    const auto stacked = device.ReadTextureRgba8(base.GetColorTexture());
+    const auto stacked = readPixels(base.GetColorTexture());
 
     const auto channel = [](const std::vector<std::byte> &pixels, std::size_t pixel, std::size_t component) {
         return std::to_integer<int>(pixels[pixel * 4 + component]);
@@ -92,6 +103,77 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
             "Overlay coverage was not the expected triangle");
     std::cout << "Camera stack composite placed " << overlayPixels << " overlay pixels over the base camera" << std::endl;
 
+    // The production stack resolves once, after HDR composition. A silhouette
+    // must contain blended red/green coverage even though the base has no edge.
+    TAAEffect taa;
+    const std::array<IPostProcessEffect *, 1> effects{&taa};
+    auto temporalOverlays = overlays;
+    temporalOverlays[0].historyKey = overlayMesh.get();
+    temporalOverlays[0].cameraData.projection[0][0] = 0.85f;
+    temporalOverlays[0].cameraData.projection[1][1] = 0.75f;
+    const BasicRenderer::BeforeTemporalResolve compose = [&](BasicRenderer &renderer, glm::vec2 jitter)
+    {
+        require(compositor.CompositeBeforeTemporalResolve(device, renderer, jitter, temporalOverlays, {}, nullptr),
+                "HDR camera stack composition failed");
+    };
+    const auto drawStack = [&](std::uint32_t width, std::uint32_t height, bool aa)
+    {
+        require(base.Render(width, height, camera, lighting, baseCommands, baseCommands,
+                            aa ? std::span<IPostProcessEffect *const>(effects) : std::span<IPostProcessEffect *const>{},
+                            {}, {}, PostProcessDebugView::None, true, nullptr, std::nullopt, compose),
+                "Temporal camera stack render failed");
+        return readPixels(base.GetColorTexture());
+    };
+    const auto partialCoverage = [&](const auto &pixels)
+    {
+        std::size_t count = 0;
+        for (std::size_t pixel = 0; pixel < pixels.size() / 4; ++pixel)
+            count += channel(pixels, pixel, 0) > 8 && channel(pixels, pixel, 0) < 247 &&
+                     channel(pixels, pixel, 1) > 8 && channel(pixels, pixel, 1) < 247;
+        return count;
+    };
+    const auto unfilteredCoverage = partialCoverage(drawStack(size, size, false));
+    std::vector<std::byte> resolved;
+    for (int frame = 0; frame < 32; ++frame)
+        resolved = drawStack(size, size, true);
+    const auto filteredCoverage = partialCoverage(resolved);
+    require(filteredCoverage > unfilteredCoverage + 10,
+            "TAA did not resolve overlay silhouette coverage after composition: " +
+            std::to_string(filteredCoverage) + " vs " + std::to_string(unfilteredCoverage));
+    std::cout << "Shared camera-stack TAA: " << filteredCoverage << " fractional edge pixels" << std::endl;
+    // Only the overlay camera moves; its own projection/reprojection must be
+    // used rather than the stationary base camera's matrices.
+    for (int frame = 0; frame < 10; ++frame)
+    {
+        temporalOverlays[0].cameraData.view[3][0] += 0.045f;
+        resolved = drawStack(size, size, true);
+    }
+    const auto movedReference = drawStack(size, size, false);
+    std::size_t ghostPixels = 0;
+    for (int y = 2; y < static_cast<int>(size) - 2; ++y)
+    for (int x = 2; x < static_cast<int>(size) - 2; ++x)
+    {
+        bool nearOverlay = false;
+        for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx)
+            nearOverlay |= channel(movedReference, (y + dy) * size + x + dx, 1) > 32;
+        ghostPixels += !nearOverlay && channel(resolved, y * size + x, 1) > 32;
+    }
+    require(ghostPixels == 0, "Moving overlay left temporal ghosts outside its silhouette");
+    for (int frame = 0; frame < 16; ++frame)
+        resolved = drawStack(size, size, true);
+    // Shared camera history must not retain an overlay after it is disabled.
+    require(base.Render(size, size, camera, lighting, baseCommands, baseCommands, effects),
+            "Camera stack removal render failed");
+    const auto removed = readPixels(base.GetColorTexture());
+    for (std::size_t pixel = 0; pixel < size * size; ++pixel)
+        require(channel(removed, pixel, 1) < 10, "TAA retained a removed camera layer");
+    for (int frame = 0; frame < 24; ++frame)
+        resolved = drawStack(96, 48, true);
+    require(partialCoverage(resolved) > 10, "Resizing the camera stack lost temporal edge coverage");
+    require(base.Render(size, size, camera, lighting, baseCommands, baseCommands),
+            "Camera stack base size restoration failed");
+
     // The overlay sees a receiver, but a world mesh excluded from its visible
     // commands must still cast onto it. A bright red caster also makes any
     // accidental leak into the overlay's color pass obvious.
@@ -118,7 +200,7 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     const auto drawOverlay = [&] {
         require(compositor.Composite(device, base.GetColorTexture(), size, size, shadowOverlays, {}, &shadowScene),
                 "Shadow-receiving overlay composite failed");
-        return device.ReadTextureRgba8(base.GetColorTexture());
+        return readPixels(base.GetColorTexture());
     };
     sceneCommands[1].castsShadow = false;
     const auto lit = drawOverlay();

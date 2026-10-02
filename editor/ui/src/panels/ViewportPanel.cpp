@@ -3958,13 +3958,16 @@ namespace PlutoGE::ui
                 commands = m_cameraStack->commandFilter.Apply(*activeScene, tagFilter, commands);
                 shadowCommands = m_cameraStack->shadowCommandFilter.Apply(*activeScene, tagFilter, shadowCommands);
             }
-            RenderRhiFrame(cameraData, commands, shadowCommands, postProcessEffects, overlays);
+            const auto lights = activeScene ? scene::CollectCameraLights(*activeScene, cameraComponent)
+                                            : std::vector<scene::Light *>{};
+            RenderRhiFrame(cameraData, commands, shadowCommands, postProcessEffects, overlays,
+                           std::span<scene::Light *const>(lights));
         }
         else
         {
             renderer.BeginFrame(sceneRenderTarget);
             renderer.RenderFrame(cameraData, sceneRenderTarget,
-                                 activeScene ? activeScene->GetLights() : std::vector<scene::Light *>{},
+                                 activeScene ? scene::CollectCameraLights(*activeScene, cameraComponent) : std::vector<scene::Light *>{},
                                  &postProcessEffects, activeScene);
             renderer.EndFrame(sceneRenderTarget);
         }
@@ -3975,7 +3978,8 @@ namespace PlutoGE::ui
                                        render::RenderCommandView commands,
                                        render::RenderCommandView shadowCommands,
                                        std::span<render::IPostProcessEffect *const> postProcessEffects,
-                                       std::span<const render::CameraView> overlays)
+                                       std::span<const render::CameraView> overlays,
+                                       std::optional<std::span<scene::Light *const>> lights)
     {
         const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
         if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
@@ -3996,7 +4000,7 @@ namespace PlutoGE::ui
                                         cameraData, commands, shadowCommands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene(),
                                         EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView(),
-                                        overlays))
+                                        overlays, lights))
         {
             // A Vulkan project must never silently display the legacy OpenGL
             // scene as if it came from the selected backend. Keep the RHI path

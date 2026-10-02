@@ -77,7 +77,8 @@ namespace PlutoGE::render
         descriptor.resourceBindings = {
             {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
             {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-            {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+            {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
         descriptor.debugName = "Render texture resolve";
         m_resolvePipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         m_sampler = rhi::Sampler(*m_device, m_device->CreateSampler({}));
@@ -144,13 +145,16 @@ namespace PlutoGE::render
                 0.0f, 0.0f,
                 1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height),
                 view.view.transparentBackground ? 1.0f : 0.0f,
-                device.GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f, 0.0f};
+                device.GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f,
+                target->renderer->GetCoverageTexture() ? 1.0f : 0.0f, 0.0f};
             device.UpdateBuffer(m_parameters.Get(), 0,
                                 {reinterpret_cast<const std::byte *>(parameters.data()), sizeof(parameters)});
             // Bind before rendering so the layout transitions stay outside it.
             commands.BindPipeline(m_resolvePipeline.Get());
             commands.BindTexture(1, target->renderer->GetColorTexture(), m_sampler.Get());
             commands.BindTexture(2, target->renderer->GetDepthTexture(), m_sampler.Get());
+            commands.BindTexture(3, target->renderer->GetCoverageTexture() ? target->renderer->GetCoverageTexture()
+                                   : target->renderer->GetDepthTexture(), m_sampler.Get());
             rhi::RenderingInfo info;
             info.colorAttachments = {target->image.Get()};
             info.width = width;
@@ -161,6 +165,8 @@ namespace PlutoGE::render
             commands.BindUniformBuffer(0, m_parameters.Get());
             commands.BindTexture(1, target->renderer->GetColorTexture(), m_sampler.Get());
             commands.BindTexture(2, target->renderer->GetDepthTexture(), m_sampler.Get());
+            commands.BindTexture(3, target->renderer->GetCoverageTexture() ? target->renderer->GetCoverageTexture()
+                                   : target->renderer->GetDepthTexture(), m_sampler.Get());
             commands.Draw(3);
             commands.EndRendering();
             commands.EndGpuScope();

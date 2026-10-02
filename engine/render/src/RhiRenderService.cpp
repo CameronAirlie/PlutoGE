@@ -55,7 +55,8 @@ namespace PlutoGE::render
                                                  const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                                  const scene::Scene *scene,
                                                  std::span<IPostProcessEffect *const> postProcessEffects,
-                                                 std::span<const CameraView> overlays)
+                                                 std::span<const CameraView> overlays,
+                                                 std::optional<std::span<scene::Light *const>> lights)
     {
         if (!m_swapchain || !m_renderer)
             return false;
@@ -76,15 +77,16 @@ namespace PlutoGE::render
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting);
-        // Overlay renderers record their own frames, so the base frame is
-        // submitted first and the composite leaves the open recording for UI.
+        BasicRenderer::BeforeTemporalResolve compose;
+        if (!overlays.empty())
+            compose = [&](BasicRenderer &base, glm::vec2 jitter)
+            {
+                if (!m_cameraStack.CompositeBeforeTemporalResolve(*m_device, base, jitter, overlays, texturePixelReader, scene))
+                    throw std::runtime_error("Overlay cameras could not be composited before temporal resolve");
+            };
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
-                                     !overlays.empty() || !combineRuntimeUiSubmission, scene))
-            return false;
-        if (!m_cameraStack.Composite(*m_device, m_sceneRenderer->GetColorTexture(), m_swapchain->GetWidth(),
-                                     m_swapchain->GetHeight(), overlays, texturePixelReader, scene,
-                                     !combineRuntimeUiSubmission))
+                                     !combineRuntimeUiSubmission, scene, lights, compose))
             return false;
         if (scene && scene->HasRmlRuntimeUI())
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),

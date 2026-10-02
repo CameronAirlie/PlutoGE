@@ -51,9 +51,14 @@ namespace PlutoGE::scene
 
     bool CameraTagFilter::Accepts(const Entity *entity) const
     {
-        if (!m_excludedTags.empty() && HierarchyHasAnyTag(entity, m_excludedTags))
+        if (Excludes(entity))
             return false;
         return m_includedTags.empty() || HierarchyHasAnyTag(entity, m_includedTags);
+    }
+
+    bool CameraTagFilter::Excludes(const Entity *entity) const
+    {
+        return !m_excludedTags.empty() && HierarchyHasAnyTag(entity, m_excludedTags);
     }
 
     std::vector<std::string> CameraTagFilter::ParseTagList(std::string_view text)

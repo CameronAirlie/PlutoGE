@@ -56,7 +56,8 @@ namespace PlutoGE::ui
                     const scene::Scene *scene,
                     render::PostProcessDebugView debugView,
                     // Composited in order over the base camera, beneath runtime UI.
-                    std::span<const render::CameraView> overlays = {});
+                    std::span<const render::CameraView> overlays = {},
+                    std::optional<std::span<scene::Light *const>> lights = std::nullopt);
 
         [[nodiscard]] const std::string &GetLastRenderError() const noexcept { return m_lastRenderError; }
         [[nodiscard]] bool IsInitialized() const noexcept { return m_sceneRenderer != nullptr; }

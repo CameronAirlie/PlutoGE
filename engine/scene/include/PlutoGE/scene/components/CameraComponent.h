@@ -67,8 +67,8 @@ namespace PlutoGE::scene
         // so a tag-filtered subject (such as a character preview) is a cutout.
         void SetTransparentBackground(bool transparent) { m_transparentBackground = transparent; }
         bool HasTransparentBackground() const { return m_transparentBackground; }
-        // Overlay and render texture cameras: the tag filter also selects which
-        // lights illuminate this camera, and only its tagged geometry casts shadows.
+        // Include tags also select lights when enabled. Ignore tags always
+        // exclude lights, including tags inherited from their parent entities.
         void SetFilterLightsByTags(bool filter) { m_filterLightsByTags = filter; }
         bool FiltersLightsByTags() const { return m_filterLightsByTags; }
 

@@ -17,6 +17,28 @@ Sampler2D normalTexture : register(t3, space0);
 Sampler2D motionTexture : register(t5, space0);
 [[vk::binding(6, 0)]]
 Sampler2D historyTexture : register(t6, space0);
+// Per-pixel previous depth and camera layer, composed before the shared resolve.
+[[vk::binding(8, 0)]] Sampler2D temporalMetadataTexture : register(t8, space0);
+[[vk::binding(9, 0)]] Sampler2D historyCoverageTexture : register(t9, space0);
+
+struct TemporalOutput
+{
+    float4 colorAndDepth : SV_Target0;
+    float coverage : SV_Target1;
+};
+
+TemporalOutput temporalOutput(float3 color, float encodedDepth, float coverage)
+{
+    TemporalOutput output;
+    output.colorAndDepth = float4(color, encodedDepth);
+    output.coverage = coverage;
+    return output;
+}
+
+float cameraLayer(float2 uv)
+{
+    return pass.parameters[4].w > 0.5 ? round(temporalMetadataTexture.SampleLevel(uv, 0).y) : 0.0;
+}
 
 [shader("vertex")]
 FullscreenVertexOutput vertexMain(uint vertexId: SV_VertexID)
@@ -87,6 +109,7 @@ float4 sampleCatmullRom(Sampler2D source, float2 uv)
 float2 responsiveMotion(float2 uv)
 {
     float closestDepth = depthTexture.Sample(uv).r;
+    float closestLayer = cameraLayer(uv);
     float2 bestMotion = motionTexture.Sample(uv).xy;
     const float2 offsets[4] = {
         float2(-1.0, 0.0), float2(1.0, 0.0),
@@ -96,12 +119,14 @@ float2 responsiveMotion(float2 uv)
     {
         const float2 sampleUv = saturate(uv + offsets[index] * pass.inverseResolution);
         const float sampleDepth = depthTexture.Sample(sampleUv).r;
+        const float sampleLayer = cameraLayer(sampleUv);
         // Reverse-Z: the largest depth belongs to the nearest surface. Dilate
         // its velocity by one pixel so rasterized silhouette gaps do not pick
         // the background velocity and lose temporal coverage.
-        if (sampleDepth > closestDepth)
+        if (sampleLayer > closestLayer || (sampleLayer == closestLayer && sampleDepth > closestDepth))
         {
             closestDepth = sampleDepth;
+            closestLayer = sampleLayer;
             bestMotion = motionTexture.Sample(sampleUv).xy;
         }
     }
@@ -109,9 +134,13 @@ float2 responsiveMotion(float2 uv)
 }
 
 [shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+TemporalOutput fragmentMain(FullscreenVertexOutput input)
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    const float layer = cameraLayer(uv);
+    // Separate camera depth ranges in history without losing depth precision.
+    const float encodedDepth = depthTexture.Sample(uv).r + layer * 2.0;
+    const float coverage = depthTexture.Sample(uv).r > 0.000001 ? 1.0 : 0.0;
     if (pass.parameters[3].x > 0.5)
     {
         // Show the raw raster result. RhiSceneRenderer exaggerates projection
@@ -121,7 +150,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         // an ordinary history-free TAA frame.
         if (uv.x < 0.012 || uv.y < 0.018)
             raw = lerp(raw, float3(1.0, 0.0, 1.0), 0.8);
-        return float4(raw, depthTexture.Sample(uv).r);
+        return temporalOutput(raw, encodedDepth, coverage);
     }
     const float2 textureOrientation = float2(1.0, pass.flipY != 0 ? -1.0 : 1.0);
     const float2 currentJitterUv = pass.parameters[2].xy * textureOrientation;
@@ -134,7 +163,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float4 current = sceneTexture.Sample(currentUv);
     const float currentDepth = depthTexture.Sample(currentUv).r;
     if (pass.parameters[5].w < 0.5)
-        return float4(current.rgb, currentDepth);
+        return temporalOutput(current.rgb, encodedDepth, coverage);
 
     const float2 encodedMotion = responsiveMotion(currentUv) * textureOrientation;
     // Motion vectors are generated from unjittered matrices and history is
@@ -144,7 +173,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float2 motion = encodedMotion;
     const float2 historyUv = uv - motion;
     if (any(historyUv < 0.0) || any(historyUv > 1.0))
-        return float4(current.rgb, currentDepth);
+        return temporalOutput(current.rgb, encodedDepth, coverage);
 
     float3 minColor = 1.0e20;
     float3 maxColor = -1.0e20;
@@ -213,26 +242,48 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
     const float4 previousClip = mul(pass.worldToLocal, float4(world, 1.0));
     const float previousNdcDepth = previousClip.z / max(previousClip.w, 0.000001);
-    const float expectedDepth = pass.zeroToOneDepth != 0 ? previousNdcDepth : previousNdcDepth * 0.5 + 0.5;
+    const float expectedDepth = pass.parameters[4].w > 0.5
+        ? temporalMetadataTexture.SampleLevel(currentUv, 0).x
+        : (pass.zeroToOneDepth != 0 ? previousNdcDepth : previousNdcDepth * 0.5 + 0.5);
     // A bilinear alpha sample invents intermediate depths at silhouettes.
     // Test the contributing history texels' depth interval instead, preserving
     // legitimate fractional edge coverage while rejecting uncovered surfaces.
     const float2 historyBase = floor(historyUv / pass.inverseResolution - 0.5);
     float historyMinDepth = 1.0, historyMaxDepth = 0.0;
+    bool hasMatchingLayer = false;
+    bool historyLayersSupported = true;
     for (int y = 0; y < 2; ++y)
     for (int x = 0; x < 2; ++x)
     {
         const float2 tap = (historyBase + float2(x,y) + 0.5) * pass.inverseResolution;
-        const float sampleDepth = historyTexture.Sample(saturate(tap)).a;
-        historyMinDepth = min(historyMinDepth, sampleDepth);
-        historyMaxDepth = max(historyMaxDepth, sampleDepth);
+        const float sampleEncodedDepth = historyTexture.Sample(saturate(tap)).a;
+        const float sampleLayer = floor(sampleEncodedDepth * 0.5);
+        const float sampleDepth = sampleEncodedDepth - sampleLayer * 2.0;
+        if (sampleLayer == layer)
+        {
+            hasMatchingLayer = true;
+            historyMinDepth = min(historyMinDepth, sampleDepth);
+            historyMaxDepth = max(historyMaxDepth, sampleDepth);
+        }
+        if (pass.parameters[4].w > 0.5 && sampleLayer != layer)
+        {
+            // Jitter can exchange base/overlay samples along a silhouette.
+            // Keep that coverage, but reject a layer that has moved away.
+            bool layerInNeighborhood = false;
+            for (int ny = -1; ny <= 1; ++ny)
+            for (int nx = -1; nx <= 1; ++nx)
+                layerInNeighborhood = layerInNeighborhood ||
+                    cameraLayer(saturate(currentUv + float2(nx, ny) * pass.inverseResolution)) == sampleLayer;
+            historyLayersSupported = historyLayersSupported && layerInNeighborhood;
+        }
     }
     const float depthDelta = max(max(historyMinDepth - expectedDepth, expectedDepth - historyMaxDepth), 0.0);
-    const float depthValidity = 1.0 - smoothstep(pass.parameters[1].x,
-        pass.parameters[1].x * 2.0, depthDelta);
+    const float depthValidity = hasMatchingLayer ? 1.0 - smoothstep(pass.parameters[1].x,
+        pass.parameters[1].x * 2.0, depthDelta) : 0.0;
     const float motionPixels = length(motion / max(pass.inverseResolution, float2(0.000001)));
     const float disocclusionWeight = smoothstep(0.35, 2.0, motionPixels);
     float validity = lerp(1.0, depthValidity, disocclusionWeight);
+    validity *= historyLayersSupported ? 1.0 : 0.0;
     validity *= 1.0 / (1.0 + length(motion) * max(pass.parameters[1].z, 0.0));
     // Coverage at an edge naturally differs from the current jitter sample.
     // Reject lighting changes only outside the entire current neighborhood.
@@ -279,5 +330,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 hdrExtent = max(maxHdrColor - minHdrColor, 0.001);
     resolved = clamp(resolved, minHdrColor - hdrExtent * 0.35,
                      maxHdrColor + hdrExtent * 0.35);
-    return float4(max(resolved, 0.0), currentDepth);
+    const float historyCoverage = historyCoverageTexture.Sample(historyUv).r;
+    // Resolve the cutout mask with the same reprojection and history weight as
+    // color. Reject removed geometry outside the current coverage neighborhood.
+    const float resolvedCoverage = clamp(lerp(coverage, historyCoverage, historyWeight),
+        minDepth > 0.000001 ? 1.0 : 0.0, maxDepth > 0.000001 ? 1.0 : 0.0);
+    return temporalOutput(max(resolved, 0.0), encodedDepth, resolvedCoverage);
 }

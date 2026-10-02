@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -530,6 +531,7 @@ namespace PlutoGE::render
     class BasicRenderer
     {
     public:
+        using BeforeTemporalResolve = std::function<void(BasicRenderer &, glm::vec2)>;
         BasicRenderer();
         ~BasicRenderer();
         BasicRenderer(const BasicRenderer &) = delete;
@@ -562,13 +564,22 @@ namespace PlutoGE::render
                     // Allows a caller to append overlays before one final submit.
                     bool submit = true,
                     // Full scene with GI materials, independent of camera visibility.
-                    std::span<const BasicDraw> giDraws = {}, std::span<const BasicParticleDraw> particles = {});
+                    std::span<const BasicDraw> giDraws = {}, std::span<const BasicParticleDraw> particles = {},
+                    const BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
+                    std::optional<glm::vec2> sharedClipJitter = std::nullopt);
+
+        // Camera composition runs on HDR color and geometry inputs before TAA.
+        void SetTemporalMetadata(rhi::TextureHandle metadata) noexcept { m_temporalMetadata = metadata; }
+        void ResetTemporalHistory() noexcept { m_taaHistoryValid = false; }
+        [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept { return m_inverseViewProjection; }
+        [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept { return m_framePreviousViewProjection; }
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
         [[nodiscard]] rhi::TextureHandle GetNormalTexture() const noexcept { return m_normalTarget.Get(); }
         [[nodiscard]] rhi::TextureHandle GetMaterialTexture() const noexcept { return m_materialTarget.Get(); }
         [[nodiscard]] rhi::TextureHandle GetMotionTexture() const noexcept { return m_motionTarget.Get(); }
+        [[nodiscard]] rhi::TextureHandle GetCoverageTexture() const noexcept { return m_outputCoverage; }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
         [[nodiscard]] std::uint32_t GetHeight() const noexcept { return m_height; }
         [[nodiscard]] std::uint32_t GetOutputWidth() const noexcept { return m_outputWidth; }
@@ -723,6 +734,8 @@ namespace PlutoGE::render
         };
         std::vector<PostProcessTargetDescription> m_postProcessPassTargetDescriptions;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
+        std::array<rhi::Texture, 2> m_taaCoverageHistoryTargets;
+        rhi::TextureHandle m_outputCoverage;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
         std::array<rhi::Texture, 2> m_exposureHistoryTargets;
@@ -810,6 +823,9 @@ namespace PlutoGE::render
         std::size_t m_postProcessBufferCursor = 0;
         std::uint8_t m_taaHistoryIndex = 0;
         bool m_taaHistoryValid = false;
+        bool m_hadCameraComposition = false;
+        rhi::TextureHandle m_temporalMetadata;
+        glm::mat4 m_framePreviousViewProjection{1.0f};
         std::uint8_t m_exposureHistoryIndex = 0;
         bool m_exposureHistoryValid = false;
         std::uint8_t m_ssaoHistoryIndex = 0;

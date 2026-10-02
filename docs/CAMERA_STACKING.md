@@ -46,6 +46,10 @@ world geometry, even though that geometry isn't drawn on the overlay. When the
 scene uses virtual shadow maps, overlays use cascaded shadows instead. Oceans,
 particle systems and the sky are left to the base camera.
 
+Ignore tags always exclude matching lights on base, overlay and render-texture
+cameras, including tags inherited from a parent entity. Include tags affect
+lights only when **FilterLightsByTags** is enabled.
+
 To light an overlay separately, turn on **FilterLightsByTags**. The overlay is
 then lit only by lights on entities its tags accept, including the sun, and
 shadowed only by its own tagged geometry. For example, give a weapon camera
@@ -55,18 +59,22 @@ World lights and shadows then no longer affect the weapon. Sky lighting still
 applies to render-texture cameras, which draw the sky. The same setting works
 for render-texture cameras.
 
-Each overlay runs its own post-process chain. An overlay has no background, so
-**AutoExposure**, **TAA** and **MotionBlur** are skipped on overlays. Give
-overlays a fixed exposure and the same tone mapping and color grading as the
-main camera. If the main camera uses auto exposure, the two images can differ
-in brightness.
+Overlays render their lighting and scene effects into HDR, using the base
+camera's jitter sequence. The stack composites color, depth, normals and motion
+before running the base camera's **TAA** once over the combined image. Each
+camera supplies its own reprojection data, so different camera projections do
+not share an incorrect motion history. Removing or reordering cameras resets
+the stack history.
+
+The base camera owns the stack's temporal resolve, camera optics, exposure,
+tone mapping and color grading. Those effects on overlay cameras are skipped.
+Runtime UI is drawn after the stack has been resolved.
 
 ## Limitations
 
 - The overlay covers only pixels where it writes depth: opaque and
   alpha-tested surfaces. Transparent-only surfaces, glass and particles on
   overlays are not composited.
-- Overlay edges are not antialiased.
 - Camera stacking needs the RHI renderer (Vulkan, or the editor's RHI
   preview). The legacy OpenGL runtime path renders only the base camera and
   ignores tag filters.

@@ -22,6 +22,12 @@ namespace PlutoGE::render
         m_compositePipeline.Reset();
         m_sampler.Reset();
         m_parameters.Reset();
+        m_temporalCompositePipeline.Reset();
+        m_temporalMetadataPipeline.Reset();
+        m_temporalMetadata.Reset();
+        m_metadataSize = {};
+        m_temporalParameters.clear();
+        m_historyKeys.clear();
         m_device = nullptr;
     }
 
@@ -70,6 +76,156 @@ namespace PlutoGE::render
         m_parameters = rhi::Buffer(*m_device, m_device->CreateBuffer(
             {sizeof(std::array<float, 4>), rhi::BufferUsage::Uniform, "Camera stack parameters"}));
         return static_cast<bool>(m_compositePipeline);
+    }
+
+    bool RhiCameraStackCompositor::EnsureTemporalCompositePipelines()
+    {
+        if (m_temporalCompositePipeline && m_temporalMetadataPipeline)
+            return true;
+        const ShaderArtifactLibrary shaders;
+        rhi::GraphicsPipelineDescriptor descriptor;
+        descriptor.vertexShader = shaders.Load("CameraStackTemporalComposite", "vertex");
+        descriptor.fragmentShader = shaders.Load("CameraStackTemporalComposite", "fragment");
+        descriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm,
+                                   rhi::Format::R32G32Float, rhi::Format::R32G32Float};
+        descriptor.depthFormat = rhi::Format::D32Float;
+        descriptor.depthTest = descriptor.depthWrite = true;
+        descriptor.depthCompare = rhi::CompareOperation::Always;
+        descriptor.cullMode = rhi::CullMode::None;
+        descriptor.resourceBindings = {
+            {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+            {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+        descriptor.debugName = "HDR camera stack composite";
+        m_temporalCompositePipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
+        descriptor.vertexShader = shaders.Load("CameraStackTemporalMetadata", "vertex");
+        descriptor.fragmentShader = shaders.Load("CameraStackTemporalMetadata", "fragment");
+        descriptor.colorFormats = {rhi::Format::R32G32Float};
+        descriptor.depthFormat = rhi::Format::Undefined;
+        descriptor.depthTest = descriptor.depthWrite = false;
+        descriptor.resourceBindings = {
+            {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+            {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+        descriptor.debugName = "Camera stack reprojection metadata";
+        m_temporalMetadataPipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
+        if (!m_sampler)
+            m_sampler = rhi::Sampler(*m_device, m_device->CreateSampler({}));
+        return m_temporalCompositePipeline && m_temporalMetadataPipeline && m_sampler;
+    }
+
+    bool RhiCameraStackCompositor::CompositeBeforeTemporalResolve(
+        rhi::IRenderDevice &device, BasicRenderer &base, glm::vec2 clipJitter,
+        std::span<const CameraView> overlays,
+        const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene)
+    {
+        if (m_device != &device)
+        {
+            Shutdown();
+            m_device = &device;
+        }
+        if (overlays.empty() || !EnsureTemporalCompositePipelines())
+            return false;
+        const auto width = base.GetWidth(), height = base.GetHeight();
+        const rhi::Extent2D size{width, height};
+        if (!m_temporalMetadata || m_metadataSize != size)
+        {
+            m_temporalMetadata = rhi::Texture(device, device.CreateTexture(
+                {width, height, rhi::Format::R32G32Float, rhi::TextureUsage::ColorAttachment,
+                 "Camera stack temporal metadata", true}));
+            m_metadataSize = size;
+        }
+        if (!m_temporalMetadata)
+            return false;
+        std::vector<const void *> historyKeys;
+        for (const auto &view : overlays)
+            historyKeys.push_back(view.historyKey);
+        if (historyKeys != m_historyKeys)
+            base.ResetTemporalHistory();
+        m_historyKeys = std::move(historyKeys);
+
+        std::vector<RhiSceneRenderer *> renderers;
+        for (std::size_t index = 0; index < overlays.size(); ++index)
+        {
+            auto *renderer = AcquireOverlayRenderer(index);
+            if (!renderer)
+                return false;
+            const auto &view = overlays[index];
+            auto lighting = view.lights ? BuildSceneLighting(view.cameraData, scene, *view.lights)
+                                       : BuildSceneLighting(view.cameraData, scene);
+            if (lighting.shadowMethod == ShadowMethod::Virtual)
+                lighting.shadowMethod = ShadowMethod::Cascaded;
+            const auto shadows = view.shadowCommands.empty() ? view.commands : view.shadowCommands;
+            if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
+                                  view.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
+                                  index + 1 < overlays.size(), scene, view.lights, {}, true, clipJitter))
+                return false;
+            renderers.push_back(renderer);
+        }
+        struct alignas(16) Parameters
+        {
+            glm::mat4 inverseViewProjection;
+            glm::mat4 previousViewProjection;
+            glm::vec4 options;
+            glm::vec4 clipJitter;
+        };
+        const auto updateParameters = [&](std::size_t index, const glm::mat4 &inverse, const glm::mat4 &previous)
+        {
+            while (m_temporalParameters.size() <= index)
+                m_temporalParameters.emplace_back(device, device.CreateBuffer(
+                    {sizeof(Parameters), rhi::BufferUsage::Uniform, "Camera stack temporal parameters"}));
+            const Parameters parameters{inverse, previous,
+                {device.GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f,
+                 device.UsesZeroToOneClipDepth() ? 1.0f : 0.0f, static_cast<float>(index), 0.0f},
+                glm::vec4(clipJitter, 0.0f, 0.0f)};
+            device.UpdateBuffer(m_temporalParameters[index].Get(), 0,
+                {reinterpret_cast<const std::byte *>(&parameters), sizeof(parameters)});
+        };
+        updateParameters(0, base.GetInverseViewProjection(), base.GetPreviousViewProjection());
+        for (std::size_t index = 0; index < renderers.size(); ++index)
+            updateParameters(index + 1, renderers[index]->GetInverseViewProjection(), renderers[index]->GetPreviousViewProjection());
+
+        auto &commands = device.GetImmediateContext();
+        commands.BeginGpuScope("HDR camera stack composite");
+        commands.BindPipeline(m_temporalMetadataPipeline.Get());
+        commands.BindTexture(2, base.GetDepthTexture(), m_sampler.Get());
+        rhi::RenderingInfo info;
+        info.colorAttachments = {m_temporalMetadata.Get()};
+        info.width = width;
+        info.height = height;
+        info.clearDepth = false;
+        commands.BeginRendering(info);
+        commands.BindPipeline(m_temporalMetadataPipeline.Get());
+        commands.BindUniformBuffer(0, m_temporalParameters[0].Get());
+        commands.BindTexture(2, base.GetDepthTexture(), m_sampler.Get());
+        commands.Draw(3);
+        commands.EndRendering();
+
+        info.colorAttachments = {base.GetColorTexture(), base.GetNormalTexture(), base.GetMotionTexture(), m_temporalMetadata.Get()};
+        info.depthAttachment = base.GetDepthTexture();
+        info.clearColor = info.clearDepth = false;
+        for (std::size_t index = 0; index < renderers.size(); ++index)
+        {
+            const auto &renderer = *renderers[index];
+            commands.BindPipeline(m_temporalCompositePipeline.Get());
+            commands.BindTexture(1, renderer.GetColorTexture(), m_sampler.Get());
+            commands.BindTexture(2, renderer.GetDepthTexture(), m_sampler.Get());
+            commands.BindTexture(3, renderer.GetNormalTexture(), m_sampler.Get());
+            commands.BindTexture(4, renderer.GetMotionTexture(), m_sampler.Get());
+            commands.BeginRendering(info);
+            commands.BindPipeline(m_temporalCompositePipeline.Get());
+            commands.BindUniformBuffer(0, m_temporalParameters[index + 1].Get());
+            commands.BindTexture(1, renderer.GetColorTexture(), m_sampler.Get());
+            commands.BindTexture(2, renderer.GetDepthTexture(), m_sampler.Get());
+            commands.BindTexture(3, renderer.GetNormalTexture(), m_sampler.Get());
+            commands.BindTexture(4, renderer.GetMotionTexture(), m_sampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+        }
+        commands.EndGpuScope();
+        base.SetTemporalMetadata(m_temporalMetadata.Get());
+        return true;
     }
 
     bool RhiCameraStackCompositor::Composite(rhi::IRenderDevice &device, rhi::TextureHandle target,

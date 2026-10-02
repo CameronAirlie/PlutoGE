@@ -240,7 +240,9 @@ namespace PlutoGE::render
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
                                   const TexturePixelReader &texturePixelReader, PostProcessDebugView debugView,
                                   bool submit, const scene::Scene *scene,
-                                  std::optional<std::span<scene::Light *const>> lights)
+                                  std::optional<std::span<scene::Light *const>> lights,
+                                  const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
+                                  std::optional<glm::vec2> sharedClipJitter)
     {
         // A tag-filtered view supplies its own lights; otherwise every scene light applies.
         std::vector<scene::Light *> allSceneLights;
@@ -1293,7 +1295,8 @@ namespace PlutoGE::render
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
                            useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
-                           std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount));
+                           std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount),
+                           beforeTemporalResolve, linearOutput, sharedClipJitter);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&
@@ -1389,8 +1392,12 @@ namespace PlutoGE::render
         return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{};
     }
 
+    const glm::mat4 &RhiSceneRenderer::GetInverseViewProjection() const noexcept { return m_renderer->GetInverseViewProjection(); }
+    const glm::mat4 &RhiSceneRenderer::GetPreviousViewProjection() const noexcept { return m_renderer->GetPreviousViewProjection(); }
+
     rhi::TextureHandle RhiSceneRenderer::GetDepthTexture() const noexcept { return m_renderer ? m_renderer->GetDepthTexture() : rhi::TextureHandle{}; }
     rhi::TextureHandle RhiSceneRenderer::GetNormalTexture() const noexcept { return m_renderer ? m_renderer->GetNormalTexture() : rhi::TextureHandle{}; }
     rhi::TextureHandle RhiSceneRenderer::GetMaterialTexture() const noexcept { return m_renderer ? m_renderer->GetMaterialTexture() : rhi::TextureHandle{}; }
     rhi::TextureHandle RhiSceneRenderer::GetMotionTexture() const noexcept { return m_renderer ? m_renderer->GetMotionTexture() : rhi::TextureHandle{}; }
+    rhi::TextureHandle RhiSceneRenderer::GetCoverageTexture() const noexcept { return m_renderer ? m_renderer->GetCoverageTexture() : rhi::TextureHandle{}; }
 }

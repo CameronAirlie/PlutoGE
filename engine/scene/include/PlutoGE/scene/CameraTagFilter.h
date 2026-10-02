@@ -28,6 +28,8 @@ namespace PlutoGE::scene
         [[nodiscard]] bool AcceptsEverything() const noexcept { return m_includedTags.empty() && m_excludedTags.empty(); }
         // A null entity stands for untagged geometry, such as procedural draws.
         [[nodiscard]] bool Accepts(const Entity *entity) const;
+        // Tests ignore tags independently of the include list, including parents.
+        [[nodiscard]] bool Excludes(const Entity *entity) const;
 
         // Comma-separated tag lists, as edited in the Inspector and serialized.
         [[nodiscard]] static std::vector<std::string> ParseTagList(std::string_view text);

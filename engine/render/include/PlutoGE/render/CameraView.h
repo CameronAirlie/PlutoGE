@@ -30,5 +30,6 @@ namespace PlutoGE::render
         // When set, only these lights illuminate the view (sun, point and spot);
         // otherwise every scene light does. Sky and atmosphere still apply.
         std::optional<std::span<scene::Light *const>> lights;
+        const void *historyKey = nullptr;
     };
 }

@@ -325,6 +325,56 @@ void LightsFollowTagFilter()
     Require(restored->FiltersLightsByTags(), "Tag-filtered lighting must round-trip");
 }
 
+void IgnoredTagsAlwaysExcludeLights()
+{
+    Scene scene;
+    auto *ignoredRoot = scene.AddEntity(std::make_unique<Entity>());
+    ignoredRoot->AddTag("Ignore");
+    auto *sun = scene.AddEntity(std::make_unique<Entity>(), ignoredRoot)->CreateComponent<LightComponent>();
+    sun->SetLightType(LightType::Directional);
+    sun->SetIntensity(3.0f);
+    auto *ignoredLamp = scene.AddEntity(std::make_unique<Entity>());
+    ignoredLamp->AddTag("Ignore");
+    ignoredLamp->AddTag("Subject");
+    ignoredLamp->CreateComponent<LightComponent>()->SetLightType(LightType::Spot);
+    auto *acceptedLamp = scene.AddEntity(std::make_unique<Entity>());
+    auto *acceptedLight = acceptedLamp->CreateComponent<LightComponent>();
+    auto *base = AddCamera(scene, CameraRenderType::Base);
+    auto *overlay = AddCamera(scene, CameraRenderType::Overlay);
+    auto *textureCamera = AddCamera(scene, CameraRenderType::Base);
+    render::RenderTexture target("IgnoredLights.plutorendertexture", {.width = 64, .height = 64});
+    textureCamera->SetTargetTexture(&target);
+    for (auto *camera : {base, overlay, textureCamera})
+    {
+        camera->SetTagFilter(CameraTagFilter({"Subject"}, {"Ignore"}));
+        Require(!camera->FiltersLightsByTags(), "The ignore-list regression must exercise default camera settings");
+        const auto lights = CollectCameraLights(scene, *camera);
+        Require(lights.size() == 1 && lights[0] == &acceptedLight->GetLight(),
+                "Ignore tags must exclude direct and inherited tags without hiding untagged lights");
+        Require(render::BuildSceneLighting(camera->GetCameraData(64, 64), &scene, lights).directionalIntensity == 0.0f,
+                "An ignored sun must not be restored by lighting setup");
+    }
+    const std::array commands{render::RenderCommand{.ownerEntity = ignoredLamp->GetID()},
+                              render::RenderCommand{.ownerEntity = acceptedLamp->GetID()}};
+    const auto stack = ResolveCameraStack(scene);
+    CameraOverlayLayerBuilder overlayBuilder;
+    const auto layer = overlayBuilder.Build(scene, stack.overlays, commands, 64, 64).front();
+    Require(layer.lights && layer.lights->size() == 1 && (*layer.lights)[0] == &acceptedLight->GetLight(),
+            "Overlay views must pass their ignored-light list to the renderer");
+    Require(layer.shadowCommands.size() == commands.size(),
+            "Ignoring lights must not opt into restricting shadow casters by included tags");
+    RenderTextureViewBuilder textureBuilder;
+    const auto view = textureBuilder.Build(scene, stack.textureCameras, commands).front();
+    Require(view.view.lights && view.view.lights->size() == 1 && (*view.view.lights)[0] == &acceptedLight->GetLight(),
+            "Render texture views must pass their ignored-light list to the renderer");
+    base->SetFilterLightsByTags(true);
+    Require(CollectCameraLights(scene, *base).empty(), "Enabling include-tag lighting must preserve an empty result");
+    acceptedLamp->AddTag("Subject");
+    const auto included = CollectCameraLights(scene, *base);
+    Require(included.size() == 1 && included[0] == &acceptedLight->GetLight(),
+            "Ignore tags must take precedence over include tags for lights");
+}
+
 int main()
 {
     try
@@ -338,6 +388,7 @@ int main()
         RenderTextureAssets();
         TextureCameras();
         LightsFollowTagFilter();
+        IgnoredTagsAlwaysExcludeLights();
         std::cout << "PASS: camera stack resolution, tag filtering, overlay layers and serialization\n";
         return 0;
     }

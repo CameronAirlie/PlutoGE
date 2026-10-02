@@ -11,6 +11,7 @@
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -33,6 +34,7 @@ namespace PlutoGE::scene
 {
     class CameraComponent;
     class Entity;
+    struct Light;
 }
 
 namespace PlutoGE::ui
@@ -66,7 +68,8 @@ namespace PlutoGE::ui
                             render::RenderCommandView commands,
                             render::RenderCommandView shadowCommands,
                             std::span<render::IPostProcessEffect *const> postProcessEffects,
-                            std::span<const render::CameraView> overlays = {});
+                            std::span<const render::CameraView> overlays = {},
+                            std::optional<std::span<scene::Light *const>> lights = std::nullopt);
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 

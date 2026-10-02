@@ -14,11 +14,12 @@ namespace PlutoGE::scene
 namespace PlutoGE::render
 {
     // Renders overlay cameras (for example a first-person weapon camera) and
-    // composites them, in order, over a base camera's final colour.
+    // composites them, in order, into a base camera's HDR temporal inputs.
     //
     // Each overlay is rendered by its own scene renderer so its depth buffer,
-    // temporal history and caches stay independent of the base view. Coverage
-    // is taken from overlay depth, so opaque and alpha-tested geometry
+    // motion history and caches stay independent of the base view. The shared
+    // temporal resolve runs after composition. Coverage is taken from overlay
+    // depth, so opaque and alpha-tested geometry
     // composites; transparent-only overlay surfaces and particles do not.
     class RhiCameraStackCompositor
     {
@@ -29,6 +30,12 @@ namespace PlutoGE::render
         RhiCameraStackCompositor &operator=(const RhiCameraStackCompositor &) = delete;
 
         void Shutdown();
+
+        // Called at the base renderer's temporal boundary, after its HDR segment
+        // was submitted. Leaves composition recording for the shared resolve.
+        bool CompositeBeforeTemporalResolve(rhi::IRenderDevice &device, BasicRenderer &base, glm::vec2 clipJitter,
+                       std::span<const CameraView> overlays,
+                       const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene);
 
         // `target` must be the base scene renderer's display output, already
         // submitted. With submit=false the composite is left recording so the
@@ -42,11 +49,18 @@ namespace PlutoGE::render
     private:
         RhiSceneRenderer *AcquireOverlayRenderer(std::size_t index);
         bool EnsureCompositePipeline();
+        bool EnsureTemporalCompositePipelines();
 
         rhi::IRenderDevice *m_device = nullptr;
         std::vector<std::unique_ptr<RhiSceneRenderer>> m_overlayRenderers;
         rhi::GraphicsPipeline m_compositePipeline;
         rhi::Sampler m_sampler;
         rhi::Buffer m_parameters;
+        rhi::GraphicsPipeline m_temporalCompositePipeline;
+        rhi::GraphicsPipeline m_temporalMetadataPipeline;
+        rhi::Texture m_temporalMetadata;
+        rhi::Extent2D m_metadataSize;
+        std::vector<rhi::Buffer> m_temporalParameters;
+        std::vector<const void *> m_historyKeys;
     };
 }

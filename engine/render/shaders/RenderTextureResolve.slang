@@ -11,6 +11,7 @@
 
 [[vk::binding(1, 0)]] Sampler2D source : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D depth : register(t2, space0);
+[[vk::binding(3, 0)]] Sampler2D resolvedCoverage : register(t3, space0);
 
 float3 srgbToLinear(float3 value)
 {
@@ -37,6 +38,7 @@ float3 srgbToLinear(float3 value)
     // Reversed depth clears to zero, so any written depth is drawn geometry.
     // Premultiplied, matching UI images and blended material sampling.
     const float2 depthUv = float2(uv.x, coverageOptions.y > 0.5 ? 1.0 - uv.y : uv.y);
-    const float coverage = depth.SampleLevel(depthUv, 0).r > 0.000001 ? 1.0 : 0.0;
+    const float coverage = coverageOptions.z > 0.5 ? saturate(resolvedCoverage.SampleLevel(depthUv, 0).r)
+        : (depth.SampleLevel(depthUv, 0).r > 0.000001 ? 1.0 : 0.0);
     return float4(color * coverage, coverage);
 }

@@ -154,14 +154,16 @@ namespace PlutoGE::ui
                                           std::span<render::IPostProcessEffect *const> postProcessEffects,
                                           const scene::Scene *scene,
                                           render::PostProcessDebugView debugView,
-                                          std::span<const render::CameraView> overlays)
+                                          std::span<const render::CameraView> overlays,
+                                          std::optional<std::span<scene::Light *const>> lights)
     {
         core::CpuScope serviceScope("Viewport scene service", core::CpuCategory::Rendering);
         core::CpuScope preparationScope("Viewport lighting and atmosphere", core::CpuCategory::Rendering);
         if (!m_sceneRenderer || !m_device)
             return false;
 
-        auto lighting = render::BuildSceneLighting(cameraData, scene);
+        auto lighting = lights ? render::BuildSceneLighting(cameraData, scene, *lights)
+                               : render::BuildSceneLighting(cameraData, scene);
         lighting.geometryDiagnosticMode = m_geometryDiagnosticMode;
         lighting.occlusionMode = m_occlusionMode;
 
@@ -185,14 +187,18 @@ namespace PlutoGE::ui
             // record their own frames, so the base frame is submitted first.
             if (debugView != render::PostProcessDebugView::None)
                 overlays = {};
+            render::BasicRenderer::BeforeTemporalResolve compose;
+            if (!overlays.empty())
+                compose = [&](render::BasicRenderer &base, glm::vec2 jitter)
+                {
+                    if (!m_cameraStack.CompositeBeforeTemporalResolve(*m_device, base, jitter, overlays, ReadTexturePixels, scene))
+                        throw std::runtime_error("Overlay cameras could not be composited before temporal resolve");
+                };
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,
                                          postProcessEffects, atmosphereEffects, ReadTexturePixels, debugView,
-                                         !overlays.empty() || !combineRuntimeUiSubmission, scene))
+                                         !combineRuntimeUiSubmission, scene, lights, compose))
                 throw std::runtime_error("Scene renderer returned no frame at " + std::to_string(width) + "x" + std::to_string(height));
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
-            if (!m_cameraStack.Composite(*m_device, m_viewportTexture, width, height, overlays,
-                                         ReadTexturePixels, scene, !combineRuntimeUiSubmission))
-                throw std::runtime_error("Overlay cameras could not be composited");
             if (scene && scene->HasRmlRuntimeUI())
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
                                                       static_cast<int>(width), static_cast<int>(height),

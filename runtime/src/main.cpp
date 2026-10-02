@@ -681,7 +681,8 @@ int RunRuntime(int argc, char **argv)
                 PlutoGE::g_runtimeDiagnostics.currentPhase = "render Vulkan frame";
 #endif
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
-                const auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get());
+                const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
+                const auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
                 std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
                 postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
                 for (const auto &effect : cameraComponent->GetPostProcessEffects())
@@ -700,7 +701,8 @@ int RunRuntime(int argc, char **argv)
                 if (!engine.GetRhiRenderService().RenderTextures(textureViews, readTexturePixels, scene.get()))
                     std::cerr << "Failed to render the frame's render textures." << std::endl;
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, cameraCommands, readTexturePixels, scene.get(), postProcessEffects, overlays))
+                        cameraData, lighting, cameraCommands, readTexturePixels, scene.get(), postProcessEffects, overlays,
+                        std::span<PlutoGE::scene::Light *const>(cameraLights)))
                 {
                     std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
                     window.RequestClose();
@@ -716,7 +718,7 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
                 PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
 #endif
-                renderer.RenderFrame(*cameraComponent, frameRenderTarget, scene->GetLights());
+                renderer.RenderFrame(*cameraComponent, frameRenderTarget, PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent));
             }
             renderer.ClearRenderCommands();
 

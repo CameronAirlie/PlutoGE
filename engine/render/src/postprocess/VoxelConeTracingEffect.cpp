@@ -494,7 +494,7 @@ vec4 sampleWorld(vec3 p,vec3 d,float diameter,out float voxelSize){
 }
 float rayBoxExit(vec3 o,vec3 d){int outer=max(uCascadeCount-1,0);vec3 boxMin=uCascadeOrigin[outer],boxMax=boxMin+vec3(uCascadeSize[outer]);vec3 safeD=vec3(abs(d.x)<.00001?(d.x<0?-.00001:.00001):d.x,abs(d.y)<.00001?(d.y<0?-.00001:.00001):d.y,abs(d.z)<.00001?(d.z<0?-.00001:.00001):d.z);vec3 t0=(boxMin-o)/safeD,t1=(boxMax-o)/safeD;vec3 farT=max(t0,t1);return max(min(min(farT.x,farT.y),farT.z),0.0);}
 uint sampleCount(int c,ivec3 coord){if(c==0)return texelFetch(uVoxelSampleCount0,coord,0).r;if(c==1)return texelFetch(uVoxelSampleCount1,coord,0).r;return texelFetch(uVoxelSampleCount2,coord,0).r;}
-const float PI=3.14159265;vec3 cone(vec3 o,vec3 n,vec3 d){float startVoxel=voxelSizeAt(o);o+=n*startVoxel*mix(.35,.75,clamp(uNormalBias,0,1));float firstSample=startVoxel;float traceLimit=min(uMaxDistance,max(rayBoxExit(o,d)-firstSample,0.0));float dist=firstSample;vec4 sum=vec4(0);
+const float PI=3.14159265;vec3 cone(vec3 o,vec3 n,vec3 d){vec3 receiverPosition=o;float startVoxel=voxelSizeAt(o);o+=n*startVoxel*mix(.35,.75,clamp(uNormalBias,0,1));float firstSample=startVoxel;float traceLimit=min(uMaxDistance,max(rayBoxExit(o,d)-firstSample,0.0));float dist=firstSample;vec4 sum=vec4(0);
  for(int i=0;i<48&&dist<traceLimit&&sum.a<.98;i++){
   float dia=max(startVoxel,2.0*uAperture*dist),sampleVoxelSize;vec3 samplePosition=o+d*dist;
   float probeSpacing=uCacheOriginSize.w/16.0;
@@ -504,7 +504,10 @@ const float PI=3.14159265;vec3 cone(vec3 o,vec3 n,vec3 d){float startVoxel=voxel
    float weight=cached.a*uCacheBlend*smoothstep(probeSpacing,probeSpacing*2.0,dia);
    sum.rgb+=(1-sum.a)*cached.rgb*weight;sum.a+=(1-sum.a)*weight;if(sum.a>=.98)break;
   }
-  vec4 s=sampleWorld(samplePosition,d,dia,sampleVoxelSize);sum.rgb+=(1-sum.a)*s.rgb;sum.a+=(1-sum.a)*s.a;dist+=max(sampleVoxelSize,dia*.5);
+  // Keep trilinear mip support outside the receiver plane, matching the RHI trace.
+  float clearance=max(dot(samplePosition-receiverPosition,n),0.0);
+  float filterDiameter=min(dia,max(startVoxel,clearance/max(dot(abs(n),vec3(1)),.0001)));
+  vec4 s=sampleWorld(samplePosition,d,filterDiameter,sampleVoxelSize);sum.rgb+=(1-sum.a)*s.rgb;sum.a+=(1-sum.a)*s.a;dist+=max(sampleVoxelSize,filterDiameter*.5);
  }return sum.rgb;}
 void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz,surfaceTc;float normalLengthSquared=dot(rawNormal,rawNormal);int surfaceCascade=findCascade(p,surfaceTc);if(!(normalLengthSquared>=.1&&normalLengthSquared<=1e6)||surfaceCascade<0){FragColor=vec4(0);return;}vec3 n=rawNormal*inversesqrt(normalLengthSquared);float viewDepth=max(-(uView*vec4(p,1)).z,0.0);
  if(uDebugView==1&&surfaceCascade>=0){vec4 voxel=sampleCascadeDirectional(surfaceCascade,surfaceTc,n,0);FragColor=vec4(voxel.rgb/(vec3(1)+voxel.rgb),viewDepth);return;}

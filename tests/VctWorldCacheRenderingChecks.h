@@ -121,6 +121,33 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         return readPixels(renderer.GetColorTexture());
     };
     const auto reference = renderFrames(4);
+    // A distant reflector's contribution must depend on its projected area,
+    // and only appear when the cone's configured range reaches it.
+    const auto receiverEnergy = [&](const auto &pixels) {
+        double total = 0;
+        for (std::uint32_t y = renderer.GetHeight()/8; y < renderer.GetHeight()*7/8; ++y)
+            for (std::uint32_t x = renderer.GetWidth()/4; x < renderer.GetWidth()*3/4; ++x)
+                total += int(pixels.at((y * renderer.GetWidth() + x) * 4));
+        return total;
+    };
+    const auto originalCeiling = draws[1];
+    draws[1].model = glm::translate(glm::mat4(1), glm::vec3(0,12,0)) *
+        glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(1,0,0));
+    draws[1].shadowBoundsCenter = {0,12,0};
+    const auto largeDistant = receiverEnergy(renderFrames(8));
+    effect.parameters[0].w = 4;
+    const auto outOfRange = receiverEnergy(renderFrames(4));
+    effect.parameters[0].w = 81;
+    draws[1].model = glm::scale(draws[1].model, glm::vec3(.5f,.5f,1));
+    draws[1].shadowBoundsRadius = 9;
+    const auto smallDistant = receiverEnergy(renderFrames(8));
+    std::cout << "VCT distant area: large=" << largeDistant << ", small=" << smallDistant
+              << ", short range=" << outOfRange << '\n';
+    if (largeDistant < 100 || largeDistant < smallDistant * 1.5 || outOfRange > largeDistant * .2)
+        throw std::runtime_error("VCT distant reflected light did not respect source area and trace range");
+    draws[1] = originalCeiling;
+    effect.parameters[0].w = 81;
+    renderFrames(8);
     // Put the real surface beyond a frame's triangle budget. Its final GI
     // must match the small mesh, proving that partial draws resume at the
     // correct index and do not publish a volume before reaching the tail.
@@ -520,17 +547,33 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     effect.parameters[5].y = 1;
     if (glm::length(render(1) - on) > 1)
         throw std::runtime_error("Cached secondary enable replayed geometry");
+    // Cancel a budgeted job while it still borrows an unprocessed mesh. The
+    // completed field must survive the cancellation and replacement rebuild.
+    auto transient = std::make_unique<BasicMesh>(renderer.CreateMesh({vertices,indices}));
+    auto extra = emitter;
+    extra.mesh = transient.get();
+    std::vector<BasicDraw> queued{receiver,emitter,extra};
+    renderer.Render(projection*lighting.view,lighting,queued,std::span(&effect,1));
+    queued.clear();
+    transient.reset();
+    if (render(1).r < on.r * .5f)
+        throw std::runtime_error("Cancelling a pending voxel job discarded completed GI");
+    render(24);
     // A moving camera must never see the direct-only intermediate field.
     // Keep the view fixed here to isolate field publication from screen sampling.
     const auto cameraBeforeMove = lighting.cameraPosition;
     double minimumMoving = on.r;
     lighting.cameraPosition.x += 3.0f;
+    // An edit accompanying relocation must retain the completed field while
+    // the new geometry and secondary light are still being calculated.
+    draws[1].emission *= .9f;
     for (int frame = 0; frame < 20; ++frame)
         minimumMoving = std::min(minimumMoving, double(render(1).r));
     std::cout << "VCT moving field minimum=" << minimumMoving << ", settled=" << on.r << '\n';
     if (minimumMoving < on.r * .5)
         throw std::runtime_error("Moving cascade exposed an unfinished secondary field");
     lighting.cameraPosition = cameraBeforeMove;
+    draws[1].emission = emitter.emission;
     render(20);
     // Valid reprojected static geometry keeps history even at >8 pixels/frame.
     // The history diagnostic is green for accepted history, red for rejection.
@@ -588,6 +631,9 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     const auto originalView=lighting.view;
     lighting.view=glm::lookAtRH(lighting.cameraPosition,glm::vec3(3,0,2),glm::vec3(0,1,0));
     effect.parameters[3].x=0;
+    // Keep the linear 8-bit readback below saturation so both bounce strengths
+    // remain measurable when the cone filter no longer self-occludes the wall.
+    effect.parameters[0].y=.1f;
     const auto roomFrame=[&](float gain) {
         effect.parameters[5].y=gain;
         for(int frame=0;frame<24;++frame)
@@ -601,6 +647,7 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     if(receivedOn.r <= receivedOff.r+1 || glm::length(roomFrame(0)-receivedOff)>1)
         throw std::runtime_error("Secondary radiance did not reach another surface in final GI");
     lighting.view=originalView; effect.parameters[3].x=1; effect.parameters[5].y=1;
+    effect.parameters[0].y=1;
     draws[0].baseColor = {0,0,0,1};
     if (glm::length(render(12)) > 1) throw std::runtime_error("Black surface reflected secondary GI");
     draws[0].baseColor = receiver.baseColor; draws[0].metallic = 1;

@@ -99,10 +99,11 @@ int main(int argc, char **argv)
     // captures are written to the explicitly supplied output directory.
     const bool vsmCapture = argc >= 6 && std::string_view(argv[1]) == "--vsm-scene";
     const bool motionCapture = argc >= 6 && std::string_view(argv[1]) == "--vct-motion";
+    const bool projectCapture = argc >= 6 && std::string_view(argv[1]) == "--vct-project";
     const bool bistroBenchmark = argc >= 6 && std::string_view(argv[1]) == "--bistro-benchmark";
     const bool bistroSaved = bistroBenchmark || (argc >= 6 && std::string_view(argv[1]) == "--bistro-saved-scene");
     const bool bistroCapture = bistroSaved || (argc >= 6 && std::string_view(argv[1]) == "--bistro-scene");
-    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || motionCapture || vsmCapture || bistroCapture))
+    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || projectCapture || motionCapture || vsmCapture || bistroCapture))
     {
         engine.GetAssetManager().SetProjectContext(argv[2]);
         std::string error;
@@ -181,6 +182,19 @@ int main(int argc, char **argv)
         render::ToneMappingEffect tone;
         render::GammaCorrectionEffect gamma;
         std::vector<render::IPostProcessEffect *> effects{&gi};
+        if (projectCapture)
+        {
+            bool loaded = false;
+            const auto preset = engine.GetAssetManager().LoadPostProcessPresetAsset("project://PostProcessing/Main.plutopostprocess", &loaded);
+            if (!loaded) return 33;
+            for (const auto &effect : preset.effects)
+                if (effect.typeName == "VCTGI") gi.ApplyParameters(effect.parameters);
+            gi.ApplyParameters({{"Voxelization Command Budget",render::PostProcessParameterType::Int,"256"}});
+            if (argc > 12) gi.ApplyParameters({{"Debug View",render::PostProcessParameterType::Enum,argv[12]}});
+            if (argc > 13) gi.ApplyParameters({{"Resolution",render::PostProcessParameterType::Enum,argv[13]}});
+            if (argc > 14) gi.ApplyParameters({{"Indirect Only",render::PostProcessParameterType::Bool,argv[14]}});
+            effects = {&gi,&tone,&gamma};
+        }
         if (bistroCapture)
         {
             bool loaded = false;
@@ -199,7 +213,7 @@ int main(int argc, char **argv)
         }
         std::filesystem::create_directories(argv[4]);
         render::RhiSceneRenderer::TexturePixelReader readPixels;
-        if (bistroCapture) readPixels = [](const render::Texture &texture) {
+        if (bistroCapture || projectCapture) readPixels = [](const render::Texture &texture) {
             const auto pixels = std::as_bytes(texture.GetRgba8Pixels());
             return std::vector<std::byte>(pixels.begin(), pixels.end());
         };
@@ -325,8 +339,8 @@ int main(int argc, char **argv)
         int phase = 0;
         for (int gain : {0,1,0,1})
         {
-            if (bistroCapture && phase > 0) break;
-            if (bistroCapture) gain = 1;
+            if ((bistroCapture || projectCapture) && phase > 0) break;
+            if (bistroCapture || projectCapture) gain = 1;
             if (motionCapture && phase > 1) break;
             if (motionCapture) gain = 1;
             gi.ApplyParameters({{"Secondary Bounce",render::PostProcessParameterType::Float,std::to_string(gain)}});
@@ -355,7 +369,7 @@ int main(int argc, char **argv)
                     for (std::size_t i=0;i<pixels.size();i+=4)
                     {
                         const auto pixel = i / 4;
-                        const auto sourceIndex = bistroCapture && output.flipped
+                        const auto sourceIndex = (bistroCapture || projectCapture) && output.flipped
                             ? ((output.extentHeight - 1 - pixel/output.extentWidth)*output.extentWidth + pixel%output.extentWidth)*4 : i;
                         file.write(reinterpret_cast<const char*>(pixels.data()+sourceIndex),3);
                         energy+=int(pixels[i])+int(pixels[i+1])+int(pixels[i+2]);

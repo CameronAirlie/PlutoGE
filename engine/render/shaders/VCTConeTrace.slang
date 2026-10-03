@@ -122,7 +122,7 @@ float4 sampleWorld(float3 position, float3 direction, float diameter, out float 
     }
     return result;
 }
-float3 traceCone(float3 origin, float3 direction, float startVoxel)
+float3 traceCone(float3 origin, float3 direction, float startVoxel, float3 receiverPosition, float3 receiverNormal)
 {
     float distance = startVoxel;
     float4 total = 0.0;
@@ -144,10 +144,17 @@ float3 traceCone(float3 origin, float3 direction, float startVoxel)
             if (total.a >= 0.98) break;
         }
         float sampledVoxelSize;
-        const float4 sample = sampleWorld(samplePosition, direction, diameter, sampledVoxelSize);
+        // A trilinear voxel mip has a box-shaped support, wider than the cone's
+        // circular cross section. At grazing angles that support can repeatedly
+        // include the receiver, making its own dark wall extinguish the cone.
+        // Keep the filter support on the outward side of the receiver plane.
+        const float clearance = max(dot(samplePosition - receiverPosition, receiverNormal), 0.0);
+        const float filterDiameter = min(diameter, max(startVoxel,
+            clearance / max(dot(abs(receiverNormal), float3(1.0)), 0.0001)));
+        const float4 sample = sampleWorld(samplePosition, direction, filterDiameter, sampledVoxelSize);
         total.rgb += (1.0 - total.a) * sample.rgb;
         total.a += (1.0 - total.a) * sample.a;
-        distance += max(sampledVoxelSize, diameter * 0.5);
+        distance += max(sampledVoxelSize, filterDiameter * 0.5);
     }
     return total.rgb;
 }
@@ -181,14 +188,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 bitangent = cross(normal, tangent);
     const float startVoxel = voxelSizeAt(position);
     const float3 origin = position + normal * startVoxel * lerp(0.35, 0.75, saturate(pass.traceSettings.w));
-    float3 indirect = traceCone(origin, normal, startVoxel);
+    float3 indirect = traceCone(origin, normal, startVoxel, position, normal);
     const uint coneCount = clamp(pass.traceCounts.z, 1, 6);
     for (uint cone = 1; cone < coneCount; ++cone)
     {
         const float angle = 6.2831853 * float(cone - 1) / float(max(coneCount - 1, 1));
         const float3 direction = normalize(normal * 0.55 +
             (tangent * cos(angle) + bitangent * sin(angle)) * 0.835);
-        indirect += traceCone(origin, direction, startVoxel);
+        indirect += traceCone(origin, direction, startVoxel, position, normal);
     }
     // The cone set samples the cosine-weighted hemisphere. Its arithmetic mean
     // therefore estimates (1 / PI) * integral(Li * cos(theta) dOmega), which is

@@ -3592,8 +3592,12 @@ namespace PlutoGE::render
         if (cascade.valid && (cascade.contentSignature != cascade.pendingSignature ||
             cascade.lightingSignature != VctLightingSignature(cascade.publishedLighting, cascade.pendingInjectLocalLights)))
         {
-            m_vctReactiveFrames = 8;
-            cascade.deferredPublication = false;
+            // Deferred rebuilds keep a complete old field and then blend to a
+            // complete replacement using the configured temporal weight. Fast
+            // reactive decay is only needed for immediate direct relighting.
+            if (!cascade.deferredPublication) m_vctReactiveFrames = 8;
+            // A relight updates pending injection, not publication readiness.
+            // Keep rebuilt geometry deferred until its secondary field finishes.
         }
         cascade.publishedInjectLocalLights = cascade.pendingInjectLocalLights;
         cascade.lightingSignature = VctLightingSignature(cascade.publishedLighting, cascade.pendingInjectLocalLights);
@@ -3794,7 +3798,11 @@ namespace PlutoGE::render
                 cascade.pendingDraws.clear();
                 cascade.pendingMeshes.clear();
                 cascade.rebuilding = false;
-                cascade.valid = false;
+                // Only the pending job borrowed these meshes. The published
+                // radiance is independent GPU data and remains usable until a
+                // replacement is ready, even if the pending scene changes.
+                cascade.geometryReady = false;
+                cascade.secondaryDirty = false;
                 cascade.deferredPublication = false;
                 if (m_vctBounceCascade == index) m_vctBounceCascade = 3;
             }
@@ -3818,8 +3826,10 @@ namespace PlutoGE::render
             {
                 if (geometryChanged) ++m_frameStats.vctGeometryBuilds;
                 const bool shadowChanged = geometryChanged || VctShadowSignature(cascade.publishedLighting) != VctShadowSignature(currentLighting);
-                cascade.deferredPublication = geometryChanged && cascade.valid && secondaryBounce > 0 &&
-                    cascade.contentSignature == contentSignature && cascade.lightingSignature == lightSignature;
+                // Relocated/rebuilt geometry needs a complete secondary field
+                // before replacing the old world-space result. Light or content
+                // edits during camera motion must not publish a direct-only gap.
+                cascade.deferredPublication = geometryChanged && cascade.valid && secondaryBounce > 0;
                 cascade.geometryReady = !geometryChanged;
                 cascade.fullRelight = geometryChanged || cascade.directionalSignature != directionalSignature;
                 cascade.relightPending = true;

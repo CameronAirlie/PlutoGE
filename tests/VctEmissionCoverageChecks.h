@@ -220,7 +220,9 @@ inline bool CheckVctEmissionCoverage()
             else
             {
                 for (unsigned i=0;i<4;++i) glBindImageTexture(i+1,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                const glm::uvec4 pass(resolution,0,std::bit_cast<unsigned>(bounce),0); upload(0,&pass,sizeof(pass));
+                const std::array<glm::uvec4,3> pass{glm::uvec4(resolution,0,std::bit_cast<unsigned>(bounce),0),
+                    glm::uvec4(0), glm::uvec4(resolution,resolution,resolution,0)};
+                upload(0,pass.data(),sizeof(pass));
             }
             glBindImageTexture(5,textures[5],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
             glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
@@ -230,10 +232,9 @@ inline bool CheckVctEmissionCoverage()
             glGetTexImage(GL_TEXTURE_3D,0,GL_RGBA,GL_FLOAT,field.data());
             double energy=0;
             for (const auto& value:field) energy+=value.r*voxelSize*voxelSize;
-            // Compare the actual mip against premultiplied front-to-back
-            // compositing. Resolve's existing opacity dilation can absorb light
-            // before it reaches a mip, so equality with unoccluded energy is not
-            // expected; generating additional energy is never valid.
+            // A single planar source must conserve its projected energy through
+            // directional mips. Opacity without matching surface radiance used
+            // to absorb the emitter before the cone could gather its light.
             const int mipSize = resolution/2;
             glBindTexture(GL_TEXTURE_3D,textures[6]);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
@@ -243,7 +244,8 @@ inline bool CheckVctEmissionCoverage()
             glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_3D,textures[5]);
             glActiveTexture(GL_TEXTURE0);
             glBindImageTexture(2,textures[6],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
-            const std::array<glm::uvec4,2> mipPass{glm::uvec4(axis,1,0,mipSize),glm::uvec4(0)};
+            const std::array<glm::uvec4,4> mipPass{glm::uvec4(axis,1,0,mipSize),glm::uvec4(0),
+                glm::uvec4(0),glm::uvec4(mipSize,mipSize,mipSize,0)};
             upload(0,mipPass.data(),sizeof(mipPass));
             mip->Bind();
             glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -268,7 +270,8 @@ inline bool CheckVctEmissionCoverage()
                         glm::ivec3 far = near; ++far[axis];
                         referenceEnergy += (at(near).r+(1-at(near).a)*at(far).r)*voxelSize*voxelSize;
                     }
-            if (std::abs(mipEnergy-referenceEnergy)>std::max(.002,referenceEnergy*.002) || mipEnergy>energy+.002)
+            if (std::abs(mipEnergy-referenceEnergy)>std::max(.002,referenceEnergy*.002) ||
+                std::abs(mipEnergy-energy)>std::max(.002,energy*.002))
             {
                 std::cerr << "VCT directional mip energy: expected=" << referenceEnergy << " actual=" << mipEnergy << '\n';
                 passed = false;

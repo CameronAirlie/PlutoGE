@@ -139,7 +139,7 @@ uniform float uSecondaryGain;
 uniform int uResolution,uDestinationZOffset;
 float opacityAt(ivec3 coord,ivec3 size){if(any(lessThan(coord,ivec3(0)))||any(greaterThanEqual(coord,size)))return 0;uint count=imageLoad(uAccumulationCount,coord).r;if(count==0u)return 0;return clamp(float(imageLoad(uAccumulationOpacity,coord).r)/4095.0,0.0,1.0);}
 void main(){ivec3 coord=ivec3(gl_GlobalInvocationID),localSize=ivec3(uResolution);if(any(greaterThanEqual(coord,localSize)))return;uint count=imageLoad(uAccumulationCount,coord).r;vec3 radiance=vec3(0);if(count>0u){vec3 sums=vec3(imageLoad(uAccumulationR,coord).r,imageLoad(uAccumulationG,coord).r,imageLoad(uAccumulationB,coord).r);// Match the Slang resolve: fractional coverage must survive normalization.
- radiance=sums*(1.0/max(float(imageLoad(uAccumulationOpacity,coord).r),4095.0));}if(uSecondaryGain>0.0)radiance+=imageLoad(uSecondaryVolume,coord).rgb*uSecondaryGain;float opacity=opacityAt(coord,localSize);const ivec3 offsets[6]=ivec3[6](ivec3(1,0,0),ivec3(-1,0,0),ivec3(0,1,0),ivec3(0,-1,0),ivec3(0,0,1),ivec3(0,0,-1));for(int i=0;i<6;i++)opacity=max(opacity,opacityAt(coord+offsets[i],localSize)*.35);imageStore(uResolvedVolume,coord+ivec3(0,0,uDestinationZOffset),vec4(radiance,opacity));})";
+ radiance=sums*(1.0/max(float(imageLoad(uAccumulationOpacity,coord).r),4095.0));}if(uSecondaryGain>0.0)radiance+=imageLoad(uSecondaryVolume,coord).rgb*uSecondaryGain;float opacity=opacityAt(coord,localSize);imageStore(uResolvedVolume,coord+ivec3(0,0,uDestinationZOffset),vec4(radiance,opacity));})";
         return resolve;
     }
 }

@@ -47,9 +47,9 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         radiance = min(radiance + directVolume[coordinate].rgb, 16.0 * opacityAt(coordinate, size));
     if (pass.secondaryGain > 0.0) radiance += secondaryVolume[coordinate].rgb * pass.secondaryGain;
     float opacity = opacityAt(coordinate, size);
-    const int3 offsets[6] = {int3(1,0,0), int3(-1,0,0), int3(0,1,0),
-                             int3(0,-1,0), int3(0,0,1), int3(0,0,-1)};
-    for (uint index = 0; index < 6; ++index)
-        opacity = max(opacity, opacityAt(coordinate + offsets[index], size) * 0.35);
+    // Coverage and premultiplied radiance describe the same surface footprint.
+    // Dilating opacity alone creates dark shells that absorb the source before
+    // directional mip compositing, progressively losing distant bounce energy.
+    // Conservative voxelization already records sub-voxel surface coverage.
     resolvedVolume[coordinate + int3(0, 0, pass.destinationZOffset)] = float4(radiance, opacity);
 }

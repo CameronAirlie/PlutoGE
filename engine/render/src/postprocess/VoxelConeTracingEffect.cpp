@@ -514,11 +514,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
  if(uDebugView==2&&surfaceCascade>=0){float opacity=sampleCascadeDirectional(surfaceCascade,surfaceTc,n,0).a;FragColor=vec4(vec3(opacity),viewDepth);return;}
  if(uDebugView==3&&surfaceCascade>=0){ivec3 countSize=textureSize(uVoxelSampleCount0,0);ivec3 countCoord=clamp(ivec3(surfaceTc*vec3(countSize)),ivec3(0),countSize-ivec3(1));uint count=sampleCount(surfaceCascade,countCoord);float level=clamp(log2(float(count)+1.0)/20.0,0.0,1.0);vec3 countColor=count>=1048575u?vec3(1,0,0):vec3(level);FragColor=vec4(countColor,viewDepth);return;}
  if(uDebugView==4){vec3 cascadeColor=surfaceCascade==0?vec3(0,.8,0):surfaceCascade==1?vec3(0,.35,1):vec3(1,.55,0);FragColor=vec4(cascadeColor,viewDepth);return;}
- vec3 up=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),t=normalize(cross(up,n)),b=cross(n,t);vec3 total=cone(p,n,n);
- for(int i=1;i<6;i++){if(i>=uConeCount)break;float a=6.2831853*float(i-1)/max(float(uConeCount-1),1);vec3 d=normalize(n*.55+(t*cos(a)+b*sin(a))*.835);total+=cone(p,n,d);}
- // Cone directions approximate cosine-weighted hemisphere sampling, so their
- // mean already contains the receiver's 1/PI Lambertian normalization.
- FragColor=vec4(total*coverageAt(p)*uIntensity/max(float(uConeCount),1.0),viewDepth);})";
+ vec3 total=vec3(0);float weightSum=0;int count=clamp(uConeCount,1,6);
+ // Fixed antipodal directions avoid reflection-like lobes as normal maps vary.
+ for(int i=0;i<6;i++){if(i>=count)break;float z=(float(i)+.5)/float(count),r=sqrt(max(1-z*z,0.0)),a=float(i)*2.39996323;vec3 d=count==1?n:vec3(r*cos(a),r*sin(a),z);float c=dot(n,d),w=abs(c);d*=c<0?-1.0:1.0;if(w>.00001)total+=cone(p,n,d)*w;weightSum+=w;}
+ FragColor=vec4(total*coverageAt(p)*uIntensity/max(weightSum,.00001),viewDepth);})";
         const auto probeFunctions = trace.fragmentSource.find("bool containsCascade");
         trace.fragmentSource.insert(probeFunctions, kVctProbeSampling);
         m_coneTraceShader = Shader::Create(trace);

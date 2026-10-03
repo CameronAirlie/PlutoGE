@@ -183,26 +183,37 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // have an exactly zero result, so do not trace six cones then discard them.
     if (receiverMetallic >= 1.0 || pass.traceSettings.x == 0.0)
         return pass.indirectOnly != 0 ? float4(0.0, 0.0, 0.0, 1.0) : scene;
-    float3 up = abs(normal.y) < 0.99 ? float3(0,1,0) : float3(1,0,0);
-    const float3 tangent = normalize(cross(up, normal));
-    const float3 bitangent = cross(normal, tangent);
     const float startVoxel = voxelSizeAt(position);
     const float3 origin = position + normal * startVoxel * lerp(0.35, 0.75, saturate(pass.traceSettings.w));
-    float3 indirect = traceCone(origin, normal, startVoxel, position, normal);
+    float3 indirect = 0.0;
+    float weightSum = 0.0;
     const uint coneCount = clamp(pass.traceCounts.z, 1, 6);
-    for (uint cone = 1; cone < coneCount; ++cone)
+    for (uint cone = 0; cone < coneCount; ++cone)
     {
-        const float angle = 6.2831853 * float(cone - 1) / float(max(coneCount - 1, 1));
-        const float3 direction = normalize(normal * 0.55 +
-            (tangent * cos(angle) + bitangent * sin(angle)) * 0.835);
-        indirect += traceCone(origin, direction, startVoxel, position, normal);
+        // Fixed antipodal world-space quadrature. Exactly one member of each
+        // pair lies in the receiver hemisphere. At a hemisphere crossing its
+        // cosine weight reaches zero, so changing normals cannot sweep a sparse
+        // cone lobe across bright voxels or flip the tangent-frame basis.
+        const float z = (float(cone) + 0.5) / float(coneCount);
+        const float radius = sqrt(max(1.0 - z * z, 0.0));
+        const float angle = float(cone) * 2.39996323;
+        float3 direction = float3(radius * cos(angle), radius * sin(angle), z);
+        // A single ray cannot span a hemisphere; retain the normal ray for
+        // that lowest quality setting rather than losing axis-aligned receivers.
+        if (coneCount == 1) direction = normal;
+        const float cosine = dot(normal, direction);
+        direction *= cosine < 0.0 ? -1.0 : 1.0;
+        const float weight = abs(cosine);
+        if (weight > 0.00001)
+            indirect += traceCone(origin, direction, startVoxel, position, normal) * weight;
+        weightSum += weight;
     }
-    // The cone set samples the cosine-weighted hemisphere. Its arithmetic mean
+    // The quadrature estimates the cosine-weighted hemisphere mean
     // therefore estimates (1 / PI) * integral(Li * cos(theta) dOmega), which is
     // already the irradiance term required by a Lambertian receiver. Voxel
     // radiance also contains the source surface's 1 / PI BRDF. Dividing here by
     // PI again would remove roughly two thirds of the energy from every bounce.
-    indirect *= coverageAt(position) * pass.traceSettings.x / float(coneCount);
+    indirect *= coverageAt(position) * pass.traceSettings.x / max(weightSum, 0.00001);
     // Filter irradiance before applying the current receiver material, so GI
     // history cannot average away jittered albedo detail either.
     return pass.indirectOnly != 0 ? float4(indirect, 1.0) : float4(scene.rgb + indirect, scene.a);

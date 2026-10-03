@@ -559,6 +559,29 @@ void CheckVctSecondaryBounce(PlutoGE::render::BasicRenderer &renderer, ReadPixel
     if (render(1).r < on.r * .5f)
         throw std::runtime_error("Cancelling a pending voxel job discarded completed GI");
     render(24);
+    // Nearly identical shading normals across the old tangent-frame switch
+    // must not rotate a sparse cone pattern and create a diffuse highlight.
+    const auto normalResponse = [&](float y) {
+        auto variedVertices = vertices;
+        for (auto &vertex : variedVertices)
+            vertex.normal = {0,y,std::sqrt(1-y*y)};
+        auto variedMesh = renderer.CreateMesh({variedVertices,indices});
+        auto visible = draws;
+        visible[0].mesh = &variedMesh;
+        effect.parameters[3].x = 0;
+        effect.parameters[0].y = .1f;
+        renderer.Render(projection*lighting.view,lighting,visible,std::span(&effect,1), {},
+            PostProcessDebugView::None,nullptr,nullptr,true,draws);
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        const auto at = (renderer.GetHeight()/2*renderer.GetWidth()+renderer.GetWidth()/2)*4;
+        return glm::vec3(int(pixels.at(at)),int(pixels.at(at+1)),int(pixels.at(at+2)));
+    };
+    const auto belowBasisSwitch = normalResponse(.9899f);
+    const auto aboveBasisSwitch = normalResponse(.9901f);
+    if (glm::length(belowBasisSwitch-aboveBasisSwitch)>3)
+        throw std::runtime_error("Diffuse GI developed a highlight at a shading-normal basis switch");
+    effect.parameters[3].x = 1;
+    effect.parameters[0].y = 1;
     // A moving camera must never see the direct-only intermediate field.
     // Keep the view fixed here to isolate field publication from screen sampling.
     const auto cameraBeforeMove = lighting.cameraPosition;

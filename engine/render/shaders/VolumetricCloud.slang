@@ -25,9 +25,11 @@ float hash31(float3 p)
     const uint seed = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u ^ uint(cell.z) * 0xcb1ab31fu;
     return float(cloudHash(seed) >> 8) * (1.0 / 16777216.0);
 }
-float cloudSampleOffset(uint seed, uint index)
+float cloudSampleOffset(uint index)
 {
-    return (float(cloudHash(seed ^ cloudHash(index + 1u)) >> 8) + 0.5) * (1.0 / 16777216.0);
+    // A shared low-discrepancy sequence decorrelates successive strata without
+    // introducing pixel-sized noise that cannot be resolved without history.
+    return frac(0.5 + float(index) * 0.61803398875);
 }
 float valueNoise(float3 p)
 {
@@ -91,7 +93,7 @@ float2 intersectVolume(float3 origin, float3 direction, float4x4 inverseVolume)
     return float2(nearDistance, farDistance);
 }
 
-float lightTransmittance(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps, uint seed)
+float lightTransmittance(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps)
 {
     const float2 hit = intersectVolume(position + lightDirection * 0.01, lightDirection, inverseVolume);
     const float stepLength = max(hit.y, 0.0) / lightSteps;
@@ -101,7 +103,7 @@ float lightTransmittance(float3 position, float3 lightDirection, float4x4 invers
         if (index >= lightSteps)
             break;
         const float3 samplePosition = position + lightDirection *
-            ((float(index) + cloudSampleOffset(seed, index)) * stepLength);
+            ((float(index) + 0.5) * stepLength);
         opticalDepth += densityAt(samplePosition, inverseVolume) * pass.parameters[2].w * stepLength;
         if (opticalDepth >= 9.21034) // Remaining sunlight is below 0.0001.
             break;
@@ -121,7 +123,6 @@ float4 integrateCloud(FullscreenVertexOutput input)
 {
     const float2 pixel = floor(orientFullscreenUv(input.uv, pass.flipY) / pass.inverseResolution);
     const float2 uv = (pixel + 0.5) * pass.inverseResolution;
-    const uint seed = cloudHash(uint(pixel.x) ^ (uint(pixel.y) * 0x9e3779b9u));
     const float4x4 inverseVolume = pass.worldToLocal;
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
     const float2 hit = intersectVolume(pass.cameraPosition.xyz, rayDirection, inverseVolume);
@@ -147,9 +148,9 @@ float4 integrateCloud(FullscreenVertexOutput input)
     const uint primarySteps = clamp(pass.quality & 255u, 1u, 128u);
     const uint lightSteps = clamp((pass.quality >> 8u) & 255u, 1u, 16u);
     const float stepLength = (end - start) / primarySteps;
-    // Stratify every cell independently. Fixed midpoints align density/light
-    // samples into visible sheets across neighboring screen rows. Spatially
-    // stable offsets remove that coherence without requiring temporal history.
+    // Vary offsets along the ray, but share them across pixels. Per-pixel
+    // random primary and light samples produce screen-space grain, especially
+    // at low render scales; this pass has no cloud history to accumulate it.
     float transmittance = 1.0;
     float3 radiance = 0.0;
     const float anisotropy = clamp(pass.parameters[4].y, -0.9, 0.9);
@@ -165,7 +166,7 @@ float4 integrateCloud(FullscreenVertexOutput input)
     {
         if (index >= primarySteps || transmittance < 0.01)
             break;
-        const float distanceAlongRay = start + (float(index) + cloudSampleOffset(seed, index)) * stepLength;
+        const float distanceAlongRay = start + (float(index) + cloudSampleOffset(index)) * stepLength;
         const float3 samplePosition = pass.cameraPosition.xyz + rayDirection * distanceAlongRay;
         const float density = densityAt(samplePosition, inverseVolume);
         // An empty segment has exactly zero scattering and extinction.
@@ -173,7 +174,7 @@ float4 integrateCloud(FullscreenVertexOutput input)
             continue;
         const float segmentTransmittance = exp(-density * pass.parameters[2].w * stepLength);
         const float sunlight = pass.parameters[3].w > 0.0001
-                                   ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps, cloudHash(seed ^ index ^ 0xa511e9b3u))
+                                   ? lightTransmittance(samplePosition, normalize(pass.parameters[2].xyz), inverseVolume, lightSteps)
                                    : 1.0;
         const float3 incident = ambientLight +
                                 pass.parameters[3].rgb * pass.parameters[3].w * phase * sunlight;

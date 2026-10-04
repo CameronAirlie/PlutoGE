@@ -357,6 +357,8 @@ endif()
 
 add_test(NAME PlutoGEVulkanParticlePointTests COMMAND PlutoGEVulkanRhiTests --particles-points-only)
 add_test(NAME PlutoGEOpenGLParticlePointTests COMMAND PlutoGEOpenGLRhiTests --particles-points-only)
+add_test(NAME PlutoGEVulkanDecalTests COMMAND PlutoGEVulkanRhiTests --decals-only)
+add_test(NAME PlutoGEOpenGLDecalTests COMMAND PlutoGEOpenGLRhiTests --decals-only)
 
 add_test(NAME PlutoGEVulkanTemporalMotionTests COMMAND PlutoGEVulkanRhiTests --temporal-motion)
 add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --temporal-motion)

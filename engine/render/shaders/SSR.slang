@@ -44,6 +44,15 @@ float depthDelta(float2 uv, float depth, float rayDepth, float4 viewDepthRow, fl
     return rayDepth + dot(viewDepthRow, clip) / safeW;
 }
 
+// Stable pixel-local rotations decorrelate the finite GGX quadrature. Using
+// identical directions across a wall creates displaced copies of the source.
+float2 reflectionSampleRotation(float2 pixel)
+{
+    float3 seed = frac(float3(pixel.xyx) * float3(0.1031, 0.1030, 0.0973));
+    seed += dot(seed, seed.yzx + 33.33);
+    return frac((seed.xx + seed.yz) * seed.zy);
+}
+
 float smithG1(float cosine, float alphaSquared)
 {
     return 2.0 * cosine / max(cosine + sqrt(alphaSquared +
@@ -85,8 +94,19 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         const float2 fraction = frac(pixel);
         float3 sum = 0.0;
         float weightSum = 0.0;
-        for (int y = 0; y < 2; ++y)
-            for (int x = 0; x < 2; ++x)
+        // Glossy receivers retain bilinear reconstruction. Rough receivers
+        // integrate neighbouring independent estimates using surface-aware
+        // weights, smoothing noise without smearing across silhouettes.
+        const bool roughFilter = roughness > 0.2;
+        // The old 4x4 footprint left most of the stochastic variance visible.
+        // Widen only the rough-surface kernel; mirror-like surfaces still use
+        // the original four taps, and the ray count remains unchanged.
+        const int filterRadius = roughness > 0.5 ? 4 : 2;
+        const int firstTap = roughFilter ? 1 - filterRadius : 0;
+        const int lastTap = roughFilter ? filterRadius : 1;
+        const float sigma = max(0.5, roughness * roughness * 4.0);
+        for (int y = firstTap; y <= lastTap; ++y)
+            for (int x = firstTap; x <= lastTap; ++x)
             {
                 const float2 at = (clamp(base + float2(x, y), 0.0, traceSize - 1.0) + 0.5) / traceSize;
                 const float2 surfaceUv = (floor(at / pass.inverseResolution) + 0.5) * pass.inverseResolution;
@@ -105,7 +125,11 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                     abs(tapMaterial.x - metallic), abs(tapMaterial.y - material.g)));
                 const float2 bilinear = float2(x == 0 ? 1.0 - fraction.x : fraction.x,
                                                y == 0 ? 1.0 - fraction.y : fraction.y);
-                const float weight = bilinear.x * bilinear.y * depthWeight * normalWeight * materialWeight;
+                const float2 tapOffset = float2(x, y) - fraction;
+                const float spatialWeight = roughFilter
+                    ? exp(-dot(tapOffset, tapOffset) / (2.0 * sigma * sigma))
+                    : bilinear.x * bilinear.y;
+                const float weight = spatialWeight * depthWeight * normalWeight * materialWeight;
                 sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
                 weightSum += weight;
             }
@@ -131,9 +155,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float4 viewDepthRow = clipToView[2];
     const float4 homogeneousRow = pass.inverseViewProjection[3];
     const uint steps = clamp(pass.quality, 8u, 128u);
-    // Integrate the GGX lobe. Fixed stratified samples avoid temporal shimmer;
-    // rejected directions and misses still count in the estimator denominator.
+    // Integrate the GGX lobe with pixel-local, temporally stable stratified
+    // samples. Rejected directions and misses remain in the denominator.
     const uint samples = 16;
+    const float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
     float3 reflection = 0.0;
 #if defined(PLUTO_SSR_UNROLL_RAYS)
     // Partially unroll fixed GGX samples without constant-folding the entire
@@ -148,8 +173,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     for (uint sample = 0; sample < samples; ++sample)
     {
 #endif
-        float xi = (float(sample) + 0.5) / float(samples);
-        float phi = 6.283185307 * frac(float(sample) * 0.618033989);
+        float xi = frac((float(sample) + 0.5) / float(samples) + sampleRotation.x);
+        float phi = 6.283185307 * frac(float(sample) * 0.618033989 + sampleRotation.y);
         float cosTheta = sqrt((1.0 - xi) / (1.0 + (a2 - 1.0) * xi));
         float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
         float3 halfVector = tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normal * cosTheta;

@@ -2237,6 +2237,7 @@ namespace PlutoGE::assets
                 std::string line;
                 while (std::getline(input, line))
                 {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
                     const auto delimiter = line.find('=');
                     if (delimiter == std::string::npos)
                     {
@@ -2620,6 +2621,7 @@ namespace PlutoGE::assets
         std::string line;
         while (std::getline(input, line))
         {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             const auto delimiter = line.find('=');
             if (delimiter == std::string::npos)
             {

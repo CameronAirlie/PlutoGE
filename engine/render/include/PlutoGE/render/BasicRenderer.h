@@ -211,6 +211,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
+        BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
         std::array<BasicPostProcessShaderPackage, 2> ssrStages; // Trace and resolve.
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
@@ -353,6 +354,20 @@ namespace PlutoGE::render
         std::vector<BasicParticleVertex> vertices;
         std::vector<BasicParticleInstance> instances;
         BasicParticleParameters parameters;
+        rhi::TextureHandle texture;
+    };
+
+    struct alignas(16) BasicDecalParameters
+    {
+        glm::mat4 inverseViewProjection{1}, inverseModel{1};
+        glm::vec4 color{1}, projectorNormal{0, 0, 1, 0};
+        glm::vec4 material{1, 1, 0, 0.5f}; // UV scale, alpha mode, cutoff.
+        glm::vec4 viewport{0}; // inverse size, clip convention bits, texture present.
+    };
+    static_assert(sizeof(BasicDecalParameters) == 192);
+    struct BasicDecalDraw
+    {
+        BasicDecalParameters parameters;
         rhi::TextureHandle texture;
     };
 
@@ -566,7 +581,8 @@ namespace PlutoGE::render
                     // Full scene with GI materials, independent of camera visibility.
                     std::span<const BasicDraw> giDraws = {}, std::span<const BasicParticleDraw> particles = {},
                     const BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
-                    std::optional<glm::vec2> sharedClipJitter = std::nullopt);
+                    std::optional<glm::vec2> sharedClipJitter = std::nullopt,
+                    std::span<const BasicDecalDraw> decals = {});
 
         // Camera composition runs on HDR color and geometry inputs before TAA.
         void SetTemporalMetadata(rhi::TextureHandle metadata) noexcept { m_temporalMetadata = metadata; }
@@ -833,6 +849,10 @@ namespace PlutoGE::render
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
         rhi::GraphicsPipeline m_particlePipeline;
+        rhi::GraphicsPipeline m_decalPipeline, m_decalSnapshotPipeline;
+        std::vector<rhi::Buffer> m_decalParameters;
+        rhi::Texture m_decalColorSnapshot, m_decalAlbedoSnapshot;
+        rhi::Extent2D m_decalSnapshotSize;
         rhi::GraphicsPipeline m_particleInstancedPipeline;
         rhi::Buffer m_particleQuadIndices;
         std::vector<rhi::Buffer> m_particleInstances;

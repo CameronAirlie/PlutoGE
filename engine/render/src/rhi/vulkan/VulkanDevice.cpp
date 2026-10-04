@@ -3123,8 +3123,8 @@ namespace PlutoGE::render::rhi::vulkan
             blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
             blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend.colorBlendOp = VK_BLEND_OP_ADD;
-            blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend.srcAlphaBlendFactor = descriptor.blend.preserveDestinationAlpha ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE;
+            blend.dstAlphaBlendFactor = descriptor.blend.preserveDestinationAlpha ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend.alphaBlendOp = VK_BLEND_OP_ADD;
         }
         VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};

@@ -6,6 +6,7 @@
 #include "PlutoGE/render/PostProcessResourcePool.h"
 #include "GlassSnapshotBounds.h"
 #include "SnapshotDamageTracker.h"
+#include "DecalRasterBounds.h"
 #include "BasicDrawBatching.h"
 #include "PersistentParameterCache.h"
 #include "MaterialPreparationCache.h"
@@ -668,6 +669,31 @@ namespace PlutoGE::render
                 copy.debugName = "Glass immutable depth snapshot";
                 m_glassDepthCopyPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(copy));
             }
+            if (!shaders.decals.fragment.spirv.empty() || !shaders.decals.fragment.glsl.empty())
+            {
+                rhi::GraphicsPipelineDescriptor decal;
+                decal.vertexShader = shaders.decals.vertex;
+                decal.fragmentShader = shaders.decals.fragment;
+                decal.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm};
+                decal.depthFormat = rhi::Format::Undefined;
+                decal.depthTest = decal.depthWrite = false;
+                decal.cullMode = rhi::CullMode::None;
+                decal.blend = {true, true};
+                decal.resourceBindings = {{0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment}};
+                for (std::uint32_t slot = 1; slot <= 5; ++slot)
+                    decal.resourceBindings.push_back({slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                decal.debugName = "Projected surface decals";
+                m_decalPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(decal));
+                decal.vertexShader = shaders.decalSnapshot.vertex;
+                decal.fragmentShader = shaders.decalSnapshot.fragment;
+                decal.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
+                decal.blend = {};
+                decal.resourceBindings = {
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                decal.debugName = "Decal surface snapshot";
+                m_decalSnapshotPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(decal));
+            }
             if (!shaders.particles.vertexShader.spirv.empty() || !shaders.particles.vertexShader.glsl.empty())
             {
                 auto particle = shaders.particles;
@@ -1224,6 +1250,10 @@ namespace PlutoGE::render
         for (auto &target : m_ssaoHistoryTargets)
             target.Reset();
         m_particlePipeline.Reset();
+        m_decalPipeline.Reset(); m_decalSnapshotPipeline.Reset();
+        m_decalParameters.clear();
+        m_decalColorSnapshot.Reset(); m_decalAlbedoSnapshot.Reset();
+        m_decalSnapshotSize = {};
         m_particleInstancedPipeline.Reset();
         m_particleQuadIndices.Reset();
         m_particleInstances.clear();
@@ -1561,7 +1591,8 @@ namespace PlutoGE::render
                                bool submit, std::span<const BasicDraw> giDraws,
                                std::span<const BasicParticleDraw> particles,
                                const BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
-                               std::optional<glm::vec2> sharedClipJitter)
+                               std::optional<glm::vec2> sharedClipJitter,
+                               std::span<const BasicDecalDraw> decals)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -2228,6 +2259,8 @@ namespace PlutoGE::render
         rhi::RenderingInfo renderingInfo;
         const bool geometryDebug = debugView != PostProcessDebugView::None;
         BasicPostProcessInput geometryInputs = lighting.requiredGeometryInputs;
+        if (!decals.empty())
+            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Albedo;
         if (beforeTemporalResolve || linearOutput)
             geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
         for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
@@ -2660,6 +2693,65 @@ namespace PlutoGE::render
 
         m_outputColor = m_colorTarget.Get();
         core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);
+        if (!decals.empty() && m_decalPipeline && m_decalSnapshotPipeline)
+        {
+            ScopedGpuTiming timing(commands, "RHI Decals");
+            glm::mat4 jitterTranslation(1);
+            jitterTranslation[3].x = temporalClipOffset.x;
+            jitterTranslation[3].y = temporalClipOffset.y;
+            const auto decalViewProjection = jitterTranslation * viewProjection;
+            const auto decalInverseViewProjection = glm::inverse(decalViewProjection);
+            if (!m_decalColorSnapshot || m_decalSnapshotSize.width != m_width || m_decalSnapshotSize.height != m_height)
+            {
+                m_decalColorSnapshot = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "Decal color snapshot", true}));
+                m_decalAlbedoSnapshot = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "Decal albedo snapshot", true}));
+                m_decalSnapshotSize = {m_width, m_height};
+            }
+            for (std::size_t index = 0; index < decals.size(); ++index)
+            {
+                if (index == m_decalParameters.size())
+                    m_decalParameters.emplace_back(*m_device, m_device->CreateBuffer(
+                        {sizeof(BasicDecalParameters), rhi::BufferUsage::Uniform, "Decal parameters"}));
+                auto parameters = decals[index].parameters;
+                parameters.inverseViewProjection = decalInverseViewProjection;
+                parameters.viewport = {1.0f / m_width, 1.0f / m_height,
+                    float((m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1 : 0) |
+                          (m_device->UsesZeroToOneClipDepth() ? 2 : 0)), decals[index].texture ? 1.0f : 0.0f};
+                m_device->UpdateBuffer(m_decalParameters[index].Get(), 0, Bytes(parameters));
+            }
+            rhi::RenderingInfo snapshot;
+            snapshot.colorAttachments = {m_decalColorSnapshot.Get(), m_decalAlbedoSnapshot.Get()};
+            snapshot.width = m_width; snapshot.height = m_height;
+            commands.BeginRendering(snapshot);
+            commands.BindPipeline(m_decalSnapshotPipeline.Get());
+            commands.BindTexture(1, m_colorTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(2, m_albedoTarget.Get(), m_screenSampler.Get());
+            commands.Draw(3); commands.EndRendering();
+            rhi::RenderingInfo surface;
+            surface.colorAttachments = {m_colorTarget.Get(), m_albedoTarget.Get()};
+            surface.width = m_width; surface.height = m_height;
+            surface.clearColor = surface.clearDepth = false;
+            commands.BeginRendering(surface);
+            commands.BindPipeline(m_decalPipeline.Get());
+            commands.BindTexture(1, m_decalColorSnapshot.Get(), m_screenSampler.Get());
+            commands.BindTexture(2, m_decalAlbedoSnapshot.Get(), m_screenSampler.Get());
+            commands.BindTexture(3, m_depthTarget.Get(), m_shadowSampler.Get());
+            commands.BindTexture(4, m_normalTarget.Get(), m_screenSampler.Get());
+            for (std::size_t index = 0; index < decals.size(); ++index)
+            {
+                const auto bounds = DecalRasterBounds(decalViewProjection * glm::inverse(decals[index].parameters.inverseModel),
+                    m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan);
+                if (!bounds.width || !bounds.height) continue;
+                commands.SetScissor(bounds);
+                commands.BindUniformBuffer(0, m_decalParameters[index].Get());
+                commands.BindTexture(5, decals[index].texture ? decals[index].texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                commands.Draw(3);
+            }
+            commands.SetScissor({0, 0, m_width, m_height});
+            commands.EndRendering();
+        }
         const auto postProcessRecordingStart = std::chrono::steady_clock::now();
         commands.BeginGpuScope("RHI Post Process");
         m_postProcessBufferCursor = 0;

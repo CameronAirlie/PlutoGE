@@ -5,6 +5,13 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <iterator>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 namespace PlutoGE::render
 {
@@ -60,6 +67,8 @@ namespace PlutoGE::render
                                .fragment = Load("GlassSceneCopy", "fragment")},
             .glassColorCopy = {.vertex = Load("GlassColorCopy", "vertex"), .fragment = Load("GlassColorCopy", "fragment")},
             .glassDepthCopy = {.vertex = Load("GlassDepthCopy", "vertex"), .fragment = Load("GlassDepthCopy", "fragment")},
+            .decals = {.vertex = Load("Decals", "vertex"), .fragment = Load("Decals", "fragment")},
+            .decalSnapshot = {.vertex = Load("DecalSnapshot", "vertex"), .fragment = Load("DecalSnapshot", "fragment")},
             .shadowVertex = Load("DirectionalShadow", "vertex"),
             .shadowInstancedVertex = Load("DirectionalShadowInstanced", "vertex"),
             .shadowFragment = Load("DirectionalShadow", "fragment"),
@@ -150,6 +159,27 @@ namespace PlutoGE::render
             if (!std::filesystem::is_directory(root))
                 throw std::runtime_error("PLUTOGE_SHADER_ROOT is not a directory");
             return root;
+        }
+        // Standalone builds ship the same shader package beside the executable.
+        // Resolve against the executable, independent of its working directory.
+        std::filesystem::path executable;
+#ifdef _WIN32
+        std::wstring path(32768, L'\0');
+        const auto size = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (size && size < path.size()) { path.resize(size); executable = path; }
+#elif defined(__APPLE__)
+        std::uint32_t size = 0;
+        _NSGetExecutablePath(nullptr, &size);
+        std::string path(size, '\0');
+        if (_NSGetExecutablePath(path.data(), &size) == 0) executable = path.c_str();
+#else
+        std::error_code error;
+        executable = std::filesystem::read_symlink("/proc/self/exe", error);
+#endif
+        if (!executable.empty())
+        {
+            const auto shipped = executable.parent_path() / "Shaders";
+            if (std::filesystem::is_regular_file(shipped / "BasicLit.vertex.spv")) return shipped;
         }
         return PLUTO_RHI_SHADER_DIR;
     }

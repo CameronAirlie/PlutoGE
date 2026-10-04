@@ -1292,11 +1292,32 @@ namespace PlutoGE::render
             const bool full = ssr->parameters[4].w > .5f;
             m_timingStats.ssrTraceSize = full ? renderSize : rhi::Extent2D{(renderSize.width + 1) / 2, (renderSize.height + 1) / 2};
         }
+        std::vector<BasicDecalDraw> decals;
+        if (scene && m_sceneEffectsEnabled && scene == core::Engine::GetInstance().GetScene())
+        {
+            for (const auto &command : core::Engine::GetInstance().GetRenderer().GetDecalCommands())
+            {
+                if (!command.material || command.tint.a <= 0 || std::abs(glm::determinant(command.model)) < 0.000001f)
+                    continue;
+                const auto &config = command.material->ReadConfig();
+                BasicDecalDraw draw;
+                draw.parameters.inverseModel = glm::inverse(command.model);
+                draw.parameters.color = config.color * command.tint;
+                draw.parameters.projectorNormal = {glm::normalize(glm::vec3(command.model[2])), command.normalCutoff};
+                draw.parameters.material = {config.uvScale, static_cast<float>(config.alphaMode),
+                    config.alphaCutoff / std::max(config.color.a, 0.000001f)};
+                draw.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Decal albedo");
+                // An unresolved textured decal must not become a solid square.
+                if (config.albedoTexture && !draw.texture)
+                    continue;
+                decals.push_back(draw);
+            }
+        }
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
                            useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
                            std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount),
-                           beforeTemporalResolve, linearOutput, sharedClipJitter);
+                           beforeTemporalResolve, linearOutput, sharedClipJitter, decals);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&

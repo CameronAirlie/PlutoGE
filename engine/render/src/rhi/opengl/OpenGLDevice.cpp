@@ -362,7 +362,9 @@ namespace PlutoGE::render::rhi::opengl
             if (pipeline->descriptor.blend.enabled)
             {
                 glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA,
+                    pipeline->descriptor.blend.preserveDestinationAlpha ? GL_ZERO : GL_ONE,
+                    pipeline->descriptor.blend.preserveDestinationAlpha ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
             }
             GLenum compare = GL_LESS;
             switch (pipeline->descriptor.depthCompare)

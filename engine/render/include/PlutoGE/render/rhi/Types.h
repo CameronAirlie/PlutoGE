@@ -188,6 +188,7 @@ namespace PlutoGE::render::rhi
     struct BlendState
     {
         bool enabled = false;
+        bool preserveDestinationAlpha = false;
     };
 
     struct VertexAttribute

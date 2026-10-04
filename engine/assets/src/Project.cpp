@@ -1418,6 +1418,19 @@ namespace PlutoGE::assets
             return false;
         }
 
+        const auto runtimeShaders = normalizedRuntimeExecutablePath.parent_path() / "Shaders";
+        const auto exportedShaders = normalizedDestinationExecutablePath.parent_path() / "Shaders";
+        if (std::filesystem::is_directory(runtimeShaders) && runtimeShaders != exportedShaders)
+        {
+            std::filesystem::copy(runtimeShaders, exportedShaders,
+                std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, errorCode);
+            if (errorCode)
+            {
+                SetError(errorMessage, "Failed to copy runtime shaders: " + errorCode.message());
+                return false;
+            }
+        }
+
         if (!manifest.scriptAssembly.empty() &&
             !CopyBundledDotnetRuntime(normalizedDestinationExecutablePath.parent_path(), errorMessage))
         {

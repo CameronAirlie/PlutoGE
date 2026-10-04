@@ -11,6 +11,7 @@
 #include "OpaqueBatchingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
+#include "DecalRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -142,6 +143,9 @@ int main(int argc, char **argv)
             shaders.vctPostProcess[index].fragment.spirv = ReadSpirv((std::string(vctModules[index]) + ".fragment.spv").c_str());
         }
         shaders.particles.vertexShader.spirv = ReadSpirv("Particles.vertex.spv");
+        shaders.particleInstancedVertex.spirv = ReadSpirv("ParticlesInstanced.vertex.spv");
+        shaders.decals = { { .spirv = ReadSpirv("Decals.vertex.spv") }, { .spirv = ReadSpirv("Decals.fragment.spv") } };
+        shaders.decalSnapshot = { { .spirv = ReadSpirv("DecalSnapshot.vertex.spv") }, { .spirv = ReadSpirv("DecalSnapshot.fragment.spv") } };
         shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
         LoadRenderOptimizationShaders(shaders);
         BasicRenderer renderer;
@@ -252,6 +256,11 @@ int main(int argc, char **argv)
             CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
                 return device.ReadTextureRgba8(texture);
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--decals-only")
+        {
+            CheckDecalRendering(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vct-removed-character")

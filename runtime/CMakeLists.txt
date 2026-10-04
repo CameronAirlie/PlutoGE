@@ -35,6 +35,14 @@ target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm PlutoGE::imgui PlutoGE
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
 pluto_attach_streamline_runtime(PlutoGERuntime)
 pluto_attach_slang_runtime(PlutoGERuntime)
+if (TARGET PlutoGERhiShaders)
+    add_dependencies(PlutoGERuntime PlutoGERhiShaders)
+    add_custom_command(TARGET PlutoGERuntime POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "$<TARGET_PROPERTY:PlutoGERhiShaders,PLUTO_SHADER_DIRECTORY>"
+            "$<TARGET_FILE_DIR:PlutoGERuntime>/Shaders"
+    )
+endif()
 
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGERuntime POST_BUILD

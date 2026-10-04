@@ -197,6 +197,7 @@ namespace PlutoGE::render
             }
         }
         void SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas);
+        [[nodiscard]] std::span<const DecalCommand> GetDecalCommands() const { return m_decalCommands; }
         void ClearSubmissionCullingCameras();
 
         void SetVSyncEnabled(bool enabled);

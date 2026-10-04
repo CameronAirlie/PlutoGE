@@ -8,6 +8,7 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/render/DebugDraw.h"
 
 #include "PlutoGE/scene/Entity.h"
@@ -606,8 +607,11 @@ namespace PlutoGE::core
     void Engine::Shutdown()
     {
         StopRuntime();
+        scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: scripts");
         m_scriptEngine->Shutdown();
+        scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: audio");
         m_audioSystem->Shutdown();
+        scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: renderer");
         if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
             m_renderer->Shutdown();
         m_textureManager->SetWindow(nullptr);

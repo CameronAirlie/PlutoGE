@@ -14,6 +14,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/scene/CameraStack.h"
 #include "PlutoGE/scene/Entity.h"
@@ -37,6 +38,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -68,6 +70,7 @@ namespace PlutoGE
         struct RuntimeDiagnostics
         {
             std::ofstream logFile;
+            std::mutex logMutex;
             std::string currentPhase = "startup";
 
             void Initialize(const std::filesystem::path &executablePath)
@@ -77,6 +80,7 @@ namespace PlutoGE
 
             void Log(const std::string &message)
             {
+                std::lock_guard lock(logMutex);
                 if (!logFile.is_open())
                 {
                     return;
@@ -411,6 +415,12 @@ int RunRuntime(int argc, char **argv)
 
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.Initialize(executablePath);
+    PlutoGE::scripting::SetScriptLogSink([](PlutoGE::scripting::ScriptLogSeverity severity, std::string_view message)
+    {
+        const char *prefix = severity == PlutoGE::scripting::ScriptLogSeverity::Error ? "[Script][Error] " :
+            severity == PlutoGE::scripting::ScriptLogSeverity::Warning ? "[Script][Warning] " : "[Script] ";
+        PlutoGE::g_runtimeDiagnostics.Log(std::string(prefix) + std::string(message));
+    });
     PlutoGE::g_runtimeDiagnostics.Log("Runtime start");
     PlutoGE::g_runtimeDiagnostics.Log("Executable: " + executablePath.string());
     PlutoGE::g_runtimeDiagnostics.Log("Manifest: " + manifestPath.string());
@@ -912,11 +922,20 @@ int RunRuntime(int argc, char **argv)
         catch (const std::exception &error) { std::cerr << error.what() << '\n'; benchmarkSucceeded = false; }
     }
     if (projectBenchmark) std::cerr << "Benchmark: stopping gameplay\n";
+#ifdef _WIN32
+    PlutoGE::g_runtimeDiagnostics.Log("Stopping gameplay");
+#endif
     engine.StopRuntime();
     if (projectBenchmark) std::cerr << "Benchmark: releasing scene\n";
+#ifdef _WIN32
+    PlutoGE::g_runtimeDiagnostics.Log("Releasing scene");
+#endif
     engine.SetScene(nullptr);
     scene.reset();
     if (projectBenchmark) std::cerr << "Benchmark: shutting down engine\n";
+#ifdef _WIN32
+    PlutoGE::g_runtimeDiagnostics.Log("Shutting down engine");
+#endif
     engine.Shutdown();
     if (projectBenchmark) std::cerr << "Benchmark: shutdown complete\n";
 

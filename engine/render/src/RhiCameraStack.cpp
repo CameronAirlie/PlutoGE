@@ -7,6 +7,29 @@
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        BasicLighting BuildOverlayLighting(const CameraView &view, const scene::Scene *scene)
+        {
+            auto lighting = view.lights ? BuildSceneLighting(view.cameraData, scene, *view.lights)
+                                       : BuildSceneLighting(view.cameraData, scene);
+            // Overlays need the sky's material lighting, but must not draw its
+            // background or apply world atmosphere over the base camera.
+            const auto atmosphere = BuildSceneAtmosphere(scene, lighting, view.cameraData.tagFilter);
+            for (const auto &effect : atmosphere)
+                if (effect.type == BasicPostProcessEffectType::PhysicalSky)
+                {
+                    lighting.physicalSkyEnabled = true;
+                    lighting.physicalSkyExposure = effect.exposure;
+                    lighting.physicalSkyParameters = effect.parameters;
+                    break;
+                }
+            if (lighting.shadowMethod == ShadowMethod::Virtual)
+                lighting.shadowMethod = ShadowMethod::Cascaded;
+            return lighting;
+        }
+    }
+
     RhiCameraStackCompositor::RhiCameraStackCompositor() = default;
 
     RhiCameraStackCompositor::~RhiCameraStackCompositor()
@@ -163,10 +186,7 @@ namespace PlutoGE::render
             if (!renderer)
                 return false;
             const auto &view = overlays[index];
-            auto lighting = view.lights ? BuildSceneLighting(view.cameraData, scene, *view.lights)
-                                       : BuildSceneLighting(view.cameraData, scene);
-            if (lighting.shadowMethod == ShadowMethod::Virtual)
-                lighting.shadowMethod = ShadowMethod::Cascaded;
+            const auto lighting = BuildOverlayLighting(view, scene);
             const auto shadows = view.shadowCommands.empty() ? view.commands : view.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
             if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
@@ -278,10 +298,7 @@ namespace PlutoGE::render
             if (!renderer)
                 return false;
             const auto &layer = overlays[index];
-            auto lighting = layer.lights ? BuildSceneLighting(layer.cameraData, scene, *layer.lights)
-                                         : BuildSceneLighting(layer.cameraData, scene);
-            if (lighting.shadowMethod == ShadowMethod::Virtual)
-                lighting.shadowMethod = ShadowMethod::Cascaded;
+            const auto lighting = BuildOverlayLighting(layer, scene);
             // The last overlay stays recording; the composite is appended to it.
             const bool lastOverlay = index + 1 == overlays.size();
             const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;

@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include <array>
 #include <optional>
 #include <span>
@@ -104,6 +105,52 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     require(overlayPixels > size * size / 8 && overlayPixels < size * size / 3,
             "Overlay coverage was not the expected triangle");
     std::cout << "Camera stack composite placed " << overlayPixels << " overlay pixels over the base camera" << std::endl;
+
+    // A tagged sky lights overlay materials without replacing uncovered base
+    // pixels. Exercise both the final-color and shared-temporal stack paths.
+    PlutoGE::scene::Scene skyScene;
+    auto *skyEntity = skyScene.AddEntity(std::make_unique<PlutoGE::scene::Entity>());
+    skyEntity->AddTag("Sky");
+    skyEntity->CreateComponent<PlutoGE::scene::PhysicalSkyComponent>();
+    Material skyLitMaterial({.color = {1, 1, 1, 1}});
+    const std::array litCommands{RenderCommand{.material = &skyLitMaterial, .mesh = overlayMesh.get()}};
+    PlutoGE::scene::CameraTagFilter skyFilter({"Weapon", "Sky"}, {});
+    auto skyCamera = camera;
+    skyCamera.tagFilter = &skyFilter;
+    const std::array skyOverlays{CameraView{.cameraData = skyCamera, .commands = litCommands}};
+    for (const bool temporal : {false, true})
+    {
+        const auto drawSkyStack = [&]()
+        {
+            const BasicRenderer::BeforeTemporalResolve composeSky = [&](BasicRenderer &renderer, glm::vec2 jitter)
+            {
+                require(compositor.CompositeBeforeTemporalResolve(device, renderer, jitter, skyOverlays, {}, &skyScene),
+                        "Sky-lit HDR overlay composition failed");
+            };
+            require(base.Render(size, size, camera, lighting, baseCommands, baseCommands, {}, {}, {},
+                                PostProcessDebugView::None, true, nullptr, std::nullopt,
+                                temporal ? composeSky : BasicRenderer::BeforeTemporalResolve{}),
+                    "Sky overlay base render failed");
+            if (!temporal)
+                require(compositor.Composite(device, base.GetColorTexture(), size, size, skyOverlays, {}, &skyScene),
+                        "Sky-lit overlay composition failed");
+            return readPixels(base.GetColorTexture());
+        };
+        skyFilter.SetExcludedTags({});
+        const auto lit = drawSkyStack();
+        skyFilter.SetExcludedTags({"Sky"});
+        const auto unlit = drawSkyStack();
+        std::size_t brighterPixels = 0;
+        for (std::size_t pixel = 0; pixel < size * size; ++pixel)
+        {
+            if (isGreen(overlayAlone, pixel))
+                brighterPixels += channel(lit, pixel, 1) > channel(unlit, pixel, 1) + 2;
+            else
+                require(isRed(lit, pixel) && isRed(unlit, pixel),
+                        "Overlay sky overwrote the base outside geometry coverage");
+        }
+        require(brighterPixels > overlayPixels / 2, "Included sky did not illuminate overlay materials");
+    }
 
     // The production stack resolves once, after HDR composition. A silhouette
     // must contain blended red/green coverage even though the base has no edge.

@@ -176,6 +176,8 @@ namespace PlutoGE::render::rhi::vulkan
                 return VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
             case BufferUsage::Storage:
                 return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+            case BufferUsage::VertexStorage:
+                return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
             case BufferUsage::Uniform:
                 return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             }
@@ -1461,7 +1463,7 @@ namespace PlutoGE::render::rhi::vulkan
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
         {
             auto *resource = m_impl.buffers.Get(handle);
-            if (!resource || resource->usage != BufferUsage::Vertex)
+            if (!resource || (resource->usage != BufferUsage::Vertex && resource->usage != BufferUsage::VertexStorage))
                 throw std::invalid_argument("Invalid Vulkan vertex buffer (index=" +
                     std::to_string(handle.index) + ", generation=" + std::to_string(handle.generation) +
                     ", pipeline='" + (m_pipeline ? m_pipeline->descriptor.debugName : std::string("none")) +
@@ -1576,7 +1578,8 @@ namespace PlutoGE::render::rhi::vulkan
         void BindStorageBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *buffer = m_impl.buffers.Get(handle);
-            if (!m_pipeline || slot >= MaxResourceSlots || !buffer || buffer->usage != BufferUsage::Storage)
+            if (!m_pipeline || slot >= MaxResourceSlots || !buffer ||
+                (buffer->usage != BufferUsage::Storage && buffer->usage != BufferUsage::VertexStorage))
                 throw std::invalid_argument("Invalid Vulkan storage buffer");
             if (m_storageBuffers[slot] != handle) MarkDescriptorBindingDirty(ResourceBindingType::StorageBuffer, slot);
             m_storageBuffers[slot] = handle;
@@ -1644,7 +1647,8 @@ namespace PlutoGE::render::rhi::vulkan
         bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
         {
             auto *buffer = m_impl.buffers.Get(source);
-            if (!m_recording || m_rendering || !buffer || buffer->usage != BufferUsage::Storage || size > buffer->size || !size)
+            if (!m_recording || m_rendering || !buffer ||
+                (buffer->usage != BufferUsage::Storage && buffer->usage != BufferUsage::VertexStorage) || size > buffer->size || !size)
                 return false;
             auto &frame = m_frames[m_frameIndex];
             if (frame.readbackCursor == frame.readbacks.size()) frame.readbacks.emplace_back();
@@ -1685,9 +1689,9 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
-                                    VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+                                    VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
-                                    VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+                                    VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
             vkCmdPipelineBarrier(CommandBuffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
@@ -2871,6 +2875,11 @@ namespace PlutoGE::render::rhi::vulkan
         allocation.usage = VMA_MEMORY_USAGE_AUTO;
         allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         BufferResource resource;
+        if (descriptor.usage == BufferUsage::VertexStorage && data.empty())
+        {
+            allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+            allocation.flags = 0;
+        }
         resource.size = descriptor.size;
         resource.usage = descriptor.usage;
         resource.immutable = descriptor.immutable;
@@ -3315,7 +3324,7 @@ namespace PlutoGE::render::rhi::vulkan
                                                           .count();
             return;
         }
-        if (resource->usage == BufferUsage::Storage ||
+        if (resource->usage == BufferUsage::Storage || resource->usage == BufferUsage::VertexStorage ||
             ((resource->usage == BufferUsage::Vertex || resource->usage == BufferUsage::Index) &&
              m_impl->context->NativeCommandBuffer()))
         {

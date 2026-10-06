@@ -21,6 +21,7 @@
 #include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SkinningRenderingChecks.h"
+#include "GpuSkinningChecks.h"
 #include "BufferUploadChecks.h"
 #include "SkyQuadratureChecks.h"
 #include "SsrRenderingChecks.h"
@@ -239,8 +240,13 @@ int main(int argc, char **argv)
             CheckFsr2Rendering(renderer, device);
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--skinning")
+        if (argc > 1 && (std::string_view(argv[1]) == "--skinning" || std::string_view(argv[1]) == "--gpu-skinning"))
         {
+            if (std::string_view(argv[1]) == "--gpu-skinning")
+            {
+                shaders.skinning.spirv = ReadSpirv("GpuSkinning.compute.spv");
+                CheckGpuSkinning(device,shaders.skinning);
+            }
             CheckSkinningRendering(device, shaders);
             if(argc>2) CheckImportedSkinning(device,shaders,argv[2],argc>3?argv[3]:nullptr);
             return 0;

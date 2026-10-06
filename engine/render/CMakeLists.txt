@@ -29,6 +29,7 @@ add_library(PlutoGERender
     src/LoadingScreenRenderer.cpp
     src/RmlLoadingDocument.cpp
     src/RhiSkinning.cpp
+    src/RhiGpuSkinning.cpp
     src/RhiSceneRenderer.cpp
     src/RhiCameraStack.cpp
     src/RhiRenderTextureRenderer.cpp
@@ -235,6 +236,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(OcclusionDepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OcclusionDepth.slang" vertexMain fragmentMain)
     pluto_add_slang_compute_shader(OcclusionReduce "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Occlusion.slang" reduceMain)
     pluto_add_slang_compute_shader(OcclusionTest "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Occlusion.slang" testMain)
+    pluto_add_slang_compute_shader(GpuSkinning "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GpuSkinning.slang" computeMain)
     pluto_add_slang_graphics_shader(VSMReceiver "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" receiverVertex receiverFragment)
     pluto_add_slang_graphics_shader(VSMPage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" pageVertex pageFragment)
     pluto_add_slang_graphics_shader(VSMClear "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" clearVertex clearFragment)

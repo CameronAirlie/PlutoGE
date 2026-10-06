@@ -10,6 +10,7 @@
 #include "BasicDrawBatching.h"
 #include "PersistentParameterCache.h"
 #include "MaterialPreparationCache.h"
+#include "RhiGpuSkinning.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -1177,6 +1178,8 @@ namespace PlutoGE::render
             }
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
             m_occlusion = std::make_unique<OcclusionCulling>();
+            auto skinning = std::make_unique<RhiGpuSkinning>();
+            if (skinning->Initialize(device, shaders.skinning)) m_gpuSkinning = std::move(skinning);
             m_occlusion->Initialize(device, shaders.occlusion);
             m_virtualShadowShaders = shaders.virtualShadows;
             // Compile VSM pipelines during renderer initialization, alongside
@@ -1289,6 +1292,7 @@ namespace PlutoGE::render
         m_shadowResolutions.fill(0);
         m_virtualShadows.reset();
         m_occlusion.reset();
+        m_gpuSkinning.reset();
         m_geometrySweepFrame = 0;
         m_emptyVirtualShadowTable.Reset();
         m_emptyVirtualShadowPageTable.Reset();
@@ -1390,6 +1394,48 @@ namespace PlutoGE::render
         return mesh;
     }
 
+    std::shared_ptr<RhiGpuSkinningSource> BasicRenderer::CreateGpuSkinningSource(std::span<const MeshVertexData> vertices)
+    {
+        if (!m_gpuSkinning) throw std::logic_error("GPU skinning is unavailable");
+        return m_gpuSkinning->CreateSource(vertices);
+    }
+
+    BasicMesh BasicRenderer::CreateGpuSkinnedMesh(std::shared_ptr<const RhiGpuSkinningSource> source,
+                                                 std::span<const std::uint32_t> indices,
+                                                 std::span<const ShadowGeometryCluster> bounds)
+    {
+        if (!m_gpuSkinning || !source || indices.empty() || bounds.empty())
+            throw std::invalid_argument("GPU skinned mesh requires source geometry and bounds");
+        BasicMesh mesh;
+        mesh.m_gpuSkinningState = m_gpuSkinning->CreateState(source);
+        mesh.m_vertexCount = source->vertexCount;
+        mesh.m_vertexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
+            {mesh.m_vertexCount * sizeof(BasicVertex),rhi::BufferUsage::VertexStorage,"GPU skinned vertices"}));
+        mesh.m_indexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
+            {indices.size_bytes(),rhi::BufferUsage::Index,"GPU skinned indices",true},Bytes(indices)));
+        mesh.m_indexCount = static_cast<std::uint32_t>(indices.size());
+        mesh.m_shadowClusters.assign(bounds.begin(),bounds.end());
+        mesh.m_revision = m_nextMeshRevision++;
+        return mesh;
+    }
+
+    void BasicRenderer::UpdateGpuSkinnedMesh(BasicMesh &mesh, std::span<const glm::mat4> current,
+                                            std::span<const glm::mat4> previous, bool geometryChanged,
+                                            std::span<const ShadowGeometryCluster> bounds)
+    {
+        if (!m_gpuSkinning || !mesh.m_gpuSkinningState || bounds.size() != mesh.m_shadowClusters.size())
+            throw std::invalid_argument("Invalid GPU skinned mesh update");
+        for (std::size_t i = 0; i < bounds.size(); ++i)
+            if (bounds[i].firstIndex != mesh.m_shadowClusters[i].firstIndex || bounds[i].indexCount != mesh.m_shadowClusters[i].indexCount)
+                throw std::invalid_argument("GPU shadow bounds must preserve topology");
+        m_gpuSkinning->Queue(*mesh.m_gpuSkinningState,current,previous);
+        if (geometryChanged)
+        {
+            mesh.m_revision = m_nextMeshRevision++;
+            mesh.m_shadowClusters.assign(bounds.begin(),bounds.end());
+        }
+    }
+
     void BasicRenderer::UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged,
                                           std::span<const ShadowGeometryCluster> shadowClusters)
     {
@@ -1410,6 +1456,8 @@ namespace PlutoGE::render
     void BasicRenderer::PrepareMeshVertexUpdate(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged,
                                               std::span<const ShadowGeometryCluster> shadowClusters)
     {
+        if (mesh.m_gpuSkinningState)
+            throw std::invalid_argument("GPU skinned meshes require palette updates");
         if (!m_device || !mesh.IsValid() || vertices.size() != mesh.m_vertexCount)
             throw std::invalid_argument("Dynamic mesh update must preserve vertex count");
         if (!shadowClusters.empty())
@@ -1667,6 +1715,33 @@ namespace PlutoGE::render
         core::CpuScope beginScope("RHI.BeginFrame", core::CpuCategory::Rendering);
         const auto beginFrameStart = std::chrono::steady_clock::now();
         commands.BeginFrame(m_submissionLabel);
+        bool skinningScope = false;
+        const auto deformMeshes = [&](std::span<const BasicDraw> list)
+        {
+            for (const auto &draw : list)
+            {
+                if (!draw.mesh || !draw.mesh->m_gpuSkinningState || !draw.mesh->m_gpuSkinningState->pending) continue;
+                if (!m_gpuSkinning) throw std::logic_error("Queued GPU skinning requires its compute pipeline");
+                if (!skinningScope)
+                {
+                    commands.BeginGpuScope("RHI GPU skinning");
+                    commands.ShaderMemoryBarrier();
+                    skinningScope = true;
+                }
+                m_gpuSkinning->Record(*draw.mesh->m_gpuSkinningState, draw.mesh->m_vertexBuffer.Get());
+                ++m_frameStats.gpuSkinningDispatches;
+                m_frameStats.gpuSkinningVertices += draw.mesh->m_gpuSkinningState->source->vertexCount;
+                m_frameStats.gpuSkinningPaletteBytes += draw.mesh->m_gpuSkinningState->matrices.size() * sizeof(glm::mat4);
+            }
+        };
+        deformMeshes(draws);
+        deformMeshes(shadowDraws);
+        deformMeshes(giDraws);
+        if (skinningScope)
+        {
+            commands.ShaderMemoryBarrier();
+            commands.EndGpuScope();
+        }
         const auto uploadDeformedMeshes = [&](std::span<const BasicDraw> list)
         {
             for (const auto &draw : list)

@@ -39,6 +39,7 @@ namespace PlutoGE::render
         float meshUploadMs = 0.0f;
         float skinningDeformationMs = 0.0f;
         float skinningUploadMs = 0.0f;
+        std::size_t gpuSkinningDispatches = 0, gpuSkinningVertices = 0, gpuSkinningPaletteBytes = 0;
         float textureReadMs = 0.0f;
         float textureUploadMs = 0.0f;
         std::size_t meshUploadCount = 0;
@@ -235,6 +236,8 @@ namespace PlutoGE::render
           std::weak_ptr<const void> lifetime;
           BasicMesh mesh;
           std::shared_ptr<std::vector<BasicVertex>> vertices = std::make_shared<std::vector<BasicVertex>>();
+          std::size_t sourceVertexCount = 0;
+          std::shared_ptr<RhiGpuSkinningSource> gpuSource;
           std::vector<glm::mat4> pose;
           std::shared_ptr<RhiSkinnedShadowBounds> shadowBounds;
           std::vector<ShadowGeometryCluster> shadowClusters;
@@ -251,7 +254,7 @@ namespace PlutoGE::render
           SkinnedMesh *entry;
           const Mesh *mesh;
           const std::vector<glm::mat4> *pose;
-          bool changed, topologyChanged, upload;
+          bool changed, topologyChanged, upload, hasHistory;
           std::size_t jobIndex;
       };
       std::vector<PendingSkinning> m_pendingSkinning;
@@ -264,6 +267,7 @@ namespace PlutoGE::render
               std::weak_ptr<const void> lifetime;
               std::uint64_t contentRevision = 0;
               std::shared_ptr<RhiSkinnedShadowBounds> bounds;
+              std::shared_ptr<RhiGpuSkinningSource> gpuSource;
           };
           std::unordered_map<const Mesh *, std::unordered_map<const std::vector<glm::mat4> *, SkinnedMesh>> meshes;
           std::unordered_map<const Mesh *, ShadowBounds> shadowBounds;

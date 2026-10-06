@@ -45,6 +45,7 @@ namespace PlutoGE::render::rhi::opengl
             switch (usage)
             {
             case BufferUsage::Vertex:
+            case BufferUsage::VertexStorage:
                 return GL_ARRAY_BUFFER;
             case BufferUsage::Index:
                 return GL_ELEMENT_ARRAY_BUFFER;
@@ -181,7 +182,8 @@ namespace PlutoGE::render::rhi::opengl
         bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
         {
             auto *buffer = m_impl.buffers.Get(source);
-            if (m_rendering || !buffer || buffer->usage != BufferUsage::Storage || !size || size > buffer->size) return false;
+            if (m_rendering || !buffer ||
+                (buffer->usage != BufferUsage::Storage && buffer->usage != BufferUsage::VertexStorage) || !size || size > buffer->size) return false;
             for (auto &readback : m_readbacks)
             {
                 if (readback.fence) continue;
@@ -391,7 +393,7 @@ namespace PlutoGE::render::rhi::opengl
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
         {
             auto *buffer = m_impl.buffers.Get(handle);
-            if (!buffer || buffer->usage != BufferUsage::Vertex || !m_pipeline)
+            if (!buffer || (buffer->usage != BufferUsage::Vertex && buffer->usage != BufferUsage::VertexStorage) || !m_pipeline)
                 throw std::invalid_argument("Invalid RHI vertex buffer or no bound pipeline");
             glBindBuffer(GL_ARRAY_BUFFER, buffer->name);
             for (const auto &attribute : m_pipeline->descriptor.vertexLayout.attributes)
@@ -486,7 +488,7 @@ namespace PlutoGE::render::rhi::opengl
         void BindStorageBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *buffer = m_impl.buffers.Get(handle);
-            if (!buffer || buffer->usage != BufferUsage::Storage)
+            if (!buffer || (buffer->usage != BufferUsage::Storage && buffer->usage != BufferUsage::VertexStorage))
                 throw std::invalid_argument("Invalid OpenGL storage buffer");
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, buffer->name);
         }
@@ -510,7 +512,8 @@ namespace PlutoGE::render::rhi::opengl
         void ShaderMemoryBarrier() override
         {
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT |
-                            GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+                            GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT |
+                            GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
         }
         void ComputeImageBarrier(std::span<const TextureHandle> images) override
         {

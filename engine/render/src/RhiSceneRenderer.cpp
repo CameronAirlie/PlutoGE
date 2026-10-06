@@ -552,7 +552,7 @@ namespace PlutoGE::render
                 auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
                 if (entry.lastFrame == m_skinningFrame || entry.queuedFrame == m_skinningFrame) continue;
                 entry.lifetime = command.mesh->GetLifetimeToken();
-                const bool topologyChanged = entry.vertices->size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size() ||
+                const bool topologyChanged = entry.sourceVertexCount != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size() ||
                     entry.contentRevision != command.mesh->GetContentRevision();
                 const bool changed = entry.pose != *command.jointMatrices || topologyChanged ||
                     entry.contentRevision != command.mesh->GetContentRevision();
@@ -566,22 +566,28 @@ namespace PlutoGE::render
                         cached.bounds->GetJointCount() != command.jointMatrices->size())
                     {
                         cached.bounds = std::make_shared<RhiSkinnedShadowBounds>();
+                        cached.gpuSource.reset();
                         cached.bounds->Build(source.vertices, source.indices, command.jointMatrices->size());
                         cached.contentRevision = command.mesh->GetContentRevision();
                         cached.lifetime = command.mesh->GetLifetimeToken();
                     }
                     entry.shadowBounds = cached.bounds;
+                    if (m_renderer->SupportsGpuSkinning())
+                    {
+                        if (!cached.gpuSource) cached.gpuSource = m_renderer->CreateGpuSkinningSource(source.vertices);
+                        entry.gpuSource = cached.gpuSource;
+                    }
                     entry.shadowClusters.clear();
                 }
                 const auto jobIndex = skinningJobs.size();
-                if (deform)
+                if (deform && !entry.gpuSource)
                     skinningJobs.push_back({source.vertices, *command.jointMatrices,
                         hasHistory ? std::span<const BasicVertex>(*entry.vertices) : std::span<const BasicVertex>{}, entry.vertices.get()});
-                else if (upload)
+                else if (upload && !entry.gpuSource)
                     for (auto &vertex : *entry.vertices)
                         vertex.previousPosition = {vertex.position[0], vertex.position[1], vertex.position[2], 1};
-                pendingSkinning.push_back({&entry, command.mesh, command.jointMatrices, changed, topologyChanged, upload,
-                    deform ? jobIndex : std::numeric_limits<std::size_t>::max()});
+                pendingSkinning.push_back({&entry, command.mesh, command.jointMatrices, changed, topologyChanged, upload, hasHistory,
+                    deform && !entry.gpuSource ? jobIndex : std::numeric_limits<std::size_t>::max()});
                 // Claim this mesh/pose once across all submeshes and pass lists.
                 // No draw consumes it until flushSkinning has joined and uploaded.
                 entry.queuedFrame = m_skinningFrame;
@@ -616,6 +622,41 @@ namespace PlutoGE::render
             for (const auto &pending : pendingSkinning)
             {
                 auto &entry = *pending.entry;
+                if (entry.gpuSource)
+                {
+                    if (pending.upload)
+                    {
+                        core::CpuScope gpuScope("Skeletal GPU preparation", core::CpuCategory::Rendering);
+                        entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
+                        const auto bounds = MergeShadowGeometryClusters(entry.shadowClusters);
+                        entry.boundsCenter = bounds.center;
+                        entry.boundsRadius = glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))) ? glm::length(bounds.extents) : -1;
+                        if (!entry.mesh.IsValid() || pending.topologyChanged)
+                        {
+                            entry.mesh = m_renderer->CreateGpuSkinnedMesh(entry.gpuSource, pending.mesh->GetMeshData().indices, entry.shadowClusters);
+                            ++m_timingStats.meshUploadCount;
+                        }
+                        const auto previous = pending.hasHistory && !pending.topologyChanged ? std::span<const glm::mat4>(entry.pose) : std::span<const glm::mat4>(*pending.pose);
+                        // A changed palette size also resets history.
+                        m_renderer->UpdateGpuSkinnedMesh(entry.mesh, *pending.pose,
+                            previous.size() == pending.pose->size() ? previous : std::span<const glm::mat4>(*pending.pose),
+                            pending.changed, entry.shadowClusters);
+                        if (pending.changed)
+                        {
+                            ++m_timingStats.skinningUpdateCount;
+                            m_timingStats.skinningVertexCount += pending.mesh->GetMeshData().vertices.size();
+                        }
+                    }
+                    const bool movingHistory = pending.changed && pending.hasHistory && !pending.topologyChanged &&
+                                               entry.pose.size() == pending.pose->size();
+                    entry.pose = *pending.pose;
+                    entry.sourceVertexCount = pending.mesh->GetMeshData().vertices.size();
+                    entry.contentRevision = pending.mesh->GetContentRevision();
+                    entry.wasMoving = movingHistory;
+                    entry.lastFrame = m_skinningFrame;
+                    entry.historyEpoch = m_skinningHistoryEpoch;
+                    continue;
+                }
                 if (pending.jobIndex != std::numeric_limits<std::size_t>::max())
                 {
                     const auto &job = skinningJobs[pending.jobIndex];
@@ -646,6 +687,7 @@ namespace PlutoGE::render
                     m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
                 }
                 entry.contentRevision = pending.mesh->GetContentRevision();
+                entry.sourceVertexCount = pending.mesh->GetMeshData().vertices.size();
                 entry.wasMoving = pending.changed;
                 // Commit history only after a successful upload. A recoverable
                 // upload failure must force history reset on the next frame.
@@ -1442,6 +1484,9 @@ namespace PlutoGE::render
         m_timingStats.graphSpecializedDraws = frameStats.graphSpecializedDraws;
         m_timingStats.graphInterpretedDraws = frameStats.graphInterpretedDraws;
         m_timingStats.geometryTriangles = frameStats.geometryTriangles;
+        m_timingStats.gpuSkinningDispatches = frameStats.gpuSkinningDispatches;
+        m_timingStats.gpuSkinningVertices = frameStats.gpuSkinningVertices;
+        m_timingStats.gpuSkinningPaletteBytes = frameStats.gpuSkinningPaletteBytes;
         m_timingStats.renderSize = renderSize;
         m_timingStats.outputSize = outputSize;
         m_timingStats.geometryDiagnosticMode = frameStats.geometryDiagnosticMode;

@@ -11,6 +11,7 @@
 #include "TemporalMotionRenderingChecks.h"
 #include "CameraStackRenderingChecks.h"
 #include "SkinningRenderingChecks.h"
+#include "GpuSkinningChecks.h"
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
 #include "EmissionTextureRenderingChecks.h"
@@ -393,8 +394,13 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             } catch (const std::exception &error) { std::cerr << error.what() << std::endl; return 1; }
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--skinning")
+        if (argc > 1 && (std::string_view(argv[1]) == "--skinning" || std::string_view(argv[1]) == "--gpu-skinning"))
         {
+            if (std::string_view(argv[1]) == "--gpu-skinning")
+            {
+                shaders.skinning.glsl = ReadText("GpuSkinning.compute.glsl");
+                CheckGpuSkinning(device,shaders.skinning,[] { glFinish(); });
+            }
             CheckSkinningRendering(device, shaders, [&](auto texture)
             {
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));

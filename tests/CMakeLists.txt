@@ -377,6 +377,8 @@ add_test(NAME PlutoGEVulkanCameraStackTests COMMAND PlutoGEVulkanRhiTests --came
 add_test(NAME PlutoGEOpenGLCameraStackTests COMMAND PlutoGEOpenGLRhiTests --camera-stack)
 add_test(NAME PlutoGEVulkanRenderTextureTests COMMAND PlutoGEVulkanRhiTests --render-texture)
 add_test(NAME PlutoGEVulkanBufferUploadTests COMMAND PlutoGEVulkanRhiTests --buffer-uploads)
+add_test(NAME PlutoGEVulkanGpuSkinningTests COMMAND PlutoGEVulkanRhiTests --gpu-skinning)
+add_test(NAME PlutoGEOpenGLGpuSkinningTests COMMAND PlutoGEOpenGLRhiTests --gpu-skinning)
 add_test(NAME PlutoGEVulkanOpaqueBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-batching)
 add_test(NAME PlutoGEOpenGLOpaqueBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-batching)
 

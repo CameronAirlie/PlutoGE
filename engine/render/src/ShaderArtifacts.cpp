@@ -76,6 +76,7 @@ namespace PlutoGE::render
             .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
                               .fragment = Load("DisplayOutput", "fragment")}};
         result.particles.vertexShader = Load("Particles", "vertex");
+        result.skinning = Load("GpuSkinning", "compute");
         result.particles.fragmentShader = Load("Particles", "fragment");
         result.particleInstancedVertex = Load("ParticlesInstanced", "vertex");
         result.volumetricTrace[0] = {Load("VolumetricFogTrace", "vertex"), Load("VolumetricFogTrace", "fragment")};

@@ -33,7 +33,9 @@ namespace PlutoGE::render::rhi
         Uniform,
         // Shader storage with indirect-command and transfer usage. Updates are
         // recorded outside render passes, so in-flight GPU reads remain valid.
-        Storage
+        Storage,
+        // Compute-written geometry consumed directly by vertex fetch.
+        VertexStorage
     };
     enum class TextureUsage : std::uint8_t
     {

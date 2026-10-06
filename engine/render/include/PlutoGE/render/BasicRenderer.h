@@ -29,6 +29,10 @@
 
 namespace PlutoGE::render
 {
+    class RhiGpuSkinning;
+    struct RhiGpuSkinningSource;
+    struct RhiGpuSkinningState;
+    struct MeshVertexData;
     class PostProcessResourcePool;
     class PersistentParameterCache;
     class MaterialPreparationCache;
@@ -235,6 +239,7 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage fusedColor;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
+        rhi::ComputePipelineDescriptor::ShaderCode skinning;
     };
 
     class BasicMesh
@@ -259,6 +264,7 @@ namespace PlutoGE::render
         std::uint64_t m_revision = 0;
         mutable std::vector<BasicVertex> m_pendingVertices;
         mutable std::shared_ptr<const std::vector<BasicVertex>> m_pendingSharedVertices;
+        std::shared_ptr<RhiGpuSkinningState> m_gpuSkinningState;
         std::vector<std::uint32_t> m_shadowIndices;
         std::vector<ShadowGeometryCluster> m_shadowClusters;
     };
@@ -487,6 +493,7 @@ namespace PlutoGE::render
 
     struct BasicRendererFrameStats
     {
+        std::size_t gpuSkinningDispatches = 0, gpuSkinningVertices = 0, gpuSkinningPaletteBytes = 0;
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         std::uint64_t vctVoxelizedTriangles = 0, vctRelitVoxels = 0;
         std::uint32_t vctGeometryBuilds = 0, vctRelightDispatches = 0, vctPublications = 0;
@@ -556,6 +563,12 @@ namespace PlutoGE::render
         bool Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders);
         void Shutdown();
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
+        [[nodiscard]] bool SupportsGpuSkinning() const noexcept { return m_gpuSkinning != nullptr; }
+        std::shared_ptr<RhiGpuSkinningSource> CreateGpuSkinningSource(std::span<const MeshVertexData>);
+        BasicMesh CreateGpuSkinnedMesh(std::shared_ptr<const RhiGpuSkinningSource>, std::span<const std::uint32_t> indices,
+                                       std::span<const ShadowGeometryCluster> bounds);
+        void UpdateGpuSkinnedMesh(BasicMesh &, std::span<const glm::mat4> current, std::span<const glm::mat4> previous,
+                                  bool geometryChanged, std::span<const ShadowGeometryCluster> bounds);
         // Stage CPU-deformed vertices; upload after BeginFrame, before any pass
         // reads the buffer. Topology and index buffers remain unchanged.
         // Supplied clusters must conservatively bound the updated vertices and
@@ -679,6 +692,7 @@ namespace PlutoGE::render
         void EnsureShadowTargets(const BasicLighting &lighting);
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
         std::unique_ptr<OcclusionCulling> m_occlusion;
+        std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
         std::uint64_t m_geometrySweepFrame = 0;
         VirtualShadowShaders m_virtualShadowShaders;
         rhi::Texture m_emptyVirtualShadowPageTable;

@@ -60,6 +60,8 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         return readPixels(renderer.GetColorTexture());
     };
     const auto initial=render();
+    std::cout << "Initial skinning: " << renderer.GetTimingStats().skinningUpdateCount << " updates, "
+              << renderer.GetTimingStats().gpuSkinningDispatches << " GPU dispatches\n";
     require(renderer.GetTimingStats().skinningUpdateCount==2,"Submeshes/passes did not share per-actor deformation");
     const auto centroid = [&](const auto &pixels, unsigned channel) {
         glm::vec2 sum(0); unsigned count=0;
@@ -77,6 +79,11 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(glm::distance(centroid(moved,0),redBefore)>15,"Bone animation did not move rendered vertices");
     require(glm::distance(centroid(moved,1),greenBefore)<.01f,"Shared model mixed two actors' poses");
     require(renderer.GetTimingStats().skinningUpdateCount==1,"Unchanged actor was deformed again");
+    const bool gpu = !shaders.skinning.glsl.empty() || !shaders.skinning.spirv.empty();
+    if (gpu)
+        require(renderer.GetTimingStats().gpuSkinningDispatches == 1 && renderer.GetTimingStats().skinningDeformationMs == 0 &&
+                renderer.GetTimingStats().skinningUploadMs == 0 && renderer.GetTimingStats().gpuSkinningPaletteBytes == 128,
+                "GPU skinning fell back to CPU deformation or uploaded vertex streams");
     require(renderer.GetTimingStats().shadowCascadeUpdateCount>0,"Bone movement failed to invalidate shadow cache");
     const auto motion=readPixels(renderer.GetMotionTexture());
     unsigned moving=0;
@@ -88,6 +95,7 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(overlay.Render(128,128,camera,light,commands,commands),"Shared skinning render failed");
     require(overlay.GetTimingStats().skinningUpdateCount==0 && overlay.GetTimingStats().skinningUploadMs==0,
             "Camera stack repeated deformation or vertex uploads");
+    require(overlay.GetTimingStats().gpuSkinningDispatches == 0,"Camera stack repeated GPU deformation");
     require(readPixels(overlay.GetColorTexture())==moved,"Shared skinning changed rendered geometry");
     require(readPixels(overlay.GetMotionTexture())==motion,"Overlay prematurely settled skeletal velocity");
     // Borrowing the same skinning frame again must still validate view-local
@@ -108,6 +116,7 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     for(std::size_t i=0;i<stopped.size();i+=4) require(int(stopped[i])<=1,"Pause retained stale skeletal velocity");
     render();
     require(renderer.GetTimingStats().shadowCascadeUpdateCount==0,"Stationary pose invalidated shadow cache");
+    require(renderer.GetTimingStats().gpuSkinningDispatches == 0,"Stationary pose repeated GPU deformation");
     renderer.ResetTemporalHistory();
     poseA[0]=glm::mat4(1);
     std::swap(commands[0],commands[2]); std::swap(commands[1],commands[3]);

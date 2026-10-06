@@ -136,4 +136,31 @@ public sealed class AnimationComponent : ComponentReference
     {
         ScriptBridge.ResetAnimationTriggerParameter(EntityId, parameterName);
     }
+    /// <summary>Sets a persistent, named two-bone constraint. Target and elbow pole are world
+    /// positions sampled into mesh space at this call. Call each update for moving targets.
+    /// The three named bones must form a direct parent chain. Constraints solve in insertion order.</summary>
+    public bool SetTwoBoneIK(string id, GameObject mesh, string rootBone, string middleBone, string tipBone,
+                             System.Numerics.Vector3 worldTarget, System.Numerics.Vector3 worldPole,
+                             float weight = 1, System.Numerics.Quaternion? worldRotation = null, float rotationWeight = 0)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        var request = new ScriptBridge.NativeSkeletalRequest {
+            Operation = 1, Owner = EntityId, Mesh = mesh.EntityId,
+            Position = ScriptBridge.NativeVector3.FromManaged(worldTarget),
+            Pole = ScriptBridge.NativeVector3.FromManaged(worldPole),
+            Rotation = ScriptBridge.NativeQuaternion.FromManaged(worldRotation ?? System.Numerics.Quaternion.Identity),
+            Weight = weight, RotationWeight = worldRotation.HasValue ? rotationWeight : 0
+        };
+        return ScriptBridge.ControlSkeleton(ref request, id, rootBone, middleBone, tipBone);
+    }
+    public void ClearTwoBoneIK(string id)
+    {
+        var request = new ScriptBridge.NativeSkeletalRequest { Operation = 4, Owner = EntityId };
+        ScriptBridge.ControlSkeleton(ref request, id);
+    }
+    public void ClearAllTwoBoneIK()
+    {
+        var request = new ScriptBridge.NativeSkeletalRequest { Operation = 5, Owner = EntityId };
+        ScriptBridge.ControlSkeleton(ref request);
+    }
 }

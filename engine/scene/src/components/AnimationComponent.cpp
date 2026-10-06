@@ -3712,8 +3712,40 @@ namespace PlutoGE::scene
         m_jointMatricesDirty = true;
     }
 
+    bool AnimationComponent::SetTwoBoneIK(std::string id, TwoBoneIKTarget target)
+    {
+        const auto finiteVector = [](glm::vec3 v) {
+            return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+        };
+        if (id.empty() || target.root.empty() || target.middle.empty() || target.tip.empty() ||
+            !finiteVector(target.position) || !finiteVector(target.pole) ||
+            !std::isfinite(target.rotation.x) || !std::isfinite(target.rotation.y) ||
+            !std::isfinite(target.rotation.z) || !std::isfinite(target.rotation.w) ||
+            !std::isfinite(target.weight) || !std::isfinite(target.rotationWeight)) return false;
+        for (auto &entry : m_ikTargets)
+            if (entry.first == id) { entry.second = std::move(target); m_jointMatricesDirty = true; return true; }
+        if (m_ikTargets.size() >= 16) return false;
+        m_ikTargets.emplace_back(std::move(id), std::move(target));
+        m_jointMatricesDirty = true;
+        return true;
+    }
+
+    void AnimationComponent::ClearTwoBoneIK(std::string_view id)
+    {
+        std::erase_if(m_ikTargets, [&](const auto &entry) { return entry.first == id; });
+        m_jointMatricesDirty = true;
+    }
+
+    void AnimationComponent::ClearAllTwoBoneIK()
+    {
+        m_ikTargets.clear();
+        m_jointMatricesDirty = true;
+    }
+
     void AnimationComponent::ApplyRagdoll(const render::Skeleton &skeleton)
     {
+        if (!m_editorPreviewMode)
+            for (const auto &entry : m_ikTargets) SolveTwoBoneIK(skeleton, m_jointMatrices, entry.second);
         if (m_suppressRagdollPose)
             return;
         if (!m_ragdollEnabled || m_ragdollWeight <= 0.0f || skeleton.joints.empty() ||

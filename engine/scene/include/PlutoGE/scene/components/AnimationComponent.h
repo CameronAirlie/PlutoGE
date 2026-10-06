@@ -11,6 +11,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/assets/AnimationGraph.h"
+#include "PlutoGE/scene/TwoBoneIK.h"
 
 namespace PlutoGE::scene
 {
@@ -220,6 +221,9 @@ namespace PlutoGE::scene
         uint64_t GetRagdollRevision() const { return m_ragdollRevision; }
         void SetRagdollPhysicsPose(const render::Skeleton &skeleton, std::vector<glm::mat4> jointMatrices);
         void ClearRagdollPhysicsPose();
+        bool SetTwoBoneIK(std::string id, TwoBoneIKTarget target);
+        void ClearTwoBoneIK(std::string_view id);
+        void ClearAllTwoBoneIK();
 
     private:
         struct TransitionPlayback
@@ -326,5 +330,6 @@ namespace PlutoGE::scene
         bool m_suppressRagdollPose = false;
         bool m_loggedRagdollApply = false;
         bool m_editorPreviewMode = false;
+        std::vector<std::pair<std::string, TwoBoneIKTarget>> m_ikTargets;
     };
 }

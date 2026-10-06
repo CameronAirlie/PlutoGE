@@ -21,6 +21,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
@@ -138,6 +139,7 @@ namespace PlutoGE::scripting
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_skeletal_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
 
         struct HostFxrLocation
@@ -887,6 +889,99 @@ namespace PlutoGE::scripting
             }
 
             return scene->FindEntityByID(entityId);
+        }
+
+        struct NativeSkeletalRequest
+        {
+            int operation;
+            uint32_t owner, mesh, socket;
+            NativeVector3 position, pole;
+            NativeQuaternion rotation;
+            float weight, rotationWeight;
+        };
+        static_assert(sizeof(NativeSkeletalRequest) == 64);
+
+        int PLUTO_HOST_CALL ControlSkeleton(NativeSkeletalRequest *request, const char *id,
+                                           const char *root, const char *middle, const char *tip)
+        {
+            if (!request) return 0;
+            auto *owner = FindEntity(request->owner);
+            auto *meshEntity = FindEntity(request->mesh);
+            auto *meshComponent = meshEntity ? meshEntity->GetComponent<scene::MeshComponent>() : nullptr;
+            auto *mesh = meshComponent ? meshComponent->GetMesh() : nullptr;
+            auto *animation = owner ? owner->GetComponent<scene::AnimationComponent>() : nullptr;
+            if (request->operation == 1 || request->operation == 4 || request->operation == 5)
+            {
+                if (!animation) return 0;
+                if (request->operation == 4) { animation->ClearTwoBoneIK(id ? id : ""); return 1; }
+                if (request->operation == 5) { animation->ClearAllTwoBoneIK(); return 1; }
+                if (!mesh || !id || !root || !middle || !tip) return 0;
+                bool ownsMesh = false;
+                for (auto *ancestor = meshEntity; ancestor; ancestor = ancestor->GetParent())
+                    if (ancestor == owner) { ownsMesh = true; break; }
+                if (!ownsMesh) return 0;
+                const auto world = meshEntity->GetWorldTransform()*meshComponent->GetMeshOffsetTransform();
+                if (std::abs(glm::determinant(world)) < 1e-8f) return 0;
+                const auto inverse = glm::inverse(world);
+                scene::TwoBoneIKTarget target;
+                target.root = root; target.middle = middle; target.tip = tip;
+                target.position = glm::vec3(inverse*glm::vec4(request->position.x, request->position.y, request->position.z, 1));
+                target.pole = glm::vec3(inverse*glm::vec4(request->pole.x, request->pole.y, request->pole.z, 1));
+                glm::mat3 basis(world);
+                for (int i=0; i<3; ++i) basis[i]=glm::normalize(basis[i]);
+                target.rotation = glm::inverse(glm::normalize(glm::quat_cast(basis)))*
+                    glm::quat(request->rotation.w,request->rotation.x,request->rotation.y,request->rotation.z);
+                target.weight=request->weight; target.rotationWeight=request->rotationWeight;
+                auto palette = animation->GetJointMatrices(mesh->GetSkeleton(), mesh->GetAnimationNodes());
+                if (!scene::SolveTwoBoneIK(mesh->GetSkeleton(), palette, target)) return 0;
+                return animation->SetTwoBoneIK(id, std::move(target)) ? 1 : 0;
+            }
+            if (request->operation == 3)
+            {
+                auto *socket = FindEntity(request->socket);
+                auto *attachment = socket ? socket->GetComponent<scene::SkeletonAttachmentComponent>() : nullptr;
+                return attachment && socket->RemoveComponent(attachment) ? 1 : 0;
+            }
+            if (!mesh || !root) return 0;
+            int jointIndex = -1;
+            const auto &skeleton = mesh->GetSkeleton();
+            for (int i=0; i<static_cast<int>(skeleton.joints.size()); ++i)
+                if (skeleton.joints[i].name == root) { jointIndex=i; break; }
+            if (jointIndex < 0) return 0;
+            const auto &joint = skeleton.joints[jointIndex];
+            if (request->operation == 2)
+            {
+                auto *socket = FindEntity(request->socket);
+                if (!socket || joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(mesh->GetAnimationNodes().size())) return 0;
+                for (auto *ancestor=meshEntity; ancestor; ancestor=ancestor->GetParent())
+                    if (ancestor == socket) return 0;
+                socket->SetParent(meshEntity);
+                auto *attachment=socket->GetComponent<scene::SkeletonAttachmentComponent>();
+                if (!attachment) attachment=socket->CreateComponent<scene::SkeletonAttachmentComponent>();
+                attachment->SetTargetNodeIndex(joint.nodeIndex);
+                attachment->SetJointName(root);
+                attachment->BindSource(meshComponent, jointIndex);
+                attachment->SetEnabled(true);
+                attachment->Update(0);
+                return 1;
+            }
+            if (request->operation == 6)
+            {
+                if (!animation)
+                    for (auto *ancestor=meshEntity; ancestor && !animation; ancestor=ancestor->GetParent())
+                        animation=ancestor->GetComponent<scene::AnimationComponent>();
+                if (!animation) return 0;
+                const auto &palette=animation->GetJointMatrices(skeleton, mesh->GetAnimationNodes());
+                const auto world=meshEntity->GetWorldTransform()*meshComponent->GetMeshOffsetTransform()*
+                    palette[jointIndex]*glm::inverse(joint.inverseBindMatrix);
+                glm::mat3 basis(world);
+                for (int i=0; i<3; ++i) { if (glm::length(basis[i]) < 1e-6f) return 0; basis[i]=glm::normalize(basis[i]); }
+                const auto rotation=glm::normalize(glm::quat_cast(basis));
+                request->position={world[3].x,world[3].y,world[3].z};
+                request->rotation={rotation.x,rotation.y,rotation.z,rotation.w};
+                return 1;
+            }
+            return 0;
         }
 
         scene::Component *FindComponent(uint32_t entityId, ManagedComponentKind componentKind)
@@ -3484,6 +3579,7 @@ namespace PlutoGE::scripting
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
+        register_skeletal_api_fn registerSkeletalApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
         std::filesystem::path bridgeAssemblyPath;
@@ -3601,6 +3697,7 @@ namespace PlutoGE::scripting
             impl.registerSurfaceResponseApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
+            impl.registerSkeletalApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
             impl.bridgeSourceRuntimeConfigPath.clear();
             CleanupBridgeShadowCopy(impl);
@@ -3959,7 +4056,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
-                LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi);
+                LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSkeletalApi"), impl.registerSkeletalApi);
 
             if (!requiredExportsLoaded)
             {
@@ -4716,6 +4814,11 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&SubmitDebugDraw), reinterpret_cast<void *>(&ClearDebugDraw)) == 0)
         {
             setManagedBridgeFailure("RegisterDebugDrawApi");
+            return false;
+        }
+        if (!m_impl->registerSkeletalApi || m_impl->registerSkeletalApi(reinterpret_cast<void *>(&ControlSkeleton)) == 0)
+        {
+            setManagedBridgeFailure("RegisterSkeletalApi");
             return false;
         }
         render::DebugDraw::Get().Clear();

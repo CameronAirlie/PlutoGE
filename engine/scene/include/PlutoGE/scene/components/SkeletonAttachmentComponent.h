@@ -24,9 +24,9 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 
-        void SetTargetNodeIndex(int nodeIndex) { m_targetNodeIndex = nodeIndex; }
+        void SetTargetNodeIndex(int nodeIndex) { m_targetNodeIndex = nodeIndex; m_cachedMesh = nullptr; }
         int GetTargetNodeIndex() const { return m_targetNodeIndex; }
-        void SetJointName(std::string jointName) { m_jointName = std::move(jointName); }
+        void SetJointName(std::string jointName) { m_jointName = std::move(jointName); m_cachedMesh = nullptr; }
         const std::string &GetJointName() const { return m_jointName; }
         void BindSource(MeshComponent *source, int jointIndex);
 

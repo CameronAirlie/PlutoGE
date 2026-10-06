@@ -547,3 +547,8 @@ pluto_link_engine(PlutoGERmlUiInterfaceScaleTests)
 target_link_libraries(PlutoGERmlUiInterfaceScaleTests PRIVATE RmlUi::Core)
 add_test(NAME PlutoGEVulkanUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests)
 add_test(NAME PlutoGEOpenGLUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests --opengl)
+
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGESkeletalManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SkeletalSmokeTests/PlutoGE.SkeletalSmokeTests.csproj --configuration Release)
+endif()

@@ -74,9 +74,11 @@ namespace
         Require(Has(ScanAssetReferences(root / "Particles.plutoparticles"), reference), "Particle references failed");
         Write(root / "Post.plutopostprocess", "PostProcessPresetVersion 1 1\nEffect \"Custom\" 1 1\nParameter 2 \"Texture\" \"" + reference + "\" 0\n");
         Require(Has(ScanAssetReferences(root / "Post.plutopostprocess"), reference), "Quoted post-process fields failed");
-        Write(root / "Ui/Hud.rml", "<img src='../Textures/Rough, stone; 01.png'/><img src='../Textures/A&amp;B.png'/>\n");
+        Write(root / "Ui/Hud.rml", "<img src='Textures/Rough, stone; 01.png'/><img src='Textures/A&amp;B.png'/>"
+            "<link href='../Textures/Style.rcss'/>\n");
         scan = ScanAssetReferences(root / "Ui/Hud.rml", {}, root);
-        Require(Has(scan, reference) && Has(scan, "project://Textures/A&B.png"), "Document-relative paths failed");
+        Require(Has(scan, reference) && Has(scan, "project://Textures/A&B.png") &&
+            Has(scan, "project://Textures/Style.rcss"), "RmlUi image and stylesheet paths failed");
         Write(root / "Models/source.gltf", "{\"images\":[{\"uri\":\"../Textures/Rough, stone; 01.png\"}]}\n");
         Require(Has(ScanAssetReferences(root / "Models/source.gltf", {}, root), reference), "glTF URI paths failed");
         Require(NormalizeAssetReference("project://Textures/../Textures/a.png") == "project://Textures/a.png", "Normalization failed");

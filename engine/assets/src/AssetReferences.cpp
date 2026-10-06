@@ -92,8 +92,9 @@ namespace PlutoGE::assets
                 if (!closed) continue;
                 Add(scan, field, line);
                 if (root.empty() || field.empty() || field.front() == '#' || field.find(':') != std::string::npos) continue;
-                // Relative RmlUi src/href and glTF uri values resolve beside the
-                // owning document, unlike material textures which use Assets/.
+                // Stylesheet links and glTF URIs resolve beside their document.
+                // RmlUi image sources pass the document URL's directory to
+                // JoinPath, which strips its final segment before appending src.
                 auto before = value.substr(0, start);
                 while (!before.empty() && std::isspace(static_cast<unsigned char>(before.back()))) before.remove_suffix(1);
                 if (before.empty() || (before.back() != '=' && before.back() != ':')) continue;
@@ -116,7 +117,9 @@ namespace PlutoGE::assets
                 if (key != "src" && key != "href" && key != "uri") continue;
                 for (std::size_t amp = 0; (amp = field.find("&amp;", amp)) != std::string::npos; ++amp)
                     field.replace(amp, 5, "&");
-                const auto resolved = (path.parent_path() / FromUtf8(field)).lexically_normal();
+                const auto base = key == "src" && path.extension() == ".rml"
+                    ? path.parent_path().parent_path() : path.parent_path();
+                const auto resolved = (base / FromUtf8(field)).lexically_normal();
                 Add(scan, "project://" + Utf8(resolved.lexically_relative(root)), line);
             }
         }

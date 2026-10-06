@@ -10,7 +10,7 @@ public static class Application
     public static (int Width, int Height) WindowedSizeLimit => Native.ScriptBridge.GetWindowedSize(true);
     /// <summary>Resizes the host window, or its borderless restore size. Invalid/out-of-bounds sizes are rejected.</summary>
     public static bool TrySetWindowedSize(int width, int height) => Native.ScriptBridge.SetWindowedSize(width, height);
-    /// <summary>Borderless fullscreen on the window's current monitor (the editor window when hosted).</summary>
+    /// <summary>Borderless fullscreen on the window's current monitor. Changes are ignored in editor hosts.</summary>
     public static bool Fullscreen
     {
         get => Native.ScriptBridge.GetWindowFullscreen();

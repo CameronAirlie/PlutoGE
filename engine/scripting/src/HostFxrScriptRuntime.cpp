@@ -1345,7 +1345,11 @@ namespace PlutoGE::scripting
 
         void SetWindowFullscreen(int32_t fullscreen)
         {
-            core::Engine::GetInstance().GetWindow().SetFullscreen(fullscreen != 0);
+            auto &engine = core::Engine::GetInstance();
+            // Project display preferences belong to the standalone game window.
+            // Play-in-editor scripts must not change the editor host's window mode.
+            if (engine.GetConfig().isEditorHost) return;
+            engine.GetWindow().SetFullscreen(fullscreen != 0);
         }
 
         NativeVector3 GetViewportPointer()

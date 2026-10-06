@@ -1,5 +1,7 @@
 # RML UI authoring for PlutoGE developers and agents
 
+Project scripts can set `Application.Fullscreen` for standalone game windows. The native bridge ignores fullscreen changes in editor hosts, including during play-in-editor, so saved game display preferences cannot change the editor window mode.
+
 This is the working guide for creating runtime UI in PlutoGE, including the CoD project. Read it before generating or modifying RML, RCSS, or managed UI controllers. For the complete pinned property and extension inventory, see [RML/RCSS reference](RMLUI_REFERENCE.md). For host internals, see [integration](RMLUI_INTEGRATION.md). The engine pins **RmlUi 6.1**; current upstream documentation can describe newer features. The pinned source and the engine renderer are authoritative.
 
 ## Create a document

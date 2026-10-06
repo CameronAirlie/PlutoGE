@@ -557,7 +557,10 @@ namespace PlutoGE::render
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
         // Stage CPU-deformed vertices; upload after BeginFrame, before any pass
         // reads the buffer. Topology and index buffers remain unchanged.
-        void UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged = true);
+        // Supplied clusters must conservatively bound the updated vertices and
+        // retain the mesh's contiguous index ranges. Empty uses exact CPU bounds.
+        void UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged = true,
+                                std::span<const ShadowGeometryCluster> shadowClusters = {});
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;

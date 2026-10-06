@@ -216,7 +216,7 @@ namespace PlutoGE::ui
             if (!overlays.empty())
                 compose = [&](render::BasicRenderer &base, glm::vec2 jitter)
                 {
-                    if (!m_cameraStack.CompositeBeforeTemporalResolve(*m_device, base, jitter, overlays, ReadTexturePixels, scene))
+                    if (!m_cameraStack.CompositeBeforeTemporalResolve(*m_device, base, jitter, overlays, ReadTexturePixels, scene, m_sceneRenderer.get()))
                         throw std::runtime_error("Overlay cameras could not be composited before temporal resolve");
                 };
             if (!m_sceneRenderer->Render(width, height, cameraData, lighting, commands, shadowCommands,

@@ -24,6 +24,7 @@ add_library(PlutoGEScene
     src/components/OceanComponent.cpp
     src/components/SkeletonAttachmentComponent.cpp
     src/components/CameraRigComponent.cpp
+    src/components/IKComponent.cpp
     src/components/CameraComponent.cpp
     src/CameraStack.cpp
     src/CameraTagFilter.cpp

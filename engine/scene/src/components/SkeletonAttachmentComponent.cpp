@@ -6,6 +6,11 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <algorithm>
+#include <sstream>
+#include <iomanip>
+#include <limits>
+#include <cmath>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -170,10 +175,6 @@ namespace PlutoGE::scene
 
     MeshComponent *SkeletonAttachmentComponent::FindSourceMeshComponent() const
     {
-        if (m_cachedSourceMeshComponent)
-        {
-            return m_cachedSourceMeshComponent;
-        }
         const auto *owner = GetOwner();
         for (auto *current = owner ? owner->GetParent() : nullptr; current != nullptr; current = current->GetParent())
         {
@@ -191,10 +192,6 @@ namespace PlutoGE::scene
 
     AnimationComponent *SkeletonAttachmentComponent::FindAnimationComponent() const
     {
-        if (m_cachedAnimationComponent)
-        {
-            return m_cachedAnimationComponent;
-        }
         auto *source = FindSourceMeshComponent();
         return FindAnimationComponentInAncestors(source ? source->GetOwner() : nullptr);
     }
@@ -218,6 +215,16 @@ namespace PlutoGE::scene
         auto *sourceMeshComponent = FindSourceMeshComponent();
         auto *sourceMeshEntity = sourceMeshComponent ? sourceMeshComponent->GetOwner() : nullptr;
         auto *mesh = sourceMeshComponent ? sourceMeshComponent->GetMesh() : nullptr;
+        // Bone names survive reordered imports; the node index is a legacy fallback.
+        if (mesh && !m_jointName.empty())
+        {
+            const auto &joints = mesh->GetSkeleton().joints;
+            const auto joint = std::find_if(joints.begin(), joints.end(), [&](const auto &candidate) {
+                return candidate.name == m_jointName;
+            });
+            if (joint == joints.end()) return;
+            if (m_targetNodeIndex != joint->nodeIndex) SetTargetNodeIndex(joint->nodeIndex);
+        }
         if (!owner || !sourceMeshEntity || !mesh || m_targetNodeIndex < 0)
         {
             return;
@@ -231,10 +238,11 @@ namespace PlutoGE::scene
 
         // Serialized attachments are not explicitly bound. Resolve their shared
         // source once; generated attachments are bound when they are created.
-        if (!m_cachedSourceMeshComponent)
+        if (m_cachedSourceMeshComponent != sourceMeshComponent)
         {
             m_cachedSourceMeshComponent = sourceMeshComponent;
             m_cachedAnimationComponent = FindAnimationComponentInAncestors(sourceMeshEntity);
+            m_cachedMesh = nullptr;
         }
         if (m_cachedMesh != mesh)
         {
@@ -246,9 +254,11 @@ namespace PlutoGE::scene
         }
 
         auto *animationComponent = FindAnimationComponent();
+        const auto angles=glm::radians(m_rotationOffset);
+        const glm::mat4 offset=glm::translate(glm::mat4(1),m_positionOffset)*glm::eulerAngleXYZ(angles.x,angles.y,angles.z);
         const glm::mat4 jointMeshMatrix = ComputeJointMeshMatrix(
             *mesh, animationComponent, m_targetNodeIndex, m_cachedJointIndex,
-            m_cachedJointIndex >= 0 ? &m_cachedBindMatrix : nullptr);
+            m_cachedJointIndex >= 0 ? &m_cachedBindMatrix : nullptr)*offset;
         const uint64_t updateSequence = owner->GetScene() ? owner->GetScene()->GetUpdateSequence() : 0;
         m_cachedJointMeshMatrix = jointMeshMatrix;
         m_cachedUpdateSequence = updateSequence;
@@ -286,9 +296,19 @@ namespace PlutoGE::scene
 
     std::vector<Property> SkeletonAttachmentComponent::Serialize() const
     {
+        const auto vectorText=[](glm::vec3 value) {
+            std::ostringstream text; text.imbue(std::locale::classic());
+            text << std::setprecision(std::numeric_limits<float>::max_digits10) << value.x << ',' << value.y << ',' << value.z;
+            return text.str();
+        };
+        std::vector<std::string> bones{""};
+        if (const auto *source=FindSourceMeshComponent(); source && source->GetMesh())
+            for (const auto &joint : source->GetMesh()->GetSkeleton().joints) bones.push_back(joint.name);
         return {
+            {"PositionOffset",PropertyType::Vec3,vectorText(m_positionOffset)},
+            {"RotationOffset",PropertyType::Vec3,vectorText(m_rotationOffset)},
             {"TargetNodeIndex", PropertyType::Int, std::to_string(m_targetNodeIndex)},
-            {"JointName", PropertyType::String, m_jointName},
+            {"JointName", PropertyType::String, m_jointName, bones},
         };
     }
 
@@ -296,13 +316,20 @@ namespace PlutoGE::scene
     {
         for (const auto &property : properties)
         {
-            if (property.name == "TargetNodeIndex")
+            if (property.name=="PositionOffset" || property.name=="RotationOffset")
             {
-                m_targetNodeIndex = std::stoi(property.value);
+                auto text=property.value; std::replace(text.begin(),text.end(),',',' ');
+                std::istringstream input(text); input.imbue(std::locale::classic()); glm::vec3 value;
+                if (input >> value.x >> value.y >> value.z && std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z))
+                { if (property.name=="PositionOffset") m_positionOffset=value; else m_rotationOffset=value; }
+            }
+            else if (property.name == "TargetNodeIndex")
+            {
+                SetTargetNodeIndex(std::stoi(property.value));
             }
             else if (property.name == "JointName")
             {
-                m_jointName = property.value;
+                SetJointName(property.value);
             }
         }
     }

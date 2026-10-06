@@ -27,6 +27,7 @@
 #include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -853,6 +854,40 @@ namespace PlutoGE::ui
                 if (!entity || entity != selectedEntity || !entity->IsActive())
                 {
                     continue;
+                }
+
+                scene::IKComponent *ik=nullptr;
+                for (auto *ancestor=entity; ancestor && !ik; ancestor=ancestor->GetParent()) ik=ancestor->GetComponent<scene::IKComponent>();
+                if (ik && ik->IsEnabled())
+                {
+                    auto *mesh=ik->ResolveMesh();
+                    auto *animator=ik->GetOwner()->GetComponent<scene::AnimationComponent>();
+                    if (mesh && mesh->GetMesh() && animator)
+                    {
+                        const auto &skeleton=mesh->GetMesh()->GetSkeleton();
+                        const auto &palette=animator->GetJointMatrices(skeleton,mesh->GetMesh()->GetAnimationNodes());
+                        const auto world=mesh->GetOwner()->GetWorldTransform()*mesh->GetMeshOffsetTransform();
+                        const auto point=[&](const std::string &name, glm::vec3 &result) {
+                            for (size_t i=0; i<skeleton.joints.size(); ++i)
+                                if (skeleton.joints[i].name==name) { result=glm::vec3((world*palette[i]*glm::inverse(skeleton.joints[i].inverseBindMatrix))[3]); return true; }
+                            return false;
+                        };
+                        const auto line=[&](glm::vec3 a,glm::vec3 b,ImU32 color) { DrawWorldLine(drawList,a,b,cameraData,viewportMin,viewportSize,color,2); };
+                        const auto marker=[&](glm::vec3 p,ImU32 color) {
+                            for (int axis=0; axis<3; ++axis) { glm::vec3 offset(0); offset[axis]=.06f; line(p-offset,p+offset,color); }
+                        };
+                        for (const auto &constraint : ik->GetConstraints())
+                        {
+                            if (!constraint.enabled) continue;
+                            glm::vec3 root,middle,tip;
+                            if (!point(constraint.root,root) || !point(constraint.middle,middle) || !point(constraint.tip,tip)) continue;
+                            line(root,middle,IM_COL32(70,210,255,240)); line(middle,tip,IM_COL32(70,210,255,240));
+                            if (auto *target=scene->FindEntityByID(constraint.target))
+                            { marker(target->GetWorldPosition(),IM_COL32(255,205,60,255)); line(tip,target->GetWorldPosition(),IM_COL32(255,205,60,200)); }
+                            if (auto *hint=scene->FindEntityByID(constraint.hint))
+                            { marker(hint->GetWorldPosition(),IM_COL32(210,100,255,255)); line(middle,hint->GetWorldPosition(),IM_COL32(210,100,255,190)); }
+                        }
+                    }
                 }
 
                 if (auto *iblCaptureComponent = entity->GetComponent<scene::IblCaptureComponent>())

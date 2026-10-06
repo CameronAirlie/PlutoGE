@@ -11,12 +11,19 @@
 #include <filesystem>
 #include <stdexcept>
 #include <iostream>
+#include <type_traits>
 #include <glm/gtc/matrix_transform.hpp>
 
-template<class Device>
-void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders)
+template<class Device, class PixelReader = std::nullptr_t>
+void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders,
+                           PixelReader pixelReader = nullptr)
 {
     using namespace PlutoGE::render;
+    const auto readPixels = [&](auto texture)
+    {
+        if constexpr (std::is_same_v<PixelReader, std::nullptr_t>) return device.ReadTextureRgba8(texture);
+        else return pixelReader(texture);
+    };
     const auto require = [](bool value, const char *message) { if (!value) throw std::runtime_error(message); };
     MeshConfig config;
     config.data.vertices = {
@@ -48,7 +55,7 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(renderer.Initialize(device,shaders),"Skinning renderer initialization failed");
     const auto render = [&] {
         require(renderer.Render(128,128,camera,light,commands,commands),"Skinning render failed");
-        return device.ReadTextureRgba8(renderer.GetColorTexture());
+        return readPixels(renderer.GetColorTexture());
     };
     const auto initial=render();
     require(renderer.GetTimingStats().skinningUpdateCount==2,"Submeshes/passes did not share per-actor deformation");
@@ -69,14 +76,22 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(glm::distance(centroid(moved,1),greenBefore)<.01f,"Shared model mixed two actors' poses");
     require(renderer.GetTimingStats().skinningUpdateCount==1,"Unchanged actor was deformed again");
     require(renderer.GetTimingStats().shadowCascadeUpdateCount>0,"Bone movement failed to invalidate shadow cache");
-    const auto motion=device.ReadTextureRgba8(renderer.GetMotionTexture());
+    const auto motion=readPixels(renderer.GetMotionTexture());
     unsigned moving=0;
     for(std::size_t i=0;i<motion.size();i+=4) if(int(motion[i])>5) ++moving;
     require(moving>100,"Skeletal motion missing from motion-vector attachment");
+    RhiSceneRenderer overlay;
+    require(overlay.Initialize(device,shaders),"Shared skinning renderer initialization failed");
+    overlay.ReuseSkinningForFrame(renderer);
+    require(overlay.Render(128,128,camera,light,commands,commands),"Shared skinning render failed");
+    require(overlay.GetTimingStats().skinningUpdateCount==0 && overlay.GetTimingStats().skinningUploadMs==0,
+            "Camera stack repeated deformation or vertex uploads");
+    require(readPixels(overlay.GetColorTexture())==moved,"Shared skinning changed rendered geometry");
+    require(readPixels(overlay.GetMotionTexture())==motion,"Overlay prematurely settled skeletal velocity");
     const auto paused=render();
     require(paused==moved,"Paused skeletal geometry changed");
     require(renderer.GetTimingStats().skinningUpdateCount==0,"Paused pose repeated CPU deformation");
-    const auto stopped=device.ReadTextureRgba8(renderer.GetMotionTexture());
+    const auto stopped=readPixels(renderer.GetMotionTexture());
     for(std::size_t i=0;i<stopped.size();i+=4) require(int(stopped[i])<=1,"Pause retained stale skeletal velocity");
     render();
     require(renderer.GetTimingStats().shadowCascadeUpdateCount==0,"Stationary pose invalidated shadow cache");
@@ -85,12 +100,12 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     std::swap(commands[0],commands[2]); std::swap(commands[1],commands[3]);
     const auto reset=render();
     require(glm::distance(centroid(reset,0),redBefore)<.01f,"Reset/draw-order change corrupted actor pose");
-    const auto resetMotion=device.ReadTextureRgba8(renderer.GetMotionTexture());
+    const auto resetMotion=readPixels(renderer.GetMotionTexture());
     for(std::size_t i=0;i<resetMotion.size();i+=4) require(int(resetMotion[i])<=1,"Reset retained skeletal motion history");
     // More frames than Vulkan's in-flight count, without readbacks/fence waits
     // between them: recorded uploads must not overwrite preceding GPU work.
     for(int frame=0;frame<12;++frame) { poseA[0]=glm::translate(glm::mat4(1),{.02f*frame,0,0}); renderer.Render(128,128,camera,light,commands,commands); }
-    require(glm::distance(centroid(device.ReadTextureRgba8(renderer.GetColorTexture()),0),redBefore)>10,"In-flight dynamic vertex uploads lost the final pose");
+    require(glm::distance(centroid(readPixels(renderer.GetColorTexture()),0),redBefore)>10,"In-flight dynamic vertex uploads lost the final pose");
     renderer.InvalidateAssetCache();
     render();
     require(renderer.GetTimingStats().skinningUpdateCount==2,"Cache invalidation retained actor buffers");

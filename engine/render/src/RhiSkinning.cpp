@@ -15,6 +15,76 @@
 
 namespace PlutoGE::render
 {
+    void RhiSkinnedShadowBounds::Build(std::span<const MeshVertexData> vertices,
+                                     std::span<const std::uint32_t> indices, std::size_t jointCount)
+    {
+        m_jointCount = jointCount;
+        m_clusters.clear();
+        constexpr std::size_t clusterSize = ShadowClusterTriangleCount * 3;
+        struct Extents
+        {
+            glm::vec3 lo{std::numeric_limits<float>::max()}, hi{std::numeric_limits<float>::lowest()};
+            bool used = false;
+            void Add(glm::vec3 p) { lo = glm::min(lo, p); hi = glm::max(hi, p); used = true; }
+        };
+        std::vector<Extents> boxes(jointCount + 1); // Last box is the unweighted fallback.
+        for (std::size_t first = 0; first < indices.size(); first += clusterSize)
+        {
+            std::fill(boxes.begin(), boxes.end(), Extents{});
+            Cluster cluster{static_cast<std::uint32_t>(first),
+                static_cast<std::uint32_t>(std::min(clusterSize, indices.size() - first)), true, {}};
+            for (std::size_t i = first; i < first + cluster.indexCount; ++i)
+            {
+                if (indices[i] >= vertices.size()) { cluster.valid = false; break; }
+                const auto &v = vertices[indices[i]];
+                const glm::vec3 p(v.position[0], v.position[1], v.position[2]);
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+                { cluster.valid = false; break; }
+                float total = 0;
+                for (unsigned influence = 0; influence < 4; ++influence)
+                    if (v.joints[influence] >= 0 && static_cast<std::size_t>(v.joints[influence]) < jointCount &&
+                        std::isfinite(v.weights[influence]) && v.weights[influence] > 0)
+                        total += v.weights[influence];
+                if (!std::isfinite(total)) { cluster.valid = false; break; }
+                if (total <= .0001f) boxes.back().Add(p);
+                else for (unsigned influence = 0; influence < 4; ++influence)
+                    if (v.joints[influence] >= 0 && static_cast<std::size_t>(v.joints[influence]) < jointCount &&
+                        std::isfinite(v.weights[influence]) && v.weights[influence] > 0)
+                        boxes[v.joints[influence]].Add(p);
+            }
+            for (std::size_t joint = 0; joint < boxes.size(); ++joint)
+                if (boxes[joint].used)
+                    cluster.boxes.push_back({joint == jointCount ? -1 : static_cast<int>(joint),
+                        (boxes[joint].lo + boxes[joint].hi) * .5f, (boxes[joint].hi - boxes[joint].lo) * .5f});
+            m_clusters.push_back(std::move(cluster));
+        }
+    }
+
+    void RhiSkinnedShadowBounds::Refit(std::span<const glm::mat4> joints,
+                                     std::vector<ShadowGeometryCluster> &result) const
+    {
+        result.resize(m_clusters.size());
+        for (std::size_t i = 0; i < m_clusters.size(); ++i)
+        {
+            const auto &cluster = m_clusters[i];
+            bool valid = cluster.valid && joints.size() == m_jointCount && !cluster.boxes.empty();
+            glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
+            for (const auto &box : cluster.boxes)
+            {
+                if (!valid) break;
+                const auto matrix = box.joint < 0 ? glm::mat4(1) : joints[box.joint];
+                const auto center = glm::vec3(matrix * glm::vec4(box.center, 1));
+                const auto extent = glm::abs(glm::vec3(matrix[0])) * box.extents.x +
+                    glm::abs(glm::vec3(matrix[1])) * box.extents.y + glm::abs(glm::vec3(matrix[2])) * box.extents.z;
+                for (unsigned axis = 0; axis < 3; ++axis)
+                    valid &= std::isfinite(center[axis]) && std::isfinite(extent[axis]);
+                lo = glm::min(lo, center - extent); hi = glm::max(hi, center + extent);
+            }
+            result[i] = {cluster.firstIndex, cluster.indexCount,
+                valid ? (lo + hi) * .5f : glm::vec3(0), valid ? (hi - lo) * .5f : glm::vec3(-1)};
+        }
+    }
+
     // The RHI's shared vertex stream is consumed by lit, transparent, CSM and
     // virtual-shadow passes. Deform once per mesh/pose, rather than separately
     // in each material/pass. The supplied matrices already include inverse bind.

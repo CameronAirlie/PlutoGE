@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
+#include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -110,6 +111,7 @@ namespace PlutoGE::scene
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
             if (dynamic_cast<const SequencerComponent *>(&component)) return "SequencerComponent";
+            if (dynamic_cast<const IKComponent *>(&component)) return "IKComponent";
             if (dynamic_cast<const CameraRigComponent *>(&component))
                 return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
@@ -167,6 +169,7 @@ namespace PlutoGE::scene
             if (componentType == "SkeletonAttachmentComponent")
                 return std::make_unique<SkeletonAttachmentComponent>();
             if (componentType == "SequencerComponent") return std::make_unique<SequencerComponent>();
+            if (componentType == "IKComponent") return std::make_unique<IKComponent>();
             if (componentType == "CameraRigComponent")
                 return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
@@ -422,7 +425,7 @@ namespace PlutoGE::scene
                     if (auto *sequencer = dynamic_cast<SequencerComponent *>(component)) sequencer->RemapBindings(entityIdRemap);
                     auto *navAgent = dynamic_cast<NavAgentComponent *>(component);
                     auto *cameraRig = dynamic_cast<CameraRigComponent *>(component);
-                    if (!navAgent && !cameraRig)
+                    if (!navAgent && !cameraRig && !dynamic_cast<IKComponent *>(component))
                     {
                         continue;
                     }
@@ -430,7 +433,7 @@ namespace PlutoGE::scene
                     auto properties = component->Serialize();
                     for (auto &property : properties)
                     {
-                        if (property.name != "Target Entity")
+                        if (property.type != PropertyType::Entity && property.name != "Target Entity")
                         {
                             continue;
                         }

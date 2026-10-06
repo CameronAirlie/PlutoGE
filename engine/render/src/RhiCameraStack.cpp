@@ -152,7 +152,8 @@ namespace PlutoGE::render
     bool RhiCameraStackCompositor::CompositeBeforeTemporalResolve(
         rhi::IRenderDevice &device, BasicRenderer &base, glm::vec2 clipJitter,
         std::span<const CameraView> overlays,
-        const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene)
+        const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene,
+        const RhiSceneRenderer *skinningSource)
     {
         if (m_device != &device)
         {
@@ -189,6 +190,7 @@ namespace PlutoGE::render
             const auto lighting = BuildOverlayLighting(view, scene);
             const auto shadows = view.shadowCommands.empty() ? view.commands : view.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
+            if (skinningSource) renderer->ReuseSkinningForFrame(*skinningSource);
             if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
                                   view.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
                                   index + 1 < overlays.size(), scene, view.lights, {}, true, clipJitter))

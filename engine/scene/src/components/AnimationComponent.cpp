@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
@@ -2934,6 +2935,7 @@ namespace PlutoGE::scene
 
     const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton)
     {
+        RefreshAuthoredIK(skeleton);
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
             EvaluateJointMatrices(skeleton);
@@ -2950,6 +2952,7 @@ namespace PlutoGE::scene
             return GetJointMatrices(skeleton);
         }
 
+        RefreshAuthoredIK(skeleton);
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
             using Clock = std::chrono::high_resolution_clock;
@@ -3712,6 +3715,22 @@ namespace PlutoGE::scene
         m_jointMatricesDirty = true;
     }
 
+    void AnimationComponent::RefreshAuthoredIK(const render::Skeleton &skeleton)
+    {
+        std::vector<TwoBoneIKTarget> targets;
+        if (const auto *owner=GetOwner())
+            if (const auto *rig=owner->GetComponent<IKComponent>()) targets=rig->ResolveTargets(skeleton);
+        const auto equal=[](const TwoBoneIKTarget &a, const TwoBoneIKTarget &b) {
+            return a.root==b.root && a.middle==b.middle && a.tip==b.tip && a.position==b.position &&
+                   a.pole==b.pole && a.rotation==b.rotation && a.weight==b.weight && a.rotationWeight==b.rotationWeight;
+        };
+        if (targets.size()!=m_authoredIKTargets.size() || !std::equal(targets.begin(),targets.end(),m_authoredIKTargets.begin(),equal))
+        {
+            m_authoredIKTargets=std::move(targets);
+            m_jointMatricesDirty=true;
+        }
+    }
+
     bool AnimationComponent::SetTwoBoneIK(std::string id, TwoBoneIKTarget target)
     {
         const auto finiteVector = [](glm::vec3 v) {
@@ -3745,7 +3764,10 @@ namespace PlutoGE::scene
     void AnimationComponent::ApplyRagdoll(const render::Skeleton &skeleton)
     {
         if (!m_editorPreviewMode)
+        {
+            for (const auto &target : m_authoredIKTargets) SolveTwoBoneIK(skeleton, m_jointMatrices, target);
             for (const auto &entry : m_ikTargets) SolveTwoBoneIK(skeleton, m_jointMatrices, entry.second);
+        }
         if (m_suppressRagdollPose)
             return;
         if (!m_ragdollEnabled || m_ragdollWeight <= 0.0f || skeleton.joints.empty() ||

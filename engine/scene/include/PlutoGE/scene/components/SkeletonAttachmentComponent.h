@@ -29,11 +29,15 @@ namespace PlutoGE::scene
         void SetJointName(std::string jointName) { m_jointName = std::move(jointName); m_cachedMesh = nullptr; }
         const std::string &GetJointName() const { return m_jointName; }
         void BindSource(MeshComponent *source, int jointIndex);
+        MeshComponent *GetSourceMesh() const { return FindSourceMeshComponent(); }
+        const glm::vec3 &GetPositionOffset() const { return m_positionOffset; }
+        const glm::vec3 &GetRotationOffset() const { return m_rotationOffset; }
 
     private:
         MeshComponent *FindSourceMeshComponent() const;
         AnimationComponent *FindAnimationComponent() const;
 
+        glm::vec3 m_positionOffset{0}, m_rotationOffset{0};
         int m_targetNodeIndex = -1;
         std::string m_jointName;
         MeshComponent *m_cachedSourceMeshComponent = nullptr;

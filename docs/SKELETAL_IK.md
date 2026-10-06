@@ -15,6 +15,38 @@ Invalid chains or nonfinite inputs fail without changing the pose.
 Nonuniform scale/shear across an arm chain is not an authoring target: apply rig
 scale before export. Bone arrays need not be in parent-first order.
 
+## Editor workflow
+
+1. Select the soldier's Animation entity. Add Component > Two Bone IK Rig.
+2. Assign **Mesh** to the skinned mesh entity (0 uses the Animation entity itself).
+3. Choose RootBone, MiddleBone and TipBone from the imported bone names. Middle
+   and tip choices are filtered to direct children; names are saved, not indices.
+4. Click **Create Missing Targets**, or drag existing scene entities into Target
+   and Hint. Generated targets are children of the animation owner, alongside
+   the mesh, so they travel with the character and stay inside its prefab.
+5. Click **Select Target** or **Select Hint**, then use ordinary viewport translate
+   and rotate gizmos. Turn on viewport debug shapes for the cyan chain, yellow
+   target marker and purple elbow hint. PreviewInEditor controls live posing.
+6. Weight controls reach, RotationWeight controls hand orientation. Add another
+   constraint for the other arm; constraints solve in saved list order. Disable
+   a constraint or the component to release the pose. Removing a constraint
+   keeps its target entities so other constraints/scripts can still use them.
+7. Save the scene or prefab normally. Duplication remaps internal mesh, target and
+   hint references. External targets remain external when cloning.
+
+Editor clip inspection continues to bypass procedural IK. Stop clip preview to
+inspect the authored IK pose. The rig resolves fresh entity transforms when a
+pose is requested, including while paused; no script or frame-order dependency
+is required. Constraints on bones belonging to their own target/hint attachment
+hierarchy are rejected to avoid feedback loops. Script constraints solve after
+editor-authored constraints, before physics ragdoll blending.
+
+For a gun socket, add **Skeleton Attachment** to an empty entity below the skinned
+mesh. Choose JointName and adjust PositionOffset/RotationOffset (degrees) for the
+grip. Put weapon geometry beneath it. Bone names take precedence over legacy
+node indices when an import changes bone order. Offsets default to zero, preserving
+existing assets. The normal entity enabled checkbox controls attachment updates.
+
 ## Script APIs
 
 ```csharp
@@ -55,7 +87,15 @@ skins or animation clips.
 
 ## Validation
 
+Authored constraints optionally expose `WeightParameter`: an animator float
+multiplies their saved weight, clamped to 0–1. An empty name preserves the saved
+weight; a missing parameter resolves to zero. Use a float default of one for
+support-hand IK and set it to zero while a reload clip controls the hand.
+
 Build editor/runtime and ScriptCore together after bridge changes, then rebuild
 CoD scripts. `PlutoGESkeletonAttachmentTests` checks reach limits, degenerate
 poles, bone lengths, descendant propagation, invalid targets and bind-pose IK.
-Final grip quality requires a rigged asset and visual runtime testing.
+`PlutoGEIKComponentTests` additionally checks target movement/cache invalidation,
+disable/removal, editor preview, malformed settings, scene round trips, prefab
+reference remapping and bone-relative attachment offsets. Final grip quality
+requires a rigged asset and visual runtime testing.

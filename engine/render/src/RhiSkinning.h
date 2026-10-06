@@ -4,6 +4,27 @@
 #include <memory>
 namespace PlutoGE::render
 {
+    // Topology is immutable between mesh revisions. Positive normalized skin
+    // weights keep every deformed vertex inside the union of its bone boxes.
+    // Refitting these boxes avoids revisiting every triangle on each pose update.
+    class RhiSkinnedShadowBounds
+    {
+    public:
+        void Build(std::span<const MeshVertexData> vertices, std::span<const std::uint32_t> indices,
+                   std::size_t jointCount);
+        void Refit(std::span<const glm::mat4> joints, std::vector<ShadowGeometryCluster> &result) const;
+        std::size_t GetJointCount() const { return m_jointCount; }
+    private:
+        struct BoneBox { int joint; glm::vec3 center, extents; };
+        struct Cluster
+        {
+            std::uint32_t firstIndex, indexCount;
+            bool valid;
+            std::vector<BoneBox> boxes;
+        };
+        std::size_t m_jointCount = 0;
+        std::vector<Cluster> m_clusters;
+    };
     struct RhiSkinningBounds
     {
         glm::vec3 center{0.0f};

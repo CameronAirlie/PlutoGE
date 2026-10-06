@@ -10,6 +10,7 @@
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "CameraStackRenderingChecks.h"
+#include "SkinningRenderingChecks.h"
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
 #include "EmissionTextureRenderingChecks.h"
@@ -391,6 +392,20 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 });
             } catch (const std::exception &error) { std::cerr << error.what() << std::endl; return 1; }
             return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--skinning")
+        {
+            CheckSkinningRendering(device, shaders, [&](auto texture)
+            {
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                int width = 0, height = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::vector<unsigned char> pixels(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--camera-stack")
         {

@@ -42,7 +42,8 @@ namespace PlutoGE::render
         // was submitted. Leaves composition recording for the shared resolve.
         bool CompositeBeforeTemporalResolve(rhi::IRenderDevice &device, BasicRenderer &base, glm::vec2 clipJitter,
                        std::span<const CameraView> overlays,
-                       const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene);
+                       const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene,
+                       const RhiSceneRenderer *skinningSource = nullptr);
 
         // `target` must be the base scene renderer's display output, already
         // submitted. With submit=false the composite is left recording so the

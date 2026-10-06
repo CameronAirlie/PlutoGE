@@ -32,6 +32,7 @@
 #include <chrono>
 #include <cmath>
 #include <numeric>
+#include <tuple>
 
 namespace PlutoGE::render
 {
@@ -185,6 +186,15 @@ namespace PlutoGE::render
             m_renderer->SetSubmissionLabel(m_submissionLabel);
     }
 
+    void RhiSceneRenderer::ReuseSkinningForFrame(const RhiSceneRenderer &source)
+    {
+        if (this == &source || !m_device || m_device != source.m_device || source.m_skinningFrame == 0)
+            throw std::invalid_argument("Skinning reuse requires a rendered source on the same device");
+        m_skinningCache = source.m_skinningCache;
+        m_borrowedSkinningCache = true;
+        m_reusedSkinningFrame = std::pair{source.m_skinningFrame, source.m_skinningHistoryEpoch};
+    }
+
     void RhiSceneRenderer::InvalidateAssetCache()
     {
         if (m_normalMipJob.valid())
@@ -197,7 +207,9 @@ namespace PlutoGE::render
         if (m_drawPreparation)
             m_drawPreparation->Reset();
         m_meshes.clear();
-        m_skinnedMeshes.clear();
+        m_skinningCache = std::make_shared<SkinningCache>();
+        m_reusedSkinningFrame.reset();
+        m_borrowedSkinningCache = false;
     }
 
     void RhiSceneRenderer::Shutdown()
@@ -209,7 +221,9 @@ namespace PlutoGE::render
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
         m_meshes.clear();
-        m_skinnedMeshes.clear();
+        m_skinningCache = std::make_shared<SkinningCache>();
+        m_reusedSkinningFrame.reset();
+        m_borrowedSkinningCache = false;
         m_srgbTextures.clear();
         m_linearTextures.clear();
         m_normalTextures.clear();
@@ -301,7 +315,22 @@ namespace PlutoGE::render
         m_timingStats.translationPreparationMs = millisecondsBetween(totalStart, std::chrono::steady_clock::now());
 
         m_sceneCommandCount = commands.size();
-        ++m_skinningFrame;
+        if (m_reusedSkinningFrame)
+        {
+            std::tie(m_skinningFrame, m_skinningHistoryEpoch) = *m_reusedSkinningFrame;
+            m_reusedSkinningFrame.reset();
+        }
+        else
+        {
+            if (m_borrowedSkinningCache)
+            {
+                m_skinningCache = std::make_shared<SkinningCache>();
+                m_borrowedSkinningCache = false;
+            }
+            ++m_skinningFrame;
+        }
+        auto &m_skinnedMeshes = m_skinningCache->meshes;
+        std::erase_if(m_skinningCache->shadowBounds, [](const auto &entry) { return entry.second.lifetime.expired(); });
         if (!m_drawPreparation)
             m_drawPreparation = std::make_unique<RhiDrawPreparationCache>();
         auto &preparation = *m_drawPreparation;
@@ -529,6 +558,20 @@ namespace PlutoGE::render
                 const bool hasHistory = entry.lastFrame + 1 == m_skinningFrame && entry.historyEpoch == m_skinningHistoryEpoch;
                 const bool deform = changed || !entry.mesh.IsValid();
                 const bool upload = deform || entry.wasMoving || !hasHistory;
+                if (!entry.shadowBounds || topologyChanged || entry.shadowBounds->GetJointCount() != command.jointMatrices->size())
+                {
+                    auto &cached = m_skinningCache->shadowBounds[command.mesh];
+                    if (!cached.bounds || cached.lifetime.expired() || cached.contentRevision != command.mesh->GetContentRevision() ||
+                        cached.bounds->GetJointCount() != command.jointMatrices->size())
+                    {
+                        cached.bounds = std::make_shared<RhiSkinnedShadowBounds>();
+                        cached.bounds->Build(source.vertices, source.indices, command.jointMatrices->size());
+                        cached.contentRevision = command.mesh->GetContentRevision();
+                        cached.lifetime = command.mesh->GetLifetimeToken();
+                    }
+                    entry.shadowBounds = cached.bounds;
+                    entry.shadowClusters.clear();
+                }
                 const auto jobIndex = skinningJobs.size();
                 if (deform)
                     skinningJobs.push_back({source.vertices, *command.jointMatrices,
@@ -590,7 +633,15 @@ namespace PlutoGE::render
                         entry.mesh = m_renderer->CreateMesh({entry.vertices, pending.mesh->GetMeshData().indices});
                         ++m_timingStats.meshUploadCount;
                     }
-                    else m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, pending.changed);
+                    else
+                    {
+                        if (pending.changed)
+                        {
+                            core::CpuScope boundsScope("Skeletal shadow bounds refit", core::CpuCategory::Rendering);
+                            entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
+                        }
+                        m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, pending.changed, entry.shadowClusters);
+                    }
                     m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
                 }
                 entry.contentRevision = pending.mesh->GetContentRevision();

@@ -23,6 +23,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::render
 {
     class RhiSkinningExecutor;
+    class RhiSkinnedShadowBounds;
     struct RhiSkinningJob;
     class RhiDrawPreparationCache;
     struct RhiSceneTimingStats
@@ -141,6 +142,10 @@ namespace PlutoGE::render
         }
         void InvalidateAssetCache();
         void SetSubmissionLabel(std::string label);
+        // Camera-stack layers render the same immutable scene pose. Reuse the
+        // base view's vertex streams and previous-frame positions for one Render.
+        // Camera/depth/temporal reconstruction histories remain view-local.
+        void ReuseSkinningForFrame(const RhiSceneRenderer &source);
         // Scene-wide effects (oceans and particle systems) belong to the main
         // view. Secondary views disable them but keep the scene's lights.
         void SetSceneEffectsEnabled(bool enabled) noexcept
@@ -231,6 +236,8 @@ namespace PlutoGE::render
           BasicMesh mesh;
           std::vector<BasicVertex> vertices;
           std::vector<glm::mat4> pose;
+          std::shared_ptr<RhiSkinnedShadowBounds> shadowBounds;
+          std::vector<ShadowGeometryCluster> shadowClusters;
           std::uint64_t lastFrame = 0;
           std::uint64_t queuedFrame = 0;
           std::uint64_t contentRevision = 0;
@@ -250,7 +257,20 @@ namespace PlutoGE::render
       std::vector<PendingSkinning> m_pendingSkinning;
       std::vector<RhiSkinningJob> m_skinningJobs;
       // A shared model can have multiple independently animated owners.
-      std::unordered_map<const Mesh *, std::unordered_map<const std::vector<glm::mat4> *, SkinnedMesh>> m_skinnedMeshes;
+      struct SkinningCache
+      {
+          struct ShadowBounds
+          {
+              std::weak_ptr<const void> lifetime;
+              std::uint64_t contentRevision = 0;
+              std::shared_ptr<RhiSkinnedShadowBounds> bounds;
+          };
+          std::unordered_map<const Mesh *, std::unordered_map<const std::vector<glm::mat4> *, SkinnedMesh>> meshes;
+          std::unordered_map<const Mesh *, ShadowBounds> shadowBounds;
+      };
+      std::shared_ptr<SkinningCache> m_skinningCache = std::make_shared<SkinningCache>();
+      std::optional<std::pair<std::uint64_t, std::uint64_t>> m_reusedSkinningFrame;
+      bool m_borrowedSkinningCache = false;
       std::uint64_t m_skinningFrame = 0;
       std::uint64_t m_skinningHistoryEpoch = 0;
       std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;

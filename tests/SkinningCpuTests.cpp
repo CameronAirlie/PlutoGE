@@ -85,6 +85,46 @@ int main() try
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 20
             << " ms/frame\n";
     }
+    // Bone boxes must conservatively contain independently skinned vertices,
+    // including invalid influences, unnormalised weights and unweighted fallbacks.
+    auto shadowVertices = vertices;
+    shadowVertices[0].weights = {0, 0, 0, 0};
+    shadowVertices[1].joints = {-1, 9999, 0, 0};
+    shadowVertices[1].weights = {1, 1, 0, 0};
+    shadowVertices[2].weights = {2, .3f, .1f, 0};
+    std::vector<std::uint32_t> shadowIndices;
+    for (std::uint32_t i = 0; i < shadowVertices.size(); ++i)
+        for (unsigned corner = 0; corner < 3; ++corner) shadowIndices.push_back(i);
+    RhiSkinnedShadowBounds shadowBounds;
+    shadowBounds.Build(shadowVertices, shadowIndices, joints.size());
+    std::vector<ShadowGeometryCluster> refitted;
+    for (unsigned frame = 0; frame < 5; ++frame)
+    {
+        joints[1] = glm::translate(glm::mat4(1), glm::vec3(.2f * frame, -.1f * frame, 0)) *
+            glm::rotate(glm::mat4(1), .3f * frame, glm::vec3(0, 0, 1)) *
+            glm::scale(glm::mat4(1), glm::vec3(-1.2f, .7f, 2.f));
+        const auto deformed = ReferenceSkinRhiVertices(shadowVertices, joints);
+        shadowBounds.Refit(joints, refitted);
+        for (const auto &cluster : refitted)
+        {
+            if (cluster.extents.x < 0) throw std::runtime_error("Valid skinning bounds rejected");
+            for (std::size_t i = cluster.firstIndex; i < cluster.firstIndex + cluster.indexCount; ++i)
+                for (unsigned axis = 0; axis < 3; ++axis)
+                    if (std::abs(deformed[shadowIndices[i]].position[axis] - cluster.center[axis]) > cluster.extents[axis] + 1e-5f)
+                        throw std::runtime_error("Bone shadow bounds exclude a deformed vertex");
+        }
+    }
+    const auto refitStart = std::chrono::steady_clock::now();
+    for (unsigned frame = 0; frame < 50; ++frame) shadowBounds.Refit(joints, refitted);
+    std::cout << "Cached shadow bounds refit: " << std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - refitStart).count() / 50 << " ms/frame\n";
+    auto invalidIndices = shadowIndices; invalidIndices[0] = static_cast<std::uint32_t>(shadowVertices.size());
+    shadowBounds.Build(shadowVertices, invalidIndices, joints.size());
+    shadowBounds.Refit(joints, refitted);
+    if (refitted.front().extents.x >= 0) throw std::runtime_error("Invalid indices enabled shadow culling");
+    shadowBounds.Refit({}, refitted);
+    for (const auto &cluster : refitted)
+        if (cluster.extents.x >= 0) throw std::runtime_error("Changed palette size retained stale bounds");
     return 0;
 }
 catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }

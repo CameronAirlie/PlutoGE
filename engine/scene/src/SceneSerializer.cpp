@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
+#include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -237,6 +238,7 @@ namespace PlutoGE::scene
                 return "SkeletonAttachmentComponent";
             }
             if (dynamic_cast<const SequencerComponent *>(&component)) return "SequencerComponent";
+            if (dynamic_cast<const IKComponent *>(&component)) return "IKComponent";
             if (dynamic_cast<const CameraRigComponent *>(&component)) return "CameraRigComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
             {
@@ -352,6 +354,7 @@ namespace PlutoGE::scene
                 return std::make_unique<SkeletonAttachmentComponent>();
             }
             if (componentType == "SequencerComponent") return std::make_unique<SequencerComponent>();
+            if (componentType == "IKComponent") return std::make_unique<IKComponent>();
             if (componentType == "CameraRigComponent") return std::make_unique<CameraRigComponent>();
             if (componentType == "CameraComponent")
             {

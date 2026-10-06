@@ -109,6 +109,7 @@ add_test(NAME PlutoGEVulkanSkyQuadratureTests COMMAND PlutoGEVulkanRhiTests --sk
 add_test(NAME PlutoGEOpenGLSkyQuadratureTests COMMAND PlutoGEOpenGLRhiTests --sky-quadrature)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)
 add_test(NAME PlutoGEVulkanSkinningTests COMMAND PlutoGEVulkanRhiTests --skinning)
+add_test(NAME PlutoGEOpenGLSkinningTests COMMAND PlutoGEOpenGLRhiTests --skinning)
 if (PLUTO_ENABLE_FSR2)
     add_test(NAME PlutoGEOrthographicUpscalerTests COMMAND PlutoGEVulkanRhiTests --orthographic-upscalers)
     add_test(NAME PlutoGEVulkanFsr2Tests COMMAND PlutoGEVulkanRhiTests --fsr2-only)
@@ -552,3 +553,7 @@ if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGESkeletalManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SkeletalSmokeTests/PlutoGE.SkeletalSmokeTests.csproj --configuration Release)
 endif()
+
+add_executable(PlutoGEIKComponentTests IKComponentTests.cpp)
+pluto_link_engine(PlutoGEIKComponentTests)
+add_test(NAME PlutoGEIKComponentTests COMMAND PlutoGEIKComponentTests)

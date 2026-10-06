@@ -1390,16 +1390,28 @@ namespace PlutoGE::render
         return mesh;
     }
 
-    void BasicRenderer::UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged)
+    void BasicRenderer::UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged,
+                                          std::span<const ShadowGeometryCluster> shadowClusters)
     {
         if (!m_device || !mesh.IsValid() || vertices.size() != mesh.m_vertexCount)
             throw std::invalid_argument("Dynamic mesh update must preserve vertex count");
+        if (!shadowClusters.empty())
+        {
+            if (shadowClusters.size() != mesh.m_shadowClusters.size())
+                throw std::invalid_argument("Dynamic shadow bounds must preserve cluster count");
+            for (std::size_t i = 0; i < shadowClusters.size(); ++i)
+                if (shadowClusters[i].firstIndex != mesh.m_shadowClusters[i].firstIndex ||
+                    shadowClusters[i].indexCount != mesh.m_shadowClusters[i].indexCount)
+                    throw std::invalid_argument("Dynamic shadow bounds must preserve index ranges");
+        }
         mesh.m_pendingVertices.assign(vertices.begin(), vertices.end());
         // Shadow caches must see deformation even when the model is stationary.
         if (geometryChanged)
         {
             mesh.m_revision = m_nextMeshRevision++;
-            mesh.m_shadowClusters = BuildShadowGeometryClusters(vertices, std::span<const std::uint32_t>(mesh.m_shadowIndices));
+            if (shadowClusters.empty())
+                mesh.m_shadowClusters = BuildShadowGeometryClusters(vertices, std::span<const std::uint32_t>(mesh.m_shadowIndices));
+            else mesh.m_shadowClusters.assign(shadowClusters.begin(), shadowClusters.end());
         }
     }
 

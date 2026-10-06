@@ -1,5 +1,6 @@
 add_library(PlutoGEEditorUI
     src/MultiEntityEdit.cpp
+    src/IKInspector.cpp
     src/RmlDocumentEditSession.cpp
     src/SourceTextEditor.cpp
     src/RmlDocumentPreview.cpp

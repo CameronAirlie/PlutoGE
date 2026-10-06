@@ -267,6 +267,7 @@ namespace PlutoGE::scene
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void ApplyRagdoll(const render::Skeleton &skeleton);
+        void RefreshAuthoredIK(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
         void EnsureNodeBindingCache(const std::vector<render::AnimationNode> &nodes);
         void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
@@ -331,5 +332,6 @@ namespace PlutoGE::scene
         bool m_loggedRagdollApply = false;
         bool m_editorPreviewMode = false;
         std::vector<std::pair<std::string, TwoBoneIKTarget>> m_ikTargets;
+        std::vector<TwoBoneIKTarget> m_authoredIKTargets;
     };
 }

@@ -1,5 +1,7 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
+#include "PlutoGE/scene/components/IKComponent.h"
+#include "PlutoGE/ui/IKInspector.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -191,6 +193,8 @@ namespace PlutoGE::ui
             ActiveRagdoll = 28,
             CameraRig = 30,
             Sequencer = 31,
+            IK = 32,
+            SkeletonAttachment = 33,
         };
 
         struct ScriptAssetOption
@@ -1283,6 +1287,7 @@ namespace PlutoGE::ui
             }
             if (dynamic_cast<const scene::SequencerComponent *>(&component))
                 return "Sequencer";
+            if (dynamic_cast<const scene::IKComponent *>(&component)) return "Two Bone IK Rig";
             if (dynamic_cast<const scene::CameraRigComponent *>(&component))
                 return "Camera Rig";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
@@ -1381,6 +1386,7 @@ namespace PlutoGE::ui
                 return "SkeletonAttachmentComponent";
             if (dynamic_cast<const scene::SequencerComponent *>(&component))
                 return "SequencerComponent";
+            if (dynamic_cast<const scene::IKComponent *>(&component)) return "IKComponent";
             if (dynamic_cast<const scene::CameraRigComponent *>(&component))
                 return "CameraRigComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
@@ -1526,6 +1532,10 @@ namespace PlutoGE::ui
                        !entity.HasComponent<scene::ActiveRagdollComponent>();
             case AddableComponentType::Sequencer:
                 return !entity.HasComponent<scene::SequencerComponent>();
+            case AddableComponentType::IK:
+                return entity.HasComponent<scene::AnimationComponent>() && !entity.HasComponent<scene::IKComponent>();
+            case AddableComponentType::SkeletonAttachment:
+                return !entity.HasComponent<scene::SkeletonAttachmentComponent>();
             case AddableComponentType::CameraRig:
                 return entity.HasComponent<scene::CameraComponent>() && !entity.HasComponent<scene::CameraRigComponent>();
             case AddableComponentType::Camera:
@@ -1616,6 +1626,8 @@ namespace PlutoGE::ui
             {
                 renderItem("Animation", AddableComponentType::Animation);
                 renderItem("Active Ragdoll", AddableComponentType::ActiveRagdoll);
+                renderItem("Two Bone IK Rig", AddableComponentType::IK);
+                renderItem("Skeleton Attachment", AddableComponentType::SkeletonAttachment);
                 if (!search.IsActive())
                     ImGui::EndMenu();
             }
@@ -1740,6 +1752,12 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Sequencer:
                 entity.CreateComponent<scene::SequencerComponent>();
+                break;
+            case AddableComponentType::IK:
+                entity.CreateComponent<scene::IKComponent>();
+                break;
+            case AddableComponentType::SkeletonAttachment:
+                entity.CreateComponent<scene::SkeletonAttachmentComponent>();
                 break;
             case AddableComponentType::CameraRig:
                 entity.CreateComponent<scene::CameraRigComponent>();
@@ -1935,6 +1953,19 @@ namespace PlutoGE::ui
         }
         case scene::PropertyType::String:
         {
+            // String-backed choices preserve bone identities across import/reordering.
+            if (!property.enumOptions.empty())
+            {
+                bool changed=false;
+                if (ImGui::BeginCombo(property.name.c_str(), property.value.empty() ? "None" : property.value.c_str()))
+                {
+                    for (const auto &choice : property.enumOptions)
+                        if (ImGui::Selectable(choice.empty() ? "None" : choice.c_str(), property.value==choice))
+                        { property.value=choice; changed=true; }
+                    ImGui::EndCombo();
+                }
+                return changed;
+            }
             char buffer[256];
             strncpy_s(buffer, sizeof(buffer), property.value.c_str(), _TRUNCATE);
             if (ImGui::InputText(property.name.c_str(), buffer, sizeof(buffer)))
@@ -5434,6 +5465,10 @@ namespace PlutoGE::ui
                             propertiesProvided = true;
                         }
 
+                        if (auto *ik=dynamic_cast<scene::IKComponent *>(componentPtr))
+                            RenderIKInspectorTools(*ik, editorShell);
+                        if (auto *attachment=dynamic_cast<scene::SkeletonAttachmentComponent *>(componentPtr))
+                            RenderAttachmentInspectorTools(*attachment);
                         if (!propertiesProvided)
                         {
                             properties = componentPtr->Serialize();
@@ -5442,6 +5477,8 @@ namespace PlutoGE::ui
                         int propertyIndex = 0;
                         for (auto &property : properties)
                         {
+                            if (dynamic_cast<scene::IKComponent *>(componentPtr) && property.name=="ConstraintCount") continue;
+                            if (dynamic_cast<scene::SkeletonAttachmentComponent *>(componentPtr) && property.name=="TargetNodeIndex") continue;
                             if (property.name == "PostProcessEffectCount" || property.name == "MainCamera" || property.name == "Primary" || property.name == "TargetTexture" || property.name.rfind("PostProcessEffects.", 0) == 0)
                             {
                                 continue;
@@ -5505,6 +5542,30 @@ namespace PlutoGE::ui
 
                             ImGui::PushID(propertyIndex++);
                             bool renderedCustomLightProperty = false;
+                            if (dynamic_cast<scene::IKComponent *>(componentPtr))
+                            {
+                                auto display=property;
+                                const auto separator=display.name.rfind('.');
+                                if (separator!=std::string::npos)
+                                {
+                                    display.name=display.name.substr(separator+1);
+                                    if (display.name=="Name") ImGui::SeparatorText(property.value.c_str());
+                                }
+                                if (display.name=="RootBone") display.name="Root Bone";
+                                if (display.name=="MiddleBone") display.name="Middle Bone";
+                                if (display.name=="TipBone") display.name="Tip Bone";
+                                if (display.name=="PreviewInEditor") display.name="Preview In Editor";
+                                if (display.name=="RotationWeight") display.name="Rotation Weight";
+                                if (display.name=="Weight" || display.name=="Rotation Weight")
+                                {
+                                    float value=std::stof(display.value);
+                                    if (ImGui::SliderFloat(display.name.c_str(),&value,0,1))
+                                    { display.value=std::to_string(value); propertiesChanged=true; }
+                                }
+                                else propertiesChanged |= RenderPropertyEditor(display);
+                                property.value=std::move(display.value);
+                                renderedCustomLightProperty=true;
+                            }
                             if (auto *lightComponent = dynamic_cast<scene::LightComponent *>(componentPtr);
                                 lightComponent && lightComponent->GetLight().type == scene::LightType::Directional)
                             {

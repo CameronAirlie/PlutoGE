@@ -1310,6 +1310,21 @@ internal static unsafe partial class ScriptBridge
         return 1;
     }
 
+    private static delegate* unmanaged[Cdecl]<float> _getInterfaceScale;
+    private static delegate* unmanaged[Cdecl]<float, int> _setInterfaceScale;
+    internal static bool UISettingsSupported => _getInterfaceScale != null && _setInterfaceScale != null;
+    internal static float GetInterfaceScale() => _getInterfaceScale != null ? _getInterfaceScale() : 1;
+    internal static bool SetInterfaceScale(float value) => _setInterfaceScale != null && _setInterfaceScale(value) != 0;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterUISettingsApi")]
+    public static int RegisterUISettingsApi(delegate* unmanaged[Cdecl]<float> getScale,
+        delegate* unmanaged[Cdecl]<float, int> setScale)
+    {
+        if (getScale == null || setScale == null) return 0;
+        _getInterfaceScale = getScale; _setInterfaceScale = setScale;
+        return 1;
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterRmlNavigationApi")]
     public static int RegisterRmlNavigationApi(delegate* unmanaged[Cdecl]<nint, nint, int> scrollIntoView)
     {

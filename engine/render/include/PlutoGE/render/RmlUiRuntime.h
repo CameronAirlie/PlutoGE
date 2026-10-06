@@ -70,7 +70,7 @@ namespace PlutoGE::render
         glm::mat4 model{1.0f};
     };
 
-    // Owns the single screen-space RmlUi context used by runtime canvases.
+    // Owns separate screen and world RmlUi contexts used by runtime canvases.
     // CanvasComponent remains the scene-facing authoring and migration point.
     class RmlUiRuntime
     {
@@ -102,6 +102,10 @@ namespace PlutoGE::render
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }
         [[nodiscard]] const std::vector<RmlUiWorldSurface> &GetWorldSurfaces() const { return m_worldSurfaceDraws; }
+        // Screen-space dp lengths only; physical pixels and world documents are unaffected.
+        bool SetInterfaceScale(float scale);
+        [[nodiscard]] float GetInterfaceScale() const noexcept { return m_interfaceScale; }
+        [[nodiscard]] Rml::Context *GetWorldContext() const { return m_worldContext; }
         bool ShowDocument(const std::string &document, bool visible);
         bool ReloadDocument(const std::string &document);
         bool SetElementText(const std::string &document, const std::string &id, const std::string &text);
@@ -162,6 +166,10 @@ namespace PlutoGE::render
         std::unique_ptr<RmlUiRhiRenderer> m_rhiRenderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
         Rml::Context *m_context = nullptr;
+        Rml::Context *m_worldContext = nullptr;
+        Rml::Context *m_pointerContext = nullptr;
+        Rml::Context *m_keyboardContext = nullptr;
+        float m_interfaceScale = 1.0f;
         platform::Window *m_window = nullptr;
         std::unordered_map<std::string, Rml::ElementDocument *> m_documents;
         // Script-side paths often use an Assets-relative spelling while the

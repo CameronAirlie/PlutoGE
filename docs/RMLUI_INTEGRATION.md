@@ -5,12 +5,12 @@ remain loadable and editable so existing scenes can be migrated incrementally;
 both systems can coexist during that migration.
 
 For a minimal setup walkthrough and copyable example, see the
-[RmlUi project quick start](RMLUI_QUICKSTART.md).
+[RmlUi project quick start](RMLUI_QUICKSTART.md). The [developer and agent authoring guide](RMLUI_AUTHORING.md) and [pinned feature reference](RMLUI_REFERENCE.md) cover units, controls, supported features and engine extensions.
 
 ## Current integration
 
 - RmlUi 6.1 and FreeType 2.13.3 are pinned and built from source.
-- The official OpenGL 3 renderer is executed after PlutoGE's native UI pass.
+- Runtime documents use either the legacy GL3 renderer or the shared Vulkan/OpenGL RHI renderer; advanced effect support differs.
 - `.rml`, `.rcss`, image, and font references are resolved relative to the
   loaded document.
 - Mouse buttons, pointer movement, two-axis wheel input, keyboard transitions,
@@ -70,16 +70,7 @@ rendering, input, text, document lifetime, and asset loading.
 
 ### Phase 2 — gameplay binding (implemented)
 
-Add a scene-scoped RmlUi data-model registry and C# wrappers for:
-
-- loading/showing/hiding documents;
-- finding elements by ID;
-- setting text, attributes, classes, and style properties;
-- binding observable C# fields to RmlUi model variables;
-- subscribing to DOM events without polling.
-
-This is the next required slice for migrating `FpsHudController` and
-`ReactiveCrosshair`.
+The managed API provides `RmlDocument`, `RmlElement`, `RmlEvent`, and observable DOM bindings. Events are queued natively and dispatched during managed script updates. Controllers update stable IDs, attributes, classes and styles. There is no automatic reflection-based native data-model registration for C# objects; native data-* views require an explicitly registered C++ model. See the authoring guide for the current API and lifetime rules.
 
 ### Phase 3 — editor authoring (initial workflow implemented)
 
@@ -184,3 +175,11 @@ Give the image an explicit CSS width/height. Call this when the appearance chang
 The managed helper uses `data-preview-root`, `data-preview-attachments`, `data-preview-revision`, `data-preview-width` and `data-preview-height`. Native code binds a `portrait://` texture source on success and publishes `data-preview-render-count` and `data-preview-rendered-revision` for diagnostics. RmlUi consumes the render texture directly through a shared external-texture binding. No screenshot files or GPU-to-CPU readback are involved in production. The transparent-copy shader uses reversed depth to remove the scene background, and the UI binding handles texture orientation.
 
 Validation: the project-backed `PlutoGERmlUiAntialiasingTests --capture <document> <font> <prefix>` fixture renders the real player, armour and weapon assets, checks visible/transparent pixels, verifies equipment changes alter the image, and captures the result inside the inventory. Use `--opengl` in place of `--capture` for the OpenGL backend.
+
+## Screen interface scale
+
+`RmlUiRuntime::SetInterfaceScale` and managed `UISettings.TrySetInterfaceScale` set a validated 0.5�3 density-independent ratio on the screen context. `dp` sizes reflow through RmlUi layout. Percent/px/vh units retain their meanings; Canvas transforms remain an independent authoring policy. The separate world context keeps ratio 1; projected/world documents retain their context across hot reload. Screen documents composite above projected world labels. Pointer presses select the upper interacting context, drags retain that context, and keyboard input follows the selected context. Runtime reset restores interface scale 1; backend recreation preserves a preference requested before reinitialization. Loading/preview contexts remain independent.
+
+Managed bridge registration is a separate `RegisterUISettingsApi` export, preserving existing RmlUi callback signatures. Rebuild native host and ScriptCore together. CoD applies the stored preference on scene creation and uses dp screen styles without manual widget transforms.
+
+`PlutoGERmlUiInterfaceScaleTests` checks real layout at multiple ratios/resolutions, corner insets, full-screen coverage, projected geometry, reflow, hit testing, range values, world density and lifecycle reset. Vulkan and OpenGL configurations run the same checks.

@@ -3216,6 +3216,9 @@ namespace PlutoGE::scripting
             return document && id && name &&
                    render::RmlUiRuntime::Get().SetElementClass(document, id, name, enabled != 0);
         }
+        float GetInterfaceScale() { return render::RmlUiRuntime::Get().GetInterfaceScale(); }
+        int32_t SetInterfaceScale(float scale) { return render::RmlUiRuntime::Get().SetInterfaceScale(scale); }
+
         int32_t RmlSetStyle(const char *document, const char *id, const char *name, const char *value)
         {
             return document && id && name && value &&
@@ -3467,6 +3470,7 @@ namespace PlutoGE::scripting
         register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
         register_advanced_ui_api_fn registerAdvancedUIApi = nullptr;
         register_rml_ui_api_fn registerRmlUiApi = nullptr;
+        int(PLUTO_HOST_CALL *registerUISettingsApi)(void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerRmlNavigationApi)(void *) = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *) = nullptr;
@@ -3584,6 +3588,7 @@ namespace PlutoGE::scripting
             impl.registerRuntimeUIApi = nullptr;
             impl.registerAdvancedUIApi = nullptr;
             impl.registerRmlUiApi = nullptr;
+            impl.registerUISettingsApi = nullptr;
             impl.registerRmlNavigationApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
@@ -3940,6 +3945,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterRuntimeUIApi"), impl.registerRuntimeUIApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAdvancedUIApi"), impl.registerAdvancedUIApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlUiApi"), impl.registerRmlUiApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterUISettingsApi"), impl.registerUISettingsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlNavigationApi"), impl.registerRmlNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
@@ -4590,6 +4596,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&GetUIUpdateSequence)) == 0)
         {
             setManagedBridgeFailure("RegisterAdvancedUIApi");
+            return false;
+        }
+
+        if (!m_impl->registerUISettingsApi || m_impl->registerUISettingsApi(
+                reinterpret_cast<void *>(&GetInterfaceScale), reinterpret_cast<void *>(&SetInterfaceScale)) == 0)
+        {
+            setManagedBridgeFailure("RegisterUISettingsApi");
             return false;
         }
 

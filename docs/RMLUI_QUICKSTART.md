@@ -4,6 +4,8 @@ This guide creates a simple screen-space RmlUi panel in a PlutoGE project.
 RmlUi is already part of the engine build; each game project only needs its
 UI assets, a Canvas component, and optionally a C# controller.
 
+Read the [complete authoring guide](RMLUI_AUTHORING.md) for scalable units, controls, managed bindings and engine-specific extensions.
+
 ## 1. Create the UI assets
 
 Create this layout inside the project:
@@ -55,28 +57,29 @@ body {
     margin: 0;
     color: #ffffff;
     font-family: GameUI;
+    font-size: 16dp;
 }
 
 #panel {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 360px;
-    margin-left: -180px;
-    margin-top: -90px;
-    padding: 24px;
+    width: 360dp;
+    margin-left: -180dp;
+    margin-top: -90dp;
+    padding: 24dp;
     background-color: #101722ee;
-    border: 2px #58c8ff;
+    border: 2dp #58c8ff;
 }
 
 h1 {
-    margin: 0 0 18px 0;
-    font-size: 28px;
+    margin: 0 0 18dp 0;
+    font-size: 28dp;
 }
 
 button {
     width: 100%;
-    height: 44px;
+    height: 44dp;
     color: #ffffff;
     background-color: #24374a;
     border: 1px #58c8ff;
@@ -123,8 +126,9 @@ In the scene:
 1. Create an entity, for example `Game UI`.
 2. Add an **RmlUi Canvas** component.
 3. Choose `hello.rml` from the Canvas **Document** dropdown.
-4. Make sure the entity and Canvas are enabled.
-5. Enter Play mode.
+4. Set **Scale Mode** to **Constant Pixels** and scale factor to **1** for dp-based player interface scaling.
+5. Make sure the entity and Canvas are enabled.
+6. Enter Play mode.
 
 The Canvas stores a project asset reference selected by the editor. An ordinary
 path such as `UI/hello.rml` remains supported and is relative to the project's
@@ -134,7 +138,9 @@ not need child Text, Image, Button, or RML Widget components.
 RML and sibling RCSS files hot reload while the document is active, so most
 visual edits should appear after saving the file.
 
-To scale the whole document with the viewport, set the Canvas **Scale Mode** to
+For player interface size, use `UISettings.TrySetInterfaceScale` and `dp` lengths, with Canvas Constant Pixels and scale factor 1. Corner anchors and full-screen roots keep their viewport placement through layout. Keep projected aiming geometry in physical/viewport units.
+
+For the separate legacy/reference-resolution workflow, to scale the whole document with the viewport, set the Canvas **Scale Mode** to
 **Scale With Screen Size** and choose a reference resolution (for example,
 1920 x 1080). Pixel dimensions and text in the RML document then scale with the
 Canvas, while its screen-match controls determine how aspect-ratio differences
@@ -142,8 +148,8 @@ are handled.
 
 ### Blurred backdrops
 
-RmlUi's `backdrop-filter` operates on the rendered game scene behind an
-element. Combine it with a translucent background so the blur remains visible:
+In the legacy GL3 host, RmlUi's `backdrop-filter` operates on the rendered game scene behind an
+element. The shared Vulkan/OpenGL RHI host does not implement general backdrop-filter layers; use a translucent panel there. Combine it with a translucent background so the blur remains visible:
 
 ```css
 #backdrop {

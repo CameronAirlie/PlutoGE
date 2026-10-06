@@ -609,7 +609,11 @@ namespace PlutoGE::render
         if (m_context && static_cast<bool>(m_rhiRenderer) == (rhiDevice != nullptr))
             return true;
         if (m_context)
+        {
+            const float requestedScale = m_interfaceScale;
             Shutdown();
+            m_interfaceScale = requestedScale;
+        }
 
         m_window = &window;
         m_hotReloadEnabled = core::Engine::GetInstance().GetConfig().isEditorHost;
@@ -660,8 +664,12 @@ namespace PlutoGE::render
         if (m_rhiRenderer)
             m_rhiRenderer->SetViewport(m_width, m_height);
         m_context = Rml::CreateContext("PlutoGE.Runtime", {m_width, m_height});
-        if (!m_context)
+        m_worldContext = Rml::CreateContext("PlutoGE.World", {m_width, m_height});
+        if (!m_context || !m_worldContext)
         {
+            if (m_context) Rml::RemoveContext(m_context->GetName());
+            if (m_worldContext) Rml::RemoveContext(m_worldContext->GetName());
+            m_context = m_worldContext = nullptr;
             Rml::Shutdown();
             m_system.reset();
             m_rhiRenderer.reset();
@@ -669,12 +677,23 @@ namespace PlutoGE::render
             m_window = nullptr;
             return false;
         }
+        m_context->SetDensityIndependentPixelRatio(m_interfaceScale);
         auto panZoom = std::make_unique<RmlPanZoom>();
         panZoom->Attach(*m_context);
+        panZoom->Attach(*m_worldContext);
         m_panZoom = std::move(panZoom);
         return true;
     }
 
+
+    bool RmlUiRuntime::SetInterfaceScale(float scale)
+    {
+        if (!std::isfinite(scale) || scale < 0.5f || scale > 3.0f) return false;
+        if (m_interfaceScale == scale) return true;
+        m_interfaceScale = scale;
+        if (m_context) m_context->SetDensityIndependentPixelRatio(scale);
+        return true;
+    }
 
     Rml::ElementDocument *RmlUiRuntime::SetLoadingDocumentTarget(Rml::ElementDocument *document)
     {
@@ -742,6 +761,12 @@ namespace PlutoGE::render
             Rml::RemoveContext(m_context->GetName());
             m_context = nullptr;
         }
+        if (m_worldContext)
+        {
+            Rml::RemoveContext(m_worldContext->GetName());
+            m_worldContext = nullptr;
+        }
+        m_pointerContext = m_keyboardContext = nullptr;
         m_panZoom.reset();
         Rml::Shutdown();
         m_system.reset();
@@ -777,6 +802,8 @@ namespace PlutoGE::render
         m_reportedLoadFailures.clear();
         m_pendingEvents.clear();
         m_lastInputFrame = 0;
+        m_pointerContext = m_keyboardContext = nullptr;
+        SetInterfaceScale(1.0f);
         m_cpuTiming = {};
     }
 
@@ -958,7 +985,11 @@ namespace PlutoGE::render
         bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
         {
-            if (!requestedDocuments.contains(it->first))
+            const auto requested = requestedDocuments.find(it->first);
+            const auto *expectedContext = requested != requestedDocuments.end() &&
+                (requested->second.projected || requested->second.worldSurface) ? m_worldContext : m_context;
+            if (requested == requestedDocuments.end() ||
+                (it->second && it->second->GetContext() != expectedContext))
             {
                 if (!detachedForDocumentChange)
                 {
@@ -1147,17 +1178,18 @@ namespace PlutoGE::render
                     }
                     else if (document->IsVisible())
                     {
-                        m_context->UnfocusDocument(document);
+                        document->GetContext()->UnfocusDocument(document);
                         document->Hide();
                     }
                 }
                 continue;
             }
 
+            auto *documentContext = (request.projected || request.worldSurface) ? m_worldContext : m_context;
             const std::string path = request.generated ? std::string{} : ResolveDocumentPath(assets, reference);
             if (request.generated)
             {
-                if (auto *document = m_context->LoadDocumentFromMemory(request.generatedSource, reference))
+                if (auto *document = documentContext->LoadDocumentFromMemory(request.generatedSource, reference))
                 {
                     ConfigureDocument(*document, request, m_width, m_height, true, true);
                     (request.visible && request.inFrontOfCamera && !request.worldSurface) ? document->Show() : document->Hide();
@@ -1192,7 +1224,7 @@ namespace PlutoGE::render
             }
 
             LoadDocumentFonts(path);
-            if (auto *document = m_context->LoadDocument(ToRmlDocumentPath(path)))
+            if (auto *document = documentContext->LoadDocument(ToRmlDocumentPath(path)))
             {
                 const float scale = std::max(request.scale, 0.0001f);
                 ConfigureDocument(*document, request, m_width, m_height, true, true);
@@ -1356,7 +1388,7 @@ namespace PlutoGE::render
     void RmlUiRuntime::RenderWorldSurfaces()
     {
         m_worldSurfaceDraws.clear();
-        if (!m_context || !m_renderer || m_worldSurfaceTargets.empty())
+        if (!m_worldContext || !m_renderer || m_worldSurfaceTargets.empty())
             return;
 
         bool needsRender = false;
@@ -1373,7 +1405,7 @@ namespace PlutoGE::render
         std::vector<Rml::ElementDocument *> previouslyVisible;
         for (const auto &[key, document] : m_documents)
         {
-            if (document && document->IsVisible())
+            if (document && document->GetContext() == m_worldContext && document->IsVisible())
             {
                 previouslyVisible.push_back(document);
                 document->Hide();
@@ -1389,9 +1421,9 @@ namespace PlutoGE::render
 
             auto *document = documentIt->second;
             document->Show(Rml::ModalFlag::Keep, Rml::FocusFlag::None);
-            m_context->SetDimensions({target.width, target.height});
+            m_worldContext->SetDimensions({target.width, target.height});
             m_renderer->SetViewport(target.width, target.height);
-            m_context->Update();
+            m_worldContext->Update();
 
             Graphics::BindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
             Graphics::SetViewport(0, 0, target.width, target.height);
@@ -1399,7 +1431,7 @@ namespace PlutoGE::render
             glClear(GL_COLOR_BUFFER_BIT);
             PlutoGE_SetRmlUiFramebuffer(target.framebuffer);
             m_renderer->BeginFrame();
-            m_context->Render();
+            m_worldContext->Render();
             m_renderer->EndFrame();
             document->Hide();
             target.dirty = false;
@@ -1408,7 +1440,8 @@ namespace PlutoGE::render
         for (auto *document : previouslyVisible)
             document->Show(Rml::ModalFlag::Keep, Rml::FocusFlag::None);
 
-        m_context->SetDimensions({m_width, m_height});
+        m_worldContext->SetDimensions({m_width, m_height});
+        m_worldContext->Update();
         m_renderer->SetViewport(m_width, m_height);
         Graphics::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
         Graphics::SetViewport(0, 0, m_width, m_height);
@@ -1486,10 +1519,15 @@ namespace PlutoGE::render
         if (path.empty())
             return false;
         LoadDocumentFonts(path);
+        auto *documentContext = m_context;
         if (auto found = m_documents.find(document); found != m_documents.end())
         {
             DetachEventSubscriptions();
-            if (found->second) found->second->Close();
+            if (found->second)
+            {
+                documentContext = found->second->GetContext();
+                found->second->Close();
+            }
             m_documents.erase(found);
             m_documentScales.erase(document);
             m_documentUsesBackdrop.erase(document);
@@ -1502,7 +1540,7 @@ namespace PlutoGE::render
         Rml::Factory::ClearStyleSheetCache();
         Rml::Factory::ClearTemplateCache();
 
-        auto *loaded = m_context->LoadDocument(ToRmlDocumentPath(path));
+        auto *loaded = documentContext->LoadDocument(ToRmlDocumentPath(path));
         if (!loaded)
             return false;
         loaded->Show();
@@ -1725,15 +1763,17 @@ namespace PlutoGE::render
 
     bool RmlUiRuntime::IsPointerInputCaptured() const
     {
-        return m_context && m_context->IsMouseInteracting();
+        return (m_context && m_context->IsMouseInteracting()) ||
+               (m_worldContext && m_worldContext->IsMouseInteracting());
     }
 
     bool RmlUiRuntime::IsKeyboardInputCaptured() const
     {
-        if (!m_context)
+        auto *context = m_keyboardContext ? m_keyboardContext : m_context;
+        if (!context)
             return false;
 
-        const auto *focusedElement = m_context->GetFocusElement();
+        const auto *focusedElement = context->GetFocusElement();
         return focusedElement && focusedElement->IsVisible(true) &&
                rmlui_dynamic_cast<const Rml::ElementFormControl *>(focusedElement);
     }
@@ -1769,23 +1809,35 @@ namespace PlutoGE::render
                 mouseY = -1;
             }
         }
+        m_worldContext->ProcessMouseMove(mouseX, mouseY, modifiers);
         m_context->ProcessMouseMove(mouseX, mouseY, modifiers);
+        auto *pointerContext = m_pointerContext ? m_pointerContext :
+            (m_context->IsMouseInteracting() || !m_worldContext->IsMouseInteracting() ? m_context : m_worldContext);
+        bool anyButtonDown = false;
+        for (int button = 0; button < 8; ++button)
+            anyButtonDown = anyButtonDown || input.IsMouseButtonDown(static_cast<std::uint16_t>(button));
 
         for (int button = 0; button < 8; ++button)
         {
             if (input.IsMouseButtonPressed(static_cast<std::uint16_t>(button)))
-                m_context->ProcessMouseButtonDown(button, modifiers);
+            {
+                m_pointerContext = pointerContext;
+                m_keyboardContext = pointerContext;
+                pointerContext->ProcessMouseButtonDown(button, modifiers);
+            }
             if (input.IsMouseButtonReleased(static_cast<std::uint16_t>(button)))
-                m_context->ProcessMouseButtonUp(button, modifiers);
+                pointerContext->ProcessMouseButtonUp(button, modifiers);
         }
         if (input.mouseState.scrollDeltaX != 0.0 || input.mouseState.scrollDeltaY != 0.0)
         {
-            m_context->ProcessMouseWheel(
+            pointerContext->ProcessMouseWheel(
                 {-static_cast<float>(input.mouseState.scrollDeltaX),
                  -static_cast<float>(input.mouseState.scrollDeltaY)},
                 modifiers);
         }
 
+        if (!anyButtonDown) m_pointerContext = nullptr;
+        auto *keyboardContext = m_keyboardContext ? m_keyboardContext : m_context;
         for (int key = 0; key < static_cast<int>(input.keys.size()); ++key)
         {
             const auto identifier = RmlGLFW::ConvertKey(key);
@@ -1795,9 +1847,9 @@ namespace PlutoGE::render
             {
                 if (identifier == Rml::Input::KI_TAB)
                 {
-                    Rml::Element *previous = m_context->GetFocusElement();
-                    m_context->ProcessKeyDown(identifier, modifiers);
-                    Rml::Element *current = m_context->GetFocusElement();
+                    Rml::Element *previous = keyboardContext->GetFocusElement();
+                    keyboardContext->ProcessKeyDown(identifier, modifiers);
+                    Rml::Element *current = keyboardContext->GetFocusElement();
                     if (current != previous)
                     {
                         if (auto *textInput = rmlui_dynamic_cast<Rml::ElementFormControlInput *>(current))
@@ -1806,20 +1858,20 @@ namespace PlutoGE::render
                 }
                 else
                 {
-                    m_context->ProcessKeyDown(identifier, modifiers);
+                    keyboardContext->ProcessKeyDown(identifier, modifiers);
                 }
             }
             if (!input.keys[key] && input.previousKeys[key])
-                m_context->ProcessKeyUp(identifier, modifiers);
+                keyboardContext->ProcessKeyUp(identifier, modifiers);
         }
         for (const int key : input.repeatedKeys)
         {
             const auto identifier = RmlGLFW::ConvertKey(key);
             if (identifier != Rml::Input::KI_UNKNOWN)
-                m_context->ProcessKeyDown(identifier, modifiers);
+                keyboardContext->ProcessKeyDown(identifier, modifiers);
         }
         for (const auto codepoint : input.textInput)
-            m_context->ProcessTextInput(static_cast<Rml::Character>(codepoint));
+            keyboardContext->ProcessTextInput(static_cast<Rml::Character>(codepoint));
     }
 
     void RmlUiRuntime::Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
@@ -1848,6 +1900,7 @@ namespace PlutoGE::render
             m_width = width;
             m_height = height;
             m_context->SetDimensions({width, height});
+            m_worldContext->SetDimensions({width, height});
             m_renderer->SetViewport(width, height);
             m_documentScales.clear();
         }
@@ -1869,6 +1922,7 @@ namespace PlutoGE::render
         if (frameSequence != m_lastInputFrame)
         {
             ProcessInput(window, scene);
+            m_worldContext->Update();
             m_context->Update();
             m_lastInputFrame = frameSequence;
         }
@@ -1897,6 +1951,7 @@ namespace PlutoGE::render
         m_cpuTiming.copiedBackdrop = needsBackdrop;
 
         const auto renderBegin = Clock::now();
+        m_worldContext->Render();
         m_context->Render();
         m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
 
@@ -1933,6 +1988,7 @@ namespace PlutoGE::render
             m_width = width;
             m_height = height;
             m_context->SetDimensions({width, height});
+            m_worldContext->SetDimensions({width, height});
             m_rhiRenderer->SetViewport(width, height);
             m_documentScales.clear();
         }
@@ -1957,6 +2013,7 @@ namespace PlutoGE::render
         {
             core::CpuScope updateScope("Runtime UI input and layout", core::CpuCategory::UI);
             ProcessInput(window, scene);
+            m_worldContext->Update();
             m_context->Update();
             m_lastInputFrame = frameSequence;
         }
@@ -1971,6 +2028,7 @@ namespace PlutoGE::render
         try
         {
             core::CpuScope renderScope("Runtime UI draw", core::CpuCategory::UI);
+            m_worldContext->Render();
             m_context->Render();
             renderScope.End();
             m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());

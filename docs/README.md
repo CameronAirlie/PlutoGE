@@ -47,7 +47,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Voxel global illumination | [World cache](vct-world-cache.md), [secondary bounce](vct-secondary-bounce.md) |
 | Water | [Ocean waves, foam, ripples and caustics](OCEAN_WATER_EFFECTS.md) |
 | Stylized rendering | [Toon shaders](ToonShaders.md), [outlines](OutlineShaders.md) |
-| Document UI | [RmlUi quick start](RMLUI_QUICKSTART.md), [integration](RMLUI_INTEGRATION.md) |
+| Document UI | [RML authoring guide for developers and agents](RMLUI_AUTHORING.md), [feature reference](RMLUI_REFERENCE.md), [quick start](RMLUI_QUICKSTART.md), [integration](RMLUI_INTEGRATION.md) |
 | Multiplayer transport | [Networking](NETWORKING.md) |
 | Multiplayer entity state and sessions | [Entity replication](ENTITY_REPLICATION.md) |
 | Measuring performance | [Profiler](PROFILER.md) |

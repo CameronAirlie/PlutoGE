@@ -541,3 +541,9 @@ target_include_directories(PlutoGESourceTextEditorTests PRIVATE ${CMAKE_SOURCE_D
 target_link_libraries(PlutoGESourceTextEditorTests PRIVATE PlutoGE::imgui)
 target_compile_features(PlutoGESourceTextEditorTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGESourceTextEditorTests COMMAND PlutoGESourceTextEditorTests)
+
+add_executable(PlutoGERmlUiInterfaceScaleTests RmlUiInterfaceScaleTests.cpp)
+pluto_link_engine(PlutoGERmlUiInterfaceScaleTests)
+target_link_libraries(PlutoGERmlUiInterfaceScaleTests PRIVATE RmlUi::Core)
+add_test(NAME PlutoGEVulkanUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests)
+add_test(NAME PlutoGEOpenGLUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests --opengl)

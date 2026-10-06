@@ -604,6 +604,7 @@ namespace PlutoGE::render
         [[nodiscard]] const BasicRendererFrameStats &GetFrameStats() const noexcept { return m_frameStats; }
         // Diagnostic reference: same scheduling and lighting, full-volume publication.
         void SetIncrementalVctPublicationEnabled(bool enabled) noexcept { m_incrementalVctPublication = enabled; }
+        void SetTransparentBackground(bool enabled) noexcept { m_transparentBackground = enabled; }
         void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
         { if (m_virtualShadows) m_virtualShadows->SetMembershipCachingEnabled(enabled); }
         [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
@@ -879,6 +880,7 @@ namespace PlutoGE::render
         std::vector<PointShadowResources> m_pointShadowResources;
         std::array<rhi::Texture, 4> m_shadowColorTargets;
         std::array<rhi::Texture, 4> m_shadowDepthTargets;
+        bool m_transparentBackground = false;
         std::array<std::uint32_t, 4> m_shadowResolutions{};
         std::array<std::uint64_t, 4> m_shadowContentSignatures{};
         std::array<std::uint64_t, 4> m_shadowInputSignatures{};

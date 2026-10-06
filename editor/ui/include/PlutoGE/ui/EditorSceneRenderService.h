@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -43,6 +44,9 @@ namespace PlutoGE::ui
         bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
         bool SetGraphicsQuality(const render::GraphicsQuality &quality) noexcept;
+        void SetRuntimeGraphicsQuality(std::optional<render::GraphicsQuality> quality) noexcept;
+        [[nodiscard]] const render::GraphicsQuality &GetGraphicsQuality() const noexcept
+        { return m_runtimeGraphicsQuality ? *m_runtimeGraphicsQuality : m_graphicsQuality; }
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
         void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
@@ -81,6 +85,9 @@ namespace PlutoGE::ui
         }
 
     private:
+        void ApplyGraphicsQuality() noexcept;
+        render::GraphicsQuality m_graphicsQuality;
+        std::optional<render::GraphicsQuality> m_runtimeGraphicsQuality;
         render::OcclusionMode m_occlusionMode = render::OcclusionMode::Off;
         render::GeometryDiagnosticMode m_geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;

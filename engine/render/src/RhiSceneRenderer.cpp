@@ -15,6 +15,7 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -263,6 +264,7 @@ namespace PlutoGE::render
         m_timingStats = {};
         if (!m_renderer || !m_device || width == 0 || height == 0)
             return false;
+        m_renderer->SetTransparentBackground(m_transparentBackground);
         const rhi::Extent2D outputSize{width, height};
         const bool temporalUpscalerRequested = m_upscalerOptions.technology != rhi::TemporalUpscaler::None;
         const auto upscalerSupport = temporalUpscalerRequested
@@ -1136,7 +1138,7 @@ namespace PlutoGE::render
             draw.texture = {};
             return draw;
         };
-        if (scene && m_sceneEffectsEnabled)
+        if (scene && m_particleEffectsEnabled)
         {
             core::CpuScope particleScope("Particle render preparation", core::CpuCategory::Rendering);
             const auto inverseView = glm::inverse(cameraData.view);
@@ -1151,7 +1153,8 @@ namespace PlutoGE::render
             };
             for (const auto *system : scene->GetParticleSystemComponents())
             {
-                if (!system || !system->IsEnabled() || !system->GetOwner() || !system->GetOwner()->IsActive())
+                if (!system || !system->IsEnabled() || !system->GetOwner() || !system->GetOwner()->IsActiveInHierarchy() ||
+                    (cameraData.tagFilter && !cameraData.tagFilter->Accepts(system->GetOwner())))
                     continue;
                 if (system->GetParticleCount() == 0 && !system->GetTrailsEnabled())
                     continue;

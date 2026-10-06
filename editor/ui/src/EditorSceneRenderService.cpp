@@ -149,11 +149,25 @@ namespace PlutoGE::ui
 
     bool EditorSceneRenderService::SetGraphicsQuality(const render::GraphicsQuality &quality) noexcept
     {
-        if (!quality.IsValid() || !m_sceneRenderer) return false;
-        m_sceneRenderer->SetGraphicsQuality(quality);
+        if (!quality.IsValid()) return false;
+        m_graphicsQuality = quality;
+        ApplyGraphicsQuality();
+        return true;
+    }
+
+    void EditorSceneRenderService::SetRuntimeGraphicsQuality(std::optional<render::GraphicsQuality> quality) noexcept
+    {
+        if (quality && !quality->IsValid()) return;
+        m_runtimeGraphicsQuality = quality;
+        ApplyGraphicsQuality();
+    }
+
+    void EditorSceneRenderService::ApplyGraphicsQuality() noexcept
+    {
+        const auto &quality = GetGraphicsQuality();
+        if (m_sceneRenderer) m_sceneRenderer->SetGraphicsQuality(quality);
         m_cameraStack.SetGraphicsQuality(quality);
         m_renderTextures.SetGraphicsQuality(quality);
-        return true;
     }
 
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
@@ -170,6 +184,8 @@ namespace PlutoGE::ui
         core::CpuScope preparationScope("Viewport lighting and atmosphere", core::CpuCategory::Rendering);
         if (!m_sceneRenderer || !m_device)
             return false;
+
+        ApplyGraphicsQuality();
 
         auto lighting = lights ? render::BuildSceneLighting(cameraData, scene, *lights)
                                : render::BuildSceneLighting(cameraData, scene);

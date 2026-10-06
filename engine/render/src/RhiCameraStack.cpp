@@ -23,6 +23,7 @@ namespace PlutoGE::render
         m_sampler.Reset();
         m_parameters.Reset();
         m_temporalCompositePipeline.Reset();
+        m_temporalTransparencyPipeline.Reset();
         m_temporalMetadataPipeline.Reset();
         m_temporalMetadata.Reset();
         m_metadataSize = {};
@@ -42,6 +43,8 @@ namespace PlutoGE::render
             auto renderer = std::make_unique<RhiSceneRenderer>();
             renderer->SetSubmissionLabel("Camera overlay");
             renderer->SetSceneEffectsEnabled(false);
+            renderer->SetParticleEffectsEnabled(true);
+            renderer->SetTransparentBackground(true);
             if (!renderer->Initialize(*m_device, shaders))
                 return nullptr;
             m_overlayRenderers.push_back(std::move(renderer));
@@ -80,7 +83,7 @@ namespace PlutoGE::render
 
     bool RhiCameraStackCompositor::EnsureTemporalCompositePipelines()
     {
-        if (m_temporalCompositePipeline && m_temporalMetadataPipeline)
+        if (m_temporalCompositePipeline && m_temporalTransparencyPipeline && m_temporalMetadataPipeline)
             return true;
         const ShaderArtifactLibrary shaders;
         rhi::GraphicsPipelineDescriptor descriptor;
@@ -100,6 +103,14 @@ namespace PlutoGE::render
             {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
         descriptor.debugName = "HDR camera stack composite";
         m_temporalCompositePipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
+        descriptor.fragmentShader = shaders.Load("CameraStackTemporalTransparency", "fragment");
+        descriptor.colorFormats = {rhi::Format::R16G16B16A16Float};
+        descriptor.depthFormat = rhi::Format::Undefined;
+        descriptor.depthTest = descriptor.depthWrite = false;
+        descriptor.blend.enabled = true;
+        descriptor.debugName = "HDR camera stack transparency";
+        m_temporalTransparencyPipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
+        descriptor.blend.enabled = false;
         descriptor.vertexShader = shaders.Load("CameraStackTemporalMetadata", "vertex");
         descriptor.fragmentShader = shaders.Load("CameraStackTemporalMetadata", "fragment");
         descriptor.colorFormats = {rhi::Format::R32G32Float};
@@ -112,7 +123,7 @@ namespace PlutoGE::render
         m_temporalMetadataPipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         if (!m_sampler)
             m_sampler = rhi::Sampler(*m_device, m_device->CreateSampler({}));
-        return m_temporalCompositePipeline && m_temporalMetadataPipeline && m_sampler;
+        return m_temporalCompositePipeline && m_temporalTransparencyPipeline && m_temporalMetadataPipeline && m_sampler;
     }
 
     bool RhiCameraStackCompositor::CompositeBeforeTemporalResolve(
@@ -221,6 +232,18 @@ namespace PlutoGE::render
             commands.BindTexture(2, renderer.GetDepthTexture(), m_sampler.Get());
             commands.BindTexture(3, renderer.GetNormalTexture(), m_sampler.Get());
             commands.BindTexture(4, renderer.GetMotionTexture(), m_sampler.Get());
+            commands.Draw(3);
+            commands.EndRendering();
+            // Particles outside opaque coverage blend only colour. They must
+            // not replace world depth, normals or reprojection metadata.
+            auto transparency = info;
+            transparency.colorAttachments = {base.GetColorTexture()};
+            transparency.depthAttachment = {};
+            commands.BeginRendering(transparency);
+            commands.BindPipeline(m_temporalTransparencyPipeline.Get());
+            commands.BindUniformBuffer(0, m_temporalParameters[index + 1].Get());
+            commands.BindTexture(1, renderer.GetColorTexture(), m_sampler.Get());
+            commands.BindTexture(2, renderer.GetDepthTexture(), m_sampler.Get());
             commands.Draw(3);
             commands.EndRendering();
         }

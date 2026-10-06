@@ -33,7 +33,13 @@ GraphicsSettings.TryResetQuality(); // Restore authored quality
 
 `QualitySupported` checks bridge availability. Unsupported calls return false; invalid enums, non-finite distances and out-of-range values throw argument exceptions before crossing the bridge. Native setters also validate. Call on the script/main thread. The 16-byte ABI uses fixed-width integers, a float and explicit flags; presets originate in native code.
 
-Native hosts use `RhiRenderService::SetGraphicsQuality` with customised `GraphicsQuality::FromPreset` values. Direct scene renderers can opt in with `SetGraphicsQuality`; the editor scene view retains authored defaults, while the game preview follows runtime quality during Play and restores authored quality on stop.
+Native hosts use `RhiRenderService::SetGraphicsQuality` with customised `GraphicsQuality::FromPreset` values. Direct scene renderers can opt in with `SetGraphicsQuality`.
+
+## Editor
+
+Open a viewport's **Quality** popup and select **Graphics preset**: Scene settings, Low, Medium, High or Ultra. Scene settings restores authored quality; a customised runtime policy displays Custom. This control requires the RHI preview.
+
+Scene and Game viewports retain independent preview selections for the editor session. During Play, the Game viewport follows runtime quality, and changing its preset updates the runtime policy immediately, including what scripts read. Stopping Play restores its previous preview selection. The Scene viewport keeps its own selection throughout. Preview choices do not modify scene assets or the game's saved preferences.
 
 ## CoD
 

@@ -58,3 +58,14 @@ struct CompositeOutput
     output.depth = depth;
     return output;
 }
+
+[shader("fragment")] float4 transparencyMain(FullscreenVertexOutput input) : SV_Target
+{
+    const float2 uv = orientFullscreenUv(input.uv, uint(options.x));
+    if (cameraDepth.SampleLevel(uv, 0).r > 0.000001)
+        discard;
+    const float4 color = cameraColor.SampleLevel(uv, 0);
+    if (color.a <= 0.000001)
+        discard;
+    return color; // Premultiplied radiance and coverage from particle rendering.
+}

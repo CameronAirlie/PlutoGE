@@ -7,6 +7,8 @@
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include <array>
 #include <optional>
@@ -173,6 +175,51 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     require(partialCoverage(resolved) > 10, "Resizing the camera stack lost temporal edge coverage");
     require(base.Render(size, size, camera, lighting, baseCommands, baseCommands),
             "Camera stack base size restoration failed");
+
+    // A weapon flash has no mesh depth and is excluded from the base camera.
+    // Its premultiplied colour must survive the HDR overlay boundary anyway.
+    PlutoGE::scene::Scene particleScene;
+    auto flashEntity = std::make_unique<PlutoGE::scene::Entity>();
+    flashEntity->AddTag("Weapon");
+    auto *flash = flashEntity->CreateComponent<PlutoGE::scene::ParticleSystemComponent>();
+    flash->SetPlayOnAwake(false);
+    flash->SetEmissionRateOverTime(0);
+    flash->SetStartSpeed(0);
+    flash->SetStartSize(.45f);
+    flash->SetStartLifetime(1);
+    flash->SetStartColor({0, 1, 0, .5f});
+    flash->SetRenderShape(PlutoGE::assets::ParticleRenderShape::Quad);
+    particleScene.AddEntity(std::move(flashEntity));
+    flash->EmitAt({0, 0, .2f}, 1);
+    PlutoGE::scene::CameraTagFilter worldTags({}, {"Weapon"});
+    PlutoGE::scene::CameraTagFilter weaponTags({"Weapon"}, {});
+    auto worldCamera = camera;
+    worldCamera.tagFilter = &worldTags;
+    auto weaponCamera = camera;
+    weaponCamera.tagFilter = &weaponTags;
+    const std::array flashOverlay{CameraView{.cameraData = weaponCamera}};
+    const BasicRenderer::BeforeTemporalResolve composeFlash = [&](BasicRenderer &renderer, glm::vec2 jitter)
+    {
+        require(compositor.CompositeBeforeTemporalResolve(device, renderer, jitter, flashOverlay, {}, &particleScene),
+                "Particle camera overlay composition failed");
+    };
+    require(base.Render(size, size, worldCamera, lighting, baseCommands, baseCommands, {}, {}, {},
+                        PostProcessDebugView::None, true, &particleScene), "Particle exclusion render failed");
+    auto excludedFlash = readPixels(base.GetColorTexture());
+    const auto centre = (size / 2) * size + size / 2;
+    require(isRed(excludedFlash, centre), "Weapon particles leaked into the base camera");
+    require(base.Render(size, size, worldCamera, lighting, baseCommands, baseCommands, {}, {}, {},
+                        PostProcessDebugView::None, true, &particleScene, std::nullopt, composeFlash),
+            "Muzzle flash overlay render failed");
+    const auto flashed = readPixels(base.GetColorTexture());
+    require(channel(flashed, centre, 1) > 60 && channel(flashed, centre, 0) > 60,
+            "Transparent overlay flash was discarded or replaced the world background");
+    require(isRed(flashed, 0), "Transparent camera clear colour leaked outside muzzle flash coverage");
+    flash->Clear();
+    require(base.Render(size, size, worldCamera, lighting, baseCommands, baseCommands, {}, {}, {},
+                        PostProcessDebugView::None, true, &particleScene, std::nullopt, composeFlash),
+            "Expired muzzle flash overlay render failed");
+    require(isRed(readPixels(base.GetColorTexture()), centre), "Cleared muzzle flash remained visible");
 
     // The overlay sees a receiver, but a world mesh excluded from its visible
     // commands must still cast onto it. A bright red caster also makes any

@@ -2294,6 +2294,11 @@ namespace PlutoGE::render
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
+        if (m_transparentBackground)
+        {
+            std::fill(std::begin(renderingInfo.clearColorValue), std::end(renderingInfo.clearColorValue), 0.0f);
+            renderingInfo.clearColorValues[0] = {0, 0, 0, 0};
+        }
         // Current-frame coverage must include exactly the same temporal jitter.
         glm::mat4 occlusionProjection = viewProjection;
         for (int column = 0; column < 4; ++column)

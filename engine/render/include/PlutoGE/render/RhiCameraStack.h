@@ -19,9 +19,9 @@ namespace PlutoGE::render
     //
     // Each overlay is rendered by its own scene renderer so its depth buffer,
     // motion history and caches stay independent of the base view. The shared
-    // temporal resolve runs after composition. Coverage is taken from overlay
-    // depth, so opaque and alpha-tested geometry
-    // composites; transparent-only overlay surfaces and particles do not.
+    // temporal resolve runs after composition. Depth supplies opaque coverage;
+    // premultiplied alpha supplies particle coverage without replacing world
+    // depth or motion metadata.
     class RhiCameraStackCompositor
     {
     public:
@@ -65,6 +65,7 @@ namespace PlutoGE::render
         rhi::Sampler m_sampler;
         rhi::Buffer m_parameters;
         rhi::GraphicsPipeline m_temporalCompositePipeline;
+        rhi::GraphicsPipeline m_temporalTransparencyPipeline;
         rhi::GraphicsPipeline m_temporalMetadataPipeline;
         rhi::Texture m_temporalMetadata;
         rhi::Extent2D m_metadataSize;

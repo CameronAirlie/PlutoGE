@@ -8,6 +8,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/render/SpatialUpscaler.h"
+#include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TexturePainter.h"
@@ -2279,6 +2280,39 @@ namespace PlutoGE::ui
         if (ImGui::BeginPopup("QualityPopup"))
         {
             overlayPopupOpen = true;
+            if (m_rhiRenderService)
+            {
+                const auto &quality = m_rhiRenderService->GetGraphicsQuality();
+                int preset = quality.enabled ? 5 : 0;
+                if (quality.enabled)
+                    for (int index = 0; index < 4; ++index)
+                        if (quality == render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index)))
+                            preset = index + 1;
+                ImGui::BeginDisabled(!m_rhiRenderService->IsInitialized() ||
+                    (!m_useRhiPreview && m_config.graphicsApi != render::rhi::GraphicsApi::Vulkan));
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::BeginCombo("Graphics preset", preset == 5 ? "Custom" :
+                    std::array<const char *, 5>{"Scene settings", "Low", "Medium", "High", "Ultra"}[preset]))
+                {
+                    constexpr std::array<const char *, 5> names{"Scene settings", "Low", "Medium", "High", "Ultra"};
+                    for (int index = 0; index < static_cast<int>(names.size()); ++index)
+                        if (ImGui::Selectable(names[index], preset == index))
+                        {
+                            const auto selected = index == 0 ? render::GraphicsQuality{} :
+                                render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index - 1));
+                            auto &engine = core::Engine::GetInstance();
+                            if (!m_config.editorViewport && engine.IsRuntimeRunning())
+                            {
+                                engine.GetRhiRenderService().SetGraphicsQuality(selected);
+                                m_rhiRenderService->SetRuntimeGraphicsQuality(selected);
+                            }
+                            else m_rhiRenderService->SetGraphicsQuality(selected);
+                        }
+                    ImGui::EndCombo();
+                }
+                ImGui::EndDisabled();
+                ImGui::Separator();
+            }
             const auto upscaler = m_rhiRenderService
                                       ? m_rhiRenderService->GetTemporalUpscalerStatus()
                                       : render::TemporalUpscalerStatus{};

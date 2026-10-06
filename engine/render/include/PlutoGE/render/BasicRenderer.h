@@ -258,6 +258,7 @@ namespace PlutoGE::render
         std::size_t m_vertexCount = 0;
         std::uint64_t m_revision = 0;
         mutable std::vector<BasicVertex> m_pendingVertices;
+        mutable std::shared_ptr<const std::vector<BasicVertex>> m_pendingSharedVertices;
         std::vector<std::uint32_t> m_shadowIndices;
         std::vector<ShadowGeometryCluster> m_shadowClusters;
     };
@@ -561,6 +562,10 @@ namespace PlutoGE::render
         // retain the mesh's contiguous index ranges. Empty uses exact CPU bounds.
         void UpdateMeshVertices(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged = true,
                                 std::span<const ShadowGeometryCluster> shadowClusters = {});
+        // Retains the completed stream until Render records its upload. The
+        // caller must not mutate it before then; no CPU staging copy is made.
+        void UpdateSharedMeshVertices(BasicMesh &mesh, std::shared_ptr<const std::vector<BasicVertex>> vertices,
+                                      bool geometryChanged = true, std::span<const ShadowGeometryCluster> shadowClusters = {});
         bool Resize(std::uint32_t width, std::uint32_t height,
                     std::uint32_t outputWidth = 0, std::uint32_t outputHeight = 0);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
@@ -617,6 +622,8 @@ namespace PlutoGE::render
         }
 
     private:
+        void PrepareMeshVertexUpdate(BasicMesh &mesh, std::span<const BasicVertex> vertices, bool geometryChanged,
+                                     std::span<const ShadowGeometryCluster> shadowClusters);
         [[nodiscard]] rhi::PipelineHandle GeometryPipeline(const BasicDraw &draw, bool instanced,
             GeometryOutputLayout layout, bool depthOnly, bool prepassed);
         void EnsureGeometryTargets(GeometryOutputLayout layout);

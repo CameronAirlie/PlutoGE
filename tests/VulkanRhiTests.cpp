@@ -21,6 +21,7 @@
 #include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SkinningRenderingChecks.h"
+#include "BufferUploadChecks.h"
 #include "SkyQuadratureChecks.h"
 #include "SsrRenderingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
@@ -256,6 +257,11 @@ int main(int argc, char **argv)
             CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
                 return device.ReadTextureRgba8(texture);
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--buffer-uploads")
+        {
+            CheckLargeBufferUploads(device);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--decals-only")

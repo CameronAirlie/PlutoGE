@@ -6,6 +6,7 @@
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <utility>
 
 namespace PlutoGE::scene
 {
@@ -26,8 +27,8 @@ namespace PlutoGE::render
     // Renders cameras into render textures before the frame's on-screen views,
     // then publishes each image on its RenderTexture for materials to sample.
     //
-    // Every target keeps its own scene renderer, so temporal history and
-    // caches are per camera. A material that samples a texture being rendered
+    // Every target keeps its own scene renderer and temporal history; skinning
+    // is shared across this scene frame. A material sampling a texture rendered
     // in the same pass sees the previous frame's image.
     class RhiRenderTextureRenderer
     {
@@ -46,9 +47,17 @@ namespace PlutoGE::render
         // Unpublishes every live render texture this renderer drew.
         void Shutdown();
 
-        // Submits its own frames; call while no frame is recording.
+        // Submits its own frames; call while no frame is recording, once per
+        // scene frame before the on-screen view (also when views is empty).
         bool Render(rhi::IRenderDevice &device, std::span<const RenderTextureView> views,
                     const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene);
+
+        // Consume only for the on-screen view immediately following Render.
+        // Poses must remain immutable until all views in the scene frame finish.
+        const RhiSceneRenderer *TakeSkinningSource() noexcept
+        {
+            return std::exchange(m_skinningSource, nullptr);
+        }
 
     private:
         GraphicsQuality m_graphicsQuality;
@@ -65,6 +74,7 @@ namespace PlutoGE::render
         void ReleaseExpiredTargets();
 
         rhi::IRenderDevice *m_device = nullptr;
+        const RhiSceneRenderer *m_skinningSource = nullptr;
         std::unordered_map<RenderTexture *, Target> m_targets;
         rhi::GraphicsPipeline m_resolvePipeline;
         rhi::Sampler m_sampler;

@@ -234,7 +234,7 @@ namespace PlutoGE::render
       {
           std::weak_ptr<const void> lifetime;
           BasicMesh mesh;
-          std::vector<BasicVertex> vertices;
+          std::shared_ptr<std::vector<BasicVertex>> vertices = std::make_shared<std::vector<BasicVertex>>();
           std::vector<glm::mat4> pose;
           std::shared_ptr<RhiSkinnedShadowBounds> shadowBounds;
           std::vector<ShadowGeometryCluster> shadowClusters;
@@ -272,6 +272,8 @@ namespace PlutoGE::render
       std::optional<std::pair<std::uint64_t, std::uint64_t>> m_reusedSkinningFrame;
       bool m_borrowedSkinningCache = false;
       std::uint64_t m_skinningFrame = 0;
+      // Per-view material/packet aging must not follow a borrowed camera's clock.
+      std::uint64_t m_preparationFrame = 0;
       std::uint64_t m_skinningHistoryEpoch = 0;
       std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
       std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;

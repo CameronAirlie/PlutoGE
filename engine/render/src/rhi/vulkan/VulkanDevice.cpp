@@ -1127,6 +1127,8 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 for (auto &readback : frame.readbacks)
                     vmaDestroyBuffer(m_impl.allocator, readback.buffer, readback.allocation);
+                for (auto &upload : frame.uploads)
+                    if (upload.buffer) vmaDestroyBuffer(m_impl.allocator, upload.buffer, upload.allocation);
                 if (frame.fence)
                     vkDestroyFence(m_impl.device, frame.fence, nullptr);
                 if (frame.queryPool)
@@ -1158,6 +1160,8 @@ namespace PlutoGE::render::rhi::vulkan
                 readback.callback = {};
             }
             frame.readbackCursor = 0;
+            frame.uploadCursor = 0;
+            for (auto &upload : frame.uploads) upload.used = 0;
             ResolveTimestamps(frame);
             if (frame.submissionSerial != 0)
                 m_impl.completedSubmission = std::max(m_impl.completedSubmission, frame.submissionSerial);
@@ -1173,7 +1177,10 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.descriptorCpuMs = 0.0f;
             m_impl.timingStats.uniformUploadCpuMs = 0.0f;
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
-            Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(frame)");
+            {
+                core::CpuScope resetScope("Vulkan command pool reset", core::CpuCategory::Rendering);
+                Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(frame)");
+            }
             auto &descriptorCache = m_descriptorSetCaches[m_frameIndex];
             if (m_descriptorPoolResetPending[m_frameIndex] ||
                 descriptorCache.size() >= MaxCachedDescriptorSetsPerFrame)
@@ -1349,6 +1356,10 @@ namespace PlutoGE::render::rhi::vulkan
             while (!m_activeScopes.empty())
                 EndGpuScope();
             m_impl.FlushUniformArena();
+            for (auto &upload : frame.uploads)
+                if (upload.used)
+                    Check(vmaFlushAllocation(m_impl.allocator, upload.allocation, 0, upload.used),
+                          "vmaFlushAllocation(buffer uploads)");
             if (frame.profilingEnabled)
             {
                 vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
@@ -1593,6 +1604,41 @@ namespace PlutoGE::render::rhi::vulkan
             PrepareDraw();
             vkCmdDrawIndexedIndirect(CommandBuffer(), buffer->buffer, offset, count, sizeof(VkDrawIndexedIndirectCommand));
             ++m_impl.timingStats.indexedDrawCalls;
+        }
+
+        // Frame-local, append-only storage keeps CPU writes away from data still
+        // consumed by the GPU. Recycle only after this slot's fence completes.
+        void StageBufferUpload(VkBuffer destination, std::size_t offset, std::span<const std::byte> data)
+        {
+            if (!m_recording || m_rendering)
+                throw std::logic_error("Staged buffer uploads require recording outside rendering");
+            auto &frame = m_frames[m_frameIndex];
+            while (frame.uploadCursor < frame.uploads.size() &&
+                   data.size() > frame.uploads[frame.uploadCursor].capacity - frame.uploads[frame.uploadCursor].used)
+                ++frame.uploadCursor;
+            if (frame.uploadCursor == frame.uploads.size())
+            {
+                FrameResources::Upload upload;
+                upload.capacity = std::max(std::size_t{16 * 1024 * 1024}, data.size());
+                VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                info.size = upload.capacity;
+                info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                VmaAllocationCreateInfo allocation{};
+                allocation.usage = VMA_MEMORY_USAGE_AUTO;
+                allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo mapped{};
+                // Reserve before allocating so vector growth cannot leak a Vulkan allocation.
+                frame.uploads.reserve(frame.uploads.size() + 1);
+                Check(vmaCreateBuffer(m_impl.allocator, &info, &allocation, &upload.buffer, &upload.allocation, &mapped),
+                      "vmaCreateBuffer(upload arena)");
+                upload.mapped = mapped.pMappedData;
+                frame.uploads.push_back(upload);
+            }
+            auto &upload = frame.uploads[frame.uploadCursor];
+            std::memcpy(static_cast<std::byte *>(upload.mapped) + upload.used, data.data(), data.size());
+            const VkBufferCopy copy{upload.used, offset, data.size()};
+            vkCmdCopyBuffer(CommandBuffer(), upload.buffer, destination, 1, &copy);
+            upload.used += data.size(); // UpdateBuffer requires four-byte aligned sizes.
         }
 
         bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
@@ -2011,6 +2057,15 @@ namespace PlutoGE::render::rhi::vulkan
             };
             std::vector<Readback> readbacks;
             std::size_t readbackCursor = 0;
+            struct Upload
+            {
+                VkBuffer buffer = VK_NULL_HANDLE;
+                VmaAllocation allocation = VK_NULL_HANDLE;
+                void *mapped = nullptr;
+                std::size_t capacity = 0, used = 0;
+            };
+            std::vector<Upload> uploads;
+            std::size_t uploadCursor = 0;
         };
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
@@ -3275,9 +3330,13 @@ namespace PlutoGE::render::rhi::vulkan
             before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  0, 1, &before, 0, nullptr, 0, nullptr);
-            for (std::size_t cursor = 0; cursor < data.size(); cursor += 65536)
-                vkCmdUpdateBuffer(commandBuffer, resource->buffer, offset + cursor,
-                                  std::min(std::size_t{65536}, data.size() - cursor), data.data() + cursor);
+            // Large inline updates copy megabytes into the driver's command pool
+            // and make both recording and its next reset expensive. Keep small
+            // updates inline; stream large vertex/storage payloads through copies.
+            if (data.size() > 65536)
+                m_impl->context->StageBufferUpload(resource->buffer, offset, data);
+            else if (!data.empty())
+                vkCmdUpdateBuffer(commandBuffer, resource->buffer, offset, data.size(), data.data());
             VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |

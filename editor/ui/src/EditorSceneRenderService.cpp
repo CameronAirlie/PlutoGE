@@ -213,6 +213,8 @@ namespace PlutoGE::ui
             if (debugView != render::PostProcessDebugView::None)
                 overlays = {};
             render::BasicRenderer::BeforeTemporalResolve compose;
+            if (const auto *source = m_renderTextures.TakeSkinningSource())
+                m_sceneRenderer->ReuseSkinningForFrame(*source);
             if (!overlays.empty())
                 compose = [&](render::BasicRenderer &base, glm::vec2 jitter)
                 {

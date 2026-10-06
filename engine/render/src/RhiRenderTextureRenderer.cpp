@@ -17,6 +17,7 @@ namespace PlutoGE::render
 
     void RhiRenderTextureRenderer::Shutdown()
     {
+        m_skinningSource = nullptr;
         for (auto &[texture, target] : m_targets)
         {
             // Never leave a material sampling an image this renderer destroys.
@@ -91,6 +92,7 @@ namespace PlutoGE::render
                                           const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                           const scene::Scene *scene)
     {
+        m_skinningSource = nullptr;
         if (m_device != &device)
         {
             Shutdown();
@@ -103,6 +105,7 @@ namespace PlutoGE::render
             return false;
 
         auto &commands = device.GetImmediateContext();
+        const RhiSceneRenderer *skinningSource = nullptr;
         for (const auto &view : views)
         {
             if (!view.target)
@@ -129,6 +132,7 @@ namespace PlutoGE::render
                                                    : BuildSceneLighting(view.view.cameraData, scene);
             const auto atmosphere = BuildSceneAtmosphere(scene, lighting, view.view.cameraData.tagFilter);
             target->renderer->SetGraphicsQuality(m_graphicsQuality);
+            if (skinningSource) target->renderer->ReuseSkinningForFrame(*skinningSource);
             if (!target->renderer->Render(width, height, view.view.cameraData, lighting, view.view.commands,
                                           view.view.shadowCommands.empty() ? view.view.commands : view.view.shadowCommands,
                                           view.view.postProcessEffects, atmosphere,
@@ -173,7 +177,9 @@ namespace PlutoGE::render
             commands.EndGpuScope();
             commands.Submit();
             view.target->PublishGpuTexture(&device, target->image.Get());
+            if (!skinningSource) skinningSource = target->renderer.get();
         }
+        m_skinningSource = skinningSource;
         return true;
     }
 }

@@ -3,6 +3,8 @@
 #include <chrono>
 #include "../engine/render/src/RhiSkinning.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/RhiRenderTextureRenderer.h"
+#include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/import/MeshImporter.h"
@@ -88,6 +90,17 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
             "Camera stack repeated deformation or vertex uploads");
     require(readPixels(overlay.GetColorTexture())==moved,"Shared skinning changed rendered geometry");
     require(readPixels(overlay.GetMotionTexture())==motion,"Overlay prematurely settled skeletal velocity");
+    // Borrowing the same skinning frame again must still validate view-local
+    // material edits; shared geometry clocks are not preparation clocks.
+    auto editedRed = redConfig;
+    editedRed.emission = {0,0,1};
+    red.SetConfig(editedRed);
+    overlay.ReuseSkinningForFrame(renderer);
+    require(overlay.Render(128,128,camera,light,commands,commands), "Repeated shared-frame render failed");
+    require(readPixels(overlay.GetColorTexture()) != moved,
+            "Borrowed skinning frame skipped material validation");
+    require(overlay.GetTimingStats().skinningUpdateCount == 0, "Material edit invalidated shared skinning");
+    red.SetConfig(redConfig);
     const auto paused=render();
     require(paused==moved,"Paused skeletal geometry changed");
     require(renderer.GetTimingStats().skinningUpdateCount==0,"Paused pose repeated CPU deformation");
@@ -250,6 +263,33 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
             "Parallel renderer mixed independent actor histories");
     require(renderer.GetTimingStats().skinningUpdateCount == 1,
             "Parallel renderer repeated unchanged actor deformation");
+    // The minimap/render texture runs before the main view. All cameras must
+    // reuse its large streams, including when texture-camera order changes.
+    RhiRenderTextureRenderer textures;
+    RenderTexture textureA("SkinningA.plutorendertexture", {.width = 128, .height = 128});
+    RenderTexture textureB("SkinningB.plutorendertexture", {.width = 128, .height = 128});
+    std::array textureViews{
+        RenderTextureView{&textureA, {.cameraData = camera, .commands = commands}},
+        RenderTextureView{&textureB, {.cameraData = camera, .commands = commands}}};
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        poseA[0] = glm::translate(glm::mat4(1), glm::vec3(.03f * frame, .15f, 0));
+        if (frame == 2) std::swap(textureViews[0], textureViews[1]);
+        require(textures.Render(device, textureViews, {}, nullptr), "Skinned render textures failed");
+        const auto *source = textures.TakeSkinningSource();
+        require(source && !textures.TakeSkinningSource(), "Render texture skinning source must be consumed once");
+        renderer.ReuseSkinningForFrame(*source);
+        require(renderer.Render(128,128,camera,light,commands,commands), "Main render after textures failed");
+        require(renderer.GetTimingStats().skinningUpdateCount == 0 && renderer.GetTimingStats().skinningUploadMs == 0,
+                "Main camera repeated render texture skinning/uploads");
+        require(glm::distance(centroid(readPixels(renderer.GetColorTexture()),0), redBefore) > 5,
+                "Shared render texture cache lost animated geometry");
+    }
+    textures.Shutdown();
+    require(!textures.TakeSkinningSource(), "Shutdown retained a dangling skinning source");
+    render(); // No texture cameras: detach safely, retaining independent history.
+    require(renderer.GetTimingStats().skinningUpdateCount == 2,
+            "Standalone camera retained a borrowed frame cache");
     renderer.InvalidateAssetCache();
     render();
     renderer.Shutdown();

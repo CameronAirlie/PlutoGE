@@ -3369,7 +3369,9 @@ namespace PlutoGE::ui
             if (m_gameSceneRenderService)
                 m_gameSceneRenderService->SetRuntimeGraphicsQuality(m_engine.IsRuntimeRunning()
                     ? std::optional(m_engine.GetRhiRenderService().GetGraphicsQuality()) : std::nullopt);
-            if (m_scene && !gameCameraStack.textureCameras.empty())
+            // An empty pass also expires the previous frame's skinning lease
+            // when texture cameras are disabled or the game view was hidden.
+            if (m_scene)
             {
                 auto *textureService = m_gameSceneRenderService && m_gameSceneRenderService->IsInitialized()
                     ? m_gameSceneRenderService.get()

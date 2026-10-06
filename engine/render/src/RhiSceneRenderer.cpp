@@ -334,14 +334,15 @@ namespace PlutoGE::render
         if (!m_drawPreparation)
             m_drawPreparation = std::make_unique<RhiDrawPreparationCache>();
         auto &preparation = *m_drawPreparation;
-        preparation.BeginFrame(m_skinningFrame);
+        ++m_preparationFrame;
+        preparation.BeginFrame(m_preparationFrame);
         std::erase_if(m_meshes, [&](const auto &entry) {
             if (!entry.second.lifetime.expired() && entry.second.contentRevision == entry.first->GetContentRevision()) return false;
             preparation.InvalidateMesh(entry.first);
             return true;
         });
         std::erase_if(preparation.materials,
-                      [&](const auto &entry) { return entry.second.frame + 2 < m_skinningFrame; });
+                      [&](const auto &entry) { return entry.second.frame + 2 < m_preparationFrame; });
         // Retain offscreen poses briefly, but do not accumulate destroyed
         // animators indefinitely in scenes that spawn disposable characters.
         for (auto model = m_skinnedMeshes.begin(); model != m_skinnedMeshes.end(); )
@@ -450,14 +451,14 @@ namespace PlutoGE::render
         // per frame, then use its revision for every list and batching key.
         const auto prepareMaterial = [&](const Material *source) -> const RhiDrawPreparationCache::MaterialEntry & {
             auto &entry = preparation.materials[source];
-            if (entry.frame == m_skinningFrame)
+            if (entry.frame == m_preparationFrame)
                 return entry;
             const auto sourceRevision = source->GetRevision();
             if (sourceRevision && entry.sourceIdentity == source->GetIdentity() &&
                 entry.sourceRevision == sourceRevision && entry.textureResidencyRevision == m_textureResidencyRevision &&
                 !m_normalMipJob.valid())
             {
-                entry.frame = m_skinningFrame;
+                entry.frame = m_preparationFrame;
                 return entry;
             }
             BasicDraw draw;
@@ -525,7 +526,7 @@ namespace PlutoGE::render
                 pendingGraphTexture |= material.graphTextures[i] && !entry.draw.graphTextures[i];
             entry.sourceRevision = pendingTexture || pendingGraphTexture ? 0 : sourceRevision;
             entry.textureResidencyRevision = m_textureResidencyRevision;
-            entry.frame = m_skinningFrame;
+            entry.frame = m_preparationFrame;
             return entry;
         };
 
@@ -551,7 +552,7 @@ namespace PlutoGE::render
                 auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
                 if (entry.lastFrame == m_skinningFrame || entry.queuedFrame == m_skinningFrame) continue;
                 entry.lifetime = command.mesh->GetLifetimeToken();
-                const bool topologyChanged = entry.vertices.size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size() ||
+                const bool topologyChanged = entry.vertices->size() != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size() ||
                     entry.contentRevision != command.mesh->GetContentRevision();
                 const bool changed = entry.pose != *command.jointMatrices || topologyChanged ||
                     entry.contentRevision != command.mesh->GetContentRevision();
@@ -575,9 +576,9 @@ namespace PlutoGE::render
                 const auto jobIndex = skinningJobs.size();
                 if (deform)
                     skinningJobs.push_back({source.vertices, *command.jointMatrices,
-                        hasHistory ? std::span<const BasicVertex>(entry.vertices) : std::span<const BasicVertex>{}, &entry.vertices});
+                        hasHistory ? std::span<const BasicVertex>(*entry.vertices) : std::span<const BasicVertex>{}, entry.vertices.get()});
                 else if (upload)
-                    for (auto &vertex : entry.vertices)
+                    for (auto &vertex : *entry.vertices)
                         vertex.previousPosition = {vertex.position[0], vertex.position[1], vertex.position[2], 1};
                 pendingSkinning.push_back({&entry, command.mesh, command.jointMatrices, changed, topologyChanged, upload,
                     deform ? jobIndex : std::numeric_limits<std::size_t>::max()});
@@ -630,7 +631,7 @@ namespace PlutoGE::render
                     const auto uploadStart = std::chrono::steady_clock::now();
                     if (!entry.mesh.IsValid() || pending.topologyChanged)
                     {
-                        entry.mesh = m_renderer->CreateMesh({entry.vertices, pending.mesh->GetMeshData().indices});
+                        entry.mesh = m_renderer->CreateMesh({*entry.vertices, pending.mesh->GetMeshData().indices});
                         ++m_timingStats.meshUploadCount;
                     }
                     else
@@ -640,7 +641,7 @@ namespace PlutoGE::render
                             core::CpuScope boundsScope("Skeletal shadow bounds refit", core::CpuCategory::Rendering);
                             entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
                         }
-                        m_renderer->UpdateMeshVertices(entry.mesh, entry.vertices, pending.changed, entry.shadowClusters);
+                        m_renderer->UpdateSharedMeshVertices(entry.mesh, entry.vertices, pending.changed, entry.shadowClusters);
                     }
                     m_timingStats.skinningUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
                 }
@@ -712,7 +713,7 @@ namespace PlutoGE::render
                 }
                 const bool emissiveGi = giOnly && command.lodIndex != 0 && command.material &&
                     glm::any(glm::greaterThan(command.material->ReadConfig().emission, glm::vec3(0.0f)));
-                if (const auto *shared = preparation.FindRetained(command, revision, emissiveGi, m_skinningFrame))
+                if (const auto *shared = preparation.FindRetained(command, revision, emissiveGi, m_preparationFrame))
                 {
                     entry = *shared;
                     if (patch) destination[i] = entry.draw; else destination.push_back(entry.draw);
@@ -837,7 +838,7 @@ namespace PlutoGE::render
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
                 entry.Store(command, revision, &draw);
-                preparation.Retain(entry, emissiveGi, m_skinningFrame);
+                preparation.Retain(entry, emissiveGi, m_preparationFrame);
                 if (patch) destination[i] = std::move(draw); else destination.push_back(std::move(draw));
                 ++m_timingStats.rebuiltDrawPackets;
             }

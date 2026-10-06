@@ -89,6 +89,8 @@ namespace PlutoGE::render
         if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
         BasicRenderer::BeforeTemporalResolve compose;
+        if (const auto *source = m_renderTextures.TakeSkinningSource())
+            m_sceneRenderer->ReuseSkinningForFrame(*source);
         if (!overlays.empty())
             compose = [&](BasicRenderer &base, glm::vec2 jitter)
             {

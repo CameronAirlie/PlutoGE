@@ -3364,6 +3364,11 @@ namespace PlutoGE::ui
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             // Render textures are drawn once and shared by both viewports, which
             // use the same device whenever a project selects the RHI path.
+            // The game preview follows scripts during play; the editing view
+            // continues to show authored quality. Restore preview quality on stop.
+            if (m_gameSceneRenderService)
+                m_gameSceneRenderService->SetGraphicsQuality(m_engine.IsRuntimeRunning()
+                    ? m_engine.GetRhiRenderService().GetGraphicsQuality() : render::GraphicsQuality{});
             if (m_scene && !gameCameraStack.textureCameras.empty())
             {
                 auto *textureService = m_gameSceneRenderService && m_gameSceneRenderService->IsInitialized()

@@ -147,6 +147,15 @@ namespace PlutoGE::ui
         }
     }
 
+    bool EditorSceneRenderService::SetGraphicsQuality(const render::GraphicsQuality &quality) noexcept
+    {
+        if (!quality.IsValid() || !m_sceneRenderer) return false;
+        m_sceneRenderer->SetGraphicsQuality(quality);
+        m_cameraStack.SetGraphicsQuality(quality);
+        m_renderTextures.SetGraphicsQuality(quality);
+        return true;
+    }
+
     bool EditorSceneRenderService::Render(std::uint32_t width, std::uint32_t height,
                                           const render::CameraData &cameraData,
                                           render::RenderCommandView commands,

@@ -22,6 +22,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
+#include "PlutoGE/render/postprocess/SSREffect.h"
 #include "LodSelectionChecks.h"
 
 #include <array>
@@ -590,6 +591,19 @@ int main(int argc, char **argv)
         if (!runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene, effects))
             return 22;
         const auto gradedPixels = device.ReadTextureRgba8(output.texture);
+        // Quality overrides skip GPU passes while preserving authored effects.
+        render::SSREffect reflections;
+        const std::array<render::IPostProcessEffect *, 2> qualityEffects{&reflections, &gamma};
+        const auto low = render::GraphicsQuality::FromPreset(render::GraphicsPreset::Low);
+        if (!runtime.SetGraphicsQuality(low) ||
+            !runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene, qualityEffects) ||
+            runtime.GetTimingStats().ssrSteps != 0 || !reflections.IsEnabled()) return 49;
+        auto invalidQuality = low;
+        invalidQuality.shadowResolution = 0;
+        if (runtime.SetGraphicsQuality(invalidQuality) || runtime.GetGraphicsQuality() != low) return 50;
+        if (!runtime.SetGraphicsQuality({}) ||
+            !runtime.RenderSceneAndPresent(camera, lighting, {}, {}, &atmosphereScene, qualityEffects) ||
+            runtime.GetTimingStats().ssrSteps == 0) return 51;
         if (skyPixels.empty() || skyPixels == gradedPixels)
         {
             std::cerr << "Runtime camera post-processing did not change the rendered sky.\n";

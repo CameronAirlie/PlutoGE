@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
@@ -19,6 +20,8 @@ namespace PlutoGE::render
     class RhiRenderService
     {
     public:
+        bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept;
+        [[nodiscard]] const GraphicsQuality &GetGraphicsQuality() const noexcept { return m_graphicsQuality; }
         bool Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain);
         void Shutdown();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
@@ -70,6 +73,7 @@ namespace PlutoGE::render
         BasicMesh CreateMesh(const BasicMeshData &data);
 
     private:
+        GraphicsQuality m_graphicsQuality;
         rhi::IRenderDevice *m_device = nullptr;
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;

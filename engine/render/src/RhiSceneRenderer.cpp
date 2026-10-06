@@ -234,7 +234,7 @@ namespace PlutoGE::render
     }
 
     bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
-                                  const BasicLighting &lighting, RenderCommandView commands,
+                                  const BasicLighting &sourceLighting, RenderCommandView commands,
                                   RenderCommandView shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
                                   std::span<const BasicPostProcessEffect> atmosphereEffects,
@@ -244,6 +244,9 @@ namespace PlutoGE::render
                                   const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
                                   std::optional<glm::vec2> sharedClipJitter)
     {
+        BasicLighting effectiveLighting = sourceLighting;
+        m_graphicsQuality.Apply(effectiveLighting);
+        const auto &lighting = effectiveLighting;
         // A tag-filtered view supplies its own lights; otherwise every scene light applies.
         std::vector<scene::Light *> allSceneLights;
         if (!lights && scene)
@@ -855,7 +858,6 @@ namespace PlutoGE::render
         // reconstructing the unjittered form with projection-layout-specific
         // element edits below.
         const glm::mat4 unjitteredProjection = projection;
-        BasicLighting effectiveLighting = lighting;
         if (hasSceneLights)
         {
             effectiveLighting.pointLights.clear();
@@ -981,6 +983,7 @@ namespace PlutoGE::render
                 basicEffects.push_back(std::move(*adapted));
             }
         }
+        std::erase_if(basicEffects, [&](const auto &effect) { return !m_graphicsQuality.Allows(effect.type); });
         for (auto &effect : basicEffects)
             if (HasInput(InputsFor(effect.type), BasicPostProcessInput::Depth))
             {

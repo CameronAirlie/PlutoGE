@@ -6,6 +6,16 @@
 
 namespace PlutoGE::render
 {
+    bool RhiRenderService::SetGraphicsQuality(const GraphicsQuality &quality) noexcept
+    {
+        if (!quality.IsValid()) return false;
+        m_graphicsQuality = quality;
+        if (m_sceneRenderer) m_sceneRenderer->SetGraphicsQuality(quality);
+        m_cameraStack.SetGraphicsQuality(quality);
+        m_renderTextures.SetGraphicsQuality(quality);
+        return true;
+    }
+
     bool RhiRenderService::Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain)
     {
         Shutdown();
@@ -67,6 +77,7 @@ namespace PlutoGE::render
             if (!sceneRenderer->Initialize(*m_device, shaderArtifacts.LoadBasicRendererPackage()))
                 return false;
             sceneRenderer->SetTemporalUpscalerOptions(m_upscalerOptions);
+            sceneRenderer->SetGraphicsQuality(m_graphicsQuality);
             m_sceneRenderer = std::move(sceneRenderer);
         }
         // Let the first UI frame initialize its pipelines and upload resources

@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/CameraView.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
@@ -31,6 +32,12 @@ namespace PlutoGE::render
     class RhiRenderTextureRenderer
     {
     public:
+        bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept
+        {
+            if (!quality.IsValid()) return false;
+            m_graphicsQuality = quality;
+            return true;
+        }
         RhiRenderTextureRenderer();
         ~RhiRenderTextureRenderer();
         RhiRenderTextureRenderer(const RhiRenderTextureRenderer &) = delete;
@@ -44,6 +51,7 @@ namespace PlutoGE::render
                     const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene);
 
     private:
+        GraphicsQuality m_graphicsQuality;
         struct Target
         {
             std::weak_ptr<const void> lifetime;

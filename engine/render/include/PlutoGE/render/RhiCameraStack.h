@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/CameraView.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
@@ -24,6 +25,12 @@ namespace PlutoGE::render
     class RhiCameraStackCompositor
     {
     public:
+        bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept
+        {
+            if (!quality.IsValid()) return false;
+            m_graphicsQuality = quality;
+            return true;
+        }
         RhiCameraStackCompositor();
         ~RhiCameraStackCompositor();
         RhiCameraStackCompositor(const RhiCameraStackCompositor &) = delete;
@@ -47,6 +54,7 @@ namespace PlutoGE::render
                        const scene::Scene *scene, bool submit = true);
 
     private:
+        GraphicsQuality m_graphicsQuality;
         RhiSceneRenderer *AcquireOverlayRenderer(std::size_t index);
         bool EnsureCompositePipeline();
         bool EnsureTemporalCompositePipelines();

@@ -28,6 +28,12 @@ add_test(NAME PlutoGEInputAxisHistoryTests COMMAND PlutoGEInputAxisHistoryTests)
 target_link_libraries(PlutoGEContentPackTests PRIVATE PlutoGE::Content)
 add_test(NAME PlutoGEContentPackTests COMMAND PlutoGEContentPackTests)
 
+add_executable(PlutoGEGraphicsQualityTests GraphicsQualityTests.cpp)
+target_include_directories(PlutoGEGraphicsQualityTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include)
+target_link_libraries(PlutoGEGraphicsQualityTests PRIVATE glm::glm)
+target_compile_features(PlutoGEGraphicsQualityTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEGraphicsQualityTests COMMAND PlutoGEGraphicsQualityTests)
+
 add_executable(PlutoGERhiTypesTests RhiTypesTests.cpp)
 add_executable(PlutoGESkinningCpuTests SkinningCpuTests.cpp)
 target_include_directories(PlutoGESkinningCpuTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
@@ -226,6 +232,8 @@ target_link_libraries(PlutoGEDebugDrawTests PRIVATE glm::glm)
 add_test(NAME PlutoGEDebugDrawTests COMMAND PlutoGEDebugDrawTests)
 find_program(PLUTOGE_TEST_DOTNET dotnet)
 if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEGraphicsQualitySmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.GraphicsQualitySmokeTests/PlutoGE.GraphicsQualitySmokeTests.csproj --configuration Release)
     add_test(NAME PlutoGEInputActionMapSmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.InputActionMapSmokeTests/PlutoGE.InputActionMapSmokeTests.csproj --configuration Release)
 endif()

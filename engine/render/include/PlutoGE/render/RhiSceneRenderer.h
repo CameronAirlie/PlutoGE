@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
@@ -121,6 +122,13 @@ namespace PlutoGE::render
     class RhiSceneRenderer
     {
     public:
+        bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept
+        {
+            if (!quality.IsValid()) return false;
+            if (m_graphicsQuality != quality) ResetTemporalHistory();
+            m_graphicsQuality = quality;
+            return true;
+        }
         RhiSceneRenderer();
         ~RhiSceneRenderer();
         using TexturePixelReader = std::function<std::vector<std::byte>(const Texture &)>;
@@ -195,6 +203,7 @@ namespace PlutoGE::render
         }
 
     private:
+        GraphicsQuality m_graphicsQuality;
       bool m_immediateTextureUploads = false;
       bool m_sceneEffectsEnabled = true;
       std::string m_submissionLabel = "Scene";

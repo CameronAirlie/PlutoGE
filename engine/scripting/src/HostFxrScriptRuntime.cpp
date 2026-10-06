@@ -1,3 +1,4 @@
+#include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -1406,6 +1407,39 @@ namespace PlutoGE::scripting
             const auto ray = delta / length;
             *origin = {start.x, start.y, start.z}; *direction = {ray.x, ray.y, ray.z};
             return 1;
+        }
+
+        // Fixed-width wire format; keep in sync with GraphicsQualityNative in ScriptCore.
+        struct GraphicsQualityNative
+        {
+            uint32_t shadowResolution, shadowCascades;
+            float shadowDistance;
+            uint32_t flags;
+        };
+        int32_t GetGraphicsQuality(int32_t preset, GraphicsQualityNative *value)
+        {
+            if (!value || preset < -1 || preset > 3) return 0;
+            const auto q = preset == -1 ? core::Engine::GetInstance().GetRhiRenderService().GetGraphicsQuality()
+                : render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(preset));
+            *value = {q.shadowResolution, q.shadowCascades, q.shadowDistance,
+                uint32_t(q.enabled) | (uint32_t(q.cascadedShadows) << 1) |
+                (uint32_t(q.ambientOcclusion) << 2) | (uint32_t(q.globalIllumination) << 3) |
+                (uint32_t(q.reflections) << 4) | (uint32_t(q.volumetrics) << 5) |
+                (uint32_t(q.bloom) << 6) | (uint32_t(q.depthOfField) << 7) | (uint32_t(q.motionBlur) << 8)};
+            return 1;
+        }
+        int32_t SetGraphicsQuality(const GraphicsQualityNative *value)
+        {
+            if (!value || (value->flags & ~511u)) return 0;
+            render::GraphicsQuality q;
+            q.shadowResolution = value->shadowResolution; q.shadowCascades = value->shadowCascades;
+            q.shadowDistance = value->shadowDistance;
+            q.enabled = (value->flags & 1) != 0; q.cascadedShadows = (value->flags & 2) != 0;
+            q.ambientOcclusion = (value->flags & 4) != 0; q.globalIllumination = (value->flags & 8) != 0;
+            q.reflections = (value->flags & 16) != 0; q.volumetrics = (value->flags & 32) != 0;
+            q.bloom = (value->flags & 64) != 0; q.depthOfField = (value->flags & 128) != 0;
+            q.motionBlur = (value->flags & 256) != 0;
+            return core::Engine::GetInstance().GetRhiRenderService().SetGraphicsQuality(q) ? 1 : 0;
         }
 
         int32_t GetDisplayVSync() { return core::Engine::GetInstance().IsVSyncEnabled() ? 1 : 0; }
@@ -3414,6 +3448,7 @@ namespace PlutoGE::scripting
         register_window_api_fn registerProfilingApi = nullptr;
         register_window_api_fn registerPointerApi = nullptr;
         int(PLUTO_HOST_CALL *registerWindowSizeApi)(void *, void *, void *) = nullptr;
+        int(PLUTO_HOST_CALL *registerGraphicsQualityApi)(void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
@@ -3530,6 +3565,7 @@ namespace PlutoGE::scripting
             impl.registerProfilingApi = nullptr;
             impl.registerPointerApi = nullptr;
             impl.registerWindowSizeApi = nullptr;
+            impl.registerGraphicsQualityApi = nullptr;
             impl.registerDisplayApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerSceneStreamingApi = nullptr;
@@ -3886,6 +3922,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterProfilingApi"), impl.registerProfilingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPointerApi"), impl.registerPointerApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowSizeApi"), impl.registerWindowSizeApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterGraphicsQualityApi"), impl.registerGraphicsQualityApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
@@ -4227,6 +4264,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&SetWindowedSize)) == 0)
         {
             setManagedBridgeFailure("RegisterWindowSizeApi");
+            return false;
+        }
+
+        if (!m_impl->registerGraphicsQualityApi || m_impl->registerGraphicsQualityApi(
+                reinterpret_cast<void *>(&GetGraphicsQuality), reinterpret_cast<void *>(&SetGraphicsQuality)) == 0)
+        {
+            setManagedBridgeFailure("RegisterGraphicsQualityApi");
             return false;
         }
 

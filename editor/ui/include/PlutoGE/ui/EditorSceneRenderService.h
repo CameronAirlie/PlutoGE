@@ -42,6 +42,7 @@ namespace PlutoGE::ui
 
         bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
+        bool SetGraphicsQuality(const render::GraphicsQuality &quality) noexcept;
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
         void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }

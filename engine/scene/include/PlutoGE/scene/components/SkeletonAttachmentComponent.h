@@ -35,14 +35,13 @@ namespace PlutoGE::scene
 
     private:
         MeshComponent *FindSourceMeshComponent() const;
-        AnimationComponent *FindAnimationComponent() const;
 
         glm::vec3 m_positionOffset{0}, m_rotationOffset{0};
         int m_targetNodeIndex = -1;
         std::string m_jointName;
         MeshComponent *m_cachedSourceMeshComponent = nullptr;
-        AnimationComponent *m_cachedAnimationComponent = nullptr;
         const void *m_cachedMesh = nullptr;
+        uint64_t m_cachedMeshRevision = 0;
         int m_cachedJointIndex = -1;
         glm::mat4 m_cachedJointMeshMatrix{1.0f};
         glm::mat4 m_cachedBindMatrix{1.0f};

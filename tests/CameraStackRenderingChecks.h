@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RhiCameraStack.h"
@@ -106,6 +107,49 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
             "Overlay coverage was not the expected triangle");
     std::cout << "Camera stack composite placed " << overlayPixels << " overlay pixels over the base camera" << std::endl;
 
+    // Multiple layers share one recording. The last layer wins, and a caller
+    // can still append work and submit after a submit=false render.
+    Material blue({.emission = {0, 0, 1}});
+    const std::array blueCommands{RenderCommand{.material = &blue, .mesh = overlayMesh.get()}};
+    const std::array orderedOverlays{
+        CameraView{.cameraData = camera, .commands = overlayCommands},
+        CameraView{.cameraData = camera, .commands = blueCommands}};
+    for (const bool temporal : {false, true})
+    {
+        if (!temporal)
+            require(base.Render(size, size, camera, lighting, baseCommands, baseCommands), "Multi-overlay base render failed");
+        PlutoGE::core::CpuTrace trace(true);
+        if (temporal)
+        {
+            const BasicRenderer::BeforeTemporalResolve composeOrdered = [&](BasicRenderer &renderer, glm::vec2 jitter) {
+                require(compositor.CompositeBeforeTemporalResolve(device, renderer, jitter, orderedOverlays, {}, nullptr),
+                        "Ordered HDR overlay composition failed");
+            };
+            require(base.Render(size, size, camera, lighting, baseCommands, baseCommands, {}, {}, {},
+                                PostProcessDebugView::None, false, nullptr, std::nullopt, composeOrdered),
+                    "Deferred temporal stack render failed");
+        }
+        else
+            require(compositor.Composite(device, base.GetColorTexture(), size, size, orderedOverlays, {}, nullptr, false),
+                    "Deferred display stack render failed");
+        device.GetImmediateContext().Submit();
+        const auto samples = trace.TakeSamples();
+        if (device.GetApi() == rhi::GraphicsApi::Vulkan)
+        {
+            const auto count = [&](std::string_view name) {
+                return std::count_if(samples.begin(), samples.end(), [&](const auto &sample) { return sample.name == name; });
+            };
+            require(count("Scene fence wait") == 1 && count("Vulkan queue submit") == 1,
+                    "Multiple overlays must acquire and submit one command recording");
+        }
+        const auto ordered = readPixels(base.GetColorTexture());
+        for (std::size_t pixel = 0; pixel < size * size; ++pixel)
+            require(isGreen(overlayAlone, pixel)
+                        ? channel(ordered, pixel, 2) > 128 && channel(ordered, pixel, 1) < 64
+                        : isRed(ordered, pixel),
+                    "Multiple overlay order or coverage changed");
+    }
+
     // A tagged sky lights overlay materials without replacing uncovered base
     // pixels. Exercise both the final-color and shared-temporal stack paths.
     PlutoGE::scene::Scene skyScene;
@@ -167,10 +211,20 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     };
     const auto drawStack = [&](std::uint32_t width, std::uint32_t height, bool aa)
     {
+        PlutoGE::core::CpuTrace trace(true);
         require(base.Render(width, height, camera, lighting, baseCommands, baseCommands,
                             aa ? std::span<IPostProcessEffect *const>(effects) : std::span<IPostProcessEffect *const>{},
                             {}, {}, PostProcessDebugView::None, true, nullptr, std::nullopt, compose),
                 "Temporal camera stack render failed");
+        const auto samples = trace.TakeSamples();
+        if (device.GetApi() == rhi::GraphicsApi::Vulkan)
+        {
+            const auto count = [&](std::string_view name) {
+                return std::count_if(samples.begin(), samples.end(), [&](const auto &sample) { return sample.name == name; });
+            };
+            require(count("Scene fence wait") == 1 && count("Vulkan queue submit") == 1,
+                    "A temporal camera stack must acquire and submit one command recording");
+        }
         return readPixels(base.GetColorTexture());
     };
     const auto partialCoverage = [&](const auto &pixels)

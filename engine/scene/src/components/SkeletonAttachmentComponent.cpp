@@ -190,22 +190,23 @@ namespace PlutoGE::scene
         return nullptr;
     }
 
-    AnimationComponent *SkeletonAttachmentComponent::FindAnimationComponent() const
-    {
-        auto *source = FindSourceMeshComponent();
-        return FindAnimationComponentInAncestors(source ? source->GetOwner() : nullptr);
-    }
-
     void SkeletonAttachmentComponent::BindSource(MeshComponent *source, int jointIndex)
     {
         m_cachedSourceMeshComponent = source;
-        m_cachedAnimationComponent = source ? FindAnimationComponentInAncestors(source->GetOwner()) : nullptr;
-        m_cachedMesh = source ? source->GetMesh() : nullptr;
+        // Validate the named binding on the next update, including legacy node
+        // indices from assets whose joint order changed on import.
+        m_cachedMesh = nullptr;
         m_cachedJointIndex = jointIndex;
         if (const auto *mesh = source ? source->GetMesh() : nullptr;
             mesh && jointIndex >= 0 && jointIndex < static_cast<int>(mesh->GetSkeleton().joints.size()))
         {
-            m_cachedBindMatrix = glm::inverse(mesh->GetSkeleton().joints[static_cast<size_t>(jointIndex)].inverseBindMatrix);
+            const auto &joint = mesh->GetSkeleton().joints[static_cast<size_t>(jointIndex)];
+            if (joint.nodeIndex == m_targetNodeIndex && (m_jointName.empty() || joint.name == m_jointName))
+            {
+                m_cachedMesh = mesh;
+                m_cachedMeshRevision = mesh->GetContentRevision();
+                m_cachedBindMatrix = glm::inverse(joint.inverseBindMatrix);
+            }
         }
     }
 
@@ -215,23 +216,7 @@ namespace PlutoGE::scene
         auto *sourceMeshComponent = FindSourceMeshComponent();
         auto *sourceMeshEntity = sourceMeshComponent ? sourceMeshComponent->GetOwner() : nullptr;
         auto *mesh = sourceMeshComponent ? sourceMeshComponent->GetMesh() : nullptr;
-        // Bone names survive reordered imports; the node index is a legacy fallback.
-        if (mesh && !m_jointName.empty())
-        {
-            const auto &joints = mesh->GetSkeleton().joints;
-            const auto joint = std::find_if(joints.begin(), joints.end(), [&](const auto &candidate) {
-                return candidate.name == m_jointName;
-            });
-            if (joint == joints.end()) return;
-            if (m_targetNodeIndex != joint->nodeIndex) SetTargetNodeIndex(joint->nodeIndex);
-        }
-        if (!owner || !sourceMeshEntity || !mesh || m_targetNodeIndex < 0)
-        {
-            return;
-        }
-
-        const auto &nodes = mesh->GetAnimationNodes();
-        if (m_targetNodeIndex >= static_cast<int>(nodes.size()))
+        if (!owner || !sourceMeshEntity || !mesh)
         {
             return;
         }
@@ -241,19 +226,38 @@ namespace PlutoGE::scene
         if (m_cachedSourceMeshComponent != sourceMeshComponent)
         {
             m_cachedSourceMeshComponent = sourceMeshComponent;
-            m_cachedAnimationComponent = FindAnimationComponentInAncestors(sourceMeshEntity);
             m_cachedMesh = nullptr;
         }
-        if (m_cachedMesh != mesh)
+        if (m_cachedMesh != mesh || m_cachedMeshRevision != mesh->GetContentRevision())
         {
             m_cachedMesh = mesh;
-            m_cachedJointIndex = FindJointIndex(mesh->GetSkeleton(), m_targetNodeIndex, m_jointName);
+            m_cachedMeshRevision = mesh->GetContentRevision();
+            // Names survive reordered imports. Resolve once per binding instead
+            // of searching the skeleton for every attachment every frame.
+            const auto &joints = mesh->GetSkeleton().joints;
+            if (!m_jointName.empty())
+            {
+                const auto joint = std::find_if(joints.begin(), joints.end(), [&](const auto &candidate) {
+                    return candidate.name == m_jointName;
+                });
+                m_cachedJointIndex = joint == joints.end() ? -1 : static_cast<int>(joint - joints.begin());
+                if (joint != joints.end()) m_targetNodeIndex = joint->nodeIndex;
+            }
+            else
+                m_cachedJointIndex = FindJointIndex(mesh->GetSkeleton(), m_targetNodeIndex, {});
             m_cachedBindMatrix = m_cachedJointIndex >= 0
                                      ? glm::inverse(mesh->GetSkeleton().joints[static_cast<size_t>(m_cachedJointIndex)].inverseBindMatrix)
                                      : glm::mat4(1.0f);
         }
 
-        auto *animationComponent = FindAnimationComponent();
+        const auto &nodes = mesh->GetAnimationNodes();
+        if ((!m_jointName.empty() && m_cachedJointIndex < 0) ||
+            m_targetNodeIndex < 0 || m_targetNodeIndex >= static_cast<int>(nodes.size()))
+            return;
+
+        // Resolve the current animation ancestor without walking the source
+        // hierarchy again, retaining correct behavior after reparenting.
+        auto *animationComponent = FindAnimationComponentInAncestors(sourceMeshEntity);
         const auto angles=glm::radians(m_rotationOffset);
         const glm::mat4 offset=glm::translate(glm::mat4(1),m_positionOffset)*glm::eulerAngleXYZ(angles.x,angles.y,angles.z);
         const glm::mat4 jointMeshMatrix = ComputeJointMeshMatrix(

@@ -257,7 +257,8 @@ namespace PlutoGE::render
                                   bool submit, const scene::Scene *scene,
                                   std::optional<std::span<scene::Light *const>> lights,
                                   const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
-                                  std::optional<glm::vec2> sharedClipJitter)
+                                  std::optional<glm::vec2> sharedClipJitter,
+                                  BasicRenderer::RecordingMode recordingMode)
     {
         BasicLighting effectiveLighting = sourceLighting;
         m_graphicsQuality.Apply(effectiveLighting);
@@ -1417,7 +1418,7 @@ namespace PlutoGE::render
                            useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
                            std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount),
-                           beforeTemporalResolve, linearOutput, sharedClipJitter, decals);
+                           beforeTemporalResolve, linearOutput, sharedClipJitter, decals, recordingMode);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&
@@ -1450,6 +1451,7 @@ namespace PlutoGE::render
         m_timingStats.shadowRecordingMs = rendererTiming.shadowRecordingMs;
         m_timingStats.geometryRecordingMs = rendererTiming.geometryRecordingMs;
         m_timingStats.postProcessRecordingMs = rendererTiming.postProcessRecordingMs;
+        m_timingStats.cameraCompositionMs = rendererTiming.cameraCompositionMs;
         m_timingStats.temporalUpscalerMs = rendererTiming.temporalUpscalerMs;
         m_timingStats.submitMs = rendererTiming.submitMs;
         m_timingStats.recordedGeometryDepthDrawCount = frameStats.geometryDepthDraws;

@@ -52,6 +52,7 @@ namespace PlutoGE::render
         float shadowRecordingMs = 0.0f;
         float geometryRecordingMs = 0.0f;
         float postProcessRecordingMs = 0.0f;
+        float cameraCompositionMs = 0.0f;
         float temporalUpscalerMs = 0.0f;
         float submitMs = 0.0f;
         float totalMs = 0.0f;
@@ -192,7 +193,8 @@ namespace PlutoGE::render
                     // When set, only these lights illuminate the view instead of every scene light.
                     std::optional<std::span<scene::Light *const>> lights = std::nullopt,
                     const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
-                    std::optional<glm::vec2> sharedClipJitter = std::nullopt);
+                    std::optional<glm::vec2> sharedClipJitter = std::nullopt,
+                    BasicRenderer::RecordingMode recordingMode = BasicRenderer::RecordingMode::Begin);
 
         [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept;
         [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept;

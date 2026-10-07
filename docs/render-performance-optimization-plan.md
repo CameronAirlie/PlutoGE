@@ -2,6 +2,78 @@
 
 Constraint: preserve all post-process effects and visual fidelity.
 
+## 2026-10-07 CoD capture follow-up
+
+Baseline: 240 retained editor frames, 26.855 ms mean / 29.944 ms p95 CPU
+frame time, 10.518 ms reported scene GPU time. Internal resolution was 727 x
+420, output 1090 x 630, VSync on and debugger attached. Trace scopes contain
+three scene acquisitions per frame and 10.549 ms mean combined fence wait;
+the headline fence counter represented only one acquisition. GPU observations
+are asynchronous and must not be correlated with individual CPU frames.
+
+### Implementation
+
+- [x] Add an explicit Begin/Append recording contract to the scene renderers.
+  The temporal camera stack appends overlays and HDR composition to the base
+  recording, then resolves temporal history and submits once. Display-space
+  composition begins once for all its overlays and retains deferred submission.
+  Camera targets, lighting, shadow caches and motion histories remain per view.
+- [x] Keep the outer scene GPU scope open across overlays so the scene observation
+  measures the whole stack. Child GPU scopes remain inclusive: do not sum them.
+- [x] Measure camera composition separately from post-process CPU recording and
+  export it through the profiler and capture comparison tool. The CPU trace's
+  enclosing post-processing scope remains inclusive.
+- [x] Resolve skeleton attachment names only when the source, mesh content revision,
+  node index or joint name changes. Preserve missing-name rejection and legacy
+  node fallback. Resolve the current animation ancestor once per attachment update
+  so reparenting does not reuse a stale component pointer.
+- [x] Add regression checks for ordered multiple overlays, deferred submission,
+  one Vulkan acquisition/submission, and attachment binding invalidation.
+
+### Follow-up experiments and acceptance criteria
+
+1. Capture the same scene/camera path in the rebuilt RelWithDebInfo editor, then
+   in the runtime, without a debugger and with VSync disabled for throughput
+   measurement. Keep quality, bot count, viewport size and camera motion fixed.
+   Record at least 600 frames after warm-up. Compare mean/p95 frame time, all
+   fence-wait trace samples, composition time, geometry and shadow observations.
+   Do not compare the new whole-stack GPU observation directly with the old
+   partial-scene observation. Validate normal VSync gameplay separately.
+2. Geometry: rank meshes by submitted triangle count, generate LODs through the
+   existing import pipeline for the largest contributors, and inspect silhouettes,
+   material boundaries and transitions at gameplay distances. The capture alone
+   does not identify which assets are safe to simplify. Keep authored LOD0 intact.
+3. Visibility: run existing occlusion measurement mode on the same camera path,
+   then test culling with moving cameras, newly revealed objects and skinned
+   bounds. Enable production culling only after conservative visibility checks
+   and measured net GPU benefit. Never hide objects to improve a timing counter.
+4. Shadows: compare the existing quality ceilings for distance/resolution and
+   identify far-cascade invalidation causes. Independent shadow LOD selection
+   needs a shared policy with hysteresis and per-light decisions; see
+   `renderer-structural-review.md`. Preserve world casters for weapon overlays:
+   overlay cameras can receive shadows from geometry excluded from their color
+   pass, so removing their shadow draws changes rendering semantics.
+5. Animation: measure pose invalidations across Update, attachments, LateUpdate
+   and render submission. Apply distance-based pose rates only to visual poses;
+   hitboxes, IK and animation events require explicit gameplay validation.
+
+Asset LOD authoring, production occlusion enablement, lower shadow quality and
+distance-based pose rates remain measured follow-up work. They are not silently
+enabled by this engine change. No FPS improvement is claimed without a new game
+capture.
+
+### Validation
+
+The RelWithDebInfo editor and runtime were rebuilt. All 16 relevant checks
+passed: Vulkan/OpenGL RHI, camera stacks, temporal motion, GPU skinning and
+opaque batching; Vulkan preparation caching and render textures; skeleton
+attachments, camera-stack resolution and both editor profiler tests. The stack
+tests exercise first-use allocation, ordered multiple layers, deferred submit,
+moving/resized temporal views, particles and world shadow reception. Vulkan
+trace assertions require exactly one fence acquisition and queue submission
+for the complete temporal stack. `git diff --check` and capture-tool Python
+syntax validation also passed. End-to-end CoD throughput has not been measured.
+
 ## 2026-08-27 profile pass
 
 - [x] Correct scene timing attribution: audio previously appeared inside render submission.

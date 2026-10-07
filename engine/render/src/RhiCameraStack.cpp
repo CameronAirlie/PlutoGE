@@ -193,7 +193,8 @@ namespace PlutoGE::render
             if (skinningSource) renderer->ReuseSkinningForFrame(*skinningSource);
             if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
                                   view.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
-                                  index + 1 < overlays.size(), scene, view.lights, {}, true, clipJitter))
+                                  false, scene, view.lights, {}, true, clipJitter,
+                                  BasicRenderer::RecordingMode::Append))
                 return false;
             renderers.push_back(renderer);
         }
@@ -301,13 +302,14 @@ namespace PlutoGE::render
                 return false;
             const auto &layer = overlays[index];
             const auto lighting = BuildOverlayLighting(layer, scene);
-            // The last overlay stays recording; the composite is appended to it.
-            const bool lastOverlay = index + 1 == overlays.size();
+            // Begin once, append every subsequent overlay and the composite.
             const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
             if (!renderer->Render(width, height, layer.cameraData, lighting, layer.commands, shadowCommands,
                                   layer.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
-                                  !lastOverlay, scene, layer.lights))
+                                  false, scene, layer.lights, {}, false, std::nullopt,
+                                  index == 0 ? BasicRenderer::RecordingMode::Begin
+                                             : BasicRenderer::RecordingMode::Append))
                 return false;
             renderers.push_back(renderer);
         }

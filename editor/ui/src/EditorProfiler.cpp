@@ -538,6 +538,7 @@ namespace PlutoGE::ui
         report << "RHI shadow recording CPU: " << rhiScene.shadowRecordingMs << " ms\n";
         report << "RHI geometry recording CPU: " << rhiScene.geometryRecordingMs << " ms\n";
         report << "RHI post-process recording CPU: " << rhiScene.postProcessRecordingMs << " ms\n";
+        report << "RHI camera stack composition CPU: " << rhiScene.cameraCompositionMs << " ms\n";
         report << "RHI temporal upscaler CPU: " << rhiScene.temporalUpscalerMs << " ms\n";
         report << "RHI submit CPU: " << rhiScene.submitMs << " ms\n";
         for (const auto &scope : rhi.gpuScopes)

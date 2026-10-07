@@ -55,6 +55,38 @@ int main()
     meshConfig.animationNodes.push_back({.name = "root"});
     PlutoGE::render::Mesh skinnedMesh(meshConfig);
 
+    // Cached names must override stale serialized node indices, invalidate on
+    // edits/source changes, and leave missing named bones untouched.
+    auto bindingConfig = meshConfig;
+    bindingConfig.skeleton.joints.push_back({.name = "socket", .nodeIndex = 1});
+    bindingConfig.animationNodes.push_back({.name = "socket"});
+    bindingConfig.animationNodes[1].localBindTransform = glm::translate(glm::mat4(1), glm::vec3(3, 0, 0));
+    PlutoGE::render::Mesh bindingMesh(bindingConfig);
+    mesh->SetMesh(&bindingMesh);
+    auto *attachment = hand->GetComponent<SkeletonAttachmentComponent>();
+    attachment->SetJointName("socket");
+    attachment->SetTargetNodeIndex(0);
+    attachment->BindSource(mesh, 0);
+    attachment->Update(0);
+    attachment->Update(0);
+    if (attachment->GetTargetNodeIndex() != 1 || glm::length(hand->GetPosition() - glm::vec3(3, 0, 0)) > .0001f)
+    { std::cerr << "Named socket did not override its stale node index.\n"; return 1; }
+    attachment->SetJointName("missing");
+    attachment->Update(0);
+    attachment->Update(0);
+    if (glm::length(hand->GetPosition() - glm::vec3(3, 0, 0)) > .0001f)
+    { std::cerr << "Missing named socket fell back to an unrelated bone.\n"; return 1; }
+    attachment->SetJointName("root");
+    attachment->Update(0);
+    if (attachment->GetTargetNodeIndex() != 0 || glm::length(hand->GetPosition()) > .0001f)
+    { std::cerr << "Editing a socket name did not invalidate its cached binding.\n"; return 1; }
+    attachment->SetJointName("socket");
+    attachment->Update(0);
+    mesh->SetMesh(&skinnedMesh);
+    attachment->Update(0);
+    if (glm::length(hand->GetPosition() - glm::vec3(3, 0, 0)) > .0001f)
+    { std::cerr << "Changing the source mesh retained an invalid socket binding.\n"; return 1; }
+
     auto animationOwnerStorage = std::make_unique<Entity>(EntityConfig{.name = "Animated character"});
     auto *animationOwner = scene.AddEntity(std::move(animationOwnerStorage));
     auto *animation = animationOwner->CreateComponent<AnimationComponent>();

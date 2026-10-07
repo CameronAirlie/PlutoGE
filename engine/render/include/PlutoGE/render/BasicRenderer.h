@@ -547,6 +547,7 @@ namespace PlutoGE::render
         float shadowRecordingMs = 0.0f;
         float geometryRecordingMs = 0.0f;
         float postProcessRecordingMs = 0.0f;
+        float cameraCompositionMs = 0.0f;
         float temporalUpscalerMs = 0.0f;
         float submitMs = 0.0f;
     };
@@ -554,7 +555,12 @@ namespace PlutoGE::render
     class BasicRenderer
     {
     public:
+        // Runs outside a rendering pass with command recording open. The
+        // callback may append camera work, but must not begin or submit a frame.
         using BeforeTemporalResolve = std::function<void(BasicRenderer &, glm::vec2)>;
+        // Append requires an open command recording, outside a rendering pass.
+        // The caller owns its final submission; camera-local resources stay independent.
+        enum class RecordingMode { Begin, Append };
         BasicRenderer();
         ~BasicRenderer();
         BasicRenderer(const BasicRenderer &) = delete;
@@ -603,7 +609,8 @@ namespace PlutoGE::render
                     std::span<const BasicDraw> giDraws = {}, std::span<const BasicParticleDraw> particles = {},
                     const BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
                     std::optional<glm::vec2> sharedClipJitter = std::nullopt,
-                    std::span<const BasicDecalDraw> decals = {});
+                    std::span<const BasicDecalDraw> decals = {},
+                    RecordingMode recordingMode = RecordingMode::Begin);
 
         // Camera composition runs on HDR color and geometry inputs before TAA.
         void SetTemporalMetadata(rhi::TextureHandle metadata) noexcept { m_temporalMetadata = metadata; }

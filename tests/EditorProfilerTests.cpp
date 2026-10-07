@@ -127,6 +127,7 @@ int main()
             exported.timing.rhiSceneTimingStats.renderSize = {603, 346};
             exported.timing.rhiSceneTimingStats.outputSize = {1005, 594};
             exported.timing.rhiSceneTimingStats.directionalShadowSoftness = 1.5f;
+            exported.timing.rhiSceneTimingStats.cameraCompositionMs = 2.5f;
             exported.timing.rhiSceneTimingStats.skinningParticipants = 4;
             exported.timing.rhiSceneTimingStats.skinningWaitMs = .25f;
             exported.timing.rhiSceneTimingStats.ssrSteps = 48;
@@ -159,6 +160,8 @@ int main()
         Require(captureReport.find("4 participants") != std::string::npos &&
                 captureReport.find("48 steps, 5 refinements, 16 rays, 302 x 173") != std::string::npos,
                 "Capture omitted parallel skinning or SSR configuration");
+        Require(captureReport.find("RHI camera stack composition CPU: 2.50 ms") != std::string::npos,
+                "Capture omitted camera composition timing");
         return 0;
     }
     catch (const std::exception &error)

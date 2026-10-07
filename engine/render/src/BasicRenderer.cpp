@@ -1668,7 +1668,7 @@ namespace PlutoGE::render
                                std::span<const BasicParticleDraw> particles,
                                const BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
                                std::optional<glm::vec2> sharedClipJitter,
-                               std::span<const BasicDecalDraw> decals)
+                               std::span<const BasicDecalDraw> decals, RecordingMode recordingMode)
     {
         m_frameStats = {};
         m_timingStats = {};
@@ -1714,7 +1714,8 @@ namespace PlutoGE::render
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         core::CpuScope beginScope("RHI.BeginFrame", core::CpuCategory::Rendering);
         const auto beginFrameStart = std::chrono::steady_clock::now();
-        commands.BeginFrame(m_submissionLabel);
+        if (recordingMode == RecordingMode::Begin)
+            commands.BeginFrame(m_submissionLabel);
         bool skinningScope = false;
         const auto deformMeshes = [&](std::span<const BasicDraw> list)
         {
@@ -3178,12 +3179,12 @@ namespace PlutoGE::render
             compositionPending = false;
             renderParticles();
             renderTransparency();
-            // Secondary scene renderers begin their own command buffers. Finish
-            // the base segment, then resume on the compositor's open recording.
-            commands.EndGpuScope();
-            commands.Submit();
+            // Overlays append to this recording. Keep the frame's resources and
+            // GPU scope alive through composition and the shared temporal resolve.
+            core::CpuScope compositionScope("Camera stack composition", core::CpuCategory::Rendering);
+            const auto compositionStart = std::chrono::steady_clock::now();
             beforeTemporalResolve(*this, glm::vec2(temporalClipOffset));
-            commands.BeginGpuScope("RHI Camera Stack Post Process");
+            m_timingStats.cameraCompositionMs = elapsedMs(compositionStart, std::chrono::steady_clock::now());
         };
         for (std::size_t effectCursor = 0; effectCursor < postProcessEffects.size(); ++effectCursor)
         {
@@ -3467,7 +3468,7 @@ namespace PlutoGE::render
         const auto postProcessRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.postProcessRecordingMs = std::max(
             0.0f, elapsedMs(postProcessRecordingStart, postProcessRecordingEnd) -
-                      m_timingStats.temporalUpscalerMs);
+                      m_timingStats.temporalUpscalerMs - m_timingStats.cameraCompositionMs);
         ++m_frameIndex;
         m_previousMotionViewProjection = currentMotionViewProjection;
         m_previousModels.clear();

@@ -17,6 +17,7 @@ METRICS = (
     "Renderer / Command sort", "Renderer / Instance culling",
     "RHI command translation", "RHI shadow recording CPU",
     "RHI geometry recording CPU", "RHI post-process recording CPU",
+    "RHI camera stack composition CPU",
     "RHI descriptor preparation CPU", "RHI frame fence wait",
 )
 CONTEXT = ("Debugger attached", "VSync", "Editor viewport resolution",

@@ -352,6 +352,7 @@ namespace PlutoGE::ui
         ImGui::Text("  Post process: %.2f ms, upscaler: %.2f ms, submit: %.2f ms",
                     rhiScene.postProcessRecordingMs, rhiScene.temporalUpscalerMs,
                     rhiScene.submitMs);
+        ImGui::Text("  Camera stack composition: %.2f ms", rhiScene.cameraCompositionMs);
         for (const auto &scope : rhi.gpuScopes)
             ImGui::Text("%s: %.2f ms GPU, %.2f ms CPU recording", scope.name.c_str(),
                         scope.milliseconds, scope.cpuMilliseconds);

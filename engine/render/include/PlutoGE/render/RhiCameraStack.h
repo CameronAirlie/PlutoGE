@@ -38,8 +38,8 @@ namespace PlutoGE::render
 
         void Shutdown();
 
-        // Called at the base renderer's temporal boundary, after its HDR segment
-        // was submitted. Leaves composition recording for the shared resolve.
+        // Called at the base renderer's temporal boundary with recording open.
+        // Appends overlays and composition; the base owns the shared resolve and submit.
         bool CompositeBeforeTemporalResolve(rhi::IRenderDevice &device, BasicRenderer &base, glm::vec2 clipJitter,
                        std::span<const CameraView> overlays,
                        const RhiSceneRenderer::TexturePixelReader &texturePixelReader, const scene::Scene *scene,

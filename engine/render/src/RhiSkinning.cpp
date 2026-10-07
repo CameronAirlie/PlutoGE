@@ -191,7 +191,8 @@ namespace PlutoGE::render
         result.resize(source.size());
         if (source.empty()) return {};
         const auto bounds = SkinRange(source, joints, previous, result);
-        return {(bounds.minimum + bounds.maximum) * .5f, glm::length(bounds.maximum - bounds.minimum) * .5f};
+        return {(bounds.minimum + bounds.maximum) * .5f, glm::length(bounds.maximum - bounds.minimum) * .5f,
+                (bounds.maximum - bounds.minimum) * .5f};
     }
 
     struct RhiSkinningExecutor::Impl
@@ -320,7 +321,7 @@ namespace PlutoGE::render
                 extent.maximum = glm::max(extent.maximum, impl->bounds[j][i].maximum);
             }
             jobs[j].bounds = {(extent.minimum + extent.maximum) * .5f,
-                glm::length(extent.maximum - extent.minimum) * .5f};
+                glm::length(extent.maximum - extent.minimum) * .5f, (extent.maximum - extent.minimum) * .5f};
         }
         // Workers have joined this batch; retain capacity, not borrowed spans.
         impl->jobs = {};

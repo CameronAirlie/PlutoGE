@@ -29,6 +29,7 @@ namespace PlutoGE::render
     {
         glm::vec3 center{0.0f};
         float radius = 0.0f;
+        glm::vec3 extents{-1.0f};
     };
     // Inputs must remain alive until DeformBatch returns. Outputs of distinct
     // jobs must not alias; previous may alias its own job's output.

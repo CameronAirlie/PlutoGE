@@ -631,6 +631,7 @@ namespace PlutoGE::render
                         entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
                         const auto bounds = MergeShadowGeometryClusters(entry.shadowClusters);
                         entry.boundsCenter = bounds.center;
+                        entry.boundsExtents = bounds.extents;
                         entry.boundsRadius = glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))) ? glm::length(bounds.extents) : -1;
                         if (!entry.mesh.IsValid() || pending.topologyChanged)
                         {
@@ -662,6 +663,7 @@ namespace PlutoGE::render
                 {
                     const auto &job = skinningJobs[pending.jobIndex];
                     entry.boundsCenter = job.bounds.center;
+                    entry.boundsExtents = job.bounds.extents;
                     entry.boundsRadius = job.bounds.radius;
                     entry.pose = *pending.pose;
                     ++m_timingStats.skinningUpdateCount;
@@ -854,6 +856,8 @@ namespace PlutoGE::render
                 }
                 if (deformed)
                 {
+                    OcclusionCulling::SetLocalBounds(draw, deformed->boundsCenter - deformed->boundsExtents,
+                                                    deformed->boundsCenter + deformed->boundsExtents);
                     draw.shadowBoundsCenter = glm::vec3(command.model * glm::vec4(deformed->boundsCenter, 1));
                     draw.shadowBoundsRadius = deformed->boundsRadius * std::max({glm::length(glm::vec3(command.model[0])), glm::length(glm::vec3(command.model[1])), glm::length(glm::vec3(command.model[2]))});
                 }

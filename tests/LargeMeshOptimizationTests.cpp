@@ -31,6 +31,17 @@ int main(int argc, char **argv)
 {
     using namespace PlutoGE;
 
+    // Degenerate source normals must not create NaN tangent space during UV repair.
+    render::MeshConfig degenerate;
+    degenerate.data.vertices = {
+        {{0,0,0}, {0,0,0}, {0,0}, {}},
+        {{1,0,0}, {0,0,0}, {1,0}, {}},
+        {{0,1,0}, {0,0,0}, {0,1}, {}}};
+    degenerate.data.indices = {0,1,2};
+    render::Mesh repaired(degenerate);
+    for (const auto &vertex : repaired.GetMeshData().vertices)
+        for (const float value : vertex.tangent) assert(std::isfinite(value));
+
     // Optional read-only benchmark against an existing project and model identity.
     if (argc == 4)
     {
@@ -250,6 +261,33 @@ int main(int argc, char **argv)
         }
     }
     // Alternating cook settings must preserve both disk cache variants.
+    // Native skinned LODs preserve vertex payloads and the original index range.
+    auto skinnedData = generatedAsset.meshData;
+    auto skinnedSubmeshes = generatedAsset.submeshes;
+    skinnedData.indices.resize(skinnedSubmeshes.front().indexCount);
+    for (auto &vertex : skinnedData.vertices)
+    {
+        vertex.joints = {0, 1, 0, 0};
+        vertex.weights = {0.5f, 0.5f, 0, 0};
+    }
+    const auto originalVertices = skinnedData.vertices;
+    const auto originalIndices = skinnedData.indices;
+    assetimport::MeshImporter::BuildMeshLods(skinnedData, skinnedSubmeshes);
+    assert(skinnedSubmeshes.front().lods.size() > 1);
+    assert(std::equal(originalIndices.begin(), originalIndices.end(), skinnedData.indices.begin()));
+    assert(skinnedData.vertices.size() == originalVertices.size());
+    for (size_t i = 0; i < originalVertices.size(); ++i)
+    {
+        assert(skinnedData.vertices[i].uv == originalVertices[i].uv);
+        assert(skinnedData.vertices[i].joints == originalVertices[i].joints);
+        assert(skinnedData.vertices[i].weights == originalVertices[i].weights);
+    }
+    auto invalid = skinnedSubmeshes;
+    invalid.front().indexCount = std::numeric_limits<uint32_t>::max();
+    bool rejected = false;
+    try { assetimport::MeshImporter::BuildMeshLods(skinnedData, invalid); }
+    catch (const std::invalid_argument &) { rejected = true; }
+    assert(rejected);
     const auto plainSource = importer.ImportMeshSourceAsset(gridGltfPath.string());
     std::vector<std::pair<std::filesystem::path, std::filesystem::file_time_type>> cacheStamps;
     for (const auto &entry : std::filesystem::directory_iterator(lodTestDirectory / ".plutoge-cache" / "meshes"))

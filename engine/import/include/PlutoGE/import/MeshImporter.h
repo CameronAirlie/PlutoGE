@@ -86,6 +86,10 @@ namespace PlutoGE::assetimport
         MeshImporter() = default;
         ~MeshImporter() = default;
 
+        // Offline index-only LOD generation. Leaves vertices, LOD0, material
+        // slots and skin influences intact; native assets use the same policy.
+        static void BuildMeshLods(render::MeshData &data, std::vector<render::Submesh> &submeshes);
+
         ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options = {}) const;
         ImportedMeshAsset GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options = {});
         ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options = {});

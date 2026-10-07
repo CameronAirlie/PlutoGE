@@ -38,6 +38,8 @@ namespace PlutoGE::render
         [[nodiscard]] OcclusionStats Stats() const { return *m_stats; }
         [[nodiscard]] static bool SafeOccluder(const BasicDraw &draw);
         static void SetRigidBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum);
+        // Accepts rigid mesh bounds or a conservative current-pose skinned box.
+        static void SetLocalBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum);
     private:
         rhi::GraphicsPipeline m_depthPipeline, m_reducePipeline, m_testPipeline;
         rhi::Texture m_depth, m_color;

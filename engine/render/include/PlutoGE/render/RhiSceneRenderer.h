@@ -249,6 +249,7 @@ namespace PlutoGE::render
           std::uint64_t historyEpoch = 0;
           bool wasMoving = false;
           glm::vec3 boundsCenter{0};
+          glm::vec3 boundsExtents{-1};
           float boundsRadius = 0;
       };
       struct PendingSkinning

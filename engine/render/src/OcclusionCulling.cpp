@@ -23,11 +23,18 @@ namespace PlutoGE::render
 
     void OcclusionCulling::SetRigidBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum)
     {
+        SetLocalBounds(draw, minimum, maximum);
+    }
+
+    void OcclusionCulling::SetLocalBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum)
+    {
         draw.occlusionBoundsExtents = glm::vec3(-1);
         if (!Single(draw)) return;
         const auto &model = draw.instanceModels ? draw.instanceModels->front() : draw.model;
         const glm::vec3 center = (minimum + maximum) * 0.5f;
         const glm::vec3 extents = (maximum - minimum) * 0.5f;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            if (!std::isfinite(center[axis]) || !std::isfinite(extents[axis])) return;
         if (glm::any(glm::lessThan(extents, glm::vec3(0)))) return;
         draw.occlusionBoundsCenter = glm::vec3(model * glm::vec4(center, 1));
         draw.occlusionBoundsExtents = glm::abs(glm::vec3(model[0])) * extents.x +

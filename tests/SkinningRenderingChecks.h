@@ -181,11 +181,48 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         minimum = glm::min(minimum, position); maximum = glm::max(maximum, position);
     }
     require(bounds.center == (minimum + maximum) * 0.5f &&
+            bounds.extents == (maximum - minimum) * 0.5f &&
             bounds.radius == glm::length(maximum - minimum) * 0.5f, "Fused deformation bounds differ from scan");
     const auto emptyBounds = SkinRhiVerticesInto({}, joints, {}, boundedVertices);
     require(boundedVertices.empty() && emptyBounds.center == glm::vec3(0) && emptyBounds.radius == 0,
             "Empty deformation retained stale bounds or vertices");
-    std::cout << "PASS Vulkan skinning: pixels, independent actors, submeshes, shadows, motion, pause/reset, in-flight uploads and weights\n";
+    // Pose changes must update occlusion bounds in the same frame. A hidden
+    // actor walks out from behind a wall, then returns behind it.
+    auto wallConfig = config;
+    wallConfig.submeshes.clear();
+    for (auto &vertex : wallConfig.data.vertices) vertex.weights = {};
+    Mesh wallMesh(wallConfig);
+    RenderCommand wall;
+    wall.mesh = &wallMesh; wall.material = &red;
+    wall.model = glm::translate(glm::mat4(1), glm::vec3(0, 0, 1.3f)) * glm::scale(glm::mat4(1), glm::vec3(3, 3, 1));
+    RenderCommand actor = a;
+    actor.model = actor.previousModel = glm::translate(glm::mat4(1), glm::vec3(0, 0, .8f));
+    actor.material = &green;
+    auto actorSecond = actor; actorSecond.submeshIndex = 1;
+    const std::array occlusionCommands{wall, actor, actorSecond};
+    light.shadowsEnabled = false;
+    for (const float x : {0.0f, .8f, 0.0f})
+    {
+        poseA[0] = glm::translate(glm::mat4(1), glm::vec3(x, 0, 0));
+        light.occlusionMode = OcclusionMode::Off;
+        require(renderer.Render(128,128,camera,light,occlusionCommands,{}), "Animated occlusion reference failed");
+        const auto reference = readPixels(renderer.GetColorTexture());
+        light.occlusionMode = OcclusionMode::Cull;
+        for (int frame = 0; frame < 5; ++frame)
+        {
+            require(renderer.Render(128,128,camera,light,occlusionCommands,{}), "Animated occlusion render failed");
+            require(readPixels(renderer.GetColorTexture()) == reference, "Pose-based occlusion hid newly exposed geometry");
+        }
+        const auto &stats = renderer.GetTimingStats();
+        std::cout << "Pose occlusion x=" << x << " rejected=" << stats.occlusion.rejected
+                  << " tested=" << stats.occlusion.tested << " clipped=" << stats.occlusion.clipped
+                  << " invalid=" << stats.occlusion.invalidBounds << '\n';
+        require(stats.occlusionActive && stats.occlusion.available, "Animated occlusion was not exercised");
+        // Adjacent material-compatible submeshes are merged into one draw.
+        require(stats.occlusion.rejected == (x == 0 ? 1u : 0u), "Animated bounds did not track current pose visibility");
+    }
+    light.occlusionMode = OcclusionMode::Off;
+    std::cout << "PASS skinning: deformation, motion, current-pose occlusion and visibility transitions\n";
     // Representative vertex count, four influences and reusable in-place
     // history. Log timings rather than enforcing a machine-dependent limit.
     std::vector<MeshVertexData> workload(73683, config.data.vertices[0]);

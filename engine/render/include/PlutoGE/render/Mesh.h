@@ -1083,7 +1083,11 @@ namespace PlutoGE::render
 
             for (size_t vertexIndex = 0; vertexIndex < meshData.vertices.size(); ++vertexIndex)
             {
-                const glm::vec3 normal = glm::normalize(ToVec3(meshData.vertices[vertexIndex].normal));
+                const auto sourceNormal = ToVec3(meshData.vertices[vertexIndex].normal);
+                const float normalLengthSquared = glm::dot(sourceNormal, sourceNormal);
+                const glm::vec3 normal = std::isfinite(normalLengthSquared) && normalLengthSquared > 1e-12f
+                                             ? sourceNormal / std::sqrt(normalLengthSquared)
+                                             : glm::vec3(0, 1, 0);
                 glm::vec3 tangent = accumulatedTangents[vertexIndex];
 
                 tangent = tangent - normal * glm::dot(normal, tangent);

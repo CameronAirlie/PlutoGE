@@ -171,7 +171,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 36;
+        constexpr uint32_t kCookedMeshCacheVersion = 37;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -1975,6 +1975,32 @@ namespace PlutoGE::assetimport
                     localIndices.push_back(it->second);
                 }
                 uint32_t previousIndexCount = submesh.indexCount;
+                // Joint IDs are categorical. Use one weight attribute per joint
+                // instead of interpolating the four packed joint indices.
+                std::vector<int> joints;
+                for (const auto global : globalByLocal)
+                    for (size_t influence = 0; influence < 4; ++influence)
+                        if (meshData.vertices[global].weights[influence] > 0)
+                            joints.push_back(meshData.vertices[global].joints[influence]);
+                std::sort(joints.begin(), joints.end());
+                joints.erase(std::unique(joints.begin(), joints.end()), joints.end());
+                // meshoptimizer supports 32 attributes. Keep complex rigs at
+                // LOD0 rather than silently dropping deformation constraints.
+                if (joints.size() > 27) return;
+                const size_t attributeCount = 5 + joints.size();
+                std::vector<float> attributes(globalByLocal.size() * attributeCount, 0.0f);
+                std::vector<float> attributeWeights(attributeCount, 1.0f);
+                attributeWeights[0] = attributeWeights[1] = attributeWeights[2] = 0.5f;
+                for (size_t local = 0; local < globalByLocal.size(); ++local)
+                {
+                    const auto &vertex = meshData.vertices[globalByLocal[local]];
+                    auto *values = attributes.data() + local * attributeCount;
+                    std::copy(vertex.normal.begin(), vertex.normal.end(), values);
+                    std::copy(vertex.uv.begin(), vertex.uv.end(), values + 3);
+                    for (size_t influence = 0; influence < 4; ++influence)
+                        if (vertex.weights[influence] > 0)
+                            values[5 + (std::lower_bound(joints.begin(), joints.end(), vertex.joints[influence]) - joints.begin())] += vertex.weights[influence];
+                }
                 for (const auto &lodTarget : kLodTargets)
                 {
                     const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * lodTarget.targetRatio));
@@ -1984,15 +2010,17 @@ namespace PlutoGE::assetimport
                     }
 
                     std::vector<unsigned int> simplified(submesh.indexCount);
-                    const size_t simplifiedIndexCount = meshopt_simplify(
+                    const size_t simplifiedIndexCount = meshopt_simplifyWithAttributes(
                         simplified.data(),
                         localIndices.data(),
                         submesh.indexCount,
                         localPositions.front().data(),
                         localPositions.size(),
                         sizeof(localPositions.front()),
+                        attributes.data(), attributeCount * sizeof(float),
+                        attributeWeights.data(), attributeCount, nullptr,
                         targetIndexCount,
-                        lodTarget.error);
+                        lodTarget.error, meshopt_SimplifyLockBorder);
 
                     const uint32_t alignedSimplifiedIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(simplifiedIndexCount));
                     if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= previousIndexCount)
@@ -4774,6 +4802,20 @@ namespace PlutoGE::assetimport
     ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options) const
     {
         return ParseMeshAsset(filePath, ResolveMeshCookOptions(options));
+    }
+
+    void MeshImporter::BuildMeshLods(render::MeshData &data, std::vector<render::Submesh> &submeshes)
+    {
+        for (const auto &submesh : submeshes)
+        {
+            if (submesh.indexOffset > data.indices.size() || submesh.indexCount > data.indices.size() - submesh.indexOffset)
+                throw std::invalid_argument("LOD source range is outside the index buffer");
+            for (size_t i = submesh.indexOffset; i < size_t(submesh.indexOffset) + submesh.indexCount; ++i)
+                if (data.indices[i] >= data.vertices.size())
+                    throw std::invalid_argument("LOD source index is outside the vertex buffer");
+        }
+        GenerateSubmeshLods(data, submeshes, true);
+        OptimizeGeneratedLodRanges(data, submeshes, true, false);
     }
 
     ImportedMeshAsset MeshImporter::GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options)

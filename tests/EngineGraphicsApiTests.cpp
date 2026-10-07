@@ -70,6 +70,16 @@ int main(int argc, char **argv)
         .resizable = false,
         .visible = false,
     };
+    // Reproduce the editor's in-process API switch: GLAD dispatch remains
+    // populated after the OpenGL host closes, but Vulkan has no GL context.
+    {
+        platform::Window previousHost;
+        auto previousConfig = config.windowConfig;
+        previousConfig.clientApi = platform::WindowClientApi::OpenGL;
+        if (!previousHost.Create(previousConfig) || !previousHost.EnsureOpenGLContextCurrent(true))
+            return 45;
+        previousHost.Close();
+    }
     if (!engine.Initialize(config))
         return 1;
     try { CheckLodSelection(); }

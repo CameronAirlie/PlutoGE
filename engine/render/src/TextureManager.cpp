@@ -310,14 +310,16 @@ namespace PlutoGE::render
             return rgbaPixels;
         }
 
-        bool IsTextureSizeSupported(int width, int height)
+        bool IsTextureSizeSupported(int width, int height, bool hasOpenGLContext)
         {
             if (width <= 0 || height <= 0)
             {
                 return false;
             }
 
-            if (!glad_glGetIntegerv)
+            // Dispatch pointers survive an OpenGL-to-Vulkan host switch. They do
+            // not establish that an OpenGL context is available for this query.
+            if (!hasOpenGLContext)
                 return width <= 16384 && height <= 16384;
             GLint maximumTextureSize = 0;
             glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
@@ -420,7 +422,7 @@ namespace PlutoGE::render
         unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
         if (data)
         {
-            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
             {
                 stbi_image_free(data);
                 return nullptr;
@@ -481,7 +483,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        if (!IsTextureSizeSupported(width, height))
+        if (!IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
         {
             return nullptr;
         }
@@ -535,7 +537,7 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height))
+            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height, PrepareForGpuAccess()))
             {
                 return nullptr;
             }
@@ -584,7 +586,7 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
             {
                 stbi_image_free(data);
                 return nullptr;
@@ -635,7 +637,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
         {
             stbi_image_free(data);
             return nullptr;
@@ -694,7 +696,7 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height))
+            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height, PrepareForGpuAccess()))
             {
                 return nullptr;
             }
@@ -728,7 +730,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
         {
             stbi_image_free(data);
             return nullptr;
@@ -773,7 +775,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        if (!IsTextureSizeSupported(width, height))
+        if (!IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
         {
             return nullptr;
         }
@@ -809,7 +811,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        if (!IsTextureSizeSupported(width, height))
+        if (!IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
         {
             return nullptr;
         }

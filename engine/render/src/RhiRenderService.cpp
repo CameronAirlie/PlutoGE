@@ -83,10 +83,10 @@ namespace PlutoGE::render
         // Let the first UI frame initialize its pipelines and upload resources
         // outside an active scene command buffer. Subsequent frames can safely
         // append UI rendering to the scene submission.
-        const bool combineRuntimeUiSubmission = scene && scene->HasRmlRuntimeUI() &&
+        const bool combineRuntimeUiSubmission = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI() &&
                                                 RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
-        if (scene) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
+        if (scene && cameraData.renderRuntimeUI) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
         BasicRenderer::BeforeTemporalResolve compose;
         if (const auto *source = m_renderTextures.TakeSkinningSource())
@@ -101,7 +101,7 @@ namespace PlutoGE::render
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
                                      !combineRuntimeUiSubmission, scene, lights, compose))
             return false;
-        if (scene && scene->HasRmlRuntimeUI())
+        if (cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI())
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
                                          static_cast<int>(m_swapchain->GetWidth()),
                                          static_cast<int>(m_swapchain->GetHeight()), ++m_frameSequence,

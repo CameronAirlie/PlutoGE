@@ -55,6 +55,7 @@ namespace PlutoGE::assets
         float fovY = 45.0f;
         float nearPlane = 0.1f;
         float farPlane = 100.0f;
+        bool renderRuntimeUI = false;
     };
 
     struct ProjectPostProcessParameter

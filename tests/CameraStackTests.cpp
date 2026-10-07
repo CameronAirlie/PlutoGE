@@ -194,11 +194,15 @@ namespace
         Scene scene;
         auto *camera = AddCamera(scene, CameraRenderType::Overlay);
         camera->SetOverlayOrder(3);
+        Require(camera->GetCameraData(64, 64).renderRuntimeUI, "Existing cameras must retain runtime UI by default");
+        camera->SetRenderRuntimeUI(false);
+        Require(!camera->GetCameraData(64, 64).renderRuntimeUI, "Camera UI switch must reach the rendered view");
         camera->SetTagFilter(CameraTagFilter({"Weapon", "Hands"}, {"Hidden"}));
 
         Scene restoredScene;
         auto *restored = AddCamera(restoredScene, CameraRenderType::Base);
         restored->Deserialize(camera->Serialize());
+        Require(!restored->RendersRuntimeUI(), "Camera UI selection must round-trip");
         Require(restored->IsOverlay() && restored->GetOverlayOrder() == 3, "Render type and order must round-trip");
         Require(restored->GetTagFilter() == camera->GetTagFilter(), "Tag filters must round-trip");
 

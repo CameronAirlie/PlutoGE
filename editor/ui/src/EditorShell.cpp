@@ -462,6 +462,7 @@ namespace PlutoGE::ui
                 .fovY = camera.camera.GetFOV(),
                 .nearPlane = camera.camera.GetNearPlane(),
                 .farPlane = camera.camera.GetFarPlane(),
+                .renderRuntimeUI = camera.renderRuntimeUI,
             };
         }
 
@@ -509,6 +510,7 @@ namespace PlutoGE::ui
             camera.camera.SetFOV(settings.fovY);
             camera.camera.SetNearPlane(settings.nearPlane);
             camera.camera.SetFarPlane(settings.farPlane);
+            camera.renderRuntimeUI = settings.renderRuntimeUI;
         }
 
         void ApplyProjectEditorPostProcessEffects(const std::vector<assets::ProjectPostProcessEffect> &serializedEffects,
@@ -3152,6 +3154,7 @@ namespace PlutoGE::ui
                 editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
                                                                                    renderTargetWidth,
                                                                                    renderTargetHeight);
+                editorCameraData.renderRuntimeUI = m_editorCamera.renderRuntimeUI;
                 if (m_editorCamera.orthographic)
                 {
                     const int safeRenderTargetHeight = renderTargetHeight > 1 ? renderTargetHeight : 1;

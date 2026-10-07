@@ -4,6 +4,14 @@ Project scripts can set `Application.Fullscreen` for standalone game windows. Th
 
 This is the working guide for creating runtime UI in PlutoGE, including the CoD project. Read it before generating or modifying RML, RCSS, or managed UI controllers. For the complete pinned property and extension inventory, see [RML/RCSS reference](RMLUI_REFERENCE.md). For host internals, see [integration](RMLUI_INTEGRATION.md). The engine pins **RmlUi 6.1**; current upstream documentation can describe newer features. The pinned source and the engine renderer are authoritative.
 
+Camera components expose **RenderRuntimeUI** in the Inspector. It controls runtime
+screen and world UI for that camera's viewport on the legacy and RHI render paths.
+Existing game cameras default to enabled. The **Editor Camera** Inspector has a
+**Render Runtime UI** checkbox, disabled by default and saved with the project.
+Enable it to preview game UI through the editing camera. This does not affect
+the separate Game viewport, document previews, or loading screens. UI interaction
+in the editor remains routed through the Game viewport.
+
 ## Create a document
 
 Create `Assets/UI/screen.rml`, `screen.rcss`, and licensed fonts/images. The Content Browser can generate paired RML/RCSS assets. Select the RML asset on an enabled **RmlUi Canvas**, or an **RmlWidget**. Widgets inherit the nearest enabled Canvas scale policy. A document-owning Canvas owns its UI subtree; do not attach a second widget for the same document unnecessarily. Add stable unique IDs to elements accessed by scripts.

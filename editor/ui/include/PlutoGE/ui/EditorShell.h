@@ -78,6 +78,7 @@ namespace PlutoGE::ui
             float yawDegrees = 0.0f;
             float pitchDegrees = 0.0f;
             bool orthographic = false;
+            bool renderRuntimeUI = false;
             float orthographicSize = 10.0f;
             glm::vec3 perspectivePosition{0.0f, 2.0f, 6.0f};
             bool hasPerspectivePosition = false;

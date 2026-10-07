@@ -155,6 +155,7 @@ namespace PlutoGE::scene
 
             auto data = m_camera->GetCameraData(transform, width, height);
             data.tagFilter = &m_tagFilter;
+            data.renderRuntimeUI = m_renderRuntimeUI;
             return data;
         }
         return render::CameraData{}; // Return default camera data if no camera is set
@@ -307,6 +308,7 @@ namespace PlutoGE::scene
         properties.push_back({"TargetTexture", scene::PropertyType::String, m_targetTextureReference});
         properties.push_back({"TransparentBackground", scene::PropertyType::Bool, m_transparentBackground ? "true" : "false"});
         properties.push_back({"FilterLightsByTags", scene::PropertyType::Bool, m_filterLightsByTags ? "true" : "false"});
+        properties.push_back({"RenderRuntimeUI", scene::PropertyType::Bool, m_renderRuntimeUI ? "true" : "false"});
 
         properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
 
@@ -398,6 +400,10 @@ namespace PlutoGE::scene
             else if (property.name == "TransparentBackground")
             {
                 m_transparentBackground = property.value == "true";
+            }
+            else if (property.name == "RenderRuntimeUI")
+            {
+                m_renderRuntimeUI = property.value == "true" || property.value == "1";
             }
             else if (property.name == "FilterLightsByTags")
             {

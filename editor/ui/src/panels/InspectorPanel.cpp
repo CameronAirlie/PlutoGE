@@ -2913,6 +2913,8 @@ namespace PlutoGE::ui
             }
 
             ImGui::Text("Current Fly Speed: %.2f", camera.moveSpeed * camera.speedAdjustment);
+            if (ImGui::Checkbox("Render Runtime UI", &camera.renderRuntimeUI))
+                editorShell.MarkProjectDirty();
 
             float fov = camera.camera.GetFOV();
             if (ImGui::DragFloat("FOV", &fov, 0.1f, 1.0f, 179.0f))

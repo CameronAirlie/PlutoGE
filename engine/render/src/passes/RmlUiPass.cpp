@@ -89,7 +89,7 @@ namespace PlutoGE::render
 
     void RmlUiPass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.scene || !ctx.renderer || !ctx.scene->HasRmlRuntimeUI())
+        if (!ctx.cameraData.renderRuntimeUI || !ctx.scene || !ctx.renderer || !ctx.scene->HasRmlRuntimeUI())
             return;
 
         int width = 0;

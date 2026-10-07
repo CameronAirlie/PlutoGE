@@ -552,6 +552,13 @@ target_link_libraries(PlutoGERmlUiInterfaceScaleTests PRIVATE RmlUi::Core)
 add_test(NAME PlutoGEVulkanUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests)
 add_test(NAME PlutoGEOpenGLUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests --opengl)
 
+if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGECameraUiVisibilityTests CameraUiVisibilityTests.cpp)
+    target_link_libraries(PlutoGECameraUiVisibilityTests PRIVATE PlutoGE::EditorUI)
+    add_test(NAME PlutoGEVulkanCameraUiVisibility COMMAND PlutoGECameraUiVisibilityTests)
+    add_test(NAME PlutoGEOpenGLCameraUiVisibility COMMAND PlutoGECameraUiVisibilityTests --opengl)
+endif()
+
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGESkeletalManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SkeletalSmokeTests/PlutoGE.SkeletalSmokeTests.csproj --configuration Release)

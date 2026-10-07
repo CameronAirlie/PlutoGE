@@ -1050,6 +1050,20 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
         }
 
+        VkResult SubmitWithMemoryRetry(const VkSubmitInfo &submit, VkFence fence)
+        {
+            VkResult result = vkQueueSubmit(queue, 1, &submit, fence);
+            if (result != VK_ERROR_OUT_OF_DEVICE_MEMORY && result != VK_ERROR_OUT_OF_HOST_MEMORY)
+                return result;
+            // Allocation failures leave the submission unqueued. Drain prior
+            // work and collect only resources retired by completed submissions.
+            const VkResult idle = vkDeviceWaitIdle(device);
+            if (idle != VK_SUCCESS) return idle;
+            completedSubmission = lastSubmittedSubmission;
+            CollectDeferredResources(completedSubmission);
+            return vkQueueSubmit(queue, 1, &submit, fence);
+        }
+
         void Immediate(const auto &record)
         {
             Check(vkResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
@@ -1061,7 +1075,7 @@ namespace PlutoGE::render::rhi::vulkan
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &commandBuffer;
-            Check(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit");
+            Check(SubmitWithMemoryRetry(submit, VK_NULL_HANDLE), "vkQueueSubmit");
             Check(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
         }
 
@@ -1225,6 +1239,7 @@ namespace PlutoGE::render::rhi::vulkan
             frame.hasTimestamps = false;
             frame.submissionLabel = submissionLabel.empty() ? "Unlabelled" : std::string(submissionLabel);
             m_impl.activeFrameIndex = m_frameIndex;
+            m_executable = false;
             m_recording = true;
         }
 
@@ -1357,23 +1372,27 @@ namespace PlutoGE::render::rhi::vulkan
             auto &frame = m_frames[m_frameIndex];
             while (!m_activeScopes.empty())
                 EndGpuScope();
-            m_impl.FlushUniformArena();
-            for (auto &upload : frame.uploads)
-                if (upload.used)
-                    Check(vmaFlushAllocation(m_impl.allocator, upload.allocation, 0, upload.used),
-                          "vmaFlushAllocation(buffer uploads)");
-            if (frame.profilingEnabled)
+            if (!m_executable)
             {
-                vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
-                frame.hasTimestamps = true;
+                m_impl.FlushUniformArena();
+                for (auto &upload : frame.uploads)
+                    if (upload.used)
+                        Check(vmaFlushAllocation(m_impl.allocator, upload.allocation, 0, upload.used),
+                              "vmaFlushAllocation(buffer uploads)");
+                if (frame.profilingEnabled)
+                {
+                    vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
+                    frame.hasTimestamps = true;
+                }
+                { core::CpuScope scope("Vulkan end command buffer", core::CpuCategory::Rendering);
+                  Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer"); }
+                m_executable = true;
             }
-            { core::CpuScope scope("Vulkan end command buffer", core::CpuCategory::Rendering);
-              Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer"); }
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
             { core::CpuScope scope("Vulkan queue submit", core::CpuCategory::Rendering);
-              Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(frame)"); }
+              Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(frame)"); }
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             if (!frame.profilingEnabled)
             {
@@ -2132,6 +2151,7 @@ namespace PlutoGE::render::rhi::vulkan
         bool m_descriptorBindingsDirty = true;
         std::array<bool, MaxDescriptorSets> m_descriptorSetsDirty{};
         bool m_recording = false;
+        bool m_executable = false;
         bool m_rendering = false;
         struct ActiveScope
         {
@@ -2364,7 +2384,7 @@ namespace PlutoGE::render::rhi::vulkan
             submit.pCommandBuffers = &frame.commandBuffer;
             submit.signalSemaphoreCount = 1;
             submit.pSignalSemaphores = &renderFinished;
-            Check(vkQueueSubmit(m_impl.queue, 1, &submit, frame.fence), "vkQueueSubmit(presentation)");
+            Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(presentation)");
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             timing.presentSubmitMs = elapsedMs(submitStart, Clock::now());
 

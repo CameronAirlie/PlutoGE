@@ -16,6 +16,7 @@ Inventory verified against PlutoGE's RmlUi **6.1** `Factory.cpp` and `StyleSheet
 | SVG, Lottie, Lua, browser JavaScript | Optional upstream integrations; not a guaranteed engine authoring API |
 | Native data models and data-* views | Core C++; no automatic managed-property model registration |
 | Managed DOM, observables, drag IDs, pan/zoom, portraits, render textures | Engine-specific; see authoring guide |
+| Camera runtime UI visibility | Camera RenderRuntimeUI controls its viewport; editor camera defaults off and has a saved Inspector override |
 | CSS var()/browser custom properties | Not implemented by this pinned RCSS parser; use token generation |
 
 ## Registered special elements

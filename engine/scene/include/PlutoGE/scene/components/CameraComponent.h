@@ -71,6 +71,8 @@ namespace PlutoGE::scene
         // exclude lights, including tags inherited from their parent entities.
         void SetFilterLightsByTags(bool filter) { m_filterLightsByTags = filter; }
         bool FiltersLightsByTags() const { return m_filterLightsByTags; }
+        void SetRenderRuntimeUI(bool enabled) { m_renderRuntimeUI = enabled; }
+        bool RendersRuntimeUI() const { return m_renderRuntimeUI; }
 
         render::CameraData GetCameraData(int width, int height) const;
 
@@ -106,6 +108,7 @@ namespace PlutoGE::scene
         render::RenderTexture *m_targetTexture = nullptr;
         bool m_transparentBackground = false;
         bool m_filterLightsByTags = false;
+        bool m_renderRuntimeUI = true;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
         std::string m_postProcessPresetAssetReference;
     };

@@ -23,6 +23,7 @@ namespace PlutoGE::render
         float farPlane = 100.0f;
         // Borrowed from the camera component for the lifetime of this view.
         const scene::CameraTagFilter *tagFilter = nullptr;
+        bool renderRuntimeUI = true;
     };
 
     struct CameraConfig

@@ -11,6 +11,32 @@
 
 namespace
 {
+    struct SubmissionProbe
+    {
+        static inline PFN_vkQueueSubmit original = nullptr;
+        static inline unsigned failuresRemaining = 0;
+        static inline unsigned calls = 0;
+        SubmissionProbe(unsigned failures)
+        {
+            original = vkQueueSubmit;
+            failuresRemaining = failures;
+            calls = 0;
+            vkQueueSubmit = Submit;
+        }
+        ~SubmissionProbe() { vkQueueSubmit = original; }
+        static VKAPI_ATTR VkResult VKAPI_CALL Submit(VkQueue queue, std::uint32_t count,
+                                                     const VkSubmitInfo *submits, VkFence fence)
+        {
+            ++calls;
+            if (failuresRemaining)
+            {
+                --failuresRemaining;
+                return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            }
+            return original(queue, count, submits, fence);
+        }
+    };
+
     // Inject allocation failures without exhausting the test machine's GPU.
     struct SwapchainCreationProbe
     {
@@ -136,6 +162,29 @@ int main(int argc, char **argv)
                     !swapchain->Present(renderer.GetColorTexture())) return 15;
             }
             if (!swapchain->SetVSyncEnabled(false)) return 14;
+            {
+                SubmissionProbe probe(1);
+                renderer.Render(glm::mat4(1.0f), {});
+                if (probe.calls != 2 || probe.failuresRemaining != 0) return 16;
+            }
+            {
+                SubmissionProbe probe(1);
+                if (!swapchain->Present(renderer.GetColorTexture()) || probe.calls != 2) return 17;
+            }
+            {
+                // Recovery must retry the executable buffer, not end it twice.
+                SubmissionProbe probe(2);
+                auto &context = device.GetImmediateContext();
+                context.BeginFrame("Failed submission recovery");
+                bool threw = false;
+                try { context.Submit(); }
+                catch (const std::exception &) { threw = true; }
+                if (!threw || probe.calls != 2) return 18;
+                context.RecoverInterruptedFrame();
+                if (probe.calls != 3) return 19;
+                context.BeginFrame("Frame after recovery");
+                context.Submit();
+            }
             // Exercise many uncapped frame-slot/image-index reuse cycles,
             // including resource recreation while presentation is active.
             const int frameCount = argc > 1 && std::string_view(argv[1]) == "--stress" ? 60000 : 1000;

@@ -1,4 +1,6 @@
 #include "PlutoGE/ui/PanelManager.h"
+#include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/ViewportOverlayLayout.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -124,6 +126,22 @@ namespace PlutoGE::ui
             return {};
         }
 
+        void MergeEditorIcons(ImGuiIO &io)
+        {
+            const auto path = ResolveEditorFontPath("fa-solid-900.ttf");
+            if (path.empty())
+            {
+                std::cerr << "Editor icon font missing: fa-solid-900.ttf\n";
+                return;
+            }
+            ImFontConfig config{};
+            config.MergeMode = true;
+            config.PixelSnapH = true;
+            config.GlyphMinAdvanceX = kDefaultEditorFontSize;
+            io.Fonts->AddFontFromFileTTF(path.string().c_str(), kDefaultEditorFontSize,
+                                       &config, icons::Ranges);
+        }
+
         ImFont *LoadEditorFont(ImGuiIO &io, const char *fontFileName)
         {
             const auto fontPath = ResolveEditorFontPath(fontFileName);
@@ -135,7 +153,9 @@ namespace PlutoGE::ui
                 fontConfig.PixelSnapH = true;
                 if (io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), kDefaultEditorFontSize, &fontConfig))
                 {
-                    return io.Fonts->Fonts.back();
+                    auto *font = io.Fonts->Fonts.back();
+                    MergeEditorIcons(io);
+                    return font;
                 }
             }
 
@@ -261,7 +281,11 @@ namespace PlutoGE::ui
         }
         m_martianMonoFont = LoadEditorFont(io, "MartianMono-StdRg.ttf");
         m_georamaFont = LoadEditorFont(io, "Georama-Regular.ttf");
-        m_defaultFont = io.Fonts->AddFontDefault();
+        ImFontConfig defaultFontConfig{};
+        defaultFontConfig.SizePixels = kDefaultEditorFontSize;
+        m_defaultFont = io.Fonts->AddFontDefault(&defaultFontConfig);
+        MergeEditorIcons(io);
+        RegisterViewportOverlaySettings();
         SetEditorFont(m_editorFont);
         SetEditorFontSize(kDefaultEditorFontSize);
 

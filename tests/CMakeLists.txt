@@ -567,3 +567,12 @@ endif()
 add_executable(PlutoGEIKComponentTests IKComponentTests.cpp)
 pluto_link_engine(PlutoGEIKComponentTests)
 add_test(NAME PlutoGEIKComponentTests COMMAND PlutoGEIKComponentTests)
+
+add_executable(PlutoGEViewportOverlayLayoutTests ViewportOverlayLayoutTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportOverlayLayout.cpp)
+target_include_directories(PlutoGEViewportOverlayLayoutTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+target_link_libraries(PlutoGEViewportOverlayLayoutTests PRIVATE PlutoGE::imgui)
+target_compile_features(PlutoGEViewportOverlayLayoutTests PRIVATE cxx_std_20)
+target_compile_definitions(PlutoGEViewportOverlayLayoutTests PRIVATE
+    PLUTO_FONT_DIRECTORY="${CMAKE_SOURCE_DIR}/editor/resources/fonts")
+add_test(NAME PlutoGEViewportOverlayLayoutTests COMMAND PlutoGEViewportOverlayLayoutTests)

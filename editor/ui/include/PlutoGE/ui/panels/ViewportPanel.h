@@ -160,7 +160,6 @@ namespace PlutoGE::ui
         ImGuiID m_platformViewport = 0;
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
-        float m_settingsOverlayBottom = 0.0f;
         uint32_t m_selectedSplineEntityId = 0;
         uint32_t m_selectedOceanEntityId = 0;
         int m_selectedSplinePointIndex = -1;

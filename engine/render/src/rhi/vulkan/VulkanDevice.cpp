@@ -46,6 +46,19 @@ namespace PlutoGE::render::rhi::vulkan
 {
     namespace
     {
+        template <typename Callback>
+        class ScopeExit
+        {
+        public:
+            explicit ScopeExit(Callback callback) : m_callback(std::move(callback)) {}
+            ScopeExit(const ScopeExit &) = delete;
+            ~ScopeExit() { if (m_active) m_callback(); }
+            void Dismiss() noexcept { m_active = false; }
+        private:
+            Callback m_callback;
+            bool m_active = true;
+        };
+
         void Check(VkResult result, const char *operation)
         {
             if (result != VK_SUCCESS)
@@ -2263,6 +2276,21 @@ namespace PlutoGE::render::rhi::vulkan
             auto *source = m_impl.textures.Get(sourceHandle);
             if (!source || source->descriptor.usage != TextureUsage::ColorAttachment)
                 return false;
+            if (m_interruptedPresent)
+            {
+                // Acquire succeeded but its wait was never submitted. Retire
+                // the acquired image and its signalled semaphore before reuse.
+                Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(interrupted presentation)");
+                auto &frame = m_frames[m_frameIndex];
+                VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+                VkSemaphore replacement = VK_NULL_HANDLE;
+                Check(vkCreateSemaphore(m_impl.device, &info, nullptr, &replacement),
+                      "vkCreateSemaphore(presentation recovery)");
+                vkDestroySemaphore(m_impl.device, frame.imageAvailable, nullptr);
+                frame.imageAvailable = replacement;
+                DestroySwapchain();
+                m_interruptedPresent = false;
+            }
             // Resize allocation failures retire the old swapchain. Skip this
             // frame and retry once on the next frame instead of ending the game.
             if (!m_swapchain && !Recreate())
@@ -2279,7 +2307,9 @@ namespace PlutoGE::render::rhi::vulkan
             auto &frame = m_frames[m_frameIndex];
             const auto fenceStart = Clock::now();
             core::CpuScope fenceScope("Presentation fence wait", core::CpuCategory::Wait);
-            Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            if (frame.pending)
+                Check(vkWaitForFences(m_impl.device, 1, &frame.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(presentation)");
+            frame.pending = false;
             fenceScope.End();
             timing.presentFenceWaitMs = elapsedMs(fenceStart, Clock::now());
             if (frame.submissionSerial != 0)
@@ -2299,6 +2329,13 @@ namespace PlutoGE::render::rhi::vulkan
             if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
                 Check(acquired, "vkAcquireNextImageKHR");
 
+            const auto previousSourceLayout = source->layout;
+            ScopeExit interrupted([&]
+            {
+                source->layout = previousSourceLayout;
+                m_interruptedPresent = true;
+            });
+
             // A submission fence does not guarantee that presentation has
             // consumed its wait semaphore. Reuse only the semaphore belonging
             // to the acquired image; the acquire wait below orders that reuse
@@ -2306,7 +2343,6 @@ namespace PlutoGE::render::rhi::vulkan
             const VkSemaphore renderFinished = m_renderFinished[imageIndex];
 
             const auto recordStart = Clock::now();
-            Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(presentation)");
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -2384,7 +2420,10 @@ namespace PlutoGE::render::rhi::vulkan
             submit.pCommandBuffers = &frame.commandBuffer;
             submit.signalSemaphoreCount = 1;
             submit.pSignalSemaphores = &renderFinished;
+            Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(presentation)");
+            frame.pending = true;
+            interrupted.Dismiss();
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             timing.presentSubmitMs = elapsedMs(submitStart, Clock::now());
 
@@ -2577,6 +2616,7 @@ namespace PlutoGE::render::rhi::vulkan
             VkSemaphore imageAvailable = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
             std::uint64_t submissionSerial = 0;
+            bool pending = false;
         };
         std::array<FrameResources, 2> m_frames;
         std::size_t m_frameIndex = 0;
@@ -2592,6 +2632,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::uint32_t m_height = 0;
         bool m_vSync = true;
         bool m_recreateFailureReported = false;
+        bool m_interruptedPresent = false;
     };
 
     VulkanDevice::VulkanDevice() : VulkanDevice(SwapchainDescriptor{}) {}

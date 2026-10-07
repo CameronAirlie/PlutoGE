@@ -1,6 +1,8 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/ViewportPicking.h"
+#include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/ViewportOverlayLayout.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 
 // Editor selection access is validated by EditorShell before panel use.
@@ -49,6 +51,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <string_view>
 #include <limits>
 #include <optional>
 #include <memory>
@@ -2002,34 +2005,24 @@ namespace PlutoGE::ui
             DrawGameplayDebug(m_gameDebugCamera, viewportMin, imageSize);
         if (m_useRhiPreview)
         {
-            std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
-                                   " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
-                                   " | draws " + std::to_string(m_rhiDrawCount);
-            ImU32 rhiLabelColor = IM_COL32(120, 220, 255, 255);
-            if (m_rhiRenderService)
-            {
-                const auto &upscaler = m_rhiRenderService->GetTemporalUpscalerStatus();
-                if (upscaler.requested)
-                {
-                    rhiLabel += " | " + std::string(TemporalUpscalerLabel(upscaler.options.technology)) +
-                                (upscaler.active ? " active" : " fallback");
-                    if (upscaler.nativeInput)
-                        rhiLabel += " (native input)";
-                    rhiLabelColor = upscaler.active ? IM_COL32(110, 235, 150, 255)
-                                                    : IM_COL32(255, 180, 80, 255);
-                }
-            }
-            if (m_activeRhiVulkan)
-                rhiLabel += " | compositor import";
-            ImGui::GetWindowDrawList()->AddText(
-                ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
-                rhiLabelColor, rhiLabel.c_str());
+            // Keep operational diagnostics in View; reserve the canvas for authoring.
+            const char *backend = m_activeRhiVulkan ? "Vulkan" : "OpenGL";
+            const std::string status = std::string(backend) + "  /  " + std::to_string(m_rhiDrawCount) + " draws";
+            const ImVec2 textSize = ImGui::CalcTextSize(status.c_str());
+            const ImVec2 statusMin(viewportMin.x + 8.0f, viewportMax.y - textSize.y - 14.0f);
+            auto *draw = ImGui::GetWindowDrawList();
+            draw->PushClipRect(viewportMin, viewportMax, true);
+            draw->AddRectFilled(ImVec2(statusMin.x - 5, statusMin.y - 3),
+                                ImVec2(statusMin.x + textSize.x + 5, statusMin.y + textSize.y + 3),
+                                IM_COL32(32, 33, 36, 210), 3.0f);
+            draw->AddText(statusMin, IM_COL32(166, 170, 178, 255), status.c_str());
+            draw->PopClipRect();
         }
         if (m_rhiRenderService && !m_rhiRenderService->GetLastRenderError().empty())
         {
             const auto &error = m_rhiRenderService->GetLastRenderError();
             ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-                ImVec2(viewportMin.x + 12, viewportMin.y + 12), IM_COL32(255, 130, 110, 255),
+                ImVec2(viewportMin.x + 56, viewportMin.y + 90), IM_COL32(255, 130, 110, 255),
                 error.c_str(), nullptr, std::max(80.0f, imageSize.x - 24));
         }
         m_platformViewport = ImGui::GetWindowViewport()->ID;
@@ -2173,45 +2166,144 @@ namespace PlutoGE::ui
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
 
-        const ImVec2 overlayPos(viewportMin.x + viewportSize.x - 10.0f, viewportMin.y + 10.0f);
-        ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.92f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(7.0f, 4.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-
-        const ImGuiWindowFlags flags =
-            ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoDocking |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoNav;
-
-        const std::string overlayName = "##ViewportSettingsOverlay" + m_config.name;
-        ImGui::Begin(overlayName.c_str(), nullptr, flags);
+        // Normalized anchors and a matching pivot allow independent control islands
+        // anywhere in the image, including detached editor platform windows.
+        bool hovered = false;
         bool overlayPopupOpen = false;
+        const float unit = ImGui::GetFontSize() / 13.0f;
+        const float buttonSize = 28.0f * unit;
+        ViewportOverlayLayout *currentLayout = nullptr;
+        const auto beginControls = [&](const char *id, ImVec2 anchor, ImVec2 offset)
+        {
+            const std::string name = std::string("##ViewportControls") + id + m_config.name;
+            currentLayout = &GetViewportOverlayLayout(name);
+            const auto &layout = *currentLayout;
+            const ImVec2 freeSpace(std::max(0.0f, viewportSize.x - layout.lastSize.x),
+                                   std::max(0.0f, viewportSize.y - layout.lastSize.y));
+            ImGui::SetNextWindowViewport(m_platformViewport);
+            if (layout.customized)
+                ImGui::SetNextWindowPos(ImVec2(viewportMin.x + freeSpace.x * layout.fraction.x,
+                                              viewportMin.y + freeSpace.y * layout.fraction.y), ImGuiCond_Always);
+            else
+                ImGui::SetNextWindowPos(ImVec2(viewportMin.x + viewportSize.x * anchor.x + offset.x * unit,
+                                              viewportMin.y + viewportSize.y * anchor.y + offset.y * unit),
+                                        ImGuiCond_Always, anchor);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(2 * unit, 2 * unit));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1 * unit, 1 * unit));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 3.0f * unit);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f * unit);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6 * unit, 4 * unit));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(38, 39, 42, 245));
+            ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(75, 77, 82, 220));
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(58, 60, 64, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(78, 82, 89, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(59, 96, 133, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(218, 222, 228, 255));
+            ImGui::Begin(name.c_str(), nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoFocusOnAppearing);
+            const bool vertical = std::string_view(id) == "Transform";
+            const ImVec2 gripSize = vertical ? ImVec2(buttonSize, 12 * unit) : ImVec2(12 * unit, buttonSize);
+            ImGui::InvisibleButton("##DragHandle", gripSize);
+            const ImVec2 gripMin = ImGui::GetItemRectMin();
+            const ImVec2 glyphSize = ImGui::CalcTextSize(icons::Grip);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(gripMin.x + (gripSize.x - glyphSize.x) * 0.5f,
+                       gripMin.y + (gripSize.y - glyphSize.y) * 0.5f),
+                ImGui::IsItemHovered() ? IM_COL32(216, 225, 237, 255) : IM_COL32(132, 139, 150, 255), icons::Grip);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                ImGui::SetTooltip("Drag to reposition. Double-click to reset.");
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    currentLayout->customized = false;
+                    SaveViewportOverlayLayout();
+                }
+            }
+            if (ImGui::IsItemActivated())
+            {
+                const ImVec2 pos = ImGui::GetWindowPos();
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                currentLayout->grabOffset = ImVec2(mouse.x - pos.x, mouse.y - pos.y);
+            }
+            if (ImGui::IsItemActive())
+            {
+                hovered = true;
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                {
+                    const ImVec2 size = ImGui::GetWindowSize();
+                    const ImVec2 available(std::max(0.0f, viewportSize.x - size.x),
+                                           std::max(0.0f, viewportSize.y - size.y));
+                    const ImVec2 mouse = ImGui::GetIO().MousePos;
+                    const ImVec2 offset(std::clamp(mouse.x - currentLayout->grabOffset.x - viewportMin.x, 0.0f, available.x),
+                                        std::clamp(mouse.y - currentLayout->grabOffset.y - viewportMin.y, 0.0f, available.y));
+                    // Preserve a coordinate when the viewport is temporarily too small.
+                    if (available.x > 0) currentLayout->fraction.x = offset.x / available.x;
+                    if (available.y > 0) currentLayout->fraction.y = offset.y / available.y;
+                    currentLayout->customized = true;
+                    ImGui::SetWindowPos(ImVec2(viewportMin.x + offset.x, viewportMin.y + offset.y));
+                }
+            }
+            if (ImGui::IsItemDeactivated() && currentLayout->customized) SaveViewportOverlayLayout();
+            if (!vertical) ImGui::SameLine();
+        };
+        const auto endControls = [&]()
+        {
+            hovered |= ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup |
+                                              ImGuiHoveredFlags_ChildWindows);
+            currentLayout->lastSize = ImGui::GetWindowSize();
+            const ImVec2 pos = ImGui::GetWindowPos();
+            const ImVec2 maxPos(viewportMin.x + std::max(0.0f, viewportSize.x - currentLayout->lastSize.x),
+                                viewportMin.y + std::max(0.0f, viewportSize.y - currentLayout->lastSize.y));
+            ImGui::SetWindowPos(ImVec2(std::clamp(pos.x, viewportMin.x, maxPos.x),
+                                      std::clamp(pos.y, viewportMin.y, maxPos.y)));
+            ImGui::End();
+            ImGui::PopStyleColor(6);
+            ImGui::PopStyleVar(6);
+        };
+        const auto toolButton = [&](const char *id, const char *icon, const char *tooltip, bool active,
+                                    const char *label = nullptr, bool dropdown = false)
+        {
+            const float labelWidth = label ? ImGui::CalcTextSize(label).x + 7 * unit : 0;
+            const float width = buttonSize + labelWidth + (dropdown ? 12 * unit : 0);
+            ImGui::PushStyleColor(ImGuiCol_Button, active ? IM_COL32(59, 96, 133, 255) : IM_COL32(58, 60, 64, 255));
+            const bool pressed = ImGui::Button(id, ImVec2(width, buttonSize));
+            ImGui::PopStyleColor();
+            auto *draw = ImGui::GetWindowDrawList();
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 c(min.x + buttonSize * 0.5f, min.y + buttonSize * 0.5f);
+            const ImU32 color = IM_COL32(222, 227, 234, 255);
+            const ImVec2 iconSize = ImGui::CalcTextSize(icon);
+            draw->AddText(ImVec2(c.x - iconSize.x * 0.5f, c.y - iconSize.y * 0.5f), color, icon);
+            if (label) draw->AddText(ImVec2(min.x + buttonSize, c.y - ImGui::GetFontSize() * 0.5f), color, label);
+            if (dropdown)
+            {
+                const ImVec2 chevronSize = ImGui::CalcTextSize(icons::Chevron);
+                draw->AddText(ImVec2(min.x + width - 8 * unit - chevronSize.x * 0.5f,
+                                    c.y - chevronSize.y * 0.5f), IM_COL32(170, 176, 185, 255), icons::Chevron);
+            }
+            if (active)
+                draw->AddRectFilled(ImVec2(min.x + 1, min.y + 4 * unit),
+                                    ImVec2(min.x + 3 * unit, min.y + buttonSize - 4 * unit), IM_COL32(124, 184, 241, 255), unit);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+            return pressed;
+        };
         if (m_config.editorViewport)
         {
-            if (m_gizmoOperation == ImGuizmo::TRANSLATE)
-            {
-                ImGui::TextUnformatted("Move");
-            }
-            else if (m_gizmoOperation == ImGuizmo::ROTATE)
-            {
-                ImGui::TextUnformatted("Rotate");
-            }
-            else
-            {
-                ImGui::TextUnformatted("Scale");
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", m_gizmoMode == ImGuizmo::LOCAL ? "Local" : "World");
-            ImGui::SameLine();
-            ImGui::TextDisabled("|");
-            ImGui::SameLine();
-
-            if (ImGui::SmallButton("Transform"))
+            beginControls("Transform", ImVec2(0, 0), ImVec2(8, 48));
+            if (toolButton("##Move", icons::Move, "Move (W)", m_gizmoOperation == ImGuizmo::TRANSLATE))
+                m_gizmoOperation = ImGuizmo::TRANSLATE;
+            if (toolButton("##Rotate", icons::Rotate, "Rotate (E)", m_gizmoOperation == ImGuizmo::ROTATE))
+                m_gizmoOperation = ImGuizmo::ROTATE;
+            if (toolButton("##Scale", icons::Scale, "Scale (R)", m_gizmoOperation == ImGuizmo::SCALE))
+                m_gizmoOperation = ImGuizmo::SCALE;
+            ImGui::Separator();
+            if (toolButton("##Space", icons::Space, m_gizmoMode == ImGuizmo::LOCAL ? "Local space / transform settings" : "World space / transform settings", m_gizmoMode == ImGuizmo::LOCAL))
             {
                 ImGui::OpenPopup("TransformPopup");
             }
@@ -2247,10 +2339,14 @@ namespace PlutoGE::ui
                 ImGui::EndPopup();
             }
 
-            ImGui::SameLine();
+            if (toolButton("##Frame", icons::Frame, "Frame selected (F)", false))
+                FrameSelectedEntity(EditorShell::GetInstance());
+            endControls();
         }
+        beginControls("View", ImVec2(0, 0), ImVec2(8, 8));
 
-        if (ImGui::SmallButton("View"))
+        if (toolButton("##View", icons::View, "View options and render diagnostics", false,
+                       viewportSize.x > 420 * unit ? "View" : nullptr, true))
         {
             ImGui::OpenPopup("ViewPopup");
         }
@@ -2305,10 +2401,9 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
-        ImGui::SameLine();
-        ImGui::TextDisabled("Debug: %s", GetDebugViewLabel(static_cast<render::PostProcessDebugView>(debugView)));
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Quality"))
+        endControls();
+        beginControls("Quality", ImVec2(1, 0), ImVec2(-8, 8));
+        if (toolButton("##Quality", icons::Quality, "Graphics quality and render resolution", false, nullptr, true))
         {
             ImGui::OpenPopup("QualityPopup");
         }
@@ -2411,13 +2506,25 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
+        endControls();
         if (m_config.editorViewport)
         {
+            beginControls("Tools", ImVec2(0, 0), ImVec2(48, 48));
+            if (toolButton("##Grid", icons::Grid, "Show grid", m_showGrid)) m_showGrid = !m_showGrid;
             ImGui::SameLine();
-            if (ImGui::SmallButton("Snap"))
+            if (toolButton("##SnapToggle", icons::Snap, "Toggle transform snapping", m_enableSnap)) m_enableSnap = !m_enableSnap;
+            ImGui::SameLine();
+            if (ImGui::Button("##SnapSettings", ImVec2(16 * unit, buttonSize)))
             {
                 ImGui::OpenPopup("SnapPopup");
             }
+            const ImVec2 snapMin = ImGui::GetItemRectMin();
+            const ImVec2 chevronSize = ImGui::CalcTextSize(icons::Chevron);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(snapMin.x + 8 * unit - chevronSize.x * 0.5f,
+                       snapMin.y + (buttonSize - chevronSize.y) * 0.5f),
+                IM_COL32(185, 191, 200, 255), icons::Chevron);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap increments");
             if (ImGui::BeginPopup("SnapPopup"))
             {
                 overlayPopupOpen = true;
@@ -2433,56 +2540,56 @@ namespace PlutoGE::ui
                 ImGui::EndPopup();
             }
 
-            if (auto *selectedEntity = EditorShell::GetInstance().GetSelectedEntity())
+            ImGui::SameLine();
+            if (toolButton("##Paint", icons::Paint, "Paint tools for the selected object", g_texturePaint.enabled, nullptr, true)) ImGui::OpenPopup("PaintPopup");
+            if (ImGui::BeginPopup("PaintPopup"))
             {
-                if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+                overlayPopupOpen = true;
+                ImGui::TextDisabled("Selected object paint tools");
+                if (auto *selectedEntity = EditorShell::GetInstance().GetSelectedEntity())
                 {
-                    if (terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled())
+                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
                     {
-                        RenderTerrainPaintToolbar(*terrainComponent);
+                        if (terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled())
+                        {
+                            RenderTerrainPaintToolbar(*terrainComponent);
+                        }
+                    }
+                    if (auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>())
+                    {
+                        if (foliageComponent->IsEnabled())
+                        {
+                            RenderFoliagePaintToolbar(*foliageComponent);
+                        }
+                    }
+                    if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
+                    {
+                        auto *material = meshComponent->GetMaterial();
+                        RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
+                    }
+                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+                    {
+                        auto *material = terrainComponent->GetMaterial();
+                        RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
                     }
                 }
-                if (auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>())
-                {
-                    if (foliageComponent->IsEnabled())
-                    {
-                        RenderFoliagePaintToolbar(*foliageComponent);
-                    }
-                }
-                if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
-                {
-                    auto *material = meshComponent->GetMaterial();
-                    RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
-                }
-                if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
-                {
-                    auto *material = terrainComponent->GetMaterial();
-                    RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
-                }
+                ImGui::EndPopup();
             }
+            endControls();
         }
 
-        const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows) ||
-                             overlayPopupOpen;
-        m_settingsOverlayBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
-        ImGui::End();
-        ImGui::PopStyleVar(3);
-
-        return hovered;
+        return hovered || overlayPopupOpen;
     }
 
     bool ViewportPanel::RenderViewSelectionGizmo(const ImVec2 &viewportMin, const ImVec2 &viewportSize)
     {
         auto &camera = EditorShell::GetInstance().GetEditorCamera();
-        constexpr float gizmoRadius = 39.0f;
-        constexpr float gizmoToolbarGap = 10.0f;
-        const float defaultCenterY = viewportMin.y + 58.0f;
-        const float toolbarCenterY = m_settingsOverlayBottom + gizmoToolbarGap + gizmoRadius;
-        const float maxCenterY = viewportMin.y + viewportSize.y - gizmoRadius;
-        const ImVec2 center(viewportMin.x + viewportSize.x - 58.0f,
-                            std::min(std::max(defaultCenterY, toolbarCenterY), maxCenterY));
-        constexpr float axisLength = 30.0f;
-        constexpr float endpointRadius = 10.0f;
+        const float unit = ImGui::GetFontSize() / 13.0f;
+        const float gizmoRadius = 36.0f * unit;
+        const ImVec2 center(viewportMin.x + viewportSize.x - 48 * unit,
+                            viewportMin.y + std::min(86 * unit, viewportSize.y - gizmoRadius));
+        const float axisLength = 25.0f * unit;
+        const float endpointRadius = 9.0f * unit;
 
         glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
         rotation = glm::rotate(rotation, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -2504,8 +2611,7 @@ namespace PlutoGE::ui
         };
 
         auto *drawList = ImGui::GetWindowDrawList();
-        drawList->AddCircleFilled(center, 39.0f, IM_COL32(25, 27, 34, 205));
-        drawList->AddCircle(center, 39.0f, IM_COL32(110, 115, 130, 180), 0, 1.0f);
+        drawList->AddCircleFilled(center, 3 * unit, IM_COL32(195, 202, 211, 255));
 
         struct ProjectedAxis
         {
@@ -2530,17 +2636,23 @@ namespace PlutoGE::ui
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         for (const auto &item : projected)
         {
-            drawList->AddLine(center, item.endpoint, item.axis->color, 2.5f);
+            const bool positive = item.axis->label[0] != '-';
+            const float radius = positive ? endpointRadius : 5 * unit;
+            drawList->AddLine(center, item.endpoint, item.axis->color, (positive ? 2.0f : 1.0f) * unit);
             const float dx = mouse.x - item.endpoint.x;
             const float dy = mouse.y - item.endpoint.y;
-            const bool endpointHovered = dx * dx + dy * dy <= endpointRadius * endpointRadius;
+            const bool endpointHovered = ImGui::IsWindowHovered() &&
+                dx * dx + dy * dy <= radius * radius;
             hovered = hovered || endpointHovered;
-            drawList->AddCircleFilled(item.endpoint, endpointRadius,
+            drawList->AddCircleFilled(item.endpoint, radius,
                                       endpointHovered ? IM_COL32(245, 245, 245, 255) : item.axis->color);
-            const ImVec2 textSize = ImGui::CalcTextSize(item.axis->label);
-            drawList->AddText(ImVec2(item.endpoint.x - textSize.x * 0.5f, item.endpoint.y - textSize.y * 0.5f),
-                              endpointHovered ? IM_COL32(30, 30, 35, 255) : IM_COL32(255, 255, 255, 255),
-                              item.axis->label);
+            if (positive)
+            {
+                const ImVec2 textSize = ImGui::CalcTextSize(item.axis->label);
+                drawList->AddText(ImVec2(item.endpoint.x - textSize.x * 0.5f, item.endpoint.y - textSize.y * 0.5f),
+                                  IM_COL32(25, 28, 33, 255), item.axis->label);
+            }
+            if (endpointHovered) ImGui::SetTooltip("Look along %s axis", item.axis->label);
             if (endpointHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 const glm::vec3 direction = item.axis->direction;

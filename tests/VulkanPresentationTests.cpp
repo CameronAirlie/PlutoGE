@@ -11,6 +11,19 @@
 
 namespace
 {
+    struct BoundedFenceWait
+    {
+        static inline PFN_vkWaitForFences original = nullptr;
+        BoundedFenceWait() { original = vkWaitForFences; vkWaitForFences = Wait; }
+        ~BoundedFenceWait() { vkWaitForFences = original; }
+        static VKAPI_ATTR VkResult VKAPI_CALL Wait(VkDevice device, std::uint32_t count,
+            const VkFence *fences, VkBool32 all, std::uint64_t timeout)
+        {
+            // Turn a regression's infinite wait into a test failure.
+            return original(device, count, fences, all, (std::min)(timeout, std::uint64_t{5000000000}));
+        }
+    };
+
     struct SubmissionProbe
     {
         static inline PFN_vkQueueSubmit original = nullptr;
@@ -170,6 +183,18 @@ int main(int argc, char **argv)
             {
                 SubmissionProbe probe(1);
                 if (!swapchain->Present(renderer.GetColorTexture()) || probe.calls != 2) return 17;
+            }
+            {
+                BoundedFenceWait boundedWait;
+                for (unsigned failure = 0; failure < 3; ++failure)
+                {
+                    SubmissionProbe probe(2);
+                    bool threw = false;
+                    try { swapchain->Present(renderer.GetColorTexture()); }
+                    catch (const std::exception &) { threw = true; }
+                    if (!threw || probe.calls != 2) return 20;
+                }
+                if (!swapchain->Present(renderer.GetColorTexture())) return 21;
             }
             {
                 // Recovery must retry the executable buffer, not end it twice.

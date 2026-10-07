@@ -2020,8 +2020,16 @@ namespace PlutoGE::ui
             }
         };
 
-        ImGui::SetNextItemWidth(240.0f);
-        ImGui::InputText("Filter", m_filterBuffer.data(), m_filterBuffer.size());
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+        const float toolbarSpacing = ImGui::GetStyle().ItemSpacing.x;
+        const float toolbarControlsWidth = ImGui::CalcTextSize("RefreshAdd...").x +
+                                           ImGui::GetStyle().FramePadding.x * 4.0f +
+                                           toolbarSpacing * 3.0f + 80.0f;
+        ImGui::SetNextItemWidth(std::max(40.0f, ImGui::GetContentRegionAvail().x - toolbarControlsWidth));
+        ImGui::InputTextWithHint("##ContentFilter", "Search assets...", m_filterBuffer.data(), m_filterBuffer.size());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Assets: %zu\nFolder: %s", project->GetManifest().assetEntries.size(),
+                              m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
         ImGui::SameLine();
         if (ImGui::Button("Refresh"))
         {
@@ -2034,6 +2042,12 @@ namespace PlutoGE::ui
         {
             ImGui::OpenPopup("ContentBrowserAddMenu");
         }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::SliderFloat("##AssetGridScale", &m_assetGridScale, 0.5f, 1.5f, "%.2fx");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Asset grid scale (thumbnails, labels, padding and spacing)");
+        ImGui::PopStyleVar();
         if (ImGui::BeginPopup("ContentBrowserAddMenu"))
         {
             renderAddMenu();
@@ -2780,13 +2794,21 @@ namespace PlutoGE::ui
         };
 
         const bool hasSearch = !m_cachedFilter.empty();
-        ImGui::TextDisabled("Assets: %zu", assets.size());
-        ImGui::SameLine();
-        ImGui::TextDisabled("| Folder: %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
         ImGui::Separator();
 
-        const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 3.0f;
-        ImGui::BeginChild("ContentBrowserBody", ImVec2(0.0f, -footerHeight), true);
+        const bool showDetails = m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size());
+        if (!ImGui::BeginTable("ContentBrowserLayout", 2,
+                               ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV,
+                               ImGui::GetContentRegionAvail()))
+        {
+            return;
+        }
+        ImGui::TableSetupColumn("Explorer", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthFixed |
+                                              (showDetails ? 0 : ImGuiTableColumnFlags_Disabled), 320.0f);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::BeginChild("ContentBrowserBody", ImVec2(0.0f, 0.0f), true);
         const float leftWidth = std::min(260.0f, std::max(180.0f, ImGui::GetContentRegionAvail().x * 0.28f));
         ImGui::BeginChild("FolderTree", ImVec2(leftWidth, 0.0f), false);
         const ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen |
@@ -2866,23 +2888,30 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("%s", m_openModelName.c_str());
         }
         ImGui::Separator();
-        ImGui::SetNextItemWidth(120.0f);
-        ImGui::SliderFloat("Thumbnail Size", &m_thumbnailSize, 72.0f, 144.0f, "%.0f px");
-        ImGui::Separator();
 
         if (!m_thumbnailCache) m_thumbnailCache = std::make_unique<AssetThumbnailCache>();
         m_thumbnailCache->BeginFrame();
-        const float cardWidth = m_thumbnailSize + 18.0f;
-        const float cardHeight = m_thumbnailSize + ImGui::GetTextLineHeightWithSpacing() * 2.4f + 12.0f;
-        const int columnCount = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cardWidth));
+        const float gridScale = m_assetGridScale;
+        const float thumbnailSize = 96.0f * gridScale;
+        const auto &gridStyle = ImGui::GetStyle();
+        ImGui::PushFont(nullptr, gridStyle.FontSizeBase * gridScale);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                            ImVec2(gridStyle.ItemSpacing.x * gridScale, gridStyle.ItemSpacing.y * gridScale));
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,
+                            ImVec2(gridStyle.CellPadding.x * gridScale, gridStyle.CellPadding.y * gridScale));
+        const float cardWidth = thumbnailSize + 18.0f * gridScale;
+        const float cardHeight = thumbnailSize + ImGui::GetTextLineHeightWithSpacing() * 2.4f + 12.0f * gridScale;
+        const float columnWidth = cardWidth - 6.0f * gridScale;
+        const float columnStride = columnWidth + ImGui::GetStyle().CellPadding.x * 2.0f;
+        const int columnCount = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / columnStride));
 
         const auto drawCardBackground = [&](bool selected, bool hovered)
         {
             const ImVec2 minimum = ImGui::GetItemRectMin();
             const ImVec2 maximum = ImGui::GetItemRectMax();
             const ImU32 fill = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
-            ImGui::GetWindowDrawList()->AddRectFilled(minimum, maximum, fill, 5.0f);
-            ImGui::GetWindowDrawList()->AddRect(minimum, maximum, ImGui::GetColorU32(selected ? ImGuiCol_NavHighlight : ImGuiCol_Border), 5.0f);
+            ImGui::GetWindowDrawList()->AddRectFilled(minimum, maximum, fill, 5.0f * gridScale);
+            ImGui::GetWindowDrawList()->AddRect(minimum, maximum, ImGui::GetColorU32(selected ? ImGuiCol_NavHighlight : ImGuiCol_Border), 5.0f * gridScale);
         };
 
         const auto renderFolderCard = [&](std::size_t folderIndex)
@@ -2890,19 +2919,19 @@ namespace PlutoGE::ui
             const auto &folder = m_cachedChildFolders[folderIndex];
             const auto &label = m_cachedChildFolderLabels[folderIndex];
             ImGui::PushID(folder.c_str());
-            ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth - 6.0f * gridScale, cardHeight));
             const bool hovered = ImGui::IsItemHovered();
             drawCardBackground(false, hovered);
             const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 iconMin(minimum.x + 10.0f, minimum.y + 18.0f);
-            const ImVec2 iconMax(minimum.x + cardWidth - 16.0f, minimum.y + m_thumbnailSize - 4.0f);
+            const ImVec2 iconMin(minimum.x + 10.0f * gridScale, minimum.y + 18.0f * gridScale);
+            const ImVec2 iconMax(minimum.x + cardWidth - 16.0f * gridScale, minimum.y + thumbnailSize - 4.0f * gridScale);
             auto *drawList = ImGui::GetWindowDrawList();
             const ImU32 folderColor = IM_COL32(216, 167, 64, 255);
-            drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 13.0f), iconMax, folderColor, 5.0f);
-            drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + (iconMax.x - iconMin.x) * 0.46f, iconMin.y + 25.0f), folderColor, 4.0f);
+            drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 13.0f * gridScale), iconMax, folderColor, 5.0f * gridScale);
+            drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + (iconMax.x - iconMin.x) * 0.46f, iconMin.y + 25.0f * gridScale), folderColor, 4.0f * gridScale);
             const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-            drawList->AddText(ImVec2(minimum.x + (cardWidth - 6.0f - std::min(textSize.x, cardWidth - 16.0f)) * 0.5f,
-                                     minimum.y + m_thumbnailSize + 10.0f),
+            drawList->AddText(ImVec2(minimum.x + (cardWidth - 6.0f * gridScale - std::min(textSize.x, cardWidth - 16.0f * gridScale)) * 0.5f,
+                                     minimum.y + thumbnailSize + 10.0f * gridScale),
                               ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
@@ -2952,14 +2981,14 @@ namespace PlutoGE::ui
             const std::string &fileName = m_cachedAssetFileNames[static_cast<std::size_t>(index)];
             const bool selected = m_selectedAssetIndex == index;
             ImGui::PushID(index);
-            ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth - 6.0f * gridScale, cardHeight));
             const bool hovered = ImGui::IsItemHovered();
             drawCardBackground(selected, hovered);
             const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
-            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+            const ImVec2 previewMin(minimum.x + 8.0f * gridScale, minimum.y + 8.0f * gridScale);
+            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f * gridScale, minimum.y + thumbnailSize + 2.0f * gridScale);
             auto *drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f * gridScale);
             const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
             if (thumbnail != 0)
             {
@@ -2976,13 +3005,13 @@ namespace PlutoGE::ui
             }
             const std::string shownName = fileName.size() > 22 ? fileName.substr(0, 20) + "..." : fileName;
             const ImVec2 textSize = ImGui::CalcTextSize(shownName.c_str());
-            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - textSize.x) * 0.5f),
-                                     minimum.y + m_thumbnailSize + 10.0f),
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f * gridScale, (cardWidth - 6.0f * gridScale - textSize.x) * 0.5f),
+                                     minimum.y + thumbnailSize + 10.0f * gridScale),
                               ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
             const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
             const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
-            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
-                                     minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f * gridScale, (cardWidth - 6.0f * gridScale - typeSize.x) * 0.5f),
+                                     minimum.y + thumbnailSize + 10.0f * gridScale + ImGui::GetTextLineHeightWithSpacing()),
                               ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
 
             if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
@@ -3075,14 +3104,14 @@ namespace PlutoGE::ui
             const auto &object = m_openModelObjects[objectIndex];
             const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
             ImGui::PushID(static_cast<int>(objectIndex));
-            ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth - 6.0f * gridScale, cardHeight));
             const bool hovered = ImGui::IsItemHovered();
             drawCardBackground(false, hovered);
             const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
-            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+            const ImVec2 previewMin(minimum.x + 8.0f * gridScale, minimum.y + 8.0f * gridScale);
+            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f * gridScale, minimum.y + thumbnailSize + 2.0f * gridScale);
             auto *drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f * gridScale);
             const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
             const std::string typeName(assets::Project::GetAssetTypeName(object.type));
             if (thumbnail != 0)
@@ -3096,12 +3125,12 @@ namespace PlutoGE::ui
             }
             const std::string shownName = object.name.size() > 22 ? object.name.substr(0, 20) + "..." : object.name;
             const ImVec2 nameSize = ImGui::CalcTextSize(shownName.c_str());
-            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - nameSize.x) * 0.5f),
-                                     minimum.y + m_thumbnailSize + 10.0f),
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f * gridScale, (cardWidth - 6.0f * gridScale - nameSize.x) * 0.5f),
+                                     minimum.y + thumbnailSize + 10.0f * gridScale),
                               ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
             const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
-            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
-                                     minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f * gridScale, (cardWidth - 6.0f * gridScale - typeSize.x) * 0.5f),
+                                     minimum.y + thumbnailSize + 10.0f * gridScale + ImGui::GetTextLineHeightWithSpacing()),
                               ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
             if (ImGui::BeginDragDropSource())
@@ -3147,6 +3176,8 @@ namespace PlutoGE::ui
 
         if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
         {
+            for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, columnWidth);
             ImGuiListClipper clipper;
             clipper.Begin(rowCount);
             while (clipper.Step())
@@ -3185,6 +3216,9 @@ namespace PlutoGE::ui
             }
             ImGui::EndTable();
         }
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopFont();
 
         if (ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems))
         {
@@ -3326,8 +3360,11 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
-        if (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))
+        if (showDetails && m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))
         {
+            ImGui::TableSetColumnIndex(1);
+            ImGui::BeginChild("ContentBrowserDetails", ImVec2(0.0f, 0.0f), false);
+            ImGui::SeparatorText("Details");
             const auto &asset = assets[static_cast<std::size_t>(m_selectedAssetIndex)];
             const auto resolvedPath = project->ResolveAssetReference(asset.reference);
             const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
@@ -3661,6 +3698,8 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Input Mapping"))
                     editorShell.OpenInputMappingAsset(asset.reference);
             }
+            ImGui::EndChild();
         }
+        ImGui::EndTable();
     }
 }

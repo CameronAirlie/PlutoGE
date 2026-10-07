@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/GroundPlacement.h"
+#include "PlutoGE/ui/PlacementGeometry.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -62,10 +63,12 @@ namespace PlutoGE::ui
                         index - static_cast<std::size_t>(selected) >= static_cast<std::size_t>(meshComponent->GetSubmeshRangeCount())))
                         continue;
                     const auto &submesh = mesh->GetSubmesh(index);
+                    glm::mat4 bind;
+                    if (!TryGetPlacementBindTransform(*mesh, index, bind)) continue;
                     if (submesh.hasBoundsExtents)
-                        support.Box(meshWorld * meshComponent->GetSubmeshOffsetTransform(index), submesh.boundsMin, submesh.boundsMax);
+                        support.Box(meshWorld * meshComponent->GetSubmeshOffsetTransform(index) * bind, submesh.boundsMin, submesh.boundsMax);
                     else
-                        support.Box(meshWorld * meshComponent->GetSubmeshOffsetTransform(index),
+                        support.Box(meshWorld * meshComponent->GetSubmeshOffsetTransform(index) * bind,
                             submesh.bounds.center - glm::vec3(submesh.bounds.radius),
                             submesh.bounds.center + glm::vec3(submesh.bounds.radius));
                 }
@@ -94,6 +97,64 @@ namespace PlutoGE::ui
             for (const auto *child : entity.GetChildren())
                 if (child->IsSelfActive()) CollectSupport(*child, world * child->GetLocalTransform(), support);
         }
+    }
+
+    bool GroundPlacement::ComputeAtSurface(const scene::Entity &prototype, const scene::Entity *parentEntity,
+                                            glm::vec3 point, glm::vec3 normal,
+                                            const SurfacePlacementOptions &options, scene::Transform &result,
+                                            std::string &error)
+    {
+        error.clear();
+        if (!Finite(point) || !Finite(normal) || !std::isfinite(glm::length(normal)) || glm::length(normal) < 0.0001f ||
+            !std::isfinite(options.yawDegrees) || !std::isfinite(options.scaleFactor) ||
+            !std::isfinite(options.surfaceOffset) || options.scaleFactor < 0.0001f || options.scaleFactor > 100 ||
+            !Finite(prototype.GetRotation()) || !Finite(prototype.GetScale()))
+        {
+            error = "Invalid surface or placement settings.";
+            return false;
+        }
+        normal = glm::normalize(normal);
+        const glm::mat4 parent = parentEntity ? parentEntity->GetWorldTransform() : glm::mat4(1);
+        for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 4; ++row)
+                if (!std::isfinite(parent[column][row]))
+                {
+                    error = "Placement parent must have a finite transform.";
+                    return false;
+                }
+        const float determinant = glm::determinant(parent);
+        if (!std::isfinite(determinant) || std::abs(determinant) < 1e-8f)
+        {
+            error = "Placement parent has a singular transform.";
+            return false;
+        }
+        const auto inverseParent = glm::inverse(parent);
+        const auto axis = glm::normalize(glm::mat3(inverseParent) *
+            (options.alignToNormal ? normal : glm::vec3(0, 1, 0)));
+        auto rotation = Rotation(prototype.GetRotation());
+        if (options.alignToNormal)
+            rotation = glm::mat4_cast(glm::rotation(glm::normalize(glm::vec3(rotation[1])), axis)) * rotation;
+        rotation = glm::rotate(glm::mat4(1), glm::radians(options.yawDegrees), axis) * rotation;
+        scene::Transform candidate;
+        candidate.position = glm::vec3(inverseParent * glm::vec4(point, 1));
+        candidate.scale = prototype.GetScale() * options.scaleFactor;
+        glm::vec3 radians;
+        glm::extractEulerAngleXYZ(rotation, radians.x, radians.y, radians.z);
+        candidate.rotation = glm::degrees(radians);
+        const auto world = parent * glm::translate(glm::mat4(1), candidate.position) * rotation *
+            glm::scale(glm::mat4(1), candidate.scale);
+        Support support{point, normal};
+        if (!options.usePivot) CollectSupport(prototype, world, support);
+        if (!std::isfinite(support.minimum)) support.minimum = 0;
+        candidate.position = glm::vec3(inverseParent * glm::vec4(
+            point + normal * (options.surfaceOffset - support.minimum), 1));
+        if (!Finite(candidate.position) || !Finite(candidate.rotation) || !Finite(candidate.scale))
+        {
+            error = "Placement produced an invalid transform.";
+            return false;
+        }
+        result = candidate;
+        return true;
     }
 
     bool GroundPlacement::Compute(const scene::Scene &scene, const scene::Entity &entity,

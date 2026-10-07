@@ -584,3 +584,11 @@ target_include_directories(PlutoGEBrushStrokeSamplerTests PRIVATE ../editor/ui/i
 target_link_libraries(PlutoGEBrushStrokeSamplerTests PRIVATE glm::glm)
 target_compile_features(PlutoGEBrushStrokeSamplerTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEBrushStrokeSamplerTests COMMAND PlutoGEBrushStrokeSamplerTests)
+
+add_executable(PlutoGESurfacePlacementTests
+    SurfacePlacementTests.cpp
+    ../editor/ui/src/SurfacePlacement.cpp
+    ../editor/ui/src/GroundPlacement.cpp)
+target_include_directories(PlutoGESurfacePlacementTests PRIVATE ../editor/ui/include)
+pluto_link_engine(PlutoGESurfacePlacementTests)
+add_test(NAME PlutoGESurfacePlacementTests COMMAND PlutoGESurfacePlacementTests)

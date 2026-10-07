@@ -20,9 +20,25 @@ namespace PlutoGE::ui
         uint32_t seed = 0;
     };
 
+    struct SurfacePlacementOptions
+    {
+        float yawDegrees = 0;
+        float scaleFactor = 1;
+        float surfaceOffset = 0;
+        bool alignToNormal = false;
+        bool usePivot = false;
+    };
+
     class GroundPlacement
     {
     public:
+        // Position a detached prototype against an explicit world-space surface.
+        // Reuses hierarchy support bounds; no scene or prototype is mutated.
+        static bool ComputeAtSurface(const scene::Entity &prototype, const scene::Entity *parent,
+                                     glm::vec3 point, glm::vec3 normal,
+                                     const SurfacePlacementOptions &options, scene::Transform &result,
+                                     std::string &error);
+
         // Compute a local authoring transform without mutating the selection.
         // Scene::Raycast excludes the selected entity and all of its descendants.
         static bool Compute(const scene::Scene &scene, const scene::Entity &entity,

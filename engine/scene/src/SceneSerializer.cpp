@@ -660,7 +660,8 @@ namespace PlutoGE::scene
         std::unique_ptr<Scene> LoadSceneFromStream(std::istream &input,
                                                    const std::string &filePath,
                                                    std::string *errorMessage,
-                                                   const SceneSerializer::LoadTraceCallback &trace)
+                                                   const SceneSerializer::LoadTraceCallback &trace,
+                                                   bool geometryPreview = false)
         {
             const auto reportTrace = [&trace](std::string message)
             {
@@ -875,7 +876,9 @@ namespace PlutoGE::scene
                             activeComponent->typeName + " on entity " + std::to_string(activeComponent->entityId);
                         reportTrace("Scene load line " + std::to_string(lineNumber) +
                                     ": construct " + componentContext);
-                        auto component = CreateComponentForType(activeComponent->typeName);
+                        const bool allowed = !geometryPreview || activeComponent->typeName == "MeshComponent" ||
+                                             activeComponent->typeName == "ColliderComponent";
+                        auto component = allowed ? CreateComponentForType(activeComponent->typeName) : nullptr;
                         if (component)
                         {
                             reportTrace("Scene load line " + std::to_string(lineNumber) +
@@ -946,12 +949,12 @@ namespace PlutoGE::scene
                 reportTrace("Scene hierarchy: attached entity " + std::to_string(pendingParent.id));
             }
 
-            if (bakedProbeVolume.IsValid())
+            if (!geometryPreview && bakedProbeVolume.IsValid())
             {
                 scene->SetBakedProbeVolume(std::move(bakedProbeVolume));
             }
 
-            if (!environmentMapPath.empty())
+            if (!geometryPreview && !environmentMapPath.empty())
             {
                 const auto resolvedEnvironmentPath = assetManager.ResolveAssetPath(environmentMapPath);
                 auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(resolvedEnvironmentPath.c_str());
@@ -959,7 +962,7 @@ namespace PlutoGE::scene
                 scene->SetEnvironmentIntensity(environmentIntensity);
             }
 
-            for (auto &captureVolume : iblCaptureVolumes)
+            if (!geometryPreview) for (auto &captureVolume : iblCaptureVolumes)
             {
                 if (scene->GetIblCaptureVolumes().size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
                 {
@@ -985,6 +988,22 @@ namespace PlutoGE::scene
             }
             reportTrace("Scene load completed");
             return scene;
+        }
+    }
+
+    std::unique_ptr<Scene> SceneSerializer::LoadGeometryPreview(const std::string &filePath, std::string *errorMessage)
+    {
+        if (errorMessage) errorMessage->clear();
+        try
+        {
+            content::InputFile input(filePath);
+            if (!input.is_open()) throw std::runtime_error("Failed to open prefab geometry for reading.");
+            return LoadSceneFromStream(input, filePath, errorMessage, {}, true);
+        }
+        catch (const std::exception &exception)
+        {
+            if (errorMessage) *errorMessage = exception.what();
+            return nullptr;
         }
     }
 

@@ -35,6 +35,11 @@ namespace PlutoGE::assets
     std::filesystem::path GetModelManifestPath(const Project &project, std::string_view sourceReference);
     // Reads old Imported/<name> manifests only as a compatibility fallback.
     std::filesystem::path FindModelManifestPath(const Project &project, std::string_view sourceReference);
+    // Resolve the editable mesh and importer-owned material bindings consistently
+    // for model drops in both the viewport and hierarchy. Does not import/write assets.
+    bool ResolveModelPlacementMesh(const Project &project, std::string_view modelReference,
+                                   std::string &meshReference, std::string &materialBindingReference,
+                                   std::string *errorMessage = nullptr);
     bool SaveModelAsset(const std::string &path, const ModelAsset &asset, std::string *errorMessage = nullptr);
     bool LoadModelAsset(const std::string &path, ModelAsset &asset, std::string *errorMessage = nullptr);
 }

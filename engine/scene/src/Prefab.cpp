@@ -537,7 +537,7 @@ namespace PlutoGE::scene
             return true;
         }
         std::unique_ptr<Scene> ResolvePrefab(std::string_view reference, std::set<std::string> &stack,
-            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> &dependencies)
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> &dependencies, bool geometryPreview = false)
         {
             const auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(reference)).string();
             if (stack.size() >= 64 || !stack.insert(path).second)
@@ -551,9 +551,12 @@ namespace PlutoGE::scene
             std::unique_ptr<Scene> scene;
             if (ReadVariant(path, variant))
             {
-                scene = ResolvePrefab(variant.base, stack, dependencies);
+                scene = ResolvePrefab(variant.base, stack, dependencies, geometryPreview);
                 for (const auto &patch : variant.patches)
                 {
+                    if (geometryPreview && patch.path.starts_with("Component:") &&
+                        !patch.path.starts_with("Component:MeshComponent:") &&
+                        !patch.path.starts_with("Component:ColliderComponent:")) continue;
                     auto *entity = scene->FindEntityByID(patch.entity);
                     if (!entity || !CaptureOverrideValue(*entity, patch.path))
                         throw std::runtime_error("Variant override target no longer exists: " + patch.path + " in " + path);
@@ -563,7 +566,8 @@ namespace PlutoGE::scene
             else
             {
                 std::string error;
-                scene = SceneSerializer::Load(path, &error);
+                scene = geometryPreview ? SceneSerializer::LoadGeometryPreview(path, &error)
+                                        : SceneSerializer::Load(path, &error);
                 if (!scene || !error.empty()) throw std::runtime_error("Cannot load prefab " + path + ": " + error);
             }
             stack.erase(path);
@@ -948,6 +952,22 @@ namespace PlutoGE::scene
             }
 
             return SceneSerializer::Save(prefabScene, filePath.string(), errorMessage);
+        }
+    }
+
+    std::unique_ptr<Scene> Prefab::LoadGeometryPreview(std::string_view reference, std::string *error)
+    {
+        if (error) error->clear();
+        try
+        {
+            std::set<std::string> stack;
+            std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
+            return ResolvePrefab(reference, stack, dependencies, true);
+        }
+        catch (const std::exception &exception)
+        {
+            if (error) *error = exception.what();
+            return nullptr;
         }
     }
 

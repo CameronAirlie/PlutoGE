@@ -18,6 +18,11 @@ namespace PlutoGE::scene
         // Stable serialized type name, shared by scene tools and prefab property paths.
         static std::string GetComponentTypeName(const Component &component);
 
+        // Read-only authoring prototype: hierarchy, Mesh and Collider components
+        // only. No scripts, runtime systems or environment textures are created.
+        static std::unique_ptr<Scene> LoadGeometryPreview(const std::string &filePath,
+                                                        std::string *errorMessage = nullptr);
+
         static bool Save(const Scene &scene, const std::string &filePath, std::string *errorMessage = nullptr);
         static std::unique_ptr<Scene> Load(const std::string &filePath, std::string *errorMessage = nullptr);
         static std::unique_ptr<Scene> Load(const std::string &filePath,

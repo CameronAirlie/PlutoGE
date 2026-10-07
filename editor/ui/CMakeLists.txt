@@ -15,6 +15,7 @@ add_library(PlutoGEEditorUI
     src/ViewportOverlayLayout.cpp
     src/ViewportBookmarks.cpp
     src/ViewportBookmarksUI.cpp
+    src/SurfacePlacement.cpp
     src/GroundPlacement.cpp
     src/GroundPlacementUI.cpp
     src/AssetReferenceSearchPanel.cpp

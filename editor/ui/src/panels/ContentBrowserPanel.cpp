@@ -1866,41 +1866,13 @@ namespace PlutoGE::ui
             return false;
         }
 
-        assets::ModelAsset model;
-        if (!assets::LoadModelAsset(assets::FindModelManifestPath(*project, reference).string(), model))
+        std::string meshReference, bindings, error;
+        if (!assets::ResolveModelPlacementMesh(*project, reference, meshReference, bindings, &error))
         {
-            editorShell.Log(EditorShell::ConsoleSeverity::Error, "Import the model before placing it in a scene.");
+            editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
             return false;
         }
-        const auto meshObject = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
-                                             { return object.type == assets::ProjectAssetType::Mesh; });
-        if (meshObject == model.objects.end())
-        {
-            return false;
-        }
-
-        // A source model can have an authored mesh asset beside it. That asset is
-        // the editable representation exposed in the content browser (including
-        // its saved LOD ranges and thresholds), while the manifest object is the
-        // importer-owned fallback. Prefer the authored mesh when placing the
-        // model so dragging it uses the mesh's authored geometry configuration.
-        std::string placementMeshReference = meshObject->reference;
-        if (!model.sourceReference.empty())
-        {
-            auto authoredMeshPath = project->ResolveAssetReference(model.sourceReference);
-            authoredMeshPath.replace_extension(".plutomesh");
-            std::error_code errorCode;
-            if (std::filesystem::is_regular_file(authoredMeshPath, errorCode))
-            {
-                const std::string authoredMeshReference = project->MakeAssetReference(authoredMeshPath);
-                if (assets::Project::GetAssetTypeForReference(authoredMeshReference) == assets::ProjectAssetType::Mesh)
-                {
-                    placementMeshReference = authoredMeshReference;
-                }
-            }
-        }
-        return InstantiateMeshAssetIntoScene(
-            std::move(placementMeshReference), parent, meshObject->reference);
+        return InstantiateMeshAssetIntoScene(std::move(meshReference), parent, std::move(bindings));
     }
 
     std::string ContentBrowserPanel::RevealAsset(std::string reference)

@@ -283,3 +283,13 @@ This milestone supplies editor gameplay visualization, not a standalone-player
 debug overlay or persistent scene data. Standalone native hosts can consume the
 same command store through a future renderer. Rebuild the scripting SDK and game
 scripts together to pick up the new managed/native registration entry point.
+
+## Surface placement for buildings and props
+
+Drag an imported model, mesh or prefab from Content Browser over the editor viewport. A cyan ghost follows the nearest terrain, rigid mesh or collidable surface. Release the drag to keep the placement panel open, adjust its settings, then click a surface to place the first instance. With **Repeat placement** enabled, further viewport clicks stamp copies. **Finish / Cancel** or Escape ends the tool. Releasing over the viewport, the placement panel or empty space creates nothing and leaves the tool open.
+
+Use **Yaw**, **Scale** and **Surface offset** to adjust placement. Each new asset starts at 1× scale. **cm to m (0.01x)** applies an explicit centimeter conversion; **1x** resets it. The world-size readout shows the current ghost bounds, including parent scale and yaw. Source geometry is not automatically resized based on its filename or apparent size. **Align to surface normal** is optional and off by default; existing authored rotation is preserved when it is off. **Place pivot on surface** bypasses the hierarchy's support bounds. **Snap world X/Z** rounds the target coordinates and queries the surface again; it requires an upward-facing surface. Each successful stamp has its own undo entry.
+
+Placement starts at the scene root. **Parent to selection** captures the current selection as parent; **Scene root** clears it. Rotated and scaled parent transforms are handled in placement calculations. A deleted parent disables stamping until you choose another parent. Scene replacement, project changes, undo/redo scene restoration and entering play end the session.
+
+Prefab stamps retain their source and transform overrides. Preview loads mesh geometry in its authored bind pose and support colliders; scripts, lights, audio, animation controllers and procedural effects appear only on actual instances. Skinned meshes and meshes with animation clips have a static bind-pose ghost. Model files use the same surface-placement session, preferring the editable mesh beside the source while retaining importer material bindings. Import a source model first; unimported models report an error. Mesh/model stamps retain a sibling animation asset when available.

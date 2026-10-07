@@ -46,6 +46,11 @@ namespace PlutoGE::scene
     public:
         static constexpr std::string_view kFileExtension = ".plutoprefab";
 
+        // Resolves property variants, constructing only mesh/collider geometry.
+        // The detached scene is never updated or inserted in the active scene.
+        static std::unique_ptr<Scene> LoadGeometryPreview(std::string_view prefabReference,
+                                                        std::string *errorMessage = nullptr);
+
         static PrefabPreloadResult Preload(std::string_view prefabReference);
         static bool IsReady(std::string_view prefabReference);
         static PrefabInstantiationProfile GetLatestInstantiationProfile();

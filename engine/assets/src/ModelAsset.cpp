@@ -2,6 +2,7 @@
 #include "PlutoGE/assets/ModelAsset.h"
 
 #include <fstream>
+#include <algorithm>
 #include <sstream>
 
 namespace PlutoGE::assets
@@ -59,6 +60,33 @@ namespace PlutoGE::assets
                                 (sourcePath.stem().string() + ".plutomodel");
         error.clear();
         return content::IsRegularFile(legacyPath, error) ? legacyPath : canonicalPath;
+    }
+
+    bool ResolveModelPlacementMesh(const Project &project, std::string_view reference,
+                                   std::string &meshReference, std::string &materialBindingReference,
+                                   std::string *error)
+    {
+        if (error) error->clear();
+        meshReference.clear(); materialBindingReference.clear();
+        if (Project::GetAssetTypeForReference(reference) != ProjectAssetType::Model)
+        { SetError(error, "Surface placement requires a model asset."); return false; }
+        ModelAsset model;
+        if (!LoadModelAsset(FindModelManifestPath(project, reference).string(), model, error))
+        { SetError(error, "Import the model before placing it in a scene."); return false; }
+        const auto object = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &entry)
+            { return entry.type == ProjectAssetType::Mesh; });
+        if (object == model.objects.end())
+        { SetError(error, "The imported model contains no mesh object."); return false; }
+        materialBindingReference = object->reference;
+        meshReference = object->reference;
+        if (!model.sourceReference.empty())
+        {
+            auto authored = project.ResolveAssetReference(model.sourceReference);
+            authored.replace_extension(".plutomesh");
+            std::error_code ec;
+            if (content::IsRegularFile(authored, ec)) meshReference = project.MakeAssetReference(authored);
+        }
+        return true;
     }
 
     bool SaveModelAsset(const std::string &path, const ModelAsset &asset, std::string *errorMessage)

@@ -1,6 +1,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
+#include "PlutoGE/ui/SurfacePlacement.h"
 #include "PlutoGE/ui/ViewportPicking.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
@@ -75,6 +76,22 @@ namespace PlutoGE::ui
         scene::CameraOverlayLayerBuilder overlayLayers;
     };
 
+    struct ViewportPanel::PlacementState
+    {
+        SurfacePlacementSession session;
+        SurfacePlacementOptions options;
+        std::uint64_t sceneRevision = 0;
+        const assets::Project *project = nullptr;
+        scene::EntityID parentId = 0;
+        std::string error;
+        std::string attemptedReference;
+        bool waitForRelease = false;
+        bool repeat = true;
+        bool snap = false;
+        float gridSize = 1.0f;
+        std::vector<const render::RenderCommand *> combinedCommands;
+    };
+
     struct ViewportPanel::FoliageStrokeState
     {
         BrushStrokeSampler sampler;
@@ -88,7 +105,7 @@ namespace PlutoGE::ui
     };
 
     ViewportPanel::ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService)
-        : Panel(config), m_config(config), m_foliageStroke(std::make_unique<FoliageStrokeState>()), m_rhiRenderService(renderService)
+        : Panel(config), m_config(config), m_placement(std::make_unique<PlacementState>()), m_foliageStroke(std::make_unique<FoliageStrokeState>()), m_rhiRenderService(renderService)
     {
     }
 
@@ -2075,11 +2092,12 @@ namespace PlutoGE::ui
 
         if (m_config.editorViewport && ImGui::BeginDragDropTarget())
         {
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload, ImGuiDragDropFlags_AcceptBeforeDelivery))
             {
-                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                const std::string reference = payload->Data && payload->DataSize > 0
+                    ? std::string(static_cast<const char *>(payload->Data), payload->DataSize - 1) : std::string{};
                 const auto assetType = assets::Project::GetAssetTypeForReference(reference);
-                if (assetType == assets::ProjectAssetType::Material)
+                if (assetType == assets::ProjectAssetType::Material && payload->IsDelivery())
                 {
                     auto &editorShell = EditorShell::GetInstance();
                     auto &engine = editorShell.GetEngine();
@@ -2116,37 +2134,24 @@ namespace PlutoGE::ui
                         editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load material: " + reference);
                     }
                 }
-                else if (assetType == assets::ProjectAssetType::Prefab)
+                else if (assetType == assets::ProjectAssetType::Prefab || assetType == assets::ProjectAssetType::Mesh ||
+                         assetType == assets::ProjectAssetType::Model)
                 {
-                    auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
-                    std::string errorMessage;
-                    scene::Entity *createdEntity = nullptr;
-                    if (scene)
+                    auto &shell = EditorShell::GetInstance();
+                    if (!shell.GetEngine().IsRuntimeRunning() &&
+                        (m_placement->attemptedReference != reference ||
+                         m_placement->sceneRevision != shell.GetSceneRevision() || m_placement->project != shell.GetProject()))
                     {
-                        EditorShell::GetInstance().ExecuteSceneEdit("Instantiate Prefab",
-                                                                    [scene, reference, &createdEntity, &errorMessage]()
-                                                                    {
-                                                                        createdEntity = scene::Prefab::Instantiate(*scene, reference, nullptr, &errorMessage);
-                                                                    });
+                        m_placement->attemptedReference = reference;
+                        m_placement->options = SurfacePlacementOptions{};
+                        m_placement->session.Begin(reference, shell.GetEngine().GetAssetManager(), m_placement->error, shell.GetProject());
+                        m_placement->sceneRevision = shell.GetSceneRevision();
+                        m_placement->project = shell.GetProject();
+                        m_placement->parentId = 0;
+                        m_placement->waitForRelease = true;
                     }
+                }
 
-                    if (createdEntity)
-                    {
-                        EditorShell::GetInstance().SetSelectedEntity(createdEntity);
-                    }
-                    else if (!errorMessage.empty())
-                    {
-                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
-                    }
-                }
-                else if (assetType == assets::ProjectAssetType::Mesh)
-                {
-                    InstantiateMeshAssetIntoScene(reference, nullptr);
-                }
-                else if (assetType == assets::ProjectAssetType::Model)
-                {
-                    InstantiateModelAssetIntoScene(reference, nullptr);
-                }
             }
             ImGui::EndDragDropTarget();
         }
@@ -2724,6 +2729,120 @@ namespace PlutoGE::ui
         return hovered;
     }
 
+    bool ViewportPanel::RenderSurfacePlacement(const render::CameraData &cameraData,
+                                              const ImVec2 &viewportMin, const ImVec2 &viewportSize,
+                                              bool viewportClicked, bool controlsHovered)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto &state = *m_placement;
+        if (!ImGui::GetDragDropPayload()) state.attemptedReference.clear();
+        if (!state.session.IsActive() && state.error.empty()) return false;
+        if (state.sceneRevision != shell.GetSceneRevision() || state.project != shell.GetProject() ||
+            shell.GetEngine().IsRuntimeRunning())
+        {
+            state.session.Cancel();
+            state.error.clear();
+            return false;
+        }
+        if (!state.session.IsActive() && state.error.empty()) return false;
+        if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            state.session.Cancel();
+            state.error.clear();
+            return true;
+        }
+        // Releasing a browser drag arms the persistent placement tool. The
+        // release is never a stamp or cancellation, including over this window.
+        if (state.waitForRelease && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::GetDragDropPayload())
+            state.waitForRelease = false;
+
+        ImGui::SetNextWindowPos(ImVec2(viewportMin.x + 12, viewportMin.y + 48), ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(260, 0), ImVec2(360, std::max(120.0f, viewportSize.y - 60.0f)));
+        ImGui::SetNextWindowBgAlpha(0.94f);
+        ImGui::SetNextWindowViewport(m_platformViewport);
+        ImGui::Begin("Surface Placement##Viewport", nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+        bool cancel = ImGui::Button("Finish / Cancel (Esc)");
+        ImGui::TextUnformatted(state.session.GetReference().c_str());
+        ImGui::SetNextItemWidth(140);
+        ImGui::DragFloat("Yaw", &state.options.yawDegrees, 1.0f);
+        ImGui::SetNextItemWidth(140);
+        ImGui::DragFloat("Scale", &state.options.scaleFactor, 0.001f, 0.0001f, 100.0f, "%.4f");
+        if (ImGui::Button("1x")) state.options.scaleFactor = 1;
+        ImGui::SameLine();
+        if (ImGui::Button("cm to m (0.01x)")) state.options.scaleFactor = 0.01f;
+        const auto size = state.session.GetPreviewSize();
+        ImGui::Text("World size: %.2f x %.2f x %.2f", size.x, size.y, size.z);
+        ImGui::TextUnformatted("Animated assets preview in bind pose.");
+        ImGui::SetNextItemWidth(140);
+        ImGui::DragFloat("Surface offset", &state.options.surfaceOffset, 0.01f);
+        ImGui::Checkbox("Align to surface normal", &state.options.alignToNormal);
+        ImGui::Checkbox("Place pivot on surface", &state.options.usePivot);
+        ImGui::Checkbox("Repeat placement", &state.repeat);
+        ImGui::Checkbox("Snap world X/Z", &state.snap);
+        if (state.snap)
+        {
+            ImGui::SetNextItemWidth(140);
+            ImGui::DragFloat("Grid size", &state.gridSize, 0.1f, 0.01f, 1000.0f);
+        }
+        if (ImGui::Button("Parent to selection"))
+            if (auto *selected = shell.GetSelectedEntity()) state.parentId = selected->GetID();
+        ImGui::SameLine();
+        if (ImGui::Button("Scene root")) state.parentId = 0;
+        auto *scene = shell.GetScene();
+        auto *parent = scene && state.parentId ? scene->FindEntityByID(state.parentId) : nullptr;
+        ImGui::Text("Parent: %s", parent ? parent->GetName().c_str() : (state.parentId ? "Missing" : "Scene root"));
+        ImGui::TextUnformatted("Release the drag, adjust settings, then click a surface.");
+        if (!state.error.empty()) ImGui::TextWrapped("%s", state.error.c_str());
+        const bool placementControlsHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+        ImGui::End();
+        if (cancel)
+        {
+            state.session.Cancel(); state.error.clear();
+            return true;
+        }
+        if (!scene || !state.session.IsActive()) return true;
+        state.session.InvalidatePose();
+        std::optional<PlacementSurfaceHit> hit;
+        if (!controlsHovered && !placementControlsHovered && !ImGui::GetIO().KeyAlt &&
+            !ImGui::GetIO().WantTextInput && (!state.parentId || parent))
+        {
+            if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
+                hit = RaycastPlacementSurface(*scene, *ray);
+            if (hit && state.snap)
+            {
+                if (!std::isfinite(state.gridSize) || state.gridSize < 0.01f || hit->normal.y < 0.01f)
+                { hit.reset(); state.error = "Grid snapping requires an upward-facing surface and a positive grid size."; }
+                else
+                {
+                    const float rise = std::max(1.0f, state.gridSize * 2.0f);
+                    ViewportPickRay snapped;
+                    snapped.origin = {std::round(hit->point.x / state.gridSize) * state.gridSize,
+                        hit->point.y + rise, std::round(hit->point.z / state.gridSize) * state.gridSize};
+                    snapped.direction = {0, -1, 0};
+                    hit = RaycastPlacementSurface(*scene, snapped, rise * 2.0f);
+                }
+            }
+            if (hit && state.session.Update(*hit, parent, state.options, state.error)) state.error.clear();
+            else if (!hit && state.error.empty()) state.error = "No surface under cursor; placement is disabled.";
+        }
+        if (state.parentId && !parent) state.error = "Placement parent was deleted. Choose a new parent or Scene root.";
+        const bool stamp = viewportClicked && !state.waitForRelease &&
+            !controlsHovered && !placementControlsHovered && !ImGui::GetIO().KeyAlt;
+        if (stamp && state.session.GetPose())
+        {
+            scene::Entity *created = nullptr;
+            shell.ExecuteSceneEdit("Place Asset", [&] { created = state.session.Stamp(*scene, parent, state.error); });
+            if (created)
+            {
+                shell.SetSelectedEntity(created);
+                if (!state.repeat) state.session.Cancel();
+            }
+        }
+        return true;
+    }
+
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered)
     {
         auto &editorShell = EditorShell::GetInstance();
@@ -2840,6 +2959,9 @@ namespace PlutoGE::ui
                                                                  viewportAspect,
                                                                  editorCamera.camera.GetNearPlane(),
                                                                  editorCamera.camera.GetFarPlane());
+
+        if (RenderSurfacePlacement(cameraData, viewportMin, viewportSize, viewportClicked, controlsHovered))
+            return;
 
         ImGuizmo::SetOrthographic(editorCamera.orthographic);
         ImGuizmo::Enable(true);
@@ -4250,6 +4372,20 @@ namespace PlutoGE::ui
         const auto *target = GetSceneRenderTarget();
         if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0)
             return;
+
+        auto &shell = EditorShell::GetInstance();
+        if (m_config.editorViewport && m_placement->session.IsActive() &&
+            !shell.GetEngine().IsRuntimeRunning() && m_placement->sceneRevision == shell.GetSceneRevision() &&
+            m_placement->project == shell.GetProject())
+        {
+            const auto &ghost = m_placement->session.GetRenderCommands();
+            auto &combined = m_placement->combinedCommands;
+            combined.clear();
+            combined.reserve(commands.size() + ghost.size());
+            for (const auto &command : commands) combined.push_back(&command);
+            for (const auto &command : ghost) combined.push_back(&command);
+            commands = render::RenderCommandView(combined);
+        }
 
         if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
                                         static_cast<std::uint32_t>(target->GetHeight()),

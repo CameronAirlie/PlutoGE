@@ -100,6 +100,8 @@ namespace PlutoGE::ui
     private:
         bool RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
         bool RenderViewSelectionGizmo(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
+        bool RenderSurfacePlacement(const render::CameraData &cameraData, const ImVec2 &viewportMin,
+                                    const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
         void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
         void InitializeRhiPreview();
         void ShutdownRhiPreview();
@@ -121,6 +123,8 @@ namespace PlutoGE::ui
         std::vector<std::uint32_t> m_multiGizmoSelection;
         glm::mat4 m_multiGizmoTransform{1.0f};
         bool m_multiGizmoUsing = false;
+        struct PlacementState;
+        std::unique_ptr<PlacementState> m_placement;
         struct FoliageStrokeState;
         std::unique_ptr<FoliageStrokeState> m_foliageStroke;
         bool m_enableSnap = false;

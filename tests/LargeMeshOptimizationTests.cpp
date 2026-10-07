@@ -42,6 +42,38 @@ int main(int argc, char **argv)
     for (const auto &vertex : repaired.GetMeshData().vertices)
         for (const float value : vertex.tangent) assert(std::isfinite(value));
 
+    // Scene loading can restore generated lightmap UVs on CPU/RHI meshes
+    // before any OpenGL context or legacy buffers exist.
+    render::MeshConfig lightmapConfig;
+    lightmapConfig.data.vertices = {
+        {{0,0,0}, {0,0,1}, {0,0}, {1,0,0,1}},
+        {{1,0,0}, {0,0,1}, {1,0}, {1,0,0,1}},
+        {{1,1,0}, {0,0,1}, {1,1}, {1,0,0,1}},
+        {{0,1,0}, {0,0,1}, {0,1}, {1,0,0,1}}};
+    lightmapConfig.data.indices = {0,1,2,0,2,3};
+    render::Mesh lightmapMesh(lightmapConfig);
+    const auto lightmapRevision = lightmapMesh.GetContentRevision();
+    assert(lightmapMesh.GetVAO() == 0);
+    assert(lightmapMesh.GenerateLightmapUvAtlasForSubmeshes({0}));
+    assert(lightmapMesh.GetVAO() == 0);
+    assert(lightmapMesh.GetVertexCount() == 6);
+    assert(lightmapMesh.GetIndexCount() == 6);
+    assert(lightmapMesh.HasLightmapUvs());
+    assert(lightmapMesh.HasGeneratedLightmapUvsForSubmesh(0));
+    assert(lightmapMesh.HasUsableLightmapUvsForSubmesh(0));
+    assert(lightmapMesh.GetContentRevision() > lightmapRevision);
+    for (size_t i = 0; i < lightmapMesh.GetIndexCount(); ++i)
+    {
+        const auto &source = lightmapConfig.data.vertices[lightmapConfig.data.indices[i]];
+        const auto &generated = lightmapMesh.GetMeshData().vertices[i];
+        assert(generated.position == source.position);
+        assert(generated.uv == source.uv);
+        assert(lightmapMesh.GetMeshData().indices[i] == i);
+    }
+    const auto generatedRevision = lightmapMesh.GetContentRevision();
+    assert(!lightmapMesh.GenerateLightmapUvAtlasForSubmeshes({0}));
+    assert(lightmapMesh.GetContentRevision() == generatedRevision);
+
     // Optional read-only benchmark against an existing project and model identity.
     if (argc == 4)
     {

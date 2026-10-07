@@ -8,6 +8,7 @@
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
 
+
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
 #include <memory>
@@ -120,6 +121,8 @@ namespace PlutoGE::ui
         std::vector<std::uint32_t> m_multiGizmoSelection;
         glm::mat4 m_multiGizmoTransform{1.0f};
         bool m_multiGizmoUsing = false;
+        struct FoliageStrokeState;
+        std::unique_ptr<FoliageStrokeState> m_foliageStroke;
         bool m_enableSnap = false;
         ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;

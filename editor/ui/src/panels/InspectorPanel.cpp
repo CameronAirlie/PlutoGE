@@ -5096,6 +5096,20 @@ namespace PlutoGE::ui
                                 }
                             }
 
+                            if (selectedType)
+                            {
+                                int orientation = selectedType->alignToTerrainNormal ? 1 : 0;
+                                if (ImGui::Combo("Growth Orientation", &orientation, "Upright (World Up)\0Terrain Normal\0"))
+                                {
+                                    foliageComponent->SetTypeAlignToTerrainNormal(selectedTypeIndex, orientation == 1);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." +
+                                        std::to_string(selectedTypeIndex) + ".AlignToTerrainNormal");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                if (ImGui::IsItemHovered())
+                                    ImGui::SetTooltip("Orientation for newly painted instances of this type. Existing instances keep their transforms.");
+                            }
+
                             auto &engine = core::Engine::GetInstance();
                             if (auto selection = selectedType ? selectedType->sourceMeshPath : std::string{};
                                 RenderProjectAssetPicker("Foliage Mesh", editorShell.GetProject(), assets::ProjectAssetType::Mesh,

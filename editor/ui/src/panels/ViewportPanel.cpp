@@ -1,5 +1,6 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/BrushStrokeSampler.h"
 #include "PlutoGE/ui/ViewportPicking.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
@@ -74,8 +75,20 @@ namespace PlutoGE::ui
         scene::CameraOverlayLayerBuilder overlayLayers;
     };
 
+    struct ViewportPanel::FoliageStrokeState
+    {
+        BrushStrokeSampler sampler;
+        scene::FoliageInstanceSnapshot before;
+        std::uint64_t sceneRevision = 0;
+        scene::EntityID entityId = 0;
+        int type = -1;
+        scene::FoliageBrushMode mode = scene::FoliageBrushMode::Add;
+        bool active = false;
+        bool blockedUntilRelease = false;
+    };
+
     ViewportPanel::ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService)
-        : Panel(config), m_config(config), m_rhiRenderService(renderService)
+        : Panel(config), m_config(config), m_foliageStroke(std::make_unique<FoliageStrokeState>()), m_rhiRenderService(renderService)
     {
     }
 
@@ -264,14 +277,33 @@ namespace PlutoGE::ui
             }
 
             ImGui::SameLine();
+            ImGui::TextDisabled("Move to paint; hold still to stop");
+            ImGui::SameLine();
             int density = foliageComponent.GetDensity();
             ImGui::SetNextItemWidth(90.0f);
             if (ImGui::DragInt("Density##FoliagePaint", &density, 1.0f, 1, 100))
             {
                 foliageComponent.SetDensity(density);
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Candidate count per spaced brush dab. Move to continue painting.");
 
             ImGui::SameLine();
+            if (auto *type = foliageComponent.GetSelectedType())
+            {
+                int orientation = type->alignToTerrainNormal ? 1 : 0;
+                ImGui::SetNextItemWidth(150.0f);
+                if (ImGui::Combo("Growth##FoliagePaint", &orientation, "Upright (World Up)\0Terrain Normal\0"))
+                {
+                    foliageComponent.SetTypeAlignToTerrainNormal(
+                        static_cast<std::size_t>(foliageComponent.GetSelectedTypeIndex()), orientation == 1);
+                    if (auto *owner = foliageComponent.GetOwner())
+                        owner->AddPrefabOverride("Component:FoliageComponent:Type." +
+                            std::to_string(foliageComponent.GetSelectedTypeIndex()) + ".AlignToTerrainNormal");
+                    EditorShell::GetInstance().MarkSceneDirty();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Applies to new instances of the selected foliage type.");
+                ImGui::SameLine();
+            }
             float minScale = foliageComponent.GetMinScale();
             float maxScale = foliageComponent.GetMaxScale();
             ImGui::SetNextItemWidth(150.0f);
@@ -2694,6 +2726,81 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered)
     {
+        auto &editorShell = EditorShell::GetInstance();
+        const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        if (!mouseDown) m_foliageStroke->blockedUntilRelease = false;
+        // Scene replacement/play transitions invalidate authoring snapshots.
+        // Never resolve a prior scene's entity ID against its replacement.
+        if (m_foliageStroke->sceneRevision != editorShell.GetSceneRevision() ||
+            editorShell.GetEngine().IsRuntimeRunning())
+        {
+            const bool interrupted = m_foliageStroke->active;
+            *m_foliageStroke = FoliageStrokeState{};
+            m_foliageStroke->sceneRevision = editorShell.GetSceneRevision();
+            m_foliageStroke->blockedUntilRelease = interrupted && mouseDown;
+        }
+        auto *strokeTarget = editorShell.GetSelectedEntity();
+        auto *strokeFoliage = strokeTarget ? strokeTarget->GetComponent<scene::FoliageComponent>() : nullptr;
+        const bool targetChanged = !strokeTarget || !strokeFoliage ||
+            strokeTarget->GetID() != m_foliageStroke->entityId ||
+            strokeFoliage->GetSelectedTypeIndex() != m_foliageStroke->type ||
+            strokeFoliage->GetBrushMode() != m_foliageStroke->mode ||
+            !strokeFoliage->IsEnabled() || !strokeFoliage->IsPaintEnabled() || g_texturePaint.enabled;
+        if (m_foliageStroke->active && (!mouseDown || targetChanged))
+        {
+            scene::FoliageInstanceSnapshot after;
+            if (auto *scene = editorShell.GetScene())
+                if (auto *entity = scene->FindEntityByID(m_foliageStroke->entityId))
+                    if (auto *foliage = entity->GetComponent<scene::FoliageComponent>())
+                        after = foliage->CaptureInstanceSnapshot();
+
+            if (!after.empty() && m_foliageStroke->before != after)
+            {
+                const auto entityId = m_foliageStroke->entityId;
+                const std::size_t retainedBytes = (m_foliageStroke->before.size() + after.size()) * sizeof(std::vector<scene::FoliageInstance>) +
+                                                  [&]()
+                {
+                    std::size_t bytes = 0;
+                    for (const auto &instances : m_foliageStroke->before)
+                        bytes += instances.size() * sizeof(scene::FoliageInstance);
+                    for (const auto &instances : after)
+                        bytes += instances.size() * sizeof(scene::FoliageInstance);
+                    return bytes;
+                }();
+                editorShell.PushSceneEditCommand(
+                    "Paint Foliage",
+                    [entityId, snapshot = std::move(m_foliageStroke->before)]()
+                    {
+                        auto *scene = EditorShell::GetInstance().GetScene();
+                        auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
+                        auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
+                        if (!foliage)
+                            return false;
+                        foliage->RestoreInstanceSnapshot(snapshot);
+                        EditorShell::GetInstance().MarkSceneDirty();
+                        return true;
+                    },
+                    [entityId, snapshot = std::move(after)]()
+                    {
+                        auto *scene = EditorShell::GetInstance().GetScene();
+                        auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
+                        auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
+                        if (!foliage)
+                            return false;
+                        foliage->RestoreInstanceSnapshot(snapshot);
+                        EditorShell::GetInstance().MarkSceneDirty();
+                        return true;
+                    },
+                    retainedBytes);
+            }
+            m_foliageStroke->before.clear();
+            m_foliageStroke->entityId = 0;
+            m_foliageStroke->active = false;
+            m_foliageStroke->sampler.Reset();
+            m_foliageStroke->blockedUntilRelease = mouseDown;
+        }
+        if (!mouseDown || targetChanged || !m_isViewportHovered || controlsHovered || ImGui::GetIO().KeyAlt)
+            m_foliageStroke->sampler.Reset();
         m_isTransformGizmoUsing = false;
         const bool rhiTargetReady = m_rhiRenderService && m_rhiRenderService->IsInitialized() &&
                                     (m_useRhiPreview || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
@@ -2703,7 +2810,6 @@ namespace PlutoGE::ui
             return;
         }
 
-        auto &editorShell = EditorShell::GetInstance();
         auto &editorCamera = editorShell.GetEditorCamera();
         const glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), editorCamera.position) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
@@ -3178,9 +3284,7 @@ namespace PlutoGE::ui
             bool foliagePaintActive = false;
             bool texturePaintActive = false;
             static bool s_terrainStrokeActive = false;
-            static bool s_foliageStrokeActive = false;
-            static scene::EntityID s_foliageStrokeEntityId = 0;
-            static scene::FoliageInstanceSnapshot s_foliageStrokeBefore;
+            bool foliageSampled = false;
             if (g_texturePaint.enabled)
             {
                 const bool brushActive = m_isViewportHovered && !controlsHovered &&
@@ -3255,7 +3359,10 @@ namespace PlutoGE::ui
                 const bool canFoliagePaint = terrainComponent->IsEnabled() &&
                                              foliageComponent &&
                                              foliageComponent->IsEnabled() &&
-                                             foliageComponent->IsPaintEnabled();
+                                             foliageComponent->IsPaintEnabled() &&
+                                             !g_texturePaint.enabled &&
+                                             !m_foliageStroke->blockedUntilRelease &&
+                                             !editorShell.GetEngine().IsRuntimeRunning();
                 if (canTerrainPaint || canFoliagePaint)
                 {
                     if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
@@ -3280,7 +3387,7 @@ namespace PlutoGE::ui
                                             canFoliagePaint ? IM_COL32(100, 180, 255, 230) : IM_COL32(120, 220, 140, 230));
                             drawList->PopClipRect();
 
-                            const bool brushActive = m_isViewportHovered &&
+                            const bool brushActive = m_isViewportHovered && !controlsHovered &&
                                                      !ImGuizmo::IsOver() &&
                                                      !ImGuizmo::IsUsing() &&
                                                      !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -3291,88 +3398,56 @@ namespace PlutoGE::ui
                                 editorShell.BeginSceneEdit("Paint Terrain");
                                 s_terrainStrokeActive = true;
                             }
-                            if (foliagePaintActive && !s_foliageStrokeActive)
+                            if (foliagePaintActive && !m_foliageStroke->active)
                             {
-                                s_foliageStrokeEntityId = selectedEntity->GetID();
-                                s_foliageStrokeBefore = foliageComponent->CaptureInstanceSnapshot();
-                                s_foliageStrokeActive = true;
+                                m_foliageStroke->entityId = selectedEntity->GetID();
+                                m_foliageStroke->before = foliageComponent->CaptureInstanceSnapshot();
+                                m_foliageStroke->type = foliageComponent->GetSelectedTypeIndex();
+                                m_foliageStroke->mode = foliageComponent->GetBrushMode();
+                                m_foliageStroke->sampler.Reset();
+                                m_foliageStroke->active = true;
                             }
                             if (terrainPaintActive && terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
                             {
                                 editorShell.MarkSceneDirty();
                             }
-                            if (foliagePaintActive &&
-                                foliageComponent->ApplyBrushAtWorldPosition(
-                                    hitPoint,
-                                    glm::vec3(worldTransform[1]),
-                                    [terrainComponent](float localX, float localZ)
-                                    {
-                                        return terrainComponent->GetHeightAtLocalPosition(localX, localZ);
-                                    }))
+                            if (foliagePaintActive)
                             {
-                                selectedEntity->AddPrefabOverride("Component:FoliageComponent:Instances");
-                                editorShell.MarkSceneDirty();
+                                foliageSampled = true;
+                                const glm::vec3 localHit = glm::vec3(glm::inverse(worldTransform) * glm::vec4(hitPoint, 1));
+                                m_foliageStroke->sampler.Sample({localHit.x, localHit.z},
+                                    std::max(0.05f, foliageComponent->GetBrushRadius() * 0.25f),
+                                    [&](glm::vec2 dab)
+                                    {
+                                        float height;
+                                        glm::vec3 normal;
+                                        if (!terrainComponent->TrySampleSurface(dab.x, dab.y, height, normal)) return;
+                                        const glm::vec3 worldDab = glm::vec3(worldTransform * glm::vec4(dab.x, height, dab.y, 1));
+                                        if (foliageComponent->ApplyBrushAtWorldPosition(worldDab,
+                                            [terrainComponent](float x, float z) -> std::optional<scene::FoliageSurfaceSample>
+                                            {
+                                                scene::FoliageSurfaceSample surface;
+                                                if (!terrainComponent->TrySampleSurface(x, z, surface.height, surface.normal))
+                                                    return std::nullopt;
+                                                return surface;
+                                            }))
+                                        {
+                                            selectedEntity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                    });
                             }
                         }
                     }
                 }
             }
 
+            if (!foliageSampled) m_foliageStroke->sampler.Reset();
+
             if (s_terrainStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {
                 editorShell.EndSceneEdit();
                 s_terrainStrokeActive = false;
-            }
-            if (s_foliageStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                scene::FoliageInstanceSnapshot after;
-                if (auto *scene = editorShell.GetScene())
-                    if (auto *entity = scene->FindEntityByID(s_foliageStrokeEntityId))
-                        if (auto *foliage = entity->GetComponent<scene::FoliageComponent>())
-                            after = foliage->CaptureInstanceSnapshot();
-
-                if (!after.empty() && s_foliageStrokeBefore != after)
-                {
-                    const auto entityId = s_foliageStrokeEntityId;
-                    const std::size_t retainedBytes = (s_foliageStrokeBefore.size() + after.size()) * sizeof(std::vector<scene::FoliageInstance>) +
-                                                      [&]()
-                    {
-                        std::size_t bytes = 0;
-                        for (const auto &instances : s_foliageStrokeBefore)
-                            bytes += instances.size() * sizeof(scene::FoliageInstance);
-                        for (const auto &instances : after)
-                            bytes += instances.size() * sizeof(scene::FoliageInstance);
-                        return bytes;
-                    }();
-                    editorShell.PushSceneEditCommand(
-                        "Paint Foliage",
-                        [entityId, snapshot = std::move(s_foliageStrokeBefore)]()
-                        {
-                            auto *scene = EditorShell::GetInstance().GetScene();
-                            auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
-                            auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
-                            if (!foliage)
-                                return false;
-                            foliage->RestoreInstanceSnapshot(snapshot);
-                            EditorShell::GetInstance().MarkSceneDirty();
-                            return true;
-                        },
-                        [entityId, snapshot = std::move(after)]()
-                        {
-                            auto *scene = EditorShell::GetInstance().GetScene();
-                            auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
-                            auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
-                            if (!foliage)
-                                return false;
-                            foliage->RestoreInstanceSnapshot(snapshot);
-                            EditorShell::GetInstance().MarkSceneDirty();
-                            return true;
-                        },
-                        retainedBytes);
-                }
-                s_foliageStrokeBefore.clear();
-                s_foliageStrokeEntityId = 0;
-                s_foliageStrokeActive = false;
             }
             if (g_texturePaint.strokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {

@@ -573,6 +573,28 @@ namespace PlutoGE::scene
         return SampleHeight(x / m_cellSize, z / m_cellSize);
     }
 
+    bool TerrainComponent::TrySampleSurface(float x, float z, float &height, glm::vec3 &normal) const
+    {
+        const float maxX = (m_width - 1) * m_cellSize;
+        const float maxZ = (m_depth - 1) * m_cellSize;
+        if (!std::isfinite(x) || !std::isfinite(z) || !std::isfinite(m_cellSize) || m_cellSize <= 0 ||
+            x < 0 || z < 0 || x > maxX || z > maxZ)
+            return false;
+
+        height = GetHeightAtLocalPosition(x, z);
+        // One-sided differences at the boundary avoid flattening the normal
+        // by sampling a clamped height outside the heightfield.
+        const float left = std::max(0.0f, x - m_cellSize * 0.5f);
+        const float right = std::min(maxX, x + m_cellSize * 0.5f);
+        const float down = std::max(0.0f, z - m_cellSize * 0.5f);
+        const float up = std::min(maxZ, z + m_cellSize * 0.5f);
+        if (right <= left || up <= down) return false;
+        const float dx = (GetHeightAtLocalPosition(right, z) - GetHeightAtLocalPosition(left, z)) / (right - left);
+        const float dz = (GetHeightAtLocalPosition(x, up) - GetHeightAtLocalPosition(x, down)) / (up - down);
+        normal = glm::normalize(glm::vec3(-dx, 1.0f, -dz));
+        return std::isfinite(height) && std::isfinite(normal.x) && std::isfinite(normal.y) && std::isfinite(normal.z);
+    }
+
     void TerrainComponent::SetLodCount(int lodCount)
     {
         m_lodCount = glm::clamp(lodCount, 1, 6);

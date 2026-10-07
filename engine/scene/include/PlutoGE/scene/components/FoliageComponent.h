@@ -9,6 +9,7 @@
 #include <functional>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -74,8 +75,17 @@ namespace PlutoGE::scene
         int submeshIndex = -1;
         std::vector<int> submeshIndices;
         bool useGeneratedLods = false;
+        bool alignToTerrainNormal = false; // New instances: false keeps their up axis on world +Y.
         FoliageTypeAsset asset;
     };
+
+    struct FoliageSurfaceSample
+    {
+        float height = 0.0f;
+        glm::vec3 normal{0.0f, 1.0f, 0.0f}; // In foliage owner local space.
+    };
+
+    using FoliageSurfaceSampler = std::function<std::optional<FoliageSurfaceSample>(float, float)>;
 
     enum class FoliageBrushMode
     {
@@ -142,6 +152,10 @@ namespace PlutoGE::scene
             const glm::vec3 &terrainNormal,
             const std::function<float(float, float)> &sampleTerrainHeight);
 
+        // A missing sample rejects the candidate (bounds, holes, or filters).
+        bool ApplyBrushAtWorldPosition(const glm::vec3 &worldPosition,
+                                       const FoliageSurfaceSampler &sampleSurface);
+
         void ClearInstances();
         void ClearSelectedTypeInstances();
         const std::vector<FoliageInstance> &GetInstances() const;
@@ -175,6 +189,7 @@ namespace PlutoGE::scene
         void SetTypeSubmeshIndex(std::size_t index, int submeshIndex);
         void SetTypeSubmeshIndices(std::size_t index, const std::vector<int> &submeshIndices);
         void SetTypeUseGeneratedLods(std::size_t index, bool useGeneratedLods);
+        void SetTypeAlignToTerrainNormal(std::size_t index, bool align);
         void SetTypeSourceMeshPath(std::size_t index, const std::string &sourceMeshPath);
         void SetTypeMaterialAssetReference(std::size_t index, const std::string &materialAssetReference);
         void ClearTypeMaterialAssetReference(std::size_t index);
@@ -201,8 +216,7 @@ namespace PlutoGE::scene
         void RebuildTypeMeshFromReference(FoliageType &type);
 
         bool PaintAtWorldPosition(const glm::vec3 &worldPosition,
-                                  const glm::vec3 &terrainNormal,
-                                  const std::function<float(float, float)> &sampleTerrainHeight);
+                                  const FoliageSurfaceSampler &sampleSurface);
         bool RemoveInstancesAtWorldPosition(const glm::vec3 &worldPosition, float radius);
 
         render::Material *m_material = nullptr;

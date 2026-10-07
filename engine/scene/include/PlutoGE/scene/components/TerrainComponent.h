@@ -59,6 +59,9 @@ namespace PlutoGE::scene
         float GetHeightScale() const { return m_heightScale; }
         float GetSurfaceSmoothing() const { return m_surfaceSmoothing; }
         float GetHeightAtLocalPosition(float x, float z) const;
+        // Bounded local surface query. Unlike GetHeightAtLocalPosition, this
+        // rejects out-of-terrain coordinates instead of clamping them.
+        bool TrySampleSurface(float x, float z, float &height, glm::vec3 &normal) const;
         int GetChunkSize() const { return m_chunkSize; }
         void SetLodCount(int lodCount);
         int GetLodCount() const { return m_lodCount; }

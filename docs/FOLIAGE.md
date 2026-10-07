@@ -46,6 +46,32 @@ Then configure and paint the foliage:
 Collision is configured independently for every foliage type. Leave it disabled
 for grass, flowers, and other small decorative meshes.
 
+## Painting strokes
+
+The terrain brush paints one dab on press and additional dabs as the cursor moves.
+Dabs are spaced by one quarter of the brush radius (at least 0.05 terrain-local
+units). Holding the cursor still does not continue adding instances. **Density**
+is the number of candidates per dab; terrain-edge candidates may be rejected.
+The result follows the sampled cursor path rather than the number of rendered
+frames. A discontinuous jump exceeding 256 dab intervals starts at the new cursor
+position instead of filling the gap in one frame.
+
+Each candidate samples its own local height and normal. Candidates outside the
+terrain or with invalid surface data are skipped. Choose **Growth Orientation** per foliage type in the Inspector or paint toolbar:
+**Upright (World Up)** is the default for trees; **Terrain Normal** follows the
+slope for grass and ground cover. Upright means world +Y even on rotated/scaled
+terrain. Random yaw works with either option. This setting affects new instances;
+existing instances keep their authored transforms. The choice persists with scenes
+and prefabs; older data without the setting defaults to upright. Invalid hits and viewport/tool interruptions reset the distance
+sampler so re-entry does not paint across the gap. Selection/type/mode changes
+finish the current stroke and require mouse release before starting another.
+Scene replacement and play transitions discard obsolete stroke state.
+
+Stroke undo still stores whole-component instance snapshots; compact history and
+local cache updates are planned in [environment milestone E06](ENVIRONMENT_DESIGN_MILESTONES.md).
+Existing scenes and serialized density values remain compatible. Old scenes are
+not repainted or moved automatically.
+
 ## Data model
 
 `FoliageComponent` owns the placed instances and a collection of foliage types.

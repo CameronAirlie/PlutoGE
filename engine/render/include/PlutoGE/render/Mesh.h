@@ -792,6 +792,10 @@ namespace PlutoGE::render
                 m_submeshHasUsableLightmapUvs.push_back(HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, true));
             }
 
+            // CPU/RHI meshes consume the rebuilt data through the content revision.
+            // Only meshes with legacy GL buffers need an OpenGL upload.
+            if (!m_VBO) return true;
+
             glBindVertexArray(m_VAO);
             glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
             glBufferData(GL_ARRAY_BUFFER,

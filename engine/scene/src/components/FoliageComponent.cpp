@@ -697,6 +697,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.submeshIndex)});
             properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.submeshIndices)});
             properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.useGeneratedLods ? "true" : "false"});
+            properties.push_back({prefix + "AlignToTerrainNormal", PropertyType::Bool, type.alignToTerrainNormal ? "true" : "false"});
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
@@ -791,6 +792,8 @@ namespace PlutoGE::scene
                     type.submeshIndices = DeserializeSubmeshIndices(property.value);
                 else if (fieldName == "UseGeneratedLods")
                     type.useGeneratedLods = property.value == "true" || property.value == "1";
+                else if (fieldName == "AlignToTerrainNormal")
+                    type.alignToTerrainNormal = property.value == "true" || property.value == "1";
                 else if (fieldName == "AssetReference")
                     type.asset.assetReference = property.value;
                 else if (fieldName == "CellSize")
@@ -973,9 +976,25 @@ namespace PlutoGE::scene
                                                      const glm::vec3 &terrainNormal,
                                                      const std::function<float(float, float)> &sampleTerrainHeight)
     {
+        const auto *owner = GetOwner();
+        if (!owner) return false;
+        const glm::vec3 localNormal = glm::transpose(glm::mat3(owner->GetWorldTransform())) * terrainNormal;
+        return ApplyBrushAtWorldPosition(worldPosition,
+            [&](float x, float z) -> std::optional<FoliageSurfaceSample>
+            {
+                return FoliageSurfaceSample{
+                    sampleTerrainHeight ? sampleTerrainHeight(x, z) :
+                        glm::vec3(glm::inverse(owner->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f)).y,
+                    localNormal};
+            });
+    }
+
+    bool FoliageComponent::ApplyBrushAtWorldPosition(const glm::vec3 &worldPosition,
+                                                     const FoliageSurfaceSampler &sampleSurface)
+    {
         if (m_brushMode == FoliageBrushMode::Add)
         {
-            return PaintAtWorldPosition(worldPosition, terrainNormal, sampleTerrainHeight);
+            return PaintAtWorldPosition(worldPosition, sampleSurface);
         }
         else if (m_brushMode == FoliageBrushMode::Remove)
         {
@@ -985,23 +1004,32 @@ namespace PlutoGE::scene
     }
 
     bool FoliageComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition,
-                                                const glm::vec3 &terrainNormal,
-                                                const std::function<float(float, float)> &sampleTerrainHeight)
+                                                const FoliageSurfaceSampler &sampleSurface)
     {
         auto *owner = GetOwner();
         auto &type = EnsureSelectedType();
-        if (!owner || !m_paintEnabled || !type.mesh)
+        if (!owner || !m_paintEnabled || !type.mesh || !sampleSurface)
         {
             return false;
         }
 
         const glm::mat4 inverseWorld = glm::inverse(owner->GetWorldTransform());
         const glm::vec3 localCenter = glm::vec3(inverseWorld * glm::vec4(worldPosition, 1.0f));
+        if (!std::isfinite(localCenter.x) || !std::isfinite(localCenter.y) || !std::isfinite(localCenter.z))
+            return false;
+        const auto coordinateSeed = [](float value)
+        {
+            // Keep quantization deterministic without overflowing lround for
+            // distant worlds. Conversion to uint32 is always in range.
+            constexpr double modulus = 4294967296.0;
+            double wrapped = std::fmod(std::round(static_cast<double>(value) * 100.0), modulus);
+            if (wrapped < 0) wrapped += modulus;
+            return static_cast<std::uint32_t>(wrapped);
+        };
         std::seed_seq seed{
-            static_cast<unsigned int>(std::lround(worldPosition.x * 100.0f)),
-            static_cast<unsigned int>(std::lround(worldPosition.z * 100.0f)),
-            static_cast<unsigned int>(type.instances.size()),
-            static_cast<unsigned int>(m_selectedTypeIndex),
+            coordinateSeed(localCenter.x), coordinateSeed(localCenter.z),
+            static_cast<std::uint32_t>(type.instances.size()),
+            static_cast<std::uint32_t>(m_selectedTypeIndex),
         };
         std::mt19937 rng(seed);
         std::uniform_real_distribution<float> angleDistribution(0.0f, glm::two_pi<float>());
@@ -1016,13 +1044,36 @@ namespace PlutoGE::scene
             const float angle = angleDistribution(rng);
             const float radius = std::sqrt(radiusDistribution(rng)) * m_brushRadius;
             glm::vec3 localPosition = localCenter + glm::vec3(std::cos(angle) * radius, 0.0f, std::sin(angle) * radius);
-            localPosition.y = sampleTerrainHeight ? sampleTerrainHeight(localPosition.x, localPosition.z) : localCenter.y;
+            const auto surface = sampleSurface(localPosition.x, localPosition.z);
             const float scale = scaleDistribution(rng);
-            const glm::vec3 normal = glm::normalize(terrainNormal);
+            const float yaw = yawDistribution(rng);
+            if (!surface || !std::isfinite(surface->height) ||
+                !std::isfinite(surface->normal.x) || !std::isfinite(surface->normal.y) ||
+                !std::isfinite(surface->normal.z))
+                continue;
+            localPosition.y = surface->height;
+            const float largestNormal = std::max({std::abs(surface->normal.x), std::abs(surface->normal.y), std::abs(surface->normal.z)});
+            if (largestNormal < 0.0001f) continue;
+            const glm::vec3 localSurfaceNormal = glm::normalize(surface->normal / largestNormal);
+            // Normals use inverse transpose; instance axes use the ordinary
+            // owner transform. Convert the desired world axis back to local
+            // space so rotated/nonuniformly scaled terrain does not lean trees.
+            const glm::vec3 worldUp = type.alignToTerrainNormal
+                ? glm::transpose(glm::mat3(inverseWorld)) * localSurfaceNormal
+                : glm::vec3(0, 1, 0);
+            const glm::vec3 localUp = glm::mat3(inverseWorld) * worldUp;
+            const float largestUp = std::max({std::abs(localUp.x), std::abs(localUp.y), std::abs(localUp.z)});
+            if (!std::isfinite(largestUp) || largestUp < std::numeric_limits<float>::min()) continue;
+            const glm::vec3 normal = glm::normalize(localUp / largestUp);
+            // Render transforms use Y * X * Z. Solve tilt after removing yaw
+            // so every randomly rotated instance keeps its up axis on the normal.
+            const glm::vec3 unyawedNormal = glm::vec3(
+                glm::rotate(glm::mat4(1.0f), glm::radians(-yaw), glm::vec3(0, 1, 0)) * glm::vec4(normal, 0));
             type.instances.push_back(FoliageInstance{
                 .id = m_nextInstanceId++,
                 .position = localPosition,
-                .rotationDegrees = {glm::degrees(std::atan2(normal.z, normal.y)), yawDistribution(rng), -glm::degrees(std::atan2(normal.x, normal.y))},
+                .rotationDegrees = {glm::degrees(std::atan2(unyawedNormal.z, unyawedNormal.y)), yaw,
+                                    -glm::degrees(std::asin(glm::clamp(unyawedNormal.x, -1.0f, 1.0f)))},
                 .scale = {scale, scale, scale},
             });
         }
@@ -1428,6 +1479,12 @@ namespace PlutoGE::scene
             type->submeshIndex = type->submeshIndices.size() == 1 ? type->submeshIndices.front() : -1;
             MarkRenderCommandsDirty();
         }
+    }
+
+    void FoliageComponent::SetTypeAlignToTerrainNormal(std::size_t index, bool align)
+    {
+        if (auto *type = GetType(index)) type->alignToTerrainNormal = align;
+        // Placement policy only: existing instance transforms stay authored.
     }
 
     void FoliageComponent::SetTypeUseGeneratedLods(std::size_t index, bool useGeneratedLods)

@@ -5,12 +5,54 @@
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 
 #include <filesystem>
+#include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <string_view>
 
 namespace
 {
+    struct FrameBeginProbe
+    {
+        static inline PFN_vkBeginCommandBuffer original = nullptr;
+        FrameBeginProbe() { original = vkBeginCommandBuffer; vkBeginCommandBuffer = Begin; }
+        ~FrameBeginProbe() { vkBeginCommandBuffer = original; }
+        static VKAPI_ATTR VkResult VKAPI_CALL Begin(VkCommandBuffer, const VkCommandBufferBeginInfo *)
+        {
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
+    };
+
+    struct ImageViewProbe
+    {
+        static inline PFN_vkCreateImageView create = nullptr;
+        static inline PFN_vkDestroyImageView destroy = nullptr;
+        static inline int live = 0;
+        ImageViewProbe()
+        {
+            create = vkCreateImageView;
+            destroy = vkDestroyImageView;
+            live = 0;
+            vkCreateImageView = Create;
+            vkDestroyImageView = Destroy;
+        }
+        ~ImageViewProbe() { vkCreateImageView = create; vkDestroyImageView = destroy; }
+        static VKAPI_ATTR VkResult VKAPI_CALL Create(VkDevice device, const VkImageViewCreateInfo *info,
+            const VkAllocationCallbacks *allocator, VkImageView *view)
+        {
+            const auto result = create(device, info, allocator, view);
+            if (result == VK_SUCCESS) ++live;
+            return result;
+        }
+        static VKAPI_ATTR void VKAPI_CALL Destroy(VkDevice device, VkImageView view,
+            const VkAllocationCallbacks *allocator)
+        {
+            if (view) --live;
+            destroy(device, view, allocator);
+        }
+    };
+
     struct BoundedFenceWait
     {
         static inline PFN_vkWaitForFences original = nullptr;
@@ -208,6 +250,52 @@ int main(int argc, char **argv)
                 context.RecoverInterruptedFrame();
                 if (probe.calls != 3) return 19;
                 context.BeginFrame("Frame after recovery");
+                context.Submit();
+            }
+            {
+                ImageViewProbe views;
+                const std::array pixels{std::byte{255}, std::byte{0}, std::byte{0}, std::byte{255}};
+                const render::rhi::TextureDescriptor textureDescriptor{
+                    .width = 1, .height = 1, .format = render::rhi::Format::R8G8B8A8Unorm};
+                for (unsigned failure = 0; failure < 3; ++failure)
+                {
+                    SubmissionProbe probe(2);
+                    bool threw = false;
+                    try { static_cast<void>(device.CreateTexture(textureDescriptor, pixels)); }
+                    catch (const std::exception &) { threw = true; }
+                    if (!threw || probe.calls != 2 || views.live != 0) return 22;
+                }
+                const auto texture = device.CreateTexture(textureDescriptor, pixels);
+                {
+                    SubmissionProbe probe(2);
+                    bool threw = false;
+                    try { static_cast<void>(device.ReadTextureRgba8(texture)); }
+                    catch (const std::exception &) { threw = true; }
+                    if (!threw || probe.calls != 2) return 25;
+                }
+                if (device.ReadTextureRgba8(texture) != std::vector<std::byte>(pixels.begin(), pixels.end())) return 23;
+                device.DestroyTexture(texture);
+                // Destruction is deferred until a subsequent completed frame.
+                auto &context = device.GetImmediateContext();
+                for (unsigned frame = 0; frame < 3; ++frame)
+                {
+                    context.BeginFrame("Upload recovery cleanup");
+                    context.Submit();
+                }
+                if (views.live != 0) return 24;
+            }
+            {
+                BoundedFenceWait boundedWait;
+                auto &context = device.GetImmediateContext();
+                {
+                    FrameBeginProbe probe;
+                    bool threw = false;
+                    try { context.BeginFrame("Failed scene frame setup"); }
+                    catch (const std::exception &) { threw = true; }
+                    if (!threw) return 26;
+                    context.RecoverInterruptedFrame();
+                }
+                context.BeginFrame("Scene frame after failed setup");
                 context.Submit();
             }
             // Exercise many uncapped frame-slot/image-index reuse cycles,

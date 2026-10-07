@@ -1205,7 +1205,6 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.persistentUniformBytesUploaded = 0;
             m_impl.timingStats.descriptorCpuMs = 0.0f;
             m_impl.timingStats.uniformUploadCpuMs = 0.0f;
-            Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
             {
                 core::CpuScope resetScope("Vulkan command pool reset", core::CpuCategory::Rendering);
                 Check(vkResetCommandPool(m_impl.device, frame.commandPool, 0), "vkResetCommandPool(frame)");
@@ -1405,6 +1404,9 @@ namespace PlutoGE::render::rhi::vulkan
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
             { core::CpuScope scope("Vulkan queue submit", core::CpuCategory::Rendering);
+              // Frame setup can allocate and throw before m_recording is set.
+              // Leave its fence signalled until work is ready to be queued.
+              Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
               Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(frame)"); }
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             if (!frame.profilingEnabled)
@@ -2977,6 +2979,20 @@ namespace PlutoGE::render::rhi::vulkan
             throw std::invalid_argument("Invalid Vulkan texture dimensions");
         TextureResource resource;
         resource.descriptor = descriptor;
+        TextureHandle handle;
+        ScopeExit failedTexture([&]
+        {
+            if (handle.IsValid())
+            {
+                auto removed = m_impl->textures.Remove(handle);
+                if (!removed) return;
+                resource = std::move(*removed);
+            }
+            for (const auto storageView : resource.storageViews)
+                if (storageView) vkDestroyImageView(m_impl->device, storageView, nullptr);
+            if (resource.view) vkDestroyImageView(m_impl->device, resource.view, nullptr);
+            if (resource.image) vmaDestroyImage(m_impl->allocator, resource.image, resource.allocation);
+        });
         const auto maximumDimension = (std::max)({descriptor.width, descriptor.height, descriptor.depth});
         const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(
                                                       std::floor(std::log2(static_cast<double>(maximumDimension))));
@@ -3020,7 +3036,7 @@ namespace PlutoGE::render::rhi::vulkan
                       "vkCreateImageView(storage mip)");
             }
         }
-        const auto handle = m_impl->textures.Insert(std::move(resource));
+        handle = m_impl->textures.Insert(std::move(resource));
         auto *stored = m_impl->textures.Get(handle);
         if (!data.empty())
         {
@@ -3084,6 +3100,14 @@ namespace PlutoGE::render::rhi::vulkan
             }
             const BufferHandle stagingHandle = CreateBuffer({mipData.size(), BufferUsage::Vertex, "Texture staging"}, mipData);
             auto *staging = m_impl->buffers.Get(stagingHandle);
+            // Immediate either fails to queue or waits for this upload. The
+            // staging allocation is safe to release on both paths, even while
+            // an unrelated scene frame is still being recorded.
+            ScopeExit releaseStaging([&]
+            {
+                if (auto removed = m_impl->buffers.Remove(stagingHandle))
+                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
+            });
             m_impl->Immediate([&](VkCommandBuffer command)
             {
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -3123,8 +3147,8 @@ namespace PlutoGE::render::rhi::vulkan
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
             });
-            DestroyBuffer(stagingHandle);
         }
+        failedTexture.Dismiss();
         return handle;
     }
 
@@ -3658,14 +3682,17 @@ namespace PlutoGE::render::rhi::vulkan
         VkBuffer buffer{};
         VmaAllocation memory{};
         Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
+        ScopeExit releaseReadback([&] { vmaDestroyBuffer(m_impl->allocator, buffer, memory); });
+        const auto previousLayout = texture->layout;
+        ScopeExit failedReadback([&] { texture->layout = previousLayout; });
         m_impl->Immediate([&](VkCommandBuffer command)
                           { m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1}; vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy); });
+        failedReadback.Dismiss();
         void *mapped = nullptr;
         Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)");
         vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount);
         auto pixels = ConvertToRgba8(mapped, pixelCount, texture->descriptor.format);
         vmaUnmapMemory(m_impl->allocator, memory);
-        vmaDestroyBuffer(m_impl->allocator, buffer, memory);
         return pixels;
     }
 

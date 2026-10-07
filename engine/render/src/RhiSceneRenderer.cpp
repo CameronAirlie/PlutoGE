@@ -174,6 +174,13 @@ namespace PlutoGE::render
             return false;
         renderer->SetSubmissionLabel(m_submissionLabel);
         m_device = &device;
+        // Weak ownership prevents cached resources outliving their device. All
+        // renderers are initialized and used on the rendering thread.
+        static std::unordered_map<rhi::IRenderDevice *, std::weak_ptr<TextureCache>> caches;
+        std::erase_if(caches, [](const auto &entry) { return entry.second.expired(); });
+        m_textureCache = caches[&device].lock();
+        if (!m_textureCache)
+            caches[&device] = m_textureCache = std::make_shared<TextureCache>();
         m_renderer = std::move(renderer);
         m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -201,9 +208,14 @@ namespace PlutoGE::render
             m_normalMipJob.wait();
         m_normalMipJob = {};
         m_pendingNormalSource = nullptr;
-        m_srgbTextures.clear();
-        m_linearTextures.clear();
-        m_normalTextures.clear();
+        if (m_textureCache)
+        {
+            m_textureCache->srgb.clear();
+            m_textureCache->linear.clear();
+            m_textureCache->normal.clear();
+            m_textureCache->versions.clear();
+            ++m_textureCache->residencyRevision;
+        }
         if (m_drawPreparation)
             m_drawPreparation->Reset();
         m_meshes.clear();
@@ -224,11 +236,7 @@ namespace PlutoGE::render
         m_skinningCache = std::make_shared<SkinningCache>();
         m_reusedSkinningFrame.reset();
         m_borrowedSkinningCache = false;
-        m_srgbTextures.clear();
-        m_linearTextures.clear();
-        m_normalTextures.clear();
-        m_textureVersions.clear();
-        ++m_textureResidencyRevision;
+        m_textureCache.reset();
         // The worker owns its pixels and never touches scene or GPU objects.
         m_normalMipJob = {};
         m_pendingNormalSource = nullptr;
@@ -355,13 +363,13 @@ namespace PlutoGE::render
 
         // Revisions are checked without reading texture pixels. Remove expired
         // keys before dereferencing them; identity also handles address reuse.
-        std::erase_if(m_textureVersions, [&](const auto &item) {
+        std::erase_if(m_textureCache->versions, [&](const auto &item) {
             const auto *source = item.first;
             const auto &version = item.second;
             if (!version.lifetime.expired() && version.identity == source->GetIdentity() &&
                 version.revision == source->GetContentRevision()) return false;
-            m_srgbTextures.erase(source); m_linearTextures.erase(source); m_normalTextures.erase(source);
-            ++m_textureResidencyRevision;
+            m_textureCache->srgb.erase(source); m_textureCache->linear.erase(source); m_textureCache->normal.erase(source);
+            ++m_textureCache->residencyRevision;
             return true;
         });
         if (m_normalMipJob.valid() &&
@@ -370,17 +378,23 @@ namespace PlutoGE::render
             auto pixels = m_normalMipJob.get();
             const auto uploadStart = std::chrono::steady_clock::now();
             core::CpuScope uploadScope("Prepared normal texture upload", core::CpuCategory::Rendering);
-            ++m_timingStats.textureUploadCount;
-            rhi::Texture uploaded(*m_device, m_device->CreateTexture(
-                {m_pendingNormalWidth, m_pendingNormalHeight, rhi::Format::R8G8B8A8Unorm,
-                 rhi::TextureUsage::Sampled, "Scene normal", false, 1, false, 0, true, true}, pixels));
-            m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
-            if (uploaded && !m_pendingNormalLifetime.expired() &&
-                m_pendingNormalSource->GetContentRevision() == m_pendingNormalRevision)
+            // Another view may have finished this image while our CPU job ran.
+            // Never upload a duplicate, or publish work for an invalidated source.
+            if (!m_pendingNormalLifetime.expired() &&
+                m_pendingNormalSource->GetContentRevision() == m_pendingNormalRevision &&
+                !m_textureCache->normal.contains(m_pendingNormalSource))
             {
-                m_normalTextures.emplace(m_pendingNormalSource, std::move(uploaded));
-                ++m_textureResidencyRevision;
+                ++m_timingStats.textureUploadCount;
+                rhi::Texture uploaded(*m_device, m_device->CreateTexture(
+                    {m_pendingNormalWidth, m_pendingNormalHeight, rhi::Format::R8G8B8A8Unorm,
+                     rhi::TextureUsage::Sampled, "Scene normal", false, 1, false, 0, true, true}, pixels));
+                if (uploaded)
+                {
+                    m_textureCache->normal.emplace(m_pendingNormalSource, std::move(uploaded));
+                    ++m_textureCache->residencyRevision;
+                }
             }
+            m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
             m_pendingNormalSource = nullptr;
         }
         const auto uploadTexture = [&](const Texture *source, rhi::Format format,
@@ -389,7 +403,7 @@ namespace PlutoGE::render
         {
             if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0)
                 return {};
-            m_textureVersions.try_emplace(source, TextureVersion{source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()});
+            m_textureCache->versions.try_emplace(source, TextureVersion{source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()});
             // Render textures are drawn on the GPU; republishing bumps their
             // revision, which re-prepares the materials that sample them.
             if (const auto *renderTexture = dynamic_cast<const RenderTexture *>(source))
@@ -456,7 +470,7 @@ namespace PlutoGE::render
                 return entry;
             const auto sourceRevision = source->GetRevision();
             if (sourceRevision && entry.sourceIdentity == source->GetIdentity() &&
-                entry.sourceRevision == sourceRevision && entry.textureResidencyRevision == m_textureResidencyRevision &&
+                entry.sourceRevision == sourceRevision && entry.textureResidencyRevision == m_textureCache->residencyRevision &&
                 !m_normalMipJob.valid())
             {
                 entry.frame = m_preparationFrame;
@@ -473,8 +487,8 @@ namespace PlutoGE::render
             draw.emissionChannelMask = material.emissionChannelMask;
             draw.emissionChannels = material.emissionChannels;
             draw.emissionTexture = material.emissionChannelMask
-                ? uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Unorm, m_linearTextures, "Emission masks")
-                : uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene emission");
+                ? uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Emission masks")
+                : uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Scene emission");
             draw.subsurface = material.subsurface;
             draw.subsurfaceColor = material.subsurfaceColor;
             draw.subsurfaceRadius = material.subsurfaceRadius;
@@ -492,7 +506,7 @@ namespace PlutoGE::render
             draw.graphSamplers = material.graphSamplers;
             for (size_t i = 0; i < draw.graphTextures.size(); ++i)
                 draw.graphTextures[i] = uploadTexture(material.graphTextures[i], rhi::Format::R8G8B8A8Unorm,
-                                                      m_linearTextures, "Graph texture");
+                                                      m_textureCache->linear, "Graph texture");
             const bool transparent =
                 material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
             draw.contributesToGi = !transparent;
@@ -503,13 +517,13 @@ namespace PlutoGE::render
             draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
             draw.flipNormalY = material.flipNormalY;
             draw.baseColorTexture =
-                uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Scene albedo");
-            draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm, m_normalTextures,
+                uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Scene albedo");
+            draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->normal,
                                                "Scene normal", true);
             draw.metallicTexture =
-                uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_linearTextures, "Scene metallic");
+                uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Scene metallic");
             draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                  m_linearTextures, "Scene roughness");
+                                                  m_textureCache->linear, "Scene roughness");
             if (entry.revision == 0 || !SameBasicDrawSurface(entry.draw, draw))
             {
                 entry.revision = preparation.NextRevision();
@@ -526,7 +540,7 @@ namespace PlutoGE::render
             for (std::size_t i = 0; i < material.graphTextures.size(); ++i)
                 pendingGraphTexture |= material.graphTextures[i] && !entry.draw.graphTextures[i];
             entry.sourceRevision = pendingTexture || pendingGraphTexture ? 0 : sourceRevision;
-            entry.textureResidencyRevision = m_textureResidencyRevision;
+            entry.textureResidencyRevision = m_textureCache->residencyRevision;
             entry.frame = m_preparationFrame;
             return entry;
         };
@@ -1288,7 +1302,7 @@ namespace PlutoGE::render
                         return;
                     const auto &config = material->ReadConfig();
                     packet.parameters.values[0] = config.color;
-                    packet.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures,
+                    packet.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb,
                                                    "Particle albedo");
                     packet.parameters.values[1] = {config.emission, packet.texture ? 1.0f : 0.0f};
                 };
@@ -1411,7 +1425,7 @@ namespace PlutoGE::render
                 draw.parameters.projectorNormal = {glm::normalize(glm::vec3(command.model[2])), command.normalCutoff};
                 draw.parameters.material = {config.uvScale, static_cast<float>(config.alphaMode),
                     config.alphaCutoff / std::max(config.color.a, 0.000001f)};
-                draw.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_srgbTextures, "Decal albedo");
+                draw.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Decal albedo");
                 // An unresolved textured decal must not become a solid square.
                 if (config.albedoTexture && !draw.texture)
                     continue;

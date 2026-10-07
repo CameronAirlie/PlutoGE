@@ -282,17 +282,21 @@ namespace PlutoGE::render
       // Per-view material/packet aging must not follow a borrowed camera's clock.
       std::uint64_t m_preparationFrame = 0;
       std::uint64_t m_skinningHistoryEpoch = 0;
-      std::unordered_map<const Texture *, rhi::Texture> m_srgbTextures;
-      std::unordered_map<const Texture *, rhi::Texture> m_linearTextures;
-      std::unordered_map<const Texture *, rhi::Texture> m_normalTextures;
+      struct TextureVersion { std::weak_ptr<const void> lifetime; std::uint64_t identity, revision; };
+      // Immutable material images belong to the device, not an individual camera.
+      // Keep one allocation across editor/game/secondary views on that device.
+      struct TextureCache
+      {
+          std::unordered_map<const Texture *, rhi::Texture> srgb, linear, normal;
+          std::unordered_map<const Texture *, TextureVersion> versions;
+          std::uint64_t residencyRevision = 1;
+      };
+      std::shared_ptr<TextureCache> m_textureCache;
       // One CPU-only job bounds worker count and temporary image memory.
       std::future<std::vector<std::byte>> m_normalMipJob;
       const Texture *m_pendingNormalSource = nullptr;
       std::weak_ptr<const void> m_pendingNormalLifetime;
       std::uint64_t m_pendingNormalRevision = 0;
-      struct TextureVersion { std::weak_ptr<const void> lifetime; std::uint64_t identity, revision; };
-      std::unordered_map<const Texture *, TextureVersion> m_textureVersions;
-      std::uint64_t m_textureResidencyRevision = 1;
       std::uint32_t m_pendingNormalWidth = 0;
       std::uint32_t m_pendingNormalHeight = 0;
       std::size_t m_sceneCommandCount = 0;

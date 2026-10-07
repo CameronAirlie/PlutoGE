@@ -1,3 +1,4 @@
+#include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
@@ -489,6 +490,42 @@ int main(int argc, char **argv)
     render::CameraData cameraData{.view = glm::mat4(1.0f), .projection = glm::mat4(1.0f)};
     if (!engine.GetRhiRenderService().RenderSceneAndPresent(cameraData, {}, commands))
         return 10;
+    {
+        // Editor, game and render-texture views must share immutable GPU images.
+        // Revisions/invalidation must still reach every view, and closing one
+        // view must not destroy images used by another.
+        struct MutableTexture : render::Texture
+        {
+            MutableTexture() : Texture({}) { m_width = m_height = 1; m_channels = 4; m_rgba8Pixels = {255, 0, 0, 255}; }
+            void Change() { m_rgba8Pixels = {0, 0, 255, 255}; ++m_contentRevision; }
+        } source;
+        auto shaders = render::ShaderArtifactLibrary{}.LoadBasicRendererPackage();
+        shaders.virtualShadows = {};
+        auto &device = *engine.GetRenderDevice();
+        render::RhiSceneRenderer editorView, gameView;
+        if (!editorView.Initialize(device, shaders) || !gameView.Initialize(device, shaders)) return 52;
+        editorView.SetImmediateTextureUploads(true);
+        gameView.SetImmediateTextureUploads(true);
+        render::Material textured({.albedoTexture = &source, .normalTexture = &source});
+        const std::array draws{render::RenderCommand{.material = &textured, .mesh = &mesh}};
+        unsigned reads = 0;
+        const render::RhiSceneRenderer::TexturePixelReader pixels = [&](const render::Texture &texture) {
+            ++reads;
+            const auto bytes = std::as_bytes(texture.GetRgba8Pixels());
+            return std::vector<std::byte>(bytes.begin(), bytes.end());
+        };
+        const auto renderView = [&](render::RhiSceneRenderer &view) {
+            return view.Render(32, 32, cameraData, {}, draws, draws, {}, {}, pixels);
+        };
+        if (!renderView(editorView) || !renderView(gameView) || reads != 2) return 53;
+        source.Change();
+        if (!renderView(gameView) || !renderView(editorView) || reads != 4) return 54;
+        editorView.InvalidateAssetCache();
+        if (!renderView(gameView) || !renderView(editorView) || reads != 6) return 55;
+        editorView.Shutdown();
+        if (!renderView(gameView) || reads != 6) return 56;
+        gameView.Shutdown();
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--benchmark")
     {
         std::vector<std::unique_ptr<scene::Entity>> entities;

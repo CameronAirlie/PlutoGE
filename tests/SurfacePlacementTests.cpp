@@ -214,6 +214,14 @@ namespace
         std::string during;
         Require(scene::SceneSerializer::SaveToString(destination, during, &error), error);
         Require(before == during, "Preview mutated destination scene");
+        // Editing placement settings replaces the one transient ghost and never
+        // allocates the original preview (or the resized one) in the destination.
+        auto editedOptions = options; editedOptions.scaleFactor = 0.01f;
+        Require(session.Update(*hit, parent, editedOptions, error), error);
+        Require(session.GetRenderCommands().size() == 1, "Settings edit retained an old ghost");
+        Require(scene::SceneSerializer::SaveToString(destination, during, &error), error);
+        Require(before == during, "Settings edit instantiated preview geometry");
+        Require(session.Update(*hit, parent, options, error), error);
         const auto ghost = session.GetRenderCommands()[0].model;
         Require(!session.GetRenderCommands()[0].castsShadow, "Ghost casts shadows");
         auto *placed = session.Stamp(destination, parent, error);

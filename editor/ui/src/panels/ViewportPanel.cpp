@@ -80,6 +80,7 @@ namespace PlutoGE::ui
     {
         SurfacePlacementSession session;
         SurfacePlacementOptions options;
+        std::optional<PlacementSurfaceHit> lastSurfaceHit;
         std::uint64_t sceneRevision = 0;
         const assets::Project *project = nullptr;
         scene::EntityID parentId = 0;
@@ -2144,6 +2145,7 @@ namespace PlutoGE::ui
                     {
                         m_placement->attemptedReference = reference;
                         m_placement->options = SurfacePlacementOptions{};
+                        m_placement->lastSurfaceHit.reset();
                         m_placement->session.Begin(reference, shell.GetEngine().GetAssetManager(), m_placement->error, shell.GetProject());
                         m_placement->sceneRevision = shell.GetSceneRevision();
                         m_placement->project = shell.GetProject();
@@ -2795,7 +2797,14 @@ namespace PlutoGE::ui
         ImGui::Text("Parent: %s", parent ? parent->GetName().c_str() : (state.parentId ? "Missing" : "Scene root"));
         ImGui::TextUnformatted("Release the drag, adjust settings, then click a surface.");
         if (!state.error.empty()) ImGui::TextWrapped("%s", state.error.c_str());
-        const bool placementControlsHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+        // Window hover alone can be false while an active widget owns the mouse.
+        // The viewport click is computed geometrically before this window is drawn,
+        // so explicitly exclude its entire rectangle and all active UI gestures.
+        const ImVec2 controlsMin = ImGui::GetWindowPos();
+        const ImVec2 controlsSize = ImGui::GetWindowSize();
+        const bool placementControlsHovered = ImGui::IsMouseHoveringRect(controlsMin,
+            ImVec2(controlsMin.x + controlsSize.x, controlsMin.y + controlsSize.y), false);
+        const bool placementControlsActive = ImGui::IsAnyItemActive();
         ImGui::End();
         if (cancel)
         {
@@ -2805,7 +2814,9 @@ namespace PlutoGE::ui
         if (!scene || !state.session.IsActive()) return true;
         state.session.InvalidatePose();
         std::optional<PlacementSurfaceHit> hit;
-        if (!controlsHovered && !placementControlsHovered && !ImGui::GetIO().KeyAlt &&
+        const bool editingControls = controlsHovered || placementControlsHovered || placementControlsActive ||
+            ImGui::GetIO().WantTextInput;
+        if (!editingControls && !ImGui::GetIO().KeyAlt &&
             !ImGui::GetIO().WantTextInput && (!state.parentId || parent))
         {
             if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
@@ -2824,12 +2835,17 @@ namespace PlutoGE::ui
                     hit = RaycastPlacementSurface(*scene, snapped, rise * 2.0f);
                 }
             }
+            state.lastSurfaceHit = hit;
             if (hit && state.session.Update(*hit, parent, state.options, state.error)) state.error.clear();
             else if (!hit && state.error.empty()) state.error = "No surface under cursor; placement is disabled.";
         }
+        // Keep a single ghost at the last valid surface while settings are edited.
+        // Recompute its pose so scale/yaw changes affect the preview immediately.
+        if (editingControls && state.lastSurfaceHit && (!state.parentId || parent))
+            if (state.session.Update(*state.lastSurfaceHit, parent, state.options, state.error)) state.error.clear();
         if (state.parentId && !parent) state.error = "Placement parent was deleted. Choose a new parent or Scene root.";
         const bool stamp = viewportClicked && !state.waitForRelease &&
-            !controlsHovered && !placementControlsHovered && !ImGui::GetIO().KeyAlt;
+            !editingControls && !ImGui::GetIO().KeyAlt;
         if (stamp && state.session.GetPose())
         {
             scene::Entity *created = nullptr;

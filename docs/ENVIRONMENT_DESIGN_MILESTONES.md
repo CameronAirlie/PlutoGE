@@ -128,3 +128,8 @@ Validation: updated FoliageCollisionTests passed; FoliageComponent, ViewportPane
 
 - Browser drag release now leaves the placement panel open, including release over its controls or outside the image. Removed implicit drop stamping and drag-end cancellation. The first stamp requires a subsequent viewport click, allowing scale, parent and alignment settings to be changed before creating any entity. Escape/Finish and scene/project/play transitions retain explicit cancellation.
 - Viewport compilation and the validation editor link passed with direct MSVC; interactive release/control checks remain pending.
+
+### E02 popup click isolation — 2026-10-07
+
+- Explicitly exclude the placement window rectangle and active ImGui widgets from scene stamping; IsWindowHovered alone can be false during widget interaction while the viewport still reports a geometric click. Settings edits recompute the one transient ghost at its last valid hit, without allocating a scene object.
+- Added a regression verifying scale edits retain one preview and leave the destination scene snapshot unchanged. SurfacePlacement tests passed; viewport compilation and validation editor link passed with direct MSVC. Interactive popup-click validation remains pending.

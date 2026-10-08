@@ -22,6 +22,11 @@ namespace PlutoGE::ui
     std::optional<PlacementSurfaceHit> RaycastPlacementSurface(
         scene::Scene &scene, const ViewportPickRay &ray, float maxDistance = 10000);
 
+    // Empty-space placement follows the cursor ray, stays upright and leaves
+    // enough room for the preview. Invalid camera/size input produces no target.
+    std::optional<PlacementSurfaceHit> MakeCameraPlacementHit(
+        const ViewportPickRay &ray, glm::vec3 previewSize = glm::vec3(0));
+
     // Editor-owned prototype and transient render commands. No active scene
     // objects are allocated until Stamp, which the caller wraps in one edit.
     class SurfacePlacementSession

@@ -29,6 +29,8 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/ui/AssetReferenceSearchPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/SurfacePlacement.h"
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1509,6 +1511,43 @@ namespace PlutoGE::ui
         return InstantiateMeshAssetIntoScene(std::move(meshReference), parent, std::move(bindings));
     }
 
+    namespace
+    {
+        bool AddAssetInFrontOfCamera(const std::string &reference)
+        {
+            auto &shell = EditorShell::GetInstance();
+            auto *scene = shell.GetScene();
+            if (!scene || shell.GetEngine().IsRuntimeRunning()) return false;
+            SurfacePlacementSession placement;
+            std::string error;
+            if (!placement.Begin(reference, shell.GetEngine().GetAssetManager(), error, shell.GetProject()) ||
+                !placement.Update(PlacementSurfaceHit{}, nullptr, {}, error))
+            {
+                shell.Log(EditorShell::ConsoleSeverity::Error, error);
+                return false;
+            }
+            const auto &camera = shell.GetEditorCamera();
+            auto rotation = glm::rotate(glm::mat4(1), glm::radians(camera.yawDegrees), glm::vec3(0, 1, 0));
+            rotation = glm::rotate(rotation, glm::radians(camera.pitchDegrees), glm::vec3(1, 0, 0));
+            const ViewportPickRay ray{camera.position, -glm::vec3(rotation[2])};
+            const auto target = MakeCameraPlacementHit(ray, placement.GetPreviewSize());
+            if (!target || !placement.Update(*target, nullptr, {}, error))
+            {
+                shell.Log(EditorShell::ConsoleSeverity::Error, error.empty() ? "Invalid editor camera placement target." : error);
+                return false;
+            }
+            scene::Entity *created = nullptr;
+            shell.ExecuteSceneEdit("Add Asset to Scene", [&] { created = placement.Stamp(*scene, nullptr, error); });
+            if (!created)
+            {
+                shell.Log(EditorShell::ConsoleSeverity::Error, error);
+                return false;
+            }
+            shell.SetSelectedEntity(created);
+            return true;
+        }
+    }
+
     std::string ContentBrowserPanel::RevealAsset(std::string reference)
     {
         auto *project = EditorShell::GetInstance().GetProject();
@@ -2665,6 +2704,10 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginPopupContextItem("AssetContext"))
             {
+                if ((asset.type == assets::ProjectAssetType::Model || asset.type == assets::ProjectAssetType::Mesh) &&
+                    ImGui::MenuItem("Add to Scene", nullptr, false,
+                        editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
+                    AddAssetInFrontOfCamera(asset.reference);
                 if (project->ResolveAssetReference(asset.reference).extension() == ".rml" && ImGui::MenuItem("Open in UI Editor"))
                     editorShell.OpenRmlDocument(asset.reference);
                 if (ImGui::MenuItem("Find References..."))
@@ -2762,6 +2805,10 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginPopupContextItem("ModelObjectContext"))
             {
+                if (object.type == assets::ProjectAssetType::Mesh &&
+                    ImGui::MenuItem("Add to Scene", nullptr, false,
+                        editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
+                    AddAssetInFrontOfCamera(object.reference);
                 const char *extractLabel = object.type == assets::ProjectAssetType::Material ? "Extract and Use" : "Extract";
                 if (ImGui::MenuItem(extractLabel))
                 {

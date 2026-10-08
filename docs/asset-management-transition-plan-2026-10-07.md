@@ -12,12 +12,12 @@ Scope: PlutoGE editor asset management, importing, references, model instantiati
 | 2. References and identities | Stable IDs/catalogs; six asset types opt in to logical writing | Remaining serializers and managed fields; explicit ambiguous-node mapping |
 | 3. Import service | Shared CPU service, headless CLI, async editor jobs | General importer extensibility and remaining synchronous entry points |
 | 4. Cache and incremental imports | Immutable cache, accepted state, reverse index, reconciliation, debounced watching | Native watcher backends, garbage collection and live-generation leases |
-| 5. Source editor workflow | Settings, force reimport, authored extraction/remaps, ownership guards | Undo, broader inspector/import settings, transactional package moves |
+| 5. Source editor workflow | Settings, force reimport, authored extraction/remaps, ownership guards, catalog-backed inspector choices | Undo, broader import settings, transactional package moves |
 | 6. Model prefab hierarchy | Full CPU source topology and transform conventions captured | Generated prefab instantiation, exact scene matrices, ambiguous-node mapping, override reconciliation |
 | 7. Cooking/runtime | Logical dependency cooking, runtime catalogs, packed-only loading verified | Remaining converted asset types and broader build integration |
-| 8. Existing project migration | Identity audit, confirmed-rename dry run, material preparation and verified recovery-copy service | Conversion coordinator, remaining format writers, rollback and cleanup tooling |
+| 8. Existing project migration | CoD converted and validated with verified recovery copies and journaled rollback | Reusable conversion coordinator, remaining format writers and cleanup tooling |
 
-The transition is not complete. New version 3 projects keep imported native products in Library; existing version 1/2 projects retain their co-located layout. The real CoD project has not been migrated or written. Detailed dated progress below supersedes earlier implementation-status notes.
+The broader transition is not complete. New version 3 projects keep imported native products in Library; version 1/2 projects retain their co-located layout until explicitly converted. The real CoD project has been converted to version 3 and validated. Detailed dated progress below supersedes earlier implementation-status notes.
 
 ## 1. Objective and scope
 
@@ -718,3 +718,73 @@ The final lock-protected recovery checkpoint records 1,181 project changes and
 checks every original manifest entry against either its unchanged original hash
 or its journaled replacement. Original source/native payloads outside the
 explicit migration set are preserved. The recovery journal status is validated.
+
+## Catalog inspector integration and next play test — 8 October 2026
+
+The reported imported mesh/material warnings exposed an incomplete editor
+consumer: asset pickers still used manifest entries and literal path equality,
+while rendering loaded Library products through the catalog. Pickers now read
+the active immutable catalog snapshot, offer imported virtual locations without
+requiring physical Assets products, and resolve stable identities to those
+locations for current selection, filtering and drag/drop. Unknown identities
+remain visibly missing. A catalog supersedes stale project manifest choices;
+engine built-ins and no-project behavior retain their existing rules.
+
+Choice collection remains a pure function with an explicit catalog input.
+Rendering acquires the active project's shared snapshot and retains it for the
+widget lifetime. Catalog choices are reconstructed from that snapshot, avoiding
+the old manifest cache's inability to observe reimported objects. Existing
+stable references are preserved when selecting their location alias; owning
+asset serializers remain responsible for persistence. Stable references are
+never interpreted as relative filesystem paths by picker normalization.
+
+Mesh, material and animation assignment guards resolve identity aliases before
+checking type. Authored meshes with no source-model provenance now assign
+successfully and clear old model correspondence. Graph and particle self-reference
+filters compare resolved references and use the same explicit snapshot.
+
+Automated coverage includes Library-only catalog choices, stable/path alias
+matching, imported material enumeration, path-based filters, stale manifest
+exclusion, unknown identities, replacement snapshots and retired objects.
+Picker and surface-placement regressions are included in the asset verification
+build target. The 21 focused tests passed; actual CoD title and Main Vulkan
+runtime smoke tests passed and the read-only identity audit reported zero issues.
+These checks do not claim interactive inspector or drag/drop verification.
+
+Use the rebuilt `out/build/msvc-nvidia/editor/RelWithDebInfo/PlutoGEEditor.exe`
+with the existing CoD project for the next manual test:
+
+1. Import a fresh textured glTF model; allow its background import to finish.
+2. Drag the model into the scene. Check that mesh and material fields show
+   valid project-relative names, with no false missing/external warnings.
+3. Use the mesh and material dropdowns and drag/drop to assign imported objects;
+   also assign an existing authored weapon mesh and a built-in mesh.
+4. Save, reopen the scene and enter Play; check appearance and assignments.
+5. Change a model source or force reimport; check that existing references remain
+   valid and the inspector refreshes its object choices.
+
+This is the next play-test checkpoint, not completion of hierarchy-prefab,
+override reconciliation, generic importer or cache-collection milestones.
+
+### Scene placement convenience — 8 October 2026
+
+Model source cards, native mesh cards and imported mesh-object cards now offer
+Add to Scene. The action creates and selects a scene-root instance in front of
+the editor camera, using one undoable scene edit and the existing placement
+prototype/material/animation pipeline. It is disabled during Play or without a
+scene; unsuccessful prototype loading reports an error without adding entities.
+
+The viewport placement tool now falls back to a camera-ray target when its
+surface query misses. The shared, CPU-only target helper starts at five world
+units, increases distance to 1.5 times the largest preview dimension, normalizes
+the ray and rejects invalid inputs. Empty-space targets stay upright and support
+world X/Z snapping without requiring ground below them. Actual surface hits
+retain their existing alignment/support and snapped surface checks. The existing
+release-drag/adjust/click placement workflow and repeat mode are retained.
+
+The editor rebuild succeeded and all 21 focused tests passed (8.65 seconds).
+New placement regressions cover normalized direction, default and size-aware
+distance, invalid camera/size inputs and creating an actual scene instance from
+an empty-space target. Manual checks: right-click a model and choose Add to Scene;
+drag one over an empty viewport, click to place, then exercise undo/redo and
+surface placement with snapping enabled.

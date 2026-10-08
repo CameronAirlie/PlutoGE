@@ -241,9 +241,12 @@ namespace PlutoGE::ui
 
         ImGui::SeparatorText("Sub Emitters");
         // A system cannot spawn itself as a sub emitter.
+        const auto pickerCatalog = core::Engine::GetInstance().GetAssetManager().GetAssetCatalog();
+        const auto selfReference = ResolveAssetPickerReference(pickerCatalog.get(), reference);
         const ProjectAssetPickerOptions subEmitterPicker{
             .includeEngineAssets = true,
-            .filter = [&reference](const AssetReferenceOption &option) { return option.reference != reference; }};
+            .filter = [&selfReference](const AssetReferenceOption &option) { return option.reference != selfReference; },
+            .catalog = pickerCatalog.get()};
         if (RenderProjectAssetPicker("Collision Sub Emitter", project, assets::ProjectAssetType::ParticleSystem,
                                      m_asset.collisionSubEmitterAssetReference, subEmitterPicker))
             m_dirty = true;

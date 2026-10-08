@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <iostream>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <source_location>
 
@@ -75,6 +76,21 @@ namespace
         const auto before = pose;
         Require(!ui::GroundPlacement::ComputeAtSurface(*prototype, parent, {}, normal, options, pose, error), "Accepted singular parent");
         Require(pose.position == before.position, "Failed calculation mutated output");
+    }
+    void TestCameraFallback()
+    {
+        const ui::ViewportPickRay ray{{2, 3, 8}, {0, 0, -2}};
+        const auto small = ui::MakeCameraPlacementHit(ray);
+        Require(small.has_value(), "Empty-space camera target was rejected");
+        Near(small->point.z, 3); Near(small->point.x, 2); Near(small->point.y, 3);
+        Near(small->normal.y, 1);
+        const auto large = ui::MakeCameraPlacementHit(ray, {10, 2, 4});
+        Require(large.has_value(), "Large preview target was rejected");
+        Near(large->point.z, -7);
+        Require(!ui::MakeCameraPlacementHit({ray.origin, {0, 0, 0}}), "Zero camera direction accepted");
+        Require(!ui::MakeCameraPlacementHit(ray, {-1, 0, 0}), "Negative preview size accepted");
+        Require(!ui::MakeCameraPlacementHit({{std::numeric_limits<float>::infinity(), 0, 0}, ray.direction}),
+                "Non-finite camera accepted");
     }
     void TestSession()
     {
@@ -250,11 +266,17 @@ namespace
         Require(session.Update(*hit, nullptr, {}, error), error);
         auto *meshStamp = session.Stamp(destination, nullptr, error);
         Require(meshStamp && meshStamp->GetComponent<scene::MeshComponent>()->GetMeshAssetReference() == "project://Triangle.plutomesh", error);
+        const auto cameraTarget = ui::MakeCameraPlacementHit({{20, 3, 10}, {0, 0, -1}});
+        Require(cameraTarget && session.Update(*cameraTarget, nullptr, {}, error), error);
+        auto *floatingStamp = session.Stamp(destination, nullptr, error);
+        Require(floatingStamp != nullptr, "Empty-space target did not produce a scene entity: " + error);
+        Near(floatingStamp->GetPosition().x, 20);
+        Near(floatingStamp->GetPosition().z, 5);
         Require(!session.Begin("project://Missing.plutomesh", assets, error), "Missing asset accepted");
     }
 }
 int main()
 {
-    try { TestSupport(); TestSession(); std::cout << "PASS: surface placement, ghost isolation, repeated stamps and prefab snapshots\n"; return 0; }
+    try { TestSupport(); TestCameraFallback(); TestSession(); std::cout << "PASS: surface placement, camera fallback, ghost isolation, repeated stamps and prefab snapshots\n"; return 0; }
     catch (const std::exception &error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }
 }

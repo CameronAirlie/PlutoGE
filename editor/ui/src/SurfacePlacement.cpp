@@ -119,6 +119,18 @@ namespace PlutoGE::ui
         }
     }
 
+    std::optional<PlacementSurfaceHit> MakeCameraPlacementHit(const ViewportPickRay &ray, glm::vec3 previewSize)
+    {
+        if (!Finite(ray.origin) || !Finite(ray.direction) || !Finite(previewSize) ||
+            glm::any(glm::lessThan(previewSize, glm::vec3(0)))) return std::nullopt;
+        const float length = glm::length(ray.direction);
+        if (!std::isfinite(length) || length < 1e-8f) return std::nullopt;
+        const float distance = std::max(5.0f, 1.5f * std::max({previewSize.x, previewSize.y, previewSize.z}));
+        const auto point = ray.origin + ray.direction / length * distance;
+        if (!Finite(point)) return std::nullopt;
+        return PlacementSurfaceHit{point, {0, 1, 0}, 0};
+    }
+
     std::optional<PlacementSurfaceHit> RaycastPlacementSurface(scene::Scene &scene,
                                                                const ViewportPickRay &input, float maxDistance)
     {

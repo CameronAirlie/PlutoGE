@@ -775,7 +775,8 @@ namespace PlutoGE::ui
                                        const std::string &materialAssetReference,
                                        core::Engine &engine)
         {
-            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                    engine.GetAssetManager().GetAssetCatalog().get(), materialAssetReference)) != assets::ProjectAssetType::Material)
             {
                 return false;
             }
@@ -855,7 +856,8 @@ namespace PlutoGE::ui
         bool AssignAnimationAsset(scene::AnimationComponent &animationComponent,
                                   const std::string &animationAssetReference)
         {
-            const auto assetType = assets::Project::GetAssetTypeForReference(animationAssetReference);
+            const auto assetType = assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                core::Engine::GetInstance().GetAssetManager().GetAssetCatalog().get(), animationAssetReference));
             if (assetType != assets::ProjectAssetType::Animation &&
                 assetType != assets::ProjectAssetType::AnimationClip)
             {
@@ -868,7 +870,8 @@ namespace PlutoGE::ui
         bool AssignAnimationGraphAsset(scene::AnimationComponent &animationComponent,
                                        const std::string &animationGraphAssetReference)
         {
-            if (assets::Project::GetAssetTypeForReference(animationGraphAssetReference) != assets::ProjectAssetType::AnimationGraph)
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                    core::Engine::GetInstance().GetAssetManager().GetAssetCatalog().get(), animationGraphAssetReference)) != assets::ProjectAssetType::AnimationGraph)
             {
                 return false;
             }
@@ -881,7 +884,8 @@ namespace PlutoGE::ui
                                           const std::string &materialAssetReference,
                                           core::Engine &engine)
         {
-            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                    engine.GetAssetManager().GetAssetCatalog().get(), materialAssetReference)) != assets::ProjectAssetType::Material)
             {
                 return false;
             }
@@ -901,7 +905,8 @@ namespace PlutoGE::ui
                                           const std::string &materialAssetReference,
                                           core::Engine &engine)
         {
-            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                    engine.GetAssetManager().GetAssetCatalog().get(), materialAssetReference)) != assets::ProjectAssetType::Material)
             {
                 return false;
             }
@@ -921,7 +926,8 @@ namespace PlutoGE::ui
                                          const std::string &materialAssetReference,
                                          core::Engine &engine)
         {
-            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
+                    engine.GetAssetManager().GetAssetCatalog().get(), materialAssetReference)) != assets::ProjectAssetType::Material)
             {
                 return false;
             }

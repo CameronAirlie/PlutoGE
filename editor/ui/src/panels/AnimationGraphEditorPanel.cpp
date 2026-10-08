@@ -961,10 +961,13 @@ namespace PlutoGE::ui
         ImGui::SeparatorText("Layered Animation");
         ImGui::TextWrapped("Stack reusable animation graphs or clips, then restrict each result with a bone mask. Later layers can partially or completely override earlier layers.");
         const auto *layerProject = editorShell.GetProject();
+        const auto pickerCatalog = core::Engine::GetInstance().GetAssetManager().GetAssetCatalog();
+        const auto selfReference = ResolveAssetPickerReference(pickerCatalog.get(), reference);
         const ProjectAssetPickerOptions layerGraphPicker{
             .noneLabel = "None (use clip)",
             .includeEngineAssets = true,
-            .filter = [&reference](const AssetReferenceOption &option) { return option.reference != reference; }};
+            .filter = [&selfReference](const AssetReferenceOption &option) { return option.reference != selfReference; },
+            .catalog = pickerCatalog.get()};
         const auto layerGraphOptions = CollectProjectAssetChoices(layerProject, assets::ProjectAssetType::AnimationGraph, layerGraphPicker);
         if (ImGui::Button("Add Graph Layer"))
         {

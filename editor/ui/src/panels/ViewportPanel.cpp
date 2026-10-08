@@ -2795,7 +2795,7 @@ namespace PlutoGE::ui
         auto *scene = shell.GetScene();
         auto *parent = scene && state.parentId ? scene->FindEntityByID(state.parentId) : nullptr;
         ImGui::Text("Parent: %s", parent ? parent->GetName().c_str() : (state.parentId ? "Missing" : "Scene root"));
-        ImGui::TextUnformatted("Release the drag, adjust settings, then click a surface.");
+        ImGui::TextUnformatted("Release the drag, adjust settings, then click to place.");
         if (!state.error.empty()) ImGui::TextWrapped("%s", state.error.c_str());
         // Window hover alone can be false while an active widget owns the mouse.
         // The viewport click is computed geometrically before this window is drawn,
@@ -2812,32 +2812,49 @@ namespace PlutoGE::ui
             return true;
         }
         if (!scene || !state.session.IsActive()) return true;
+        const auto previewSize = state.session.GetPreviewSize();
         state.session.InvalidatePose();
         std::optional<PlacementSurfaceHit> hit;
+        bool cameraFallback = false;
         const bool editingControls = controlsHovered || placementControlsHovered || placementControlsActive ||
             ImGui::GetIO().WantTextInput;
         if (!editingControls && !ImGui::GetIO().KeyAlt &&
             !ImGui::GetIO().WantTextInput && (!state.parentId || parent))
         {
             if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
+            {
                 hit = RaycastPlacementSurface(*scene, *ray);
+                if (!hit)
+                {
+                    hit = MakeCameraPlacementHit(*ray, previewSize);
+                    cameraFallback = hit.has_value();
+                }
+            }
             if (hit && state.snap)
             {
                 if (!std::isfinite(state.gridSize) || state.gridSize < 0.01f || hit->normal.y < 0.01f)
                 { hit.reset(); state.error = "Grid snapping requires an upward-facing surface and a positive grid size."; }
                 else
                 {
-                    const float rise = std::max(1.0f, state.gridSize * 2.0f);
-                    ViewportPickRay snapped;
-                    snapped.origin = {std::round(hit->point.x / state.gridSize) * state.gridSize,
-                        hit->point.y + rise, std::round(hit->point.z / state.gridSize) * state.gridSize};
-                    snapped.direction = {0, -1, 0};
-                    hit = RaycastPlacementSurface(*scene, snapped, rise * 2.0f);
+                    if (cameraFallback)
+                    {
+                        hit->point.x = std::round(hit->point.x / state.gridSize) * state.gridSize;
+                        hit->point.z = std::round(hit->point.z / state.gridSize) * state.gridSize;
+                    }
+                    else
+                    {
+                        const float rise = std::max(1.0f, state.gridSize * 2.0f);
+                        ViewportPickRay snapped;
+                        snapped.origin = {std::round(hit->point.x / state.gridSize) * state.gridSize,
+                            hit->point.y + rise, std::round(hit->point.z / state.gridSize) * state.gridSize};
+                        snapped.direction = {0, -1, 0};
+                        hit = RaycastPlacementSurface(*scene, snapped, rise * 2.0f);
+                    }
                 }
             }
             state.lastSurfaceHit = hit;
             if (hit && state.session.Update(*hit, parent, state.options, state.error)) state.error.clear();
-            else if (!hit && state.error.empty()) state.error = "No surface under cursor; placement is disabled.";
+            else if (!hit && state.error.empty()) state.error = "No valid placement ray under cursor.";
         }
         // Keep a single ghost at the last valid surface while settings are edited.
         // Recompute its pose so scale/yaw changes affect the preview immediately.

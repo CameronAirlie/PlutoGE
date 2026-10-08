@@ -70,6 +70,16 @@ int main(int argc, char **argv)
         Write(staleRuntime, std::string(kRuntimeContentPackMarker) + "\n" + std::string(kRuntimeAssetPipelineMarker));
         Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 2), "Current runtime rejected the new asset pipeline");
         Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 3), "Current runtime rejected Library projects");
+        Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 4), "Current runtime rejected affine scene projects");
+        Write(staleRuntime, std::string(kRuntimeContentPackMarker) + "\nPLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=3");
+        Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 3) && !IsRuntimeAssetPipelineCompatible(staleRuntime, 4),
+            "Version 3 runtime accepted affine project exports");
+        auto affineManifest = manifest;
+        affineManifest.assetPipelineVersion = 4;
+        Project affineProject(scratch.root / "Affine.plutoproject", affineManifest);
+        Require(affineProject.Save(&compatibilityError), "Version 4 project could not save");
+        auto reopenedAffine = Project::Load(affineProject.GetManifestPath(), &compatibilityError);
+        Require(reopenedAffine && reopenedAffine->GetManifest().assetPipelineVersion == 4, "Version 4 project could not reload");
         Write(staleRuntime, std::string(kRuntimeContentPackMarker) + "\nPLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=2");
         Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 2) && !IsRuntimeAssetPipelineCompatible(staleRuntime, 3),
             "Version 2 runtime compatibility leaked into Library project exports");

@@ -141,7 +141,7 @@ namespace PlutoGE::assets
     // Embedded capability metadata: require a matching reader before exporting.
     inline constexpr std::string_view kRuntimeContentPackMarker = "PLUTOGE_RUNTIME_CONTENT_PACK_VERSION=2";
     bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath);
-    inline constexpr std::string_view kRuntimeAssetPipelineMarker = "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=3";
+    inline constexpr std::string_view kRuntimeAssetPipelineMarker = "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=4";
     bool IsRuntimeAssetPipelineCompatible(const std::filesystem::path &runtimeExecutablePath, std::uint32_t version);
     struct ExportOptions
     {

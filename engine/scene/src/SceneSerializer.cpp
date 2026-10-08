@@ -7,6 +7,7 @@
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -40,6 +41,10 @@
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <unordered_set>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -501,7 +506,26 @@ namespace PlutoGE::scene
                 return false;
             }
 
-            output << "SCENE\t1\n";
+            std::vector<const Entity *> entities;
+            for (auto *rootEntity : scene.GetRootEntities()) CollectEntitiesRecursive(rootEntity, entities);
+            const bool affine = std::any_of(entities.begin(), entities.end(),
+                [](const Entity *entity) { return entity->HasLocalTransformCorrection(); });
+            auto &context = core::Engine::GetInstance().GetAssetManager();
+            if (affine && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion)
+            {
+                if (errorMessage) *errorMessage = "Affine scene transforms require explicit project version 4 conversion.";
+                return false;
+            }
+            const auto transformVector = [affine](const glm::vec3 &value)
+            {
+                if (!affine) return SerializeVec3(value);
+                std::ostringstream text;
+                text.imbue(std::locale::classic());
+                text << std::setprecision(std::numeric_limits<float>::max_digits10)
+                     << value.x << ',' << value.y << ',' << value.z;
+                return text.str();
+            };
+            output << "SCENE\t" << (affine ? 2 : 1) << '\n';
 
             auto &assetManager = core::Engine::GetInstance().GetAssetManager();
 
@@ -540,11 +564,6 @@ namespace PlutoGE::scene
                 }
             }
 
-            std::vector<const Entity *> entities;
-            for (auto *rootEntity : scene.GetRootEntities())
-            {
-                CollectEntitiesRecursive(rootEntity, entities);
-            }
 
             for (const auto *entity : entities)
             {
@@ -553,9 +572,13 @@ namespace PlutoGE::scene
                        << (entity->GetParent() ? entity->GetParent()->GetID() : 0) << '\t'
                        << (entity->IsSelfActive() ? 1 : 0) << '\t'
                        << EscapeText(entity->GetName()) << '\t'
-                       << SerializeVec3(entity->GetPosition()) << '\t'
-                       << SerializeVec3(entity->GetRotation()) << '\t'
-                       << SerializeVec3(entity->GetScale()) << '\n';
+                       << transformVector(entity->GetPosition()) << '\t'
+                       << transformVector(entity->GetRotation()) << '\t'
+                       << transformVector(entity->GetScale()) << '\n';
+
+                if (entity->HasLocalTransformCorrection())
+                    output << "LINEAR_TRANSFORM\t" << entity->GetID() << '\t'
+                           << SerializeLinearTransformCorrection(entity->GetLocalTransformCorrection()) << '\n';
 
                 if (!entity->GetPrefabSource().empty())
                 {
@@ -626,6 +649,9 @@ namespace PlutoGE::scene
 
     bool SceneSerializer::Save(const Scene &scene, const std::string &filePath, std::string *errorMessage)
     {
+        // Complete format validation before opening/truncating the destination.
+        std::string prepared;
+        if (!SaveToString(scene, prepared, errorMessage)) return false;
         std::ofstream output(filePath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
@@ -636,7 +662,14 @@ namespace PlutoGE::scene
             return false;
         }
 
-        return SaveSceneToStream(scene, output, errorMessage);
+        output << prepared;
+        output.flush();
+        if (!output.good())
+        {
+            if (errorMessage) *errorMessage = "Failed to write scene file.";
+            return false;
+        }
+        return true;
     }
 
     std::string SceneSerializer::GetComponentTypeName(const Component &component)
@@ -687,6 +720,17 @@ namespace PlutoGE::scene
                 return nullptr;
             }
 
+            std::string header;
+            std::getline(input, header);
+            if (!header.empty() && header.back() == '\r') header.pop_back();
+            const unsigned formatVersion = assets::SceneFormatVersion(header);
+            auto &context = core::Engine::GetInstance().GetAssetManager();
+            if (!formatVersion || (formatVersion == 2 && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion))
+            {
+                if (errorMessage) *errorMessage = "Unsupported scene format or incompatible project version.";
+                return nullptr;
+            }
+
             auto scene = std::make_unique<Scene>();
             if (!filePath.empty())
             {
@@ -717,7 +761,8 @@ namespace PlutoGE::scene
             std::vector<IblCaptureVolume> iblCaptureVolumes;
 
             std::string line;
-            std::size_t lineNumber = 0;
+            std::size_t lineNumber = 1;
+            std::unordered_set<EntityID> linearTransforms;
             while (std::getline(input, line))
             {
                 platform::LoadingWork::Checkpoint();
@@ -731,13 +776,31 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                // Structural format records are fatal, rather than recoverable:
+                // skipping one could turn a successful save into silent data loss.
+                if (tokens[0] == "SCENE")
+                {
+                    if (errorMessage) *errorMessage = "Duplicate scene format header.";
+                    return nullptr;
+                }
+                if (tokens[0] == "LINEAR_TRANSFORM")
+                {
+                    EntityID id = 0;
+                    glm::mat4 correction;
+                    if (formatVersion != 2 || tokens.size() != 3 || !ParseNumber(tokens[1], id) ||
+                        !entityMap.contains(id) || !linearTransforms.insert(id).second ||
+                        !ParseLinearTransformCorrection(tokens[2], correction) ||
+                        !entityMap.at(id)->SetLocalTransformCorrection(correction))
+                    {
+                        if (errorMessage) *errorMessage = "Invalid or duplicate linear transform record at line " + std::to_string(lineNumber) + ".";
+                        return nullptr;
+                    }
+                    continue;
+                }
+
                 try
                 {
 
-                if (tokens[0] == "SCENE")
-                {
-                    continue;
-                }
 
                 if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
                 {

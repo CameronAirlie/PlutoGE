@@ -13,11 +13,95 @@ Scope: PlutoGE editor asset management, importing, references, model instantiati
 | 3. Import service | Shared CPU service, headless CLI, async editor jobs | General importer extensibility and remaining synchronous entry points |
 | 4. Cache and incremental imports | Immutable cache, accepted state, reverse index, reconciliation, debounced watching | Native watcher backends, garbage collection and live-generation leases |
 | 5. Source editor workflow | Settings, force reimport, authored extraction/remaps, ownership guards, catalog-backed inspector choices | Undo, broader import settings, transactional package moves |
-| 6. Model prefab hierarchy | Full CPU source topology and transform conventions captured | Generated prefab instantiation, exact scene matrices, ambiguous-node mapping, override reconciliation |
+| 6. Model prefab hierarchy | Static snapshot hierarchy placement, affine persistence, source inspection and CPU layout preparation implemented | Generated prefab/linkage and draw-binding integration, ambiguous-node mapping, override reconciliation |
 | 7. Cooking/runtime | Logical dependency cooking, runtime catalogs, packed-only loading verified | Remaining converted asset types and broader build integration |
 | 8. Existing project migration | CoD converted and validated with verified recovery copies and journaled rollback | Reusable conversion coordinator, remaining format writers and cleanup tooling |
 
 The broader transition is not complete. New version 3 projects keep imported native products in Library; version 1/2 projects retain their co-located layout until explicitly converted. The real CoD project has been converted to version 3 and validated. Detailed dated progress below supersedes earlier implementation-status notes.
+
+## Active execution queue — 8 October 2026
+
+This section is the current implementation queue. Dated entries below are historical evidence; an earlier outstanding-work statement does not undo a later completed slice. Test results apply only to the revision and environment recorded with them.
+
+| Order | Deliverable | Boundary and acceptance |
+| --- | --- | --- |
+| 1 | Current editor acceptance | Fresh textured model import, picker assignment, placement, save/reopen/Play, reimport and undo/redo; Vulkan and OpenGL. Interactive verification remains outstanding. |
+| 2 | Hierarchy transform contract | Exact affine matrices, static baked-geometry compensation, animated/skinned ownership, serialization compatibility. CPU static binding preparation and affine scene persistence implemented below; hierarchy placement/render integration remains outstanding. |
+| 3 | Generated model instances | Independent static snapshot placement implemented below: selected scene, shared authored geometry, exact affine nodes, scene undo and prefab authoring. Persistent linked source/node instances and structural reconciliation remain outstanding. Existing flat instances remain supported. |
+| 4 | Explicit node repair and instance reconciliation | Reviewed correspondence persisted with source metadata; three-way reconciliation of previous defaults, authored overrides and new defaults; visible structural conflicts. |
+| 5 | Reference and pruned-build coverage | Field-level writer/reader/scanner/runtime coverage; declared dynamic content; source-free and Library-free pruned runtime with unused sentinel assets excluded. |
+| 6 | Cache lifecycle | Generation leases before collection; inspect/dry-run/collect with lock-protected revalidation. Measure generation lookup before introducing indexes or native watchers. |
+| 7 | General import and migration services | Second importer validates registry design; remaining synchronous entry points use jobs; reusable migration preparation/apply/recovery and explicit cleanup. |
+
+### Hierarchy architecture decisions
+
+- Imported node local IDs are 64-bit source-owned identities. EntityID is a 32-bit scene identity. Do not truncate, cast or reuse one as the other; model linkage needs its own serialized representation.
+- Preserve exact affine local matrices rather than silently decomposing shear into Euler rotation and scale. Define how authored transform edits compose with the imported base before changing Entity or scene formats. A new record must have a compatibility gate; older readers must not silently discard it on save.
+- For static stored vertices, vStored = bakedTransform * vSource. The hierarchy draw transform is instanceWorld * nodeWorld * inverse(bakedTransform). Normals, bounds, picking and collision must follow the same resulting geometry convention. Reflections also need winding/culling acceptance.
+- Static compensation is not an animation implementation. Animated-node draw transforms and skinned bind-space geometry require separate ownership rules and fixtures before hierarchy placement is enabled for them.
+- Initial override scope should cover local transform edits, material assignments and enabled state. Structural edits need an explicit conflict policy or unpacking. Generated defaults must never be overwritten by Apply-to-Prefab actions intended for authored prefabs.
+- Identity repair must be prepared against reviewed source/settings digests and applied under the project writer lock. Current snapshot indices can select a reviewed node but must never become persistent identity. Existing producer-ID support should be reused where available. Fallback rename/reparent repair needs a versioned correspondence/alias policy that retains tombstones and rejects two active nodes claiming one identity; it is not implemented by assigning IDs based on names.
+
+### Static instance layout preparation — 8 October 2026
+
+Implemented a CPU-only publication layout in ModelHierarchyAsset. It validates source ownership and node identities, emits selected nodes in deterministic parent-before-child order with 64-bit source IDs, preserves empty nodes and exact affine locals, folds unselected ancestors into selected-root transforms, and maps repeated static bindings to layout indices with baked-space compensation. An actual submesh count is required; unresolved selected identities, animation/skinning, overlapping roots and invalid mesh indices fail without replacing prior output. Source indices and submesh indices remain snapshot addresses, never persistent identities.
+
+The layout carries a deterministic digest of the serialized hierarchy snapshot. This is conservative hierarchy evidence, not a mesh content digest or a completed reconciliation mechanism. Production scene publication still needs persistent model linkage, mesh-generation evidence, atomic insertion/undo/unpack and generation-aware reimport/load/cooking validation. The current live reimport path replaces mesh borrowers without reconstructing compensation, so hierarchical placement must not be enabled through that path until coordinated replacement exists. Existing flat placement remains supported.
+
+Validation: rebuilt PlutoGEModelImportServiceTests; it and ImportedModelHierarchyTests/AffineTransformTests passed (3/3, 2.41 seconds). New fixtures cover IDs above 32 bits, forward source-parent ordering, exact shear, empty nodes, repeated bindings, digest stability/invalidation, selected-subtree ancestor placement and failure preservation. Interactive renderer acceptance remains outstanding.
+
+### Source hierarchy inspector — 8 October 2026
+
+The Content Browser model inspector now exposes a read-only **Source Hierarchy** section for Library-based projects (version 3 or later). It loads the accepted hierarchy through the existing owner, correspondence, containment and digest verifier. The tree supports name search with matching ancestors, selected-scene/all-source filtering, expand/collapse, clipped rows and iterative traversal. Node details show the full 64-bit source ID, correspondence status/key, exact local and rebuilt source-world matrices, plus repeated submesh bindings and baked geometry matrices. Unnamed and ambiguous identities remain visibly unresolved; animated/skinned sources remain inspectable with a static-preparation diagnostic.
+
+Accepted snapshots are cached between frames. A changed source/descriptor/catalog, import completion or **Refresh Hierarchy** revalidates the data; a failed refresh clears the old tree and reports its error. Resolved node selection and expansion survive successful refreshes by source-owned node ID. This inspector does not mutate scene history, importer settings or source correspondence.
+
+User acceptance checkpoint:
+
+1. Start the rebuilt editor and open a version 3/4 project. Select an imported FBX/glTF source in the Content Browser. If its hierarchy is missing, reimport that source with the current importer.
+2. In **Source Hierarchy**, expand nodes, search a nested name, clear the search and toggle **Selected scene only**. Confirm empty nodes and source structure match the source application. For a source with unselected scenes, verify the all-source view includes them.
+3. Click a mesh node. Review its source ID, exact local/world matrices and binding details. Select an unnamed or duplicate-name node where available and verify that the unresolved reason is visible.
+4. Reimport or force reimport. Confirm the hierarchy refreshes and a resolved selected node remains selected when its identity survives. Use **Refresh Hierarchy** to explicitly revalidate the current artifact.
+
+Validation: rebuilt PlutoGEEditor and both hierarchy UI test targets. Seven focused import, affine, picker, placement and hierarchy regressions passed (7/7, 2.58 seconds). The final inspector interaction regression also passed after adding real ImGui node-click input and stable-selection assertions. Coverage includes corrupt-artifact rejection without stale display, source switching, import-completion refresh, legacy-project messaging, search ancestry, selected-scene filtering, exact shear, 64-bit IDs and a 10,000-node hierarchy. Interactive Vulkan/OpenGL visual acceptance remains outstanding. Hierarchical scene placement remains a separate pending deliverable with the generation-reconciliation requirements above.
+
+### Editable static hierarchy snapshots — 8 October 2026
+
+The model inspector now provides **Add Static Hierarchy Snapshot…**. It creates a normal editable scene tree from the selected static source scene, including empty/anonymous nodes. One authored mesh asset is extracted using ModelObjectExtractionService and shared by every geometry binding. Source nodes retain exact affine local transforms; each render binding has a Geometry child with inverse baked-transform compensation and a single submesh range. Existing rendering, bounds, surface picking, component material editing and scene/prefab serialization consume that same resulting world transform. Scene EntityIDs are allocated independently; source IDs are never truncated or reused as entity IDs.
+
+This is an explicitly independent snapshot, not a linked generated model prefab. The extraction removes authoritative imported mesh provenance. Source reimport cannot replace snapshot geometry; material references remain shared. The existing authored-prefab workflow can save and instantiate the resulting tree. Node transforms/enabled state/material assignments use ordinary scene editing and persistence. No source hierarchy edits or correspondence repairs are written back.
+
+Preparation is read-only and checks the verified hierarchy against the accepted package and mesh baseline. Extraction now accepts an optional expected source-content digest, checked under the project writer lock before staging. A source geometry change after preparation rejects placement rather than pairing new baked vertices with old compensation. Insertion prevalidates affine matrices, parent ordering, material loads and render binding ranges before creating the tree; failed insertion removes its created subtree. The action owns one normal scene history edit. Undo removes the scene tree; the authored mesh remains available in Assets. If extraction succeeds but later resource loading or placement fails, the asset is retained, the catalog is refreshed and the error identifies the retained mesh.
+
+Exact hierarchy snapshots require project format 4. A version 3 project can opt in through an explicit checkbox in the creation dialog; confirming the action saves the manifest capability change and updates the active reader policy. The agent has not converted any user project. Version 1/2 projects must first use the separate Library migration workflow. The current placement mode rejects animation-node draw transforms and skinned geometry, singular/unrepresentable affine transforms, more than 4096 combined nodes/bindings, and source depth above 128. Animated/skinned ownership and linked structural reconciliation remain separate pending work.
+
+User acceptance checkpoint:
+
+1. Open an editable scene in the rebuilt editor and select an imported static FBX/glTF in the Content Browser. Choose **Add Static Hierarchy Snapshot…**. Reimport older sources if their hierarchy artifact is missing.
+2. Review the new mesh destination (defaults to Assets/Snapshots). For a version 3 project, explicitly enable format 4 in the dialog, then choose **Create Snapshot and Add**.
+3. Expand the selected snapshot in the Scene Hierarchy. Move/rotate/scale a source part and toggle its enabled state; sibling parts should remain independent. Edit material slots on the Geometry child. Check reflected/nonuniform/sheared fixtures on Vulkan and OpenGL.
+4. Undo/redo, save/reopen and Play. Duplicate the hierarchy or save it as an authored prefab and instantiate it. Reimport the source model and confirm the existing snapshot geometry remains unchanged.
+
+Validation: PlutoGEAssetPipelineChecks rebuilt successfully, including editor, runtime and CLI. All 26 focused asset/scene/picker/placement/hierarchy regressions passed in 10.12 seconds. The new end-to-end test imports a real glTF with shear, mirrored nonuniform scale, repeated mesh usage, an anonymous empty node and an unselected source node; checks shared mesh/submesh ranges, node edits, compensated picking, scene undo/redo snapshots, save/reopen and authored prefab creation/instantiation; verifies reimport isolation, stale-geometry rejection without partial scene insertion, invalid camera/conversion gates, pruned cooking and packed-only runtime catalog loading with no extracted virtual-root files. Interactive editor and Vulkan/OpenGL visual acceptance remain outstanding.
+
+### Reference coverage inventory seed
+
+This is a verified starting inventory, not a claim of complete field-level adoption. Expand each row into concrete fields and reader/writer/scanner/runtime/migration tests before enabling another logical writer type.
+
+| Consumer | Current integration point | Remaining audit |
+| --- | --- | --- |
+| Type policy | EditorShell enables Mesh, Material, Texture, Animation, AnimationClip and AnimationGraph; AssetManager::PersistLogicalReference applies policy | Every reference-bearing field, legacy versions, ambiguous/missing locations |
+| Mesh materials | AssetManager mesh save calls PersistDependencyReference | Scene component aliases, per-slot/per-submesh overrides, extracted assets |
+| Animation sets/graphs | AssetManager persists clips, blend points and layer graph references | Managed access, nested graphs, migration coverage |
+| Materials | AssetManager persists shader graph and named texture dependencies | ShaderGraph type policy, remaining texture slots and format-aware conversion |
+| Scene/prefab linkage | SceneSerializer and Prefab own entity persistence/cloning | Scene/Prefab type policy, model linkage, variant overrides and compatibility gates |
+| Managed asset fields | Coverage not established by six native type opt-ins | Serialized script/scriptable fields, resolver behavior, managed round trips |
+| Other authored assets | Ownership inventory includes particles, post-process, loading screens, RML and surface responses | Enumerate concrete fields; distinguish file dependencies, asset objects and semantic directories |
+| Cook roots/dynamic content | Logical explicit roots supported; CoD dynamic script prefixes retained | Declared dynamic inclusion and pruned standalone acceptance |
+
+### Current validation environment
+
+The msvc-nvidia build is now usable after selecting the installed Visual Studio instance with its explicit version. The final editor/runtime/CLI and asset verification builds succeeded. All 25 focused asset/scene regressions passed in 6.96 seconds, including affine transforms, scene history/loading/streaming and affine prefab variants. Earlier stale-executable failures disappeared after rebuilding. A parallel CMake regeneration race was avoided by temporarily disabling regeneration for verification; normal automatic regeneration was restored afterward. CMakePresets.json retains its unrelated user edits. This is automated acceptance, not interactive Vulkan/OpenGL hierarchy-placement verification.
 
 ## 1. Objective and scope
 
@@ -788,3 +872,21 @@ distance, invalid camera/size inputs and creating an actual scene instance from
 an empty-space target. Manual checks: right-click a model and choose Add to Scene;
 drag one over an empty viewport, click to place, then exercise undo/redo and
 surface placement with snapping enabled.
+
+## Static hierarchy binding preparation — 8 October 2026
+
+PrepareStaticModelBindingTransforms provides a CPU-only preparation boundary for selected-scene static bindings. It rebuilds exact world matrices from locals, preserves source binding order and shared submesh references, and returns geometry-to-node compensation without modifying geometry or creating scene entities. It rejects invalid/cyclic topology, non-affine locals, overlapping/invalid selected roots, invalid binding nodes, selected animated/skinned bindings and non-finite, singular or numerically unstable baked inverses. An empty selected scene produces no draws. Failures preserve prior caller output.
+
+Regression coverage includes shear, mirrored nonuniform scale, stale world caches, nested transforms, repeated bindings, node edits, small invertible scales, selected-scene filtering and rejection without partial output. GCC and MSVC C++20 warning-clean compilation and execution passed. No import recipe or on-disk schema changed: the planner is not wired into rendering or placement yet. Next integrate a versioned model-instance linkage, then consume this preparation result through one undoable static hierarchy placement operation. Animated/skinned placement and explicit repair/reconciliation remain separate acceptance boundaries.
+
+## Affine scene representation and compatibility — 8 October 2026
+
+Implemented the next hierarchy prerequisite: Entity retains a linear correction alongside editable TRS controls, preserving source shear and reflection without reducing the local transform to TRS alone. A CPU affine module factors nonsingular matrices, validates finite affine inputs and supplies lossless correction encoding. Entity mutations invalidate descendant world caches through the existing revision/update path; prefab copying, snapshots and explicit correction overrides preserve the additional state.
+
+Scene version 2 writes strict LINEAR_TRANSFORM records and precise TRS controls. All scene header consumers now share the supported-version policy. Loading rejects unsupported/duplicate headers and malformed/duplicate correction records. Save prepares output before opening the destination, preserving original bytes on format rejection. Read-only project validation understands the new records without depending on scene objects or graphics.
+
+Project version 4 provides an explicit opt-in and prevents older editors/runtimes from being treated as compatible. New projects continue to default to version 3; CoD and other existing projects were not upgraded. Native runtime marker 4 retains version 2/3 compatibility. Detached scene tools may round-trip affine scenes; an active project must declare version 4 to use them. Generated hierarchy placement is still disabled pending separate source/node linkage and binding integration.
+
+Build recovery: the installed Visual Studio instance is usable when CMake receives its explicit instance/version. The first parallel build hit CMake regeneration races; verification is rerun after one regeneration with CMAKE_SUPPRESS_REGENERATION=ON in the disposable build cache. CMakePresets.json remains untouched. Validation results follow below.
+
+Final affine validation: editor/runtime/CLI and the full asset verification build target succeeded. All 25 focused asset/scene regressions passed (6.96 seconds) after the final cache-policy fix. Coverage includes affine factorization/codecs, strict scene validation, non-truncating compatibility rejection, project/runtime version gates, descendant cache invalidation, snapshot restoration, prefab duplication, variant inheritance and cached-prefab rejection after a project-format change. GCC warning-clean CPU tests also passed. git diff --check passed. No project conversion or generated hierarchy placement was performed.

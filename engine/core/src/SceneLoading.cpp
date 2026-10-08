@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/core/SceneLoading.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
@@ -78,7 +79,7 @@ namespace PlutoGE::core
                 if (!input.is_open() || !input.read(data.data(), static_cast<std::streamsize>(size)))
                     throw std::runtime_error("Could not read scene file");
                 if (data.starts_with("\xef\xbb\xbf")) data.erase(0, 3);
-                if (!data.starts_with("SCENE\t1\n") && !data.starts_with("SCENE\t1\r\n"))
+                if (!assets::SceneFormatVersion(data))
                     throw std::runtime_error("Unsupported scene header");
                 return data;
             });

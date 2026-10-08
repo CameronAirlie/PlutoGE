@@ -41,7 +41,8 @@ namespace PlutoGE::assetimport
 
     bool ModelObjectExtractionService::Extract(assets::Project &project, const std::string &sourceReference,
                                         const std::string &destinationReference, ModelObjectExtractionResult &result,
-                                        std::string *errorMessage, bool useMaterialForModel) const
+                                        std::string *errorMessage, bool useMaterialForModel,
+                                        std::optional<content::ContentDigest> expectedSourceDigest) const
     {
         try
         {
@@ -88,7 +89,7 @@ namespace PlutoGE::assetimport
             if (useMaterialForModel && object->type != assets::ProjectAssetType::Material)
                 return Fail(errorMessage, "Source-wide remapping is only supported for materials.");
             assets::AssetManager reader;
-            reader.SetProjectContext(project.GetRootDirectory().string(), project.GetManifest().assetDirectory);
+            reader.SetProjectContext(project.GetRootDirectory().string(), project.GetManifest().assetDirectory, project.GetManifest().assetPipelineVersion);
             reader.SetAssetSnapshot(catalog, database.GetStorageMap());
             const auto source = std::filesystem::canonical(reader.ResolveAssetPath(object->location), error);
             if (error) return Fail(errorMessage, "Cannot resolve extraction source: " + error.message());
@@ -105,6 +106,8 @@ namespace PlutoGE::assetimport
                 return true;
             };
             if (!snapshot(source)) return false;
+            if (expectedSourceDigest && *snapshots.at(source) != *expectedSourceDigest)
+                return Fail(errorMessage, "Source geometry changed after hierarchy preparation; retry snapshot placement.");
             assets::AssetMetadata metadata;
             metadata.id = assets::GenerateAssetId();
             metadata.ownership = assets::AssetOwnership::Authored;

@@ -3477,11 +3477,12 @@ namespace PlutoGE::assets
         return normalizedPath.generic_string();
     }
 
-    void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)
+    void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory, std::uint32_t assetPipelineVersion)
     {
         m_catalog.reset();
         m_storage.reset();
         m_logicalReferenceTypes.clear();
+        m_assetPipelineVersion = assetPipelineVersion;
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
@@ -3502,6 +3503,9 @@ namespace PlutoGE::assets
     void AssetManager::ClearProjectContext()
     {
         m_catalog.reset();
+        m_storage.reset();
+        m_logicalReferenceTypes.clear();
+        m_assetPipelineVersion = 1;
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();

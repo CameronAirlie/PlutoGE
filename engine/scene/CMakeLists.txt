@@ -5,6 +5,7 @@ add_library(PlutoGEScene
     src/RoadPlacement.cpp
     src/RoadJunction.cpp
     src/components/SequencerComponent.cpp
+    src/AffineTransform.cpp
     src/Entity.cpp
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp

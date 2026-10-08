@@ -24,6 +24,7 @@ namespace PlutoGE::assets
     struct ProjectValidationInput
     {
         std::filesystem::path assetRoot;
+        std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
         std::filesystem::path scriptAssembly;
         // An absent class catalogue means class availability cannot be verified.

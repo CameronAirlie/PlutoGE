@@ -12,6 +12,42 @@ namespace PlutoGE::assets
         assetimport::ImportedModelHierarchy hierarchy;
         std::vector<ModelNodeIdentity> identities; // Snapshot node order.
     };
+    // CPU-only publication input. Node IDs belong to the source, never the scene.
+    struct StaticModelInstanceNode
+    {
+        std::uint64_t sourceNodeId = 0;
+        std::string name;
+        int parentIndex = -1; // Layout index; parents precede their children.
+        glm::mat4 localTransform{1.0f};
+    };
+    struct StaticModelInstanceBinding
+    {
+        int nodeIndex = -1; // Layout index, not a persistent identity.
+        std::uint32_t submeshIndex = 0; // Valid only for this snapshot.
+        glm::mat4 geometryToNode{1.0f};
+    };
+    struct StaticModelInstanceLayout
+    {
+        std::string sourceAssetId;
+        std::string meshReference;
+        // Conservative evidence for reconciliation; a changed snapshot must not
+        // silently reuse old binding indices or baked-transform compensation.
+        // This does not identify mesh bytes; publication also needs mesh-generation
+        // evidence and must coordinate replacement with instance reconciliation.
+        content::ContentDigest hierarchyDigest{};
+        std::vector<StaticModelInstanceNode> nodes;
+        std::vector<StaticModelInstanceBinding> bindings;
+    };
+    enum class StaticModelIdentityPolicy { RequireResolved, IndependentSnapshot };
+
+    // Selected static scene only. Linked instances require resolved identities and
+    // an actual mesh inventory count. Keeps empty nodes, exact locals and repeated
+    // bindings. Does not allocate EntityIDs, touch GPU resources or publish a scene.
+    // Failure preserves output. Animated/skinned scenes need a separate contract.
+    bool PrepareStaticModelInstanceLayout(const ModelHierarchyAsset &asset,
+        std::size_t submeshCount, StaticModelInstanceLayout &layout, std::string *errorMessage = nullptr,
+        StaticModelIdentityPolicy identityPolicy = StaticModelIdentityPolicy::RequireResolved);
+
     struct ModelHierarchyArtifact
     {
         std::string reference; // Virtual project location, not a physical Library path.

@@ -16,6 +16,10 @@
 #include <stdexcept>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <limits>
+#include <glm/gtc/matrix_transform.hpp>
+#include "PlutoGE/scene/Prefab.h"
 
 namespace
 {
@@ -182,12 +186,90 @@ namespace
     }
 
 }
+namespace
+{
+    void TestAffineSceneTransforms()
+    {
+        using namespace PlutoGE::scene;
+        auto &assets = PlutoGE::core::Engine::GetInstance().GetAssetManager();
+        assets.ClearProjectContext();
+        Scene scene;
+        auto *parent = scene.AddEntity(std::make_unique<Entity>());
+        auto *child = scene.AddEntity(std::make_unique<Entity>());
+        parent->AddChild(child);
+        glm::mat4 source = ComposeLocalTransform(Transform{{3.1234567f, -2, 5}, {23, -37, 19}, {-2, 3, 0.5f}});
+        source[1][0] += 0.75f;
+        Require(parent->SetLocalTransformMatrix(source), "Cannot set affine entity matrix");
+        child->SetPosition({1, 2, 3});
+        const auto oldChildWorld = child->GetWorldTransform();
+        const auto revision = child->GetTransformRevision();
+        parent->SetPosition(parent->GetPosition() + glm::vec3(10, 0, 0));
+        Require(child->GetTransformRevision() > revision &&
+            glm::length(child->GetWorldPosition() - glm::vec3(oldChildWorld[3]) - glm::vec3(10, 0, 0)) < 0.0001f,
+            "Affine edits did not invalidate child transforms correctly");
+        const auto correction = parent->GetLocalTransformCorrection();
+        auto invalid = source;
+        invalid[0][3] = 1;
+        Require(!parent->SetLocalTransformMatrix(invalid) && parent->GetLocalTransformCorrection() == correction,
+            "Invalid affine matrix changed entity state");
+        const auto expected = parent->GetLocalTransform();
+        std::string text, error;
+        Require(SceneSerializer::SaveToString(scene, text, &error) && text.starts_with("SCENE\t2\n"),
+            "Affine scene did not select version 2");
+        auto loaded = SceneSerializer::LoadFromString(text, &error);
+        Require(loaded && error.empty(), "Affine scene could not load");
+        auto *restored = loaded->FindEntityByID(parent->GetID());
+        Require(restored && restored->GetLocalTransformCorrection() == correction &&
+            glm::length(restored->GetWorldPosition() - glm::vec3(expected[3])) < 0.00001f,
+            "Affine scene round trip lost correction or precise position");
+        std::string roundTrip;
+        Require(SceneSerializer::SaveToString(*loaded, roundTrip, &error) && roundTrip == text,
+            "Repeated affine snapshots changed serialized state");
+        Scene duplicateScene;
+        auto *duplicate = Prefab::DuplicateEntity(duplicateScene, *parent);
+        Require(duplicate && duplicate->GetLocalTransformCorrection() == correction,
+            "Entity duplication discarded affine correction");
+        const auto after = Snapshot(scene);
+        parent->SetLocalTransformCorrection(glm::mat4(1));
+        auto undo = PlutoGE::ui::LoadSceneSnapshot(after, error);
+        Require(undo && undo->FindEntityByID(parent->GetID())->GetLocalTransformCorrection() == correction,
+            "History snapshot discarded affine correction");
+        for (const auto &bad : {std::string("SCENE\t99\n"), std::string("SCENE\t1\nSCENE\t1\n"),
+            std::string("SCENE\t2\nLINEAR_TRANSFORM\t99\t1,0,0,0,1,0,0,0,1\n"),
+            text + "LINEAR_TRANSFORM\t" + std::to_string(parent->GetID()) + "\t1,0,0,0,1,0,0,0,1\n"})
+        {
+            error.clear();
+            Require(!SceneSerializer::LoadFromString(bad, &error) && !error.empty(), "Invalid affine scene was recovered silently");
+        }
+        struct ScratchFile
+        {
+            std::filesystem::path path = std::filesystem::temp_directory_path() /
+                ("PlutoGE-affine-gate-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".plutoscene");
+            ~ScratchFile() { std::error_code ignored; std::filesystem::remove(path, ignored); }
+        } file;
+        { std::ofstream output(file.path); output << "preserve"; }
+        assets.SetProjectContext(file.path.parent_path().string(), "Assets", 3);
+        error.clear();
+        Require(!SceneSerializer::Save(*loaded, file.path.string(), &error), "Legacy project saved unsupported affine scene");
+        std::ifstream input(file.path);
+        std::string untouched;
+        input >> untouched;
+        Require(untouched == "preserve", "Failed compatibility preflight truncated scene");
+        Require(!SceneSerializer::LoadFromString(text, &error), "Legacy project accepted affine scene");
+        assets.SetProjectContext(file.path.parent_path().string(), "Assets", 4);
+        error.clear();
+        Require(SceneSerializer::LoadFromString(text, &error) != nullptr, "Version 4 project rejected affine scene");
+        assets.ClearProjectContext();
+        Require(assets.GetAssetPipelineVersion() == 1, "Project format policy leaked after context reset");
+    }
+}
 int main()
 {
     try
     {
         using namespace PlutoGE::ui;
         using namespace PlutoGE::scene;
+        TestAffineSceneTransforms();
         TestBuiltinMeshRestoration();
         TestComponentUpdatePolicy();
         TestRuntimeComponentIndex();

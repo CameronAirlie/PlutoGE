@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -138,7 +139,7 @@ namespace PlutoGE::scene
             activated = true;
             try
             {
-                if (!r.data.starts_with("SCENE\t1\n") && !r.data.starts_with("SCENE\t1\r\n"))
+                if (!assets::SceneFormatVersion(r.data))
                     throw std::runtime_error("Unsupported or missing scene section header");
                 bool unsupported = false;
                 auto section = SceneSerializer::LoadFromString(r.data, &r.error, [&](std::string_view message)

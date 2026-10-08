@@ -231,6 +231,33 @@ int main()
         content::UnmountAll();
         Require(!scene::Prefab::IsReady("project://Base.plutoprefab"), "Unmounted prefab remained ready");
         Require(!scene::Prefab::Preload("project://Base.plutoprefab").ready, "Unmounted prefab remained loadable");
+        {
+            auto &manager = core::Engine::GetInstance().GetAssetManager();
+            manager.SetProjectContext(scratch.root.string(), "Assets", 4);
+            scene::Scene source, affineInstances;
+            auto *root = source.AddEntity(std::make_unique<scene::Entity>());
+            Require(scene::Prefab::SaveFromEntity(*root, assetsPath / "AffineBase.plutoprefab", &error), error);
+            auto *instance = scene::Prefab::Instantiate(affineInstances, "project://AffineBase.plutoprefab", nullptr, &error);
+            Require(instance != nullptr, error);
+            glm::mat4 correction(1);
+            correction[1][0] = 0.123456789f;
+            Require(instance->SetLocalTransformCorrection(correction), "Cannot set affine variant correction");
+            instance->AddPrefabOverride("Transform.LinearCorrection");
+            Require(scene::Prefab::SaveVariant(*instance, assetsPath / "AffineVariant.plutoprefab", &error), error);
+            auto *variant = scene::Prefab::Instantiate(affineInstances, "project://AffineVariant.plutoprefab", nullptr, &error);
+            Require(variant && variant->GetLocalTransformCorrection() == correction, "Affine variant lost correction precision");
+            root->SetPosition({4, 5, 6});
+            Require(scene::Prefab::SaveFromEntity(*root, assetsPath / "AffineBase.plutoprefab", &error), error);
+            Require(scene::Prefab::UpdateInstance(*variant, &error) && variant->GetPosition().x == 4 &&
+                variant->GetLocalTransformCorrection() == correction, "Base update discarded affine variant override");
+            Require(scene::Prefab::Preload("project://AffineVariant.plutoprefab").ready, "Affine variant preload failed");
+            manager.SetProjectContext(scratch.root.string(), "Assets", 3);
+            Require(!scene::Prefab::IsReady("project://AffineVariant.plutoprefab"), "Format-incompatible cached prefab remained ready");
+            Require(!scene::Prefab::Instantiate(affineInstances, "project://AffineVariant.plutoprefab", nullptr, &error),
+                "Legacy project loaded cached affine variant");
+            Require(!scene::Prefab::SaveVariant(*instance, assetsPath / "RejectedAffine.plutoprefab", &error) &&
+                !std::filesystem::exists(assetsPath / "RejectedAffine.plutoprefab"), "Legacy project wrote affine variant override");
+        }
         core::Engine::GetInstance().GetAssetManager().ClearProjectContext();
         std::cout << "Prefab variant tests passed\n";
     }

@@ -880,7 +880,7 @@ namespace PlutoGE::ui
         auto &assetManager = m_engine.GetAssetManager();
         if (m_project)
         {
-            assetManager.SetProjectContext(m_project->GetRootDirectory().string(), m_project->GetManifest().assetDirectory);
+            assetManager.SetProjectContext(m_project->GetRootDirectory().string(), m_project->GetManifest().assetDirectory, m_project->GetManifest().assetPipelineVersion);
             const bool refreshed = RefreshProjectAssets();
             m_assetRefreshPending = !refreshed && IsModelImportRunning();
             m_assetReconciliationRequested = refreshed && m_project->GetManifest().assetPipelineVersion >= 2;

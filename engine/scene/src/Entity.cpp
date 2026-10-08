@@ -133,6 +133,29 @@ namespace PlutoGE::scene
         }
     }
 
+    bool Entity::SetLocalTransformMatrix(const glm::mat4 &matrix)
+    {
+        Transform transform;
+        glm::mat4 correction;
+        if (!FactorLocalTransform(matrix, transform, correction)) return false;
+        m_transform = transform;
+        m_localTransformCorrection = correction;
+        m_cachedLocalTransform = matrix;
+        m_localTransformDirty = false;
+        MarkTransformDirtyRecursive();
+        return true;
+    }
+
+    bool Entity::SetLocalTransformCorrection(const glm::mat4 &correction)
+    {
+        if (!IsLinearTransformCorrection(correction)) return false;
+        if (m_localTransformCorrection == correction) return true;
+        m_localTransformCorrection = correction;
+        m_localTransformDirty = true;
+        MarkTransformDirtyRecursive();
+        return true;
+    }
+
     void Entity::SetPosition(const glm::vec3 &position)
     {
         if (m_transform.position == position)
@@ -762,12 +785,7 @@ namespace PlutoGE::scene
             return m_cachedLocalTransform;
         }
 
-        m_cachedLocalTransform = glm::mat4(1.0f);
-        m_cachedLocalTransform = glm::translate(m_cachedLocalTransform, m_transform.position);
-        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-        m_cachedLocalTransform = glm::scale(m_cachedLocalTransform, m_transform.scale);
+        m_cachedLocalTransform = ComposeLocalTransform(m_transform, m_localTransformCorrection);
         m_localTransformDirty = false;
         return m_cachedLocalTransform;
     }

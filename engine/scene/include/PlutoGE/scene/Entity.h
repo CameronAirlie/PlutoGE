@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/AffineTransform.h"
 
 #include <glm/glm.hpp>
 #include <algorithm>
@@ -14,13 +15,6 @@
 namespace PlutoGE::scene
 {
     class Scene;
-
-    struct Transform
-    {
-        glm::vec3 position{0.0f, 0.0f, 0.0f}; // Local position of the entity
-        glm::vec3 rotation{0.0f, 0.0f, 0.0f}; // Local rotation (Euler angles in degrees)
-        glm::vec3 scale{1.0f, 1.0f, 1.0f};    // Local scale of the entity
-    };
 
     struct EntityConfig
     {
@@ -41,6 +35,11 @@ namespace PlutoGE::scene
         }
 
         glm::mat4 GetLocalTransform() const;
+        // Exact affine import input; singular/non-affine input leaves state intact.
+        bool SetLocalTransformMatrix(const glm::mat4 &matrix);
+        bool SetLocalTransformCorrection(const glm::mat4 &correction);
+        const glm::mat4 &GetLocalTransformCorrection() const { return m_localTransformCorrection; }
+        bool HasLocalTransformCorrection() const { return m_localTransformCorrection != glm::mat4(1); }
         glm::mat4 GetWorldTransform() const;
         glm::vec3 GetPosition() const { return m_transform.position; }
         glm::vec3 GetWorldPosition() const;
@@ -224,6 +223,7 @@ namespace PlutoGE::scene
         void UpdateWorldDecomposition() const;
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
+        glm::mat4 m_localTransformCorrection{1.0f};
         Transform m_transform;           // Local transform of the entity
         mutable glm::mat4 m_cachedLocalTransform = glm::mat4(1.0f);
         mutable glm::mat4 m_cachedWorldTransform = glm::mat4(1.0f);

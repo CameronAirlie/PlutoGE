@@ -2,6 +2,8 @@
 #include "PlutoGE/asset_import/ModelObjectExtractionService.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
+#include "PlutoGE/ui/ModelHierarchyInspector.h"
+#include "PlutoGE/ui/StaticModelHierarchyDialog.h"
 
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetMetadata.h"
@@ -355,6 +357,8 @@ namespace PlutoGE::ui
     void ContentBrowserPanel::OnProjectChanged()
     {
         m_referenceSearch.reset();
+        m_modelHierarchyInspector.reset();
+        m_staticHierarchyDialog.reset();
         m_thumbnailCache.reset();
         m_filterBuffer.fill(0);
         m_selectedAssetIndex = -1;
@@ -3317,6 +3321,14 @@ namespace PlutoGE::ui
                     m_modelSettingsDraft = m_modelSettingsCommitted;
                 }
                 const bool importRunning = editorShell.IsModelImportRunning();
+                if (imported)
+                {
+                    if (!m_modelHierarchyInspector) m_modelHierarchyInspector = std::make_unique<ModelHierarchyInspector>();
+                    m_modelHierarchyInspector->Render(*project, asset.reference, model,
+                        core::Engine::GetInstance().GetAssetManager().GetAssetCatalog(), importRunning);
+                    if (!m_staticHierarchyDialog) m_staticHierarchyDialog = std::make_unique<StaticModelHierarchyDialog>();
+                    m_staticHierarchyDialog->Render(asset.reference);
+                }
                 if (m_modelSettingsAwaitingImport && !importRunning)
                 {
                     m_modelSettingsAwaitingImport = false;

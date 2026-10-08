@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/platform/FilesystemPaths.h"
@@ -70,10 +71,17 @@ namespace PlutoGE::scene
             return std::chrono::duration<double, std::milli>(ProfileClock::now() - start).count();
         }
 
+        unsigned PrefabFormatPolicy()
+        {
+            const auto &context = core::Engine::GetInstance().GetAssetManager();
+            return context.GetProjectRootDirectory().empty() ? assets::kAffineSceneProjectVersion : context.GetAssetPipelineVersion();
+        }
+
         struct CachedPrefab
         {
             std::filesystem::file_time_type lastWriteTime{};
             bool hasLastWriteTime = false;
+            unsigned projectFormatVersion = 1;
             std::unique_ptr<Scene> scene;
             std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
         };
@@ -251,6 +259,7 @@ namespace PlutoGE::scene
             destination.SetPosition(source.GetPosition());
             destination.SetRotation(source.GetRotation());
             destination.SetScale(source.GetScale());
+            destination.SetLocalTransformCorrection(source.GetLocalTransformCorrection());
 
             RemoveAllComponents(destination);
             for (const auto &bucket : source.GetComponentBuckets())
@@ -300,6 +309,7 @@ namespace PlutoGE::scene
             clone->SetPosition(source.GetPosition());
             clone->SetRotation(source.GetRotation());
             clone->SetScale(source.GetScale());
+            clone->SetLocalTransformCorrection(source.GetLocalTransformCorrection());
             clone->SetPrefabLink(prefabReference, source.GetID(), isRoot);
 
             for (const auto &bucket : source.GetComponentBuckets())
@@ -603,6 +613,7 @@ namespace PlutoGE::scene
         }
         bool DependenciesCurrent(const CachedPrefab &cached)
         {
+            if (cached.projectFormatVersion != PrefabFormatPolicy()) return false;
             for (const auto &[path, timestamp] : cached.dependencies)
             {
                 std::error_code error;
@@ -669,6 +680,7 @@ namespace PlutoGE::scene
             CachedPrefab entry{
                 .lastWriteTime = lastWriteTime,
                 .hasLastWriteTime = hasLastWriteTime,
+                .projectFormatVersion = PrefabFormatPolicy(),
                 .scene = std::move(loadedScene),
                 .dependencies = std::move(dependencies),
             };
@@ -742,6 +754,13 @@ namespace PlutoGE::scene
             }
             if (path == "Active")
                 return entity.IsSelfActive() ? "1" : "0";
+            if (path == "Transform.LinearCorrection")
+            {
+                const auto &context = core::Engine::GetInstance().GetAssetManager();
+                if (!context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion)
+                    return std::nullopt;
+                return SerializeLinearTransformCorrection(entity.GetLocalTransformCorrection());
+            }
             if (path == "Transform.Position")
             {
                 const auto value = entity.GetPosition();
@@ -827,6 +846,16 @@ namespace PlutoGE::scene
             if (path == "Active")
             {
                 entity.SetActive(value == "1" || value == "true" || value == "True");
+                return;
+            }
+            if (path == "Transform.LinearCorrection")
+            {
+                const auto &context = core::Engine::GetInstance().GetAssetManager();
+                if (!context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion)
+                    throw std::runtime_error("Affine prefab overrides require project version 4.");
+                glm::mat4 correction;
+                if (!ParseLinearTransformCorrection(value, correction) || !entity.SetLocalTransformCorrection(correction))
+                    throw std::runtime_error("Invalid affine transform override.");
                 return;
             }
             if (path == "Transform.Position" || path == "Transform.Rotation" || path == "Transform.Scale")

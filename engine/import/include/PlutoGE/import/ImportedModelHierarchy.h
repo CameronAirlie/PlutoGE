@@ -36,6 +36,25 @@ namespace PlutoGE::assetimport
         std::vector<ImportedModelBinding> bindings;
     };
 
+    struct StaticModelBindingTransform
+    {
+        int nodeIndex = -1;
+        std::uint32_t submeshIndex = 0;
+        // Rebuilt from exact locals, never the caller's cached world matrix.
+        glm::mat4 nodeWorldTransform{1.0f};
+        // Post-multiply the entity's exact source-node world matrix by this
+        // transform before drawing vertices already baked by the importer.
+        glm::mat4 geometryToNode{1.0f};
+    };
+
+    // Prepares selected-scene static bindings without allocating scene entities.
+    // Rebuilds world matrices from locals; ignores cached world transforms.
+    // Rejects overlapping/invalid roots, invalid bindings, animated/skinned
+    // selected bindings and singular/non-affine baked transforms. Failure leaves
+    // output unchanged. No TRS decomposition or resource/GPU access is performed.
+    bool PrepareStaticModelBindingTransforms(const ImportedModelHierarchy &hierarchy,
+        std::vector<StaticModelBindingTransform> &bindings, std::string *errorMessage = nullptr);
+
     // Computes world transforms for arbitrary parent ordering without recursion.
     // Invalid parents, cycles or non-finite transforms leave output unchanged.
     bool BuildImportedModelHierarchy(std::vector<ImportedModelNode> nodes, ImportedModelHierarchy &hierarchy,

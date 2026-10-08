@@ -36,7 +36,8 @@ namespace PlutoGE::assets
     namespace
     {
         constexpr std::string_view kProjectHeader = "PLUTOPROJECT";
-        constexpr int kProjectVersion = 3;
+        constexpr int kProjectVersion = 3; // Default for new projects; affine scenes require explicit opt-in.
+        constexpr int kMaximumProjectVersion = 4;
         constexpr int kRuntimeSearchAncestorLimit = 8;
         constexpr std::string_view kBundledDotnetRuntimeDirectory = "DotnetRuntime";
 
@@ -630,7 +631,7 @@ namespace PlutoGE::assets
             if (tokens[0] == kProjectHeader && tokens.size() >= 2)
             {
                 int version = 0;
-                if (!ParseInteger(tokens[1], version) || version < 1 || version > kProjectVersion)
+                if (!ParseInteger(tokens[1], version) || version < 1 || version > kMaximumProjectVersion)
                 {
                     SetError(errorMessage, "Unsupported project manifest version.");
                     return nullptr;
@@ -1104,7 +1105,7 @@ namespace PlutoGE::assets
 
     bool Project::Save(std::string *errorMessage) const
     {
-        if (m_manifest.assetPipelineVersion < 1 || m_manifest.assetPipelineVersion > kProjectVersion)
+        if (m_manifest.assetPipelineVersion < 1 || m_manifest.assetPipelineVersion > kMaximumProjectVersion)
         {
             SetError(errorMessage, "Unsupported asset pipeline version; project was not written.");
             return false;
@@ -1360,8 +1361,9 @@ namespace PlutoGE::assets
 
     bool IsRuntimeAssetPipelineCompatible(const std::filesystem::path &runtimeExecutablePath, std::uint32_t version)
     {
-        if (version < 1 || version > 3 || !IsRuntimeContentPackCompatible(runtimeExecutablePath)) return false;
+        if (version < 1 || version > 4 || !IsRuntimeContentPackCompatible(runtimeExecutablePath)) return false;
         return version == 1 || RuntimeHasMarker(runtimeExecutablePath, kRuntimeAssetPipelineMarker) ||
+            (version <= 3 && RuntimeHasMarker(runtimeExecutablePath, "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=3")) ||
             (version == 2 && RuntimeHasMarker(runtimeExecutablePath, "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=2"));
     }
 

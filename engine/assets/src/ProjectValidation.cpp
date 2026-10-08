@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/assets/AssetReferences.h"
 #include "PlutoGE/assets/AssetCatalog.h"
@@ -142,12 +143,19 @@ namespace PlutoGE::assets
                 Component *component = nullptr;
                 std::string line;
                 std::size_t number = 0;
+                unsigned formatVersion = 0;
+                std::set<std::uint32_t> linearTransforms;
                 while (std::getline(stream, line))
                 {
                     ++number;
                     if (!line.empty() && line.back() == '\r') line.pop_back();
                     if (number == 1 && prefab && line == "VARIANT\t1") { Variant(stream, owner); return; }
-                    if (number == 1 && line != "SCENE\t1") { Add("scene.header", owner, 0, 1, "Unsupported or missing scene header."); return; }
+                    if (number == 1)
+                    {
+                        formatVersion = SceneFormatVersion(line);
+                        if (!formatVersion || (formatVersion == 2 && input.assetPipelineVersion < kAffineSceneProjectVersion))
+                        { Add("scene.header", owner, 0, 1, "Unsupported scene header or incompatible project version."); return; }
+                    }
                     if (line.size() > MaxSceneRecordSize) { Add("scan.incomplete", owner, 0, number, "Scene record exceeds 64 MiB; record not validated."); continue; }
                     const auto fields = Fields(line);
                     try
@@ -160,6 +168,15 @@ namespace PlutoGE::assets
                                 Add("scene.entity", owner, id, number, "Entity ID is zero or duplicated.");
                             component = nullptr;
                         }
+                        else if (fields[0] == "LINEAR_TRANSFORM")
+                        {
+                            std::array<float, 9> values;
+                            if (formatVersion != 2 || fields.size() != 3) throw std::invalid_argument("linear transform record");
+                            const auto id = Id(fields[1]);
+                            if (!entities.contains(id) || !linearTransforms.insert(id).second || !ParseSceneLinearCorrection(fields[2], values))
+                                throw std::invalid_argument("linear transform record");
+                        }
+                        else if (fields[0] == "SCENE" && number != 1) throw std::invalid_argument("duplicate scene header");
                         else if (fields[0] == "COMPONENT")
                         {
                             if (fields.size() < 4) throw std::invalid_argument("component record");

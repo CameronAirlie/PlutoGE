@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 
@@ -9,7 +10,7 @@ namespace PlutoGE::ui
     inline std::unique_ptr<scene::Scene> LoadSceneSnapshot(const std::string &state, std::string &error)
     {
         error.clear();
-        if (!state.starts_with("SCENE\t1\n") && !state.starts_with("SCENE\t1\r\n"))
+        if (!assets::SceneFormatVersion(state))
         {
             error = "Invalid or unsupported scene snapshot header.";
             return nullptr;

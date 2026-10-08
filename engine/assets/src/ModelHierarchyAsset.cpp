@@ -131,6 +131,70 @@ namespace PlutoGE::assets
         };
     }
 
+    bool PrepareStaticModelInstanceLayout(const ModelHierarchyAsset &asset,
+        std::size_t submeshCount, StaticModelInstanceLayout &layout, std::string *errorMessage, StaticModelIdentityPolicy identityPolicy)
+    {
+        try
+        {
+            Validate(asset);
+            if (identityPolicy != StaticModelIdentityPolicy::RequireResolved &&
+                identityPolicy != StaticModelIdentityPolicy::IndependentSnapshot)
+                throw std::runtime_error("Unknown static hierarchy identity policy.");
+            std::vector<assetimport::StaticModelBindingTransform> prepared;
+            if (!assetimport::PrepareStaticModelBindingTransforms(asset.hierarchy, prepared, errorMessage)) return false;
+            if (!prepared.empty() && asset.meshReference.empty())
+                throw std::runtime_error("Static hierarchy bindings require a source-owned mesh reference.");
+            assetimport::ImportedModelHierarchy rebuilt;
+            if (!assetimport::BuildImportedModelHierarchy(asset.hierarchy.nodes, rebuilt, errorMessage)) return false;
+            std::vector<std::vector<int>> children(rebuilt.nodes.size());
+            for (int index = 0; index < static_cast<int>(rebuilt.nodes.size()); ++index)
+                if (rebuilt.nodes[index].parentNodeIndex >= 0)
+                    children[rebuilt.nodes[index].parentNodeIndex].push_back(index);
+            StaticModelInstanceLayout candidate;
+            candidate.sourceAssetId = asset.sourceAssetId;
+            candidate.meshReference = asset.meshReference;
+            std::vector<int> indices(rebuilt.nodes.size(), -1);
+            // Iterative preorder is deterministic and bounded even for deep trees.
+            std::vector<std::pair<int, int>> pending;
+            for (auto root = asset.hierarchy.sceneRoots.rbegin(); root != asset.hierarchy.sceneRoots.rend(); ++root)
+                pending.emplace_back(*root, -1);
+            while (!pending.empty())
+            {
+                const auto [sourceIndex, parentIndex] = pending.back();
+                pending.pop_back();
+                const auto &identity = asset.identities[sourceIndex];
+                if (identityPolicy == StaticModelIdentityPolicy::RequireResolved &&
+                    (identity.status != ModelNodeIdentityStatus::Matched || identity.localId == 0))
+                    throw std::runtime_error("Selected model node requires explicit identity repair before linked instantiation.");
+                const auto &source = rebuilt.nodes[sourceIndex];
+                const int index = static_cast<int>(candidate.nodes.size());
+                indices[sourceIndex] = index;
+                // A selected root can have an unselected ancestor. Fold that
+                // ancestor's world into the root rather than losing placement.
+                candidate.nodes.push_back({identity.localId, source.name, parentIndex,
+                    parentIndex < 0 ? source.worldTransform : source.localTransform});
+                for (auto child = children[sourceIndex].rbegin(); child != children[sourceIndex].rend(); ++child)
+                    pending.emplace_back(*child, index);
+            }
+            for (const auto &binding : prepared)
+            {
+                if (binding.submeshIndex >= submeshCount)
+                    throw std::runtime_error("Static hierarchy binding exceeds the loaded mesh submesh inventory.");
+                candidate.bindings.push_back({indices[binding.nodeIndex], binding.submeshIndex, binding.geometryToNode});
+            }
+            std::string bytes;
+            if (!SerializeModelHierarchyAsset(asset, bytes, errorMessage)) return false;
+            candidate.hierarchyDigest = content::HashContent(std::as_bytes(std::span(bytes.data(), bytes.size())));
+            layout = std::move(candidate);
+            if (errorMessage) errorMessage->clear();
+            return true;
+        }
+        catch (const std::exception &error)
+        {
+            return Fail(errorMessage, error.what());
+        }
+    }
+
     bool SerializeModelHierarchyAsset(const ModelHierarchyAsset &asset, std::string &bytes, std::string *errorMessage)
     {
         try

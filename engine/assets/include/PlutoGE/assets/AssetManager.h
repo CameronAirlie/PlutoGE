@@ -62,6 +62,8 @@ namespace PlutoGE::assets
         void SetAssetCatalog(std::shared_ptr<const AssetCatalog> catalog);
         std::shared_ptr<const AssetCatalog> GetAssetCatalog() const { return m_catalog; }
         // Install a database-validated snapshot alongside its catalog on the owning thread.
+        // Project owner calls this only after explicitly saving a format conversion.
+        void SetProjectAssetPipelineVersion(std::uint32_t version) { m_assetPipelineVersion = version; }
         void SetAssetStorageMap(std::shared_ptr<const AssetStorageMap> storage) { m_storage = std::move(storage); }
         // Catalog ownership applies to logical IDs and physical location aliases.
         bool IsImportedAsset(const std::string &reference) const;
@@ -127,8 +129,9 @@ namespace PlutoGE::assets
         void SetAssetDirectory(const std::string &directory) { m_assetDirectory = directory; }
         std::string GetProjectRootDirectory() const { return m_projectRootDirectory; }
         std::string GetProjectAssetDirectory() const { return m_projectAssetDirectory; }
-        void SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory = "Assets");
+        void SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory = "Assets", std::uint32_t assetPipelineVersion = 1);
         void ClearProjectContext();
+        std::uint32_t GetAssetPipelineVersion() const { return m_assetPipelineVersion; }
 
     private:
         render::Material *LoadMaterialAsset(const std::string &assetReference, bool reload);
@@ -140,6 +143,7 @@ namespace PlutoGE::assets
         };
         std::shared_ptr<const AssetCatalog> m_catalog;
         std::shared_ptr<const AssetStorageMap> m_storage;
+        std::uint32_t m_assetPipelineVersion = 1;
         std::unordered_set<ProjectAssetType> m_logicalReferenceTypes;
         std::string PersistLogicalReference(const std::string &reference) const;
         std::string PersistDependencyReference(const std::string &reference) const;

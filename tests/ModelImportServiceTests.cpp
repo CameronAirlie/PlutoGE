@@ -733,6 +733,49 @@ Connections: {
                 parsed.hierarchy.bindings[0].transformNodeIndex == 2 && parsed.hierarchy.bindings[0].skinned &&
                 !parsed.identities[2].localId && parsed.identities[0].localId == tree.identities[0].localId,
                 "Hierarchy artifact lost exact transforms, provenance or node identities");
+            // Instance preparation never borrows source indices as persistent IDs.
+            auto staticTree = tree;
+            staticTree.hierarchy.nodes[2].name = "Empty";
+            Require(assets::ReconcileModelNodeIdentities(staticTree.hierarchy, nodeSettings, staticTree.identities, &error),
+                "Cannot identify static instance nodes");
+            staticTree.identities[0].localId = (std::uint64_t{1} << 40) + 7;
+            staticTree.hierarchy.bindings = {{0, 5, tree.hierarchy.nodes[0].localTransform},
+                {0, 3, tree.hierarchy.nodes[0].localTransform}};
+            assets::StaticModelInstanceLayout layout;
+            Require(assets::PrepareStaticModelInstanceLayout(staticTree, 6, layout, &error) && error.empty() &&
+                layout.nodes.size() == 3 && layout.nodes[0].name == "Root" && layout.nodes[0].parentIndex == -1 &&
+                layout.nodes[1].sourceNodeId == staticTree.identities[0].localId && layout.nodes[1].parentIndex == 0 &&
+                layout.nodes[1].localTransform == staticTree.hierarchy.nodes[0].localTransform &&
+                layout.nodes[2].name == "Empty" && layout.bindings.size() == 2 &&
+                layout.bindings[0].nodeIndex == 1 && layout.bindings[1].nodeIndex == 1 && layout.bindings[1].submeshIndex == 3,
+                "Static layout lost ordering, 64-bit identity, exact local, empty node or repeated binding: " + error);
+            const auto previousDigest = layout.hierarchyDigest;
+            assets::StaticModelInstanceLayout repeatedLayout;
+            Require(assets::PrepareStaticModelInstanceLayout(staticTree, 6, repeatedLayout, &error) &&
+                repeatedLayout.hierarchyDigest == previousDigest, "Instance snapshot evidence is not deterministic");
+            auto changedTree = staticTree;
+            changedTree.hierarchy.bindings[0].submeshIndex = 4;
+            Require(assets::PrepareStaticModelInstanceLayout(changedTree, 6, repeatedLayout, &error) &&
+                repeatedLayout.hierarchyDigest != previousDigest, "Binding changes did not invalidate snapshot evidence");
+            for (unsigned failure = 0; failure < 5; ++failure)
+            {
+                auto bad = staticTree;
+                if (failure == 0) bad.identities[2] = {};
+                if (failure == 1) bad.hierarchy.bindings[0].submeshIndex = 6;
+                if (failure == 2) bad.hierarchy.bindings[0].skinned = true;
+                if (failure == 3) bad.meshReference.clear();
+                if (failure == 4) bad.hierarchy.sceneRoots.push_back(0);
+                Require(!assets::PrepareStaticModelInstanceLayout(bad, 6, layout, &error) && !error.empty() &&
+                    layout.hierarchyDigest == previousDigest && layout.nodes.size() == 3,
+                    "Invalid static layout was accepted or partially replaced prior output");
+            }
+            auto selectedChild = tree;
+            selectedChild.hierarchy.sceneRoots = {0};
+            selectedChild.hierarchy.bindings = {{0, 0, glm::mat4(1)}};
+            Require(assets::PrepareStaticModelInstanceLayout(selectedChild, 1, repeatedLayout, &error) &&
+                repeatedLayout.nodes.size() == 1 && repeatedLayout.nodes[0].parentIndex == -1 &&
+                repeatedLayout.nodes[0].localTransform == tree.hierarchy.nodes[1].localTransform * tree.hierarchy.nodes[0].localTransform,
+                "Selected subtree lost unselected ancestor placement or required unselected anonymous identity");
             std::string repeated;
             Require(assets::SerializeModelHierarchyAsset(parsed, repeated, &error) && repeated == bytes, "Hierarchy round trip was not deterministic");
             for (std::size_t size = 0; size < bytes.size(); ++size)

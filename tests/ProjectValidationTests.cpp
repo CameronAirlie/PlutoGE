@@ -97,6 +97,15 @@ int main()
         Require(Has(ValidateProject(input), "scene.hierarchy"), "Hierarchy cycle not detected");
         input.currentScene = "broken";
         Require(Has(ValidateProject(input), "scene.header"), "Invalid scene header accepted");
+        input.currentScene = "SCENE\t2\n" + entity + camera + "LINEAR_TRANSFORM\t1\t1,0,0,0.5,1,0,0,0,1\n";
+        Require(Has(ValidateProject(input), "scene.header"), "Legacy project accepted affine format");
+        input.assetPipelineVersion = 4;
+        Require(!ValidateProject(input).HasErrors(), "Affine scene validation failed");
+        input.currentScene = *input.currentScene + "LINEAR_TRANSFORM\t1\t1,0,0,0,1,0,0,0,1\n";
+        Require(ValidateProject(input).HasErrors(), "Duplicate linear transform passed validation");
+        input.currentScene = "SCENE\t2\n" + entity + camera + "LINEAR_TRANSFORM\t1\tnan,0,0,0,1,0,0,0,1\n";
+        Require(ValidateProject(input).HasErrors(), "Non-finite linear transform passed validation");
+        input.assetPipelineVersion = 1;
         input.currentScene.reset();
         Write(main, good);
         Write(scratch.root / "Prefab.plutoprefab", "SCENE\t1\n" + entity);

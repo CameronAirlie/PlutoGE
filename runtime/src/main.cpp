@@ -444,7 +444,7 @@ int RunRuntime(int argc, char **argv)
     }
 
     auto &engine = PlutoGE::core::Engine::GetInstance();
-    engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory);
+    engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory, project->GetManifest().assetPipelineVersion);
     const auto catalogPath = project->GetRootDirectory() / "PlutoAssetCatalog.manifest";
     std::error_code catalogError;
     const bool hasCatalog = PlutoGE::content::IsRegularFile(catalogPath, catalogError);

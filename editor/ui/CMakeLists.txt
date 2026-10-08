@@ -16,6 +16,10 @@ add_library(PlutoGEEditorUI
     src/ViewportOverlayLayout.cpp
     src/ViewportBookmarks.cpp
     src/ViewportBookmarksUI.cpp
+    src/StaticModelHierarchyPlacement.cpp
+    src/StaticModelHierarchyDialog.cpp
+    src/ModelHierarchyView.cpp
+    src/ModelHierarchyInspector.cpp
     src/SurfacePlacement.cpp
     src/GroundPlacement.cpp
     src/GroundPlacementUI.cpp

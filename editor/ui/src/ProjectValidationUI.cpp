@@ -25,6 +25,7 @@ namespace PlutoGE::ui
         m_validationCurrentOwner.clear();
         m_validationCurrentState.clear();
         assets::ProjectValidationInput input;
+        input.assetPipelineVersion = m_project->GetManifest().assetPipelineVersion;
         input.assetRoot = m_project->GetAssetDirectoryPath();
         input.assetCatalog = m_engine.GetAssetManager().GetAssetCatalog();
         input.startupScene = m_project->GetManifest().startupScene;

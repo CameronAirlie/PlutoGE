@@ -4,6 +4,7 @@
 #include "PlutoGE/assets/AssetStorageMap.h"
 #include "PlutoGE/assets/Project.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,11 +23,14 @@ namespace PlutoGE::assetimport
     // Optional material remapping updates source settings and mesh override files
     // in the same recoverable transaction as the new asset.
     // Source may be a logical imported identity or its project location.
+    // Optional expected bytes are checked under the project writer lock before
+    // staging, allowing hierarchy snapshots to reject changed baked geometry.
     class ModelObjectExtractionService
     {
     public:
         bool Extract(assets::Project &project, const std::string &sourceReference,
                      const std::string &destinationReference, ModelObjectExtractionResult &result,
-                     std::string *errorMessage = nullptr, bool useMaterialForModel = false) const;
+                     std::string *errorMessage = nullptr, bool useMaterialForModel = false,
+                     std::optional<content::ContentDigest> expectedSourceDigest = std::nullopt) const;
     };
 }

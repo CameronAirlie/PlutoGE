@@ -26,6 +26,7 @@ namespace PlutoGE::ui
         m_validationCurrentState.clear();
         assets::ProjectValidationInput input;
         input.assetRoot = m_project->GetAssetDirectoryPath();
+        input.assetCatalog = m_engine.GetAssetManager().GetAssetCatalog();
         input.startupScene = m_project->GetManifest().startupScene;
         if (!m_project->GetManifest().scriptAssembly.empty()) input.scriptAssembly = ResolveProjectScriptAssemblyPath();
         const auto builtins = assets::Project::GetBuiltinAssetReferences();

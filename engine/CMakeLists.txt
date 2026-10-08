@@ -4,6 +4,7 @@ add_subdirectory(audio)
 add_subdirectory(render)
 add_subdirectory(assets)
 add_subdirectory(import)
+add_subdirectory(asset_import)
 add_subdirectory(scripting)
 add_subdirectory(scene)
     

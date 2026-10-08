@@ -81,8 +81,46 @@ namespace
             Has(scan, "project://Textures/Style.rcss"), "RmlUi image and stylesheet paths failed");
         Write(root / "Models/source.gltf", "{\"images\":[{\"uri\":\"../Textures/Rough, stone; 01.png\"}]}\n");
         Require(Has(ScanAssetReferences(root / "Models/source.gltf", {}, root), reference), "glTF URI paths failed");
+        Write(root / "Models/encoded.gltf", "{\"buffers\":[{\"uri\":\"geometry%20data%2B100%25.bin\"}],\"images\":[{\"uri\":\"A&amp;B.png\"}]}\n");
+        scan = ScanAssetReferences(root / "Models/encoded.gltf", {}, root);
+        Require(scan.errors.empty() && Has(scan, "project://Models/geometry data+100%.bin") && Has(scan, "project://Models/A&amp;B.png"),
+                "glTF URI percent decoding or literal ampersand handling failed");
+        Write(root / "Models/uppercase.GLTF", "{\"buffers\":[{\"uri\":\"geometry%20data.bin\"}]}\n");
+        Require(Has(ScanAssetReferences(root / "Models/uppercase.GLTF", {}, root), "project://Models/geometry data.bin"),
+                "Uppercase glTF extension skipped URI decoding");
+        for (const auto *uri : {"bad%GG.bin", "bad%00.bin", "../../outside.bin"})
+        {
+            Write(root / "Models/invalid.gltf", std::string("{\"buffers\":[{\"uri\":\"") + uri + "\"}]}\n");
+            Require(!ScanAssetReferences(root / "Models/invalid.gltf", {}, root).errors.empty(), "Invalid glTF URI was silently ignored");
+        }
         Require(NormalizeAssetReference("project://Textures/../Textures/a.png") == "project://Textures/a.png", "Normalization failed");
         Require(NormalizeAssetReference("project://../outside.png").empty(), "Escaping reference accepted");
+        Write(root / "Logical.plutomaterial", "AlbedoTexture=asset://texture-owner#0\n");
+        Require(Has(ScanAssetReferences(root / "Logical.plutomaterial"), "asset://texture-owner#0"), "Logical material dependency omitted");
+        Write(root / "Logical.plutomaterial", "AlbedoTexture=asset://texture-owner#bad\n");
+        Require(!ScanAssetReferences(root / "Logical.plutomaterial").errors.empty(), "Malformed logical dependency silently ignored");
+        const std::string logical = "asset://model-owner#42";
+        std::string binary = "LPGM";
+        for (int index = 0; index < 8; ++index) binary += static_cast<char>((static_cast<std::uint64_t>(logical.size()) >> (8 * index)) & 255);
+        binary += logical;
+        Write(root / "Logical.plutomesh", binary);
+        Require(Has(ScanAssetReferences(root / "Logical.plutomesh"), logical), "Binary logical dependency omitted");
+        for (const std::uint32_t version : {4u, 5u, 6u})
+        {
+            std::string mesh = "LPGM";
+            for (std::size_t index = 0; index < 4; ++index) mesh += static_cast<char>((version >> (8 * index)) & 255);
+            auto pod = [&](std::uint64_t value) { for (std::size_t index = 0; index < 8; ++index) mesh += static_cast<char>((value >> (8 * index)) & 255); };
+            auto string = [&](const std::string &text) { pod(text.size()); mesh += text; };
+            string(logical);
+            string("project://Models/Source.gltf");
+            if (version >= 5) { string("model-owner"); pod(42); }
+            mesh += std::string(3, '\1');
+            Write(root / "Provenance.plutomesh", mesh);
+            scan = ScanAssetReferences(root / "Provenance.plutomesh");
+            Require(scan.errors.empty() && scan.occurrences.size() == 2 && scan.occurrences.front().role == AssetReferenceRole::Runtime &&
+                    scan.occurrences.back().role == (version <= 5 ? AssetReferenceRole::ImportSource : AssetReferenceRole::Runtime),
+                    "Mesh source provenance lost its role or classified an unsupported future trailer");
+        }
     }
 
     void BinaryAndLargeFiles(const std::filesystem::path &root)

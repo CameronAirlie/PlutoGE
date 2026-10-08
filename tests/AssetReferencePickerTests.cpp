@@ -102,6 +102,39 @@ namespace
         Require(ui::ToProjectAssetReference(project, outside) == outside,
                 "Files outside the project must stay as-is so the editor can flag them");
         Require(ui::ToProjectAssetReference(project, "").empty(), "An empty slot must stay empty");
+        Require(ui::ToProjectAssetReference(project, "asset://model#7") == "asset://model#7",
+                "Stable identities must never be treated as relative filesystem paths");
+    }
+
+    void CatalogBackedImportedChoices()
+    {
+        const auto project = MakeProject(std::filesystem::temp_directory_path() / "PlutoGE-picker-catalog");
+        assets::AssetCatalog catalog;
+        Require(catalog.Replace({
+            {{"model", 7}, ProjectAssetType::Mesh, assets::AssetOwnership::Imported, "Body", "project://Models/Body.plutomesh"},
+            {{"model", 8}, ProjectAssetType::Material, assets::AssetOwnership::Imported, "Paint", "project://Models/Paint.plutomaterial"},
+            {{"texture", 0}, ProjectAssetType::Texture, assets::AssetOwnership::Authored, "Monitor", "project://Textures/Monitor.plutorendertexture"}
+        }), "Catalog fixture must be valid");
+        const auto meshes = ui::CollectProjectAssetChoices(&project, ProjectAssetType::Mesh, {.catalog = &catalog});
+        Require(meshes.size() == 1 && meshes[0].displayName == "Models/Body.plutomesh",
+                "Library-backed mesh choices must not require physical Assets files or manifest entries");
+        Require(ui::ResolveAssetPickerReference(&catalog, "asset://model#7") == meshes[0].reference,
+                "Stable IDs and virtual locations must select the same mesh");
+        Require(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Material, {.catalog = &catalog}).size() == 1,
+                "Imported materials must be offered independently of meshes");
+        const auto filtered = ui::CollectProjectAssetChoices(&project, ProjectAssetType::Texture,
+            {.filter = [](const auto &option) { return option.reference.ends_with(".plutorendertexture"); }, .catalog = &catalog});
+        Require(filtered.size() == 1, "Path-based type filters must work for catalog choices");
+        Require(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Texture, {.catalog = &catalog}).size() == 1,
+                "A current catalog must supersede stale manifest choices");
+        Require(ui::ResolveAssetPickerReference(&catalog, "asset://missing#7") == "asset://missing#7",
+                "Unknown identities must stay unresolved rather than matching an unrelated asset");
+        Require(catalog.Replace({{{"model", 7}, ProjectAssetType::Mesh, assets::AssetOwnership::Imported,
+                                 "Renamed", "project://Models/Renamed.plutomesh"}}), "Replacement catalog must be valid");
+        Require(ui::ResolveAssetPickerReference(&catalog, "asset://model#7") == "project://Models/Renamed.plutomesh",
+                "Reimport and rename must use the replacement snapshot without stale picker caching");
+        Require(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Material, {.catalog = &catalog}).empty(),
+                "Retired imported objects must disappear from choices");
     }
 }
 
@@ -112,6 +145,7 @@ int main()
         OnlyProjectAssetsAreOffered();
         EngineAssetsAndMultipleTypes();
         ReferencesNormalizeToTheProject();
+        CatalogBackedImportedChoices();
         std::cout << "PASS: material asset pickers offer and normalize project assets only\n";
         return 0;
     }

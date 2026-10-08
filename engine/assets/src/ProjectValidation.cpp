@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/assets/AssetCatalog.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -81,9 +82,26 @@ namespace PlutoGE::assets
             { result.diagnostics.push_back({severity, std::move(code), owner, entity, line, std::move(message)}); }
             void Reference(const std::string &value, const std::string &owner, std::uint32_t entity, std::size_t line)
             {
-                if (!value.starts_with("project://") && !value.starts_with("engine://")) return;
-                const auto reference = NormalizeAssetReference(value);
+                if (!value.starts_with("project://") && !value.starts_with("engine://") && !value.starts_with("asset://")) return;
+                auto reference = NormalizeAssetReference(value);
                 if (reference.empty()) { Add("asset.invalid", owner, entity, line, "Invalid asset reference: " + value); return; }
+                if (reference.starts_with("asset://"))
+                {
+                    if (!input.assetCatalog)
+                    {
+                        Add("asset.unverified", owner, entity, line, "Cannot resolve logical asset without a catalog: " + reference, ValidationSeverity::Warning);
+                        return;
+                    }
+                    AssetReference identity;
+                    const auto *object = ParseAssetReference(reference, identity) ? input.assetCatalog->Find(identity) : nullptr;
+                    if (!object || object->location.starts_with("asset://"))
+                    {
+                        Add("asset.missing", owner, entity, line, "Missing logical asset: " + reference);
+                        return;
+                    }
+                    reference = NormalizeAssetReference(object->location);
+                    if (reference.empty()) { Add("asset.invalid", owner, entity, line, "Unsupported catalog location."); return; }
+                }
                 if (input.builtinReferences.contains(reference)) return;
                 std::filesystem::path path;
                 if (reference.starts_with("project://"))
@@ -269,7 +287,8 @@ namespace PlutoGE::assets
                     {
                         const auto scan = ScanAssetReferences(path, {}, input.assetRoot);
                         for (const auto &error : scan.errors) v.Add("scan.incomplete", owner, 0, 0, error);
-                        for (const auto &reference : scan.occurrences) v.Reference(reference.reference, owner, 0, reference.line);
+                        for (const auto &reference : scan.occurrences)
+                            if (reference.role == AssetReferenceRole::Runtime) v.Reference(reference.reference, owner, 0, reference.line);
                     }
                 }
             }

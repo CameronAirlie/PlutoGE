@@ -9,6 +9,7 @@ add_library(PlutoGEScene
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp
     src/PrefabMeshExporter.cpp
+    src/AssetReconciliation.cpp
     src/Scene.cpp
     src/SceneBaker.cpp
     src/SceneSerializer.cpp

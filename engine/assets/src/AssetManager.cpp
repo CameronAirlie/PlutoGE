@@ -1,8 +1,12 @@
+#include "PlutoGE/assets/AssetPathPolicy.h"
 #include <unordered_set>
 #include <functional>
 #include "PlutoGE/platform/ContentPack.h"
 #include <PlutoGE/assets/AssetManager.h>
+#include "PlutoGE/platform/FilesystemPaths.h"
 #include <PlutoGE/assets/ModelAsset.h>
+#include "PlutoGE/assets/AssetCatalogSerialization.h"
+#include "PlutoGE/assets/MaterialAssetSerialization.h"
 #include <PlutoGE/render/Mesh.h>
 #include <PlutoGE/render/Texture.h>
 #include <PlutoGE/render/Material.h>
@@ -42,6 +46,7 @@ namespace PlutoGE::assets
         std::string line;
         while (std::getline(input, line))
         {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.rfind("ID\t", 0) == 0)
                 return line.substr(3);
         }
@@ -50,6 +55,11 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference) const
     {
+        if (m_catalog)
+        {
+            const auto location = ResolveAssetReference({assetId, 0});
+            return location.empty() ? fallbackReference : location;
+        }
         if (assetId.empty() || m_projectRootDirectory.empty())
             return fallbackReference;
         if (content::IsMounted(m_projectRootDirectory))
@@ -60,7 +70,7 @@ namespace PlutoGE::assets
         if (const auto cached = m_stableIdReferenceCache.find(assetId); cached != m_stableIdReferenceCache.end())
         {
             // Validate the sidecar so renames and replaced identities still resolve.
-            if (GetStableAssetId(cached->second) == assetId)
+            if (!IsAssetInfrastructurePath(m_projectRootDirectory, ResolveAssetPath(cached->second)) && GetStableAssetId(cached->second) == assetId)
                 return cached->second;
             m_stableIdReferenceCache.erase(cached);
         }
@@ -69,6 +79,11 @@ namespace PlutoGE::assets
         for (std::filesystem::recursive_directory_iterator iterator(assetRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
              iterator != end; iterator.increment(error))
         {
+            if (IsAssetInfrastructurePath(m_projectRootDirectory, iterator->path()))
+            {
+                iterator.disable_recursion_pending();
+                continue;
+            }
             if (error || !iterator->is_regular_file() || iterator->path().extension() != ".plutometa")
             {
                 error.clear();
@@ -78,12 +93,15 @@ namespace PlutoGE::assets
             std::string line;
             while (std::getline(input, line))
             {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line == "ID\t" + assetId)
                 {
                     auto assetPath = iterator->path();
                     assetPath.replace_extension();
-                    const auto relative = std::filesystem::relative(assetPath, assetRoot, error);
-                    if (!error)
+                    // Sidecar identity must remain resolvable when source bytes
+                    // are absent; filesystem::relative can fail for that case.
+                    const auto relative = assetPath.lexically_relative(assetRoot);
+                    if (!relative.empty() && !relative.is_absolute() && *relative.begin() != "..")
                     {
                         auto reference = std::string(Project::kProjectAssetScheme) + relative.generic_string();
                         m_stableIdReferenceCache[assetId] = reference;
@@ -96,8 +114,135 @@ namespace PlutoGE::assets
         return fallbackReference;
     }
 
+    void AssetManager::SetAssetSnapshot(std::shared_ptr<const AssetCatalog> catalog,
+        std::shared_ptr<const AssetStorageMap> storage)
+    {
+        struct Route { render::Material *material; std::string oldPath; std::string location; };
+        std::vector<Route> routes;
+        if (m_catalog)
+            for (const auto &object : m_catalog->GetObjects())
+            {
+                if (object.type != ProjectAssetType::Material) continue;
+                auto oldPath = ResolveAssetPath(object.location);
+                // A recovery snapshot disables reads without discarding the
+                // last physical route of a material still borrowed by a scene.
+                if (oldPath.empty() && m_storage)
+                    if (const auto *entry = m_storage->Find(object.location)) oldPath = entry->path.string();
+                const auto cached = m_materialCache.find(oldPath);
+                if (cached == m_materialCache.end() || !cached->second) continue;
+                const auto *replacement = catalog ? catalog->Find(object.identity) : nullptr;
+                routes.push_back({cached->second, oldPath,
+                    replacement && replacement->type == ProjectAssetType::Material ? replacement->location : std::string{}});
+            }
+        SetAssetCatalog(std::move(catalog));
+        m_storage = std::move(storage);
+        std::unordered_map<render::Material *, std::vector<std::string>> destinations;
+        for (const auto &route : routes)
+            destinations[route.material].push_back(route.location.empty() ? std::string{} : ResolveAssetPath(route.location));
+        for (const auto &[material, paths] : destinations)
+        {
+            const auto &destination = paths.front();
+            if (destination.empty() || std::any_of(paths.begin(), paths.end(),
+                    [&](const auto &path) { return path != destination; })) continue;
+            // Shared physical files can represent several identities. Only rebind
+            // when every identity agrees, keeping ambiguous borrowers last-good.
+            const auto existing = m_materialCache.find(destination);
+            auto *other = existing == m_materialCache.end() ? nullptr : existing->second;
+            m_materialCache[destination] = material;
+            LoadMaterialAsset(destination, true);
+            if (other && other != material) other->SetConfig(material->ReadConfig());
+            for (const auto &route : routes)
+                if (route.material == material && route.oldPath != destination)
+                {
+                    const auto old = m_materialCache.find(route.oldPath);
+                    if (old != m_materialCache.end() && old->second == material) m_materialCache.erase(old);
+                }
+        }
+    }
+
+    void AssetManager::SetAssetCatalog(std::shared_ptr<const AssetCatalog> catalog)
+    {
+        m_catalog = std::move(catalog);
+        m_modelResolutionCache.clear();
+    }
+
+    bool AssetManager::IsImportedAsset(const std::string &reference) const
+    {
+        if (!m_catalog || reference.empty()) return false;
+        const auto normalize = [](const std::string &path)
+        {
+            auto normalized = std::filesystem::path(path).lexically_normal().generic_string();
+#ifdef _WIN32
+            for (auto &character : normalized)
+                if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+#endif
+            return normalized;
+        };
+        const auto location = ResolveAssetPath(reference);
+        if (location.empty()) return false;
+        const auto target = normalize(location);
+        for (const auto &object : m_catalog->GetObjects())
+            if (object.ownership == AssetOwnership::Imported &&
+                normalize(ResolveAssetPath(object.location)) == target) return true;
+        return false;
+    }
+
+    void AssetManager::SetLogicalReferenceTypes(const std::vector<ProjectAssetType> &types)
+    {
+        m_logicalReferenceTypes = std::unordered_set<ProjectAssetType>(types.begin(), types.end());
+    }
+
+    std::string AssetManager::PersistLogicalReference(const std::string &reference) const
+    {
+        if (!m_catalog || m_logicalReferenceTypes.empty()) return reference;
+        const auto identity = m_catalog->FindIdentityByLocation(reference);
+        if (!identity) return reference;
+        const auto *object = m_catalog->Find(*identity);
+        if (!object || !m_logicalReferenceTypes.contains(object->type)) return reference;
+        std::string encoded;
+        return SerializeAssetReference(*identity, encoded) ? encoded : reference;
+    }
+
+    std::string AssetManager::PersistDependencyReference(const std::string &reference) const
+    {
+        if (Project::IsProjectAssetReference(reference) || std::filesystem::path(reference).is_absolute())
+            return PersistAssetPath(reference);
+        return reference;
+    }
+
+    bool AssetManager::LoadAssetCatalog(const std::string &path, std::string *errorMessage)
+    {
+        std::error_code error;
+        const auto size = content::FileSize(path, error);
+        if (error || size > 16 * 1024 * 1024)
+        {
+            if (errorMessage) *errorMessage = "Cannot read asset catalog or size limit exceeded: " + path;
+            return false;
+        }
+        content::InputFile input(path, std::ios::binary);
+        std::string bytes(static_cast<std::size_t>(size), '\0');
+        if (!input.read(bytes.data(), static_cast<std::streamsize>(size)))
+        {
+            if (errorMessage) *errorMessage = "Cannot finish reading asset catalog: " + path;
+            return false;
+        }
+        auto catalog = std::make_shared<AssetCatalog>();
+        if (!ParseAssetCatalog(bytes, *catalog, errorMessage)) return false;
+        SetAssetCatalog(std::move(catalog));
+        m_storage.reset();
+        return true;
+    }
+
+    std::string AssetManager::ResolveAssetReference(const AssetReference &reference) const
+    {
+        if (!m_catalog) return {};
+        const auto *object = m_catalog->Find(reference);
+        return object ? object->location : std::string{};
+    }
+
     std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
     {
+        if (m_catalog) return ResolveAssetReference({modelAssetId, localId});
         // Direct meshes have no imported sub-object identity. In particular,
         // legacy generated prefabs stored a project URI here with localId=0;
         // searching every metadata sidecar for that URI can stall every clone.
@@ -321,6 +466,10 @@ namespace PlutoGE::assets
 
     render::Texture *AssetManager::LoadTexture(const char *filePath)
     {
+        if (!filePath || !*filePath) return nullptr;
+        const auto resolved = ResolveAssetPath(filePath);
+        if (resolved.empty()) return nullptr;
+        filePath = resolved.c_str();
         // Check if the texture is already loaded
         auto it = m_textureCache.find(filePath);
         if (it != m_textureCache.end())
@@ -339,6 +488,14 @@ namespace PlutoGE::assets
 
     render::Mesh *AssetManager::LoadMeshAsset(const std::string &assetReference)
     {
+        if (assetReference.starts_with("asset://"))
+        {
+            AssetReference identity;
+            if (!ParseAssetReference(assetReference, identity)) return nullptr;
+            const auto location = ResolveAssetReference(identity);
+            if (location.empty() || location.starts_with("asset://")) return nullptr;
+            return LoadMeshAsset(location);
+        }
         if (assetReference.empty())
         {
             return nullptr;
@@ -384,14 +541,17 @@ namespace PlutoGE::assets
                     MeshAssetMetadata metadata;
                     if (ReadGeneratedMeshAsset(input, config, materialReferences, metadata))
                     {
-                        const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+                        const auto overridePath = GetMeshAssetMaterialOverridePath(assetReference);
                         PlutoGE::content::InputFile overrideInput(overridePath);
                         if (overrideInput.is_open())
                         {
                             std::vector<std::string> overrides;
                             std::string reference;
                             while (std::getline(overrideInput, reference))
+                            {
+                                if (!reference.empty() && reference.back() == '\r') reference.pop_back();
                                 overrides.push_back(std::move(reference));
+                            }
                             if (overrides.size() == materialReferences.size())
                                 materialReferences = std::move(overrides);
                         }
@@ -413,6 +573,14 @@ namespace PlutoGE::assets
     const std::vector<std::string> &AssetManager::GetMeshAssetMaterialReferences(const std::string &assetReference)
     {
         static const std::vector<std::string> empty;
+        if (assetReference.starts_with("asset://"))
+        {
+            AssetReference identity;
+            if (!ParseAssetReference(assetReference, identity)) return empty;
+            const auto location = ResolveAssetReference(identity);
+            if (location.empty() || location.starts_with("asset://")) return empty;
+            return GetMeshAssetMaterialReferences(location);
+        }
         if (assetReference.empty())
         {
             return empty;
@@ -420,7 +588,8 @@ namespace PlutoGE::assets
 
         if (m_meshMaterialReferenceCache.find(assetReference) == m_meshMaterialReferenceCache.end())
         {
-            LoadMeshAsset(assetReference);
+            // Decode bindings without constructing a live mesh or GPU buffers.
+            GetMeshAssetMetadata(assetReference);
         }
 
         const auto found = m_meshMaterialReferenceCache.find(assetReference);
@@ -445,8 +614,9 @@ namespace PlutoGE::assets
         if (!changed)
             return true;
 
-        const std::string meshPath = ResolveAssetPath(meshAssetReference);
-        const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+        const auto overridePath = GetMeshAssetMaterialOverridePath(meshAssetReference);
+        if (overridePath.empty())
+        { if (errorMessage) *errorMessage = "Cannot resolve authored mesh material override location."; return false; }
         std::ofstream output(overridePath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
@@ -469,6 +639,14 @@ namespace PlutoGE::assets
     const MeshAssetMetadata &AssetManager::GetMeshAssetMetadata(const std::string &assetReference)
     {
         static const MeshAssetMetadata empty;
+        if (assetReference.starts_with("asset://"))
+        {
+            AssetReference identity;
+            if (!ParseAssetReference(assetReference, identity)) return empty;
+            const auto location = ResolveAssetReference(identity);
+            if (location.empty() || location.starts_with("asset://")) return empty;
+            return GetMeshAssetMetadata(location);
+        }
         if (assetReference.empty())
         {
             return empty;
@@ -485,14 +663,17 @@ namespace PlutoGE::assets
                 MeshAssetMetadata metadata;
                 if (ReadGeneratedMeshAsset(input, ignoredConfig, ignoredMaterialReferences, metadata))
                 {
-                    const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+                    const auto overridePath = GetMeshAssetMaterialOverridePath(assetReference);
                     PlutoGE::content::InputFile overrideInput(overridePath);
                     if (overrideInput.is_open())
                     {
                         std::vector<std::string> overrides;
                         std::string reference;
                         while (std::getline(overrideInput, reference))
+                        {
+                            if (!reference.empty() && reference.back() == '\r') reference.pop_back();
                             overrides.push_back(std::move(reference));
+                        }
                         if (overrides.size() == ignoredMaterialReferences.size())
                             ignoredMaterialReferences = std::move(overrides);
                     }
@@ -508,12 +689,38 @@ namespace PlutoGE::assets
         return found == m_meshMetadataCache.end() ? empty : found->second;
     }
 
+    bool AssetManager::LoadMeshAssetData(const std::string &reference, render::MeshConfig &config,
+                                         std::vector<std::string> &materialReferences, MeshAssetMetadata &metadata,
+                                         std::string *errorMessage) const
+    {
+        const auto path = ResolveAssetPath(reference);
+        content::InputFile input(path, std::ios::binary);
+        render::MeshConfig decodedConfig;
+        std::vector<std::string> decodedMaterials;
+        MeshAssetMetadata decodedMetadata;
+        if (path.empty() || !input.is_open() ||
+            !ReadGeneratedMeshAsset(input, decodedConfig, decodedMaterials, decodedMetadata))
+        {
+            if (errorMessage) *errorMessage = "Cannot decode native mesh asset: " + reference;
+            return false;
+        }
+        config = std::move(decodedConfig);
+        materialReferences = std::move(decodedMaterials);
+        metadata = std::move(decodedMetadata);
+        return true;
+    }
+
     bool AssetManager::SaveMeshAsset(const std::string &assetReference,
                                      const render::MeshConfig &config,
                                      const std::vector<std::string> &materialReferences,
                                      std::string *errorMessage,
                                      const MeshAssetMetadata &metadata)
     {
+        if (IsImportedAsset(assetReference))
+        {
+            if (errorMessage) *errorMessage = "Imported assets are read-only. Extract an authored copy or change the source import settings.";
+            return false;
+        }
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -545,7 +752,9 @@ namespace PlutoGE::assets
         }
 
         std::ofstream output(meshPath, std::ios::binary | std::ios::trunc);
-        if (!output.is_open() || !WriteGeneratedMeshAsset(output, config, materialReferences, metadata))
+        auto persistedMaterials = materialReferences;
+        for (auto &reference : persistedMaterials) reference = PersistDependencyReference(reference);
+        if (!output.is_open() || !WriteGeneratedMeshAsset(output, config, persistedMaterials, metadata))
         {
             if (errorMessage)
             {
@@ -554,8 +763,14 @@ namespace PlutoGE::assets
             return false;
         }
 
+        output.close();
+        if (!output)
+        {
+            if (errorMessage) *errorMessage = "Failed to finish writing mesh asset.";
+            return false;
+        }
         m_meshCache.erase(assetReference);
-        m_meshMaterialReferenceCache[assetReference] = materialReferences;
+        m_meshMaterialReferenceCache[assetReference] = std::move(persistedMaterials);
         m_meshMetadataCache[assetReference] = metadata;
         return true;
     }
@@ -700,6 +915,12 @@ namespace PlutoGE::assets
                                                     const std::vector<std::string> &clipReferences,
                                                     std::string *errorMessage)
     {
+
+        if (IsImportedAsset(assetReference))
+        {
+            if (errorMessage) *errorMessage = "Imported assets are read-only. Extract an authored copy or change the source import settings.";
+            return false;
+        }
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -743,10 +964,11 @@ namespace PlutoGE::assets
         output << "AnimationSetVersion=1\n";
         for (const auto &clipReference : clipReferences)
         {
-            output << "Clip=" << clipReference << "\n";
+            output << "Clip=" << PersistDependencyReference(clipReference) << "\n";
         }
 
-        if (!output.good())
+        output.close();
+        if (!output)
         {
             if (errorMessage)
             {
@@ -761,6 +983,12 @@ namespace PlutoGE::assets
                                               const render::AnimationClip &clip,
                                               std::string *errorMessage)
     {
+
+        if (IsImportedAsset(assetReference))
+        {
+            if (errorMessage) *errorMessage = "Imported assets are read-only. Extract an authored copy or change the source import settings.";
+            return false;
+        }
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -807,7 +1035,8 @@ namespace PlutoGE::assets
         WritePod(output, kVersion);
         WriteAnimationClip(output, clip);
 
-        if (!output.good())
+        output.close();
+        if (!output)
         {
             if (errorMessage)
             {
@@ -1933,8 +2162,19 @@ namespace PlutoGE::assets
         return graph;
     }
 
-    bool AssetManager::SaveAnimationGraphAsset(const std::string &assetReference, const AnimationGraphAsset &graph, std::string *errorMessage)
+    bool AssetManager::SaveAnimationGraphAsset(const std::string &assetReference, const AnimationGraphAsset &requestedGraph, std::string *errorMessage)
     {
+        auto graph = requestedGraph;
+        for (auto &state : graph.states)
+        {
+            state.clipReference = PersistDependencyReference(state.clipReference);
+            for (auto &point : state.blendSpacePoints) point.clipReference = PersistDependencyReference(point.clipReference);
+        }
+        for (auto &layer : graph.layers)
+        {
+            layer.clipReference = PersistDependencyReference(layer.clipReference);
+            layer.graphReference = PersistDependencyReference(layer.graphReference);
+        }
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
             if (errorMessage)
@@ -2063,7 +2303,8 @@ namespace PlutoGE::assets
                    << layer.graphReference << "\n";
         }
 
-        if (!output.good())
+        output.close();
+        if (!output)
         {
             if (errorMessage)
             {
@@ -2174,6 +2415,13 @@ namespace PlutoGE::assets
         return shader;
     }
 
+    render::Material *AssetManager::FindLoadedMaterialAsset(const std::string &assetReference) const
+    {
+        const auto key = Project::IsEngineAssetReference(assetReference) ? assetReference : ResolveAssetPath(assetReference);
+        const auto found = m_materialCache.find(key);
+        return found == m_materialCache.end() ? nullptr : found->second;
+    }
+
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference)
     {
         return LoadMaterialAsset(assetReference, false);
@@ -2190,6 +2438,30 @@ namespace PlutoGE::assets
                 references.push_back(reference);
         for (const auto &reference : references)
             LoadMaterialAsset(reference, true);
+    }
+
+    void AssetManager::RefreshImportedAssets(const std::vector<std::string> &references)
+    {
+        std::unordered_set<std::string> paths;
+        for (const auto &reference : references)
+        {
+            const auto path = ResolveAssetPath(reference);
+            if (!path.empty() && !Project::IsEngineAssetReference(path)) paths.insert(path);
+        }
+        auto changed = [&](const auto &entry) { return paths.contains(ResolveAssetPath(entry.first)); };
+        // Mesh and texture pointers are borrowed by live components. Eviction
+        // changes future lookups without deleting those resources, matching the
+        // existing SaveMeshAsset lifetime contract.
+        std::erase_if(m_meshCache, changed);
+        std::erase_if(m_textureCache, changed);
+        std::erase_if(m_meshMetadataCache, changed);
+        std::erase_if(m_meshMaterialReferenceCache, changed);
+        std::vector<std::string> materials;
+        for (const auto &[reference, material] : m_materialCache)
+            if (material && paths.contains(ResolveAssetPath(reference))) materials.push_back(reference);
+        // Material reload preserves each existing Material pointer and refreshes
+        // its texture bindings after the texture lookup cache was invalidated.
+        for (const auto &reference : materials) LoadMaterialAsset(reference, true);
     }
 
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference, bool reload)
@@ -2438,6 +2710,12 @@ namespace PlutoGE::assets
 
     bool AssetManager::SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage)
     {
+
+        if (IsImportedAsset(assetReference))
+        {
+            if (errorMessage) *errorMessage = "Imported assets are read-only. Extract an authored copy or change the source import settings.";
+            return false;
+        }
         std::unordered_set<std::string> textureNames;
         for (const auto &texture : config.shaderGraphTextures)
             if (texture.name.empty() || !textureNames.insert(texture.name).second ||
@@ -2493,49 +2771,27 @@ namespace PlutoGE::assets
             return false;
         }
 
-        output << "Color=" << config.color.r << "," << config.color.g << "," << config.color.b << "," << config.color.a << "\n";
-        output << "SurfaceType=" << ToString(config.surfaceType) << "\n";
-        output << "AlphaMode=" << (config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask"
-                                                                                                                                        : "Opaque")
-               << "\n";
-        output << "AlphaCutoff=" << config.alphaCutoff << "\n";
-        output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
-        output << "TwoSided=" << (config.twoSided ? "true" : "false") << "\n";
-        output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
-        output << "Metallic=" << config.metallic << "\n";
-        output << "Roughness=" << config.roughness << "\n";
-        output << "EmissionTexture=" << (config.emissionTexture ? PersistMaterialTexturePath(config.emissionTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "EmissionChannelMask=" << (config.emissionChannelMask ? "true" : "false") << "\n";
-        const char *emissionChannelNames[]{"EmissionRed", "EmissionGreen", "EmissionBlue"};
-        for (int i = 0; i < 3; ++i)
+        auto textureReference = [&](render::Texture *texture)
         {
-            const auto &c = config.emissionChannels[i];
-            output << emissionChannelNames[i] << "=" << c.r << "," << c.g << "," << c.b << "," << c.a << "\n";
-        }
-        output << "EmissionTexCoord=" << config.emissionTexCoord << "\n";
-        output << "Emission=" << config.emission.r << "," << config.emission.g << "," << config.emission.b << "\n";
-        output << "Subsurface=" << config.subsurface << "\n";
-        output << "SubsurfaceColor=" << config.subsurfaceColor.r << "," << config.subsurfaceColor.g << "," << config.subsurfaceColor.b << "\n";
-        output << "SubsurfaceRadius=" << config.subsurfaceRadius << "\n";
-        output << "Transmission=" << config.transmission << "\n";
-        output << "Ior=" << config.ior << "\n";
-        output << "Thickness=" << config.thickness << "\n";
-        output << "AttenuationColor=" << config.attenuationColor.r << "," << config.attenuationColor.g << "," << config.attenuationColor.b << "\n";
-        output << "AttenuationDistance=" << config.attenuationDistance << "\n";
-        output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
-        output << "AlbedoTexture=" << (config.albedoTexture ? PersistMaterialTexturePath(config.albedoTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "NormalTexture=" << (config.normalTexture ? PersistMaterialTexturePath(config.normalTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "MetallicTexture=" << (config.metallicTexture ? PersistMaterialTexturePath(config.metallicTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "MetallicTextureChannel=" << static_cast<int>(config.metallicTextureChannel) << "\n";
-        output << "RoughnessTexture=" << (config.roughnessTexture ? PersistMaterialTexturePath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
-        output << "ShaderGraph=" << (config.shaderGraphReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : config.shaderGraphReference) << "\n";
-        for(const auto &t:config.shaderGraphTextures)output<<"ShaderGraphTexture="<<t.name<<'|'<<t.reference<<'\n';
-        for (const auto &variable : config.shaderGraphVariables)
+            return texture ? PersistMaterialTexturePath(texture->GetFilePath()) : std::string{};
+        };
+        const MaterialTextureReferences textures{
+            .albedo = textureReference(config.albedoTexture),
+            .normal = textureReference(config.normalTexture),
+            .metallic = textureReference(config.metallicTexture),
+            .roughness = textureReference(config.roughnessTexture),
+            .emission = textureReference(config.emissionTexture),
+        };
+        auto persistedConfig = config;
+        persistedConfig.shaderGraphReference = PersistDependencyReference(persistedConfig.shaderGraphReference);
+        for (auto &texture : persistedConfig.shaderGraphTextures)
+            texture.reference = PersistDependencyReference(texture.reference);
+        if (!WriteMaterialAsset(output, persistedConfig, textures, errorMessage)) return false;
+        output.close();
+        if (!output)
         {
-            output << "ShaderGraphVariable=" << variable.name << '|'
-                   << static_cast<int>(variable.type) << '|'
-                   << variable.value.x << ',' << variable.value.y << ',' << variable.value.z << ',' << variable.value.w << "\n";
+            if (errorMessage) *errorMessage = "Failed to finish material asset.";
+            return false;
         }
 
         const std::string cacheKey = ResolveAssetPath(assetReference);
@@ -3021,6 +3277,16 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveAssetPath(const std::string &assetPath) const
     {
+        if (assetPath.starts_with("asset://"))
+        {
+            AssetReference identity;
+            if (!ParseAssetReference(assetPath, identity)) return {};
+            const auto location = ResolveAssetReference(identity);
+            // Catalog locations describe storage, never another identity alias.
+            if (location.empty() || location.starts_with("asset://")) return {};
+            return ResolveAssetPath(location);
+        }
+
         if (assetPath.empty() || Project::IsEngineAssetReference(assetPath))
         {
             return assetPath;
@@ -3033,6 +3299,8 @@ namespace PlutoGE::assets
                 return {};
             }
 
+            if (m_storage)
+                if (const auto *storage = m_storage->Find(assetPath)) return storage->available ? NormalizePath(storage->path.string()) : std::string{};
             const auto relativePath = std::filesystem::path(std::string(assetPath.substr(Project::kProjectAssetScheme.size())));
             return NormalizePath(((std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory) / relativePath).string());
         }
@@ -3098,12 +3366,51 @@ namespace PlutoGE::assets
         return {};
     }
 
+    std::filesystem::path AssetManager::GetMeshAssetMaterialOverridePath(const std::string &assetReference) const
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference)) return {};
+        if (assetReference.starts_with("asset://"))
+        {
+            AssetReference identity;
+            if (!ParseAssetReference(assetReference, identity)) return {};
+            const auto location = ResolveAssetReference(identity);
+            if (location.empty() || location.starts_with("asset://")) return {};
+            return GetMeshAssetMaterialOverridePath(location);
+        }
+        if (Project::IsProjectAssetReference(assetReference))
+        {
+            if (m_projectRootDirectory.empty()) return {};
+            std::filesystem::path root;
+            if (!content::ResolveDirectoryForCreation(std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory, root)) return {};
+            const auto relative = std::filesystem::path(assetReference.substr(Project::kProjectAssetScheme.size()));
+            if (relative.empty() || relative.has_root_path()) return {};
+            const auto path = (root / relative).lexically_normal();
+            if (!content::IsPathWithinDirectory(path, root)) return {};
+            std::filesystem::path parent;
+            if (!content::ResolveDirectoryForCreation(path.parent_path(), parent) ||
+                !content::IsPathWithinDirectory(parent, root, true)) return {};
+            return std::filesystem::path(parent / path.filename()).concat(".materials");
+        }
+        const auto resolved = ResolveAssetPath(assetReference);
+        if (resolved.empty()) return {};
+        const auto physical = std::filesystem::absolute(resolved).lexically_normal();
+        if (m_storage)
+        {
+            if (const auto reference = m_storage->FindReferenceByPath(physical)) return GetMeshAssetMaterialOverridePath(*reference);
+            const auto library = std::filesystem::absolute(std::filesystem::path(m_projectRootDirectory) / "Library").lexically_normal();
+            if (content::IsPathWithinDirectory(physical, library)) return {};
+        }
+        return physical.empty() ? std::filesystem::path{} : std::filesystem::path(physical).concat(".materials");
+    }
+
     std::string AssetManager::PersistAssetPath(const std::string &filePath) const
     {
-        if (filePath.empty() || Project::IsProjectAssetReference(filePath) || Project::IsEngineAssetReference(filePath))
+        if (filePath.empty() || filePath.starts_with("asset://") || Project::IsEngineAssetReference(filePath))
         {
             return filePath;
         }
+
+        if (Project::IsProjectAssetReference(filePath)) return PersistLogicalReference(filePath);
 
         if (m_projectRootDirectory.empty())
         {
@@ -3111,11 +3418,13 @@ namespace PlutoGE::assets
         }
 
         const auto normalizedPath = std::filesystem::path(NormalizePath(filePath));
+        if (m_storage)
+            if (const auto reference = m_storage->FindReferenceByPath(normalizedPath)) return PersistLogicalReference(*reference);
         const auto assetDirectory = (std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory).lexically_normal();
         std::filesystem::path relativePath;
         if (TryMakeRelativePath(normalizedPath, assetDirectory, relativePath))
         {
-            return std::string(Project::kProjectAssetScheme) + relativePath.generic_string();
+            return PersistLogicalReference(std::string(Project::kProjectAssetScheme) + relativePath.generic_string());
         }
 
         return normalizedPath.string();
@@ -3123,7 +3432,7 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveMaterialTexturePath(const std::string &texturePath) const
     {
-        if (texturePath.empty() || Project::IsEngineAssetReference(texturePath) ||
+        if (texturePath.empty() || texturePath.starts_with("asset://") || Project::IsEngineAssetReference(texturePath) ||
             Project::IsProjectAssetReference(texturePath) || std::filesystem::path(texturePath).is_absolute())
         {
             return ResolveAssetPath(texturePath);
@@ -3138,21 +3447,30 @@ namespace PlutoGE::assets
 
     std::string AssetManager::PersistMaterialTexturePath(const std::string &texturePath) const
     {
-        if (texturePath.empty() || Project::IsEngineAssetReference(texturePath))
+        if (texturePath.empty() || texturePath.starts_with("asset://") || Project::IsEngineAssetReference(texturePath))
             return texturePath;
 
         if (Project::IsProjectAssetReference(texturePath))
+        {
+            const auto logical = PersistLogicalReference(texturePath);
+            if (logical.starts_with("asset://")) return logical;
             return std::filesystem::path(std::string(texturePath.substr(Project::kProjectAssetScheme.size()))).generic_string();
+        }
 
         if (m_projectRootDirectory.empty())
             return std::filesystem::path(texturePath).generic_string();
 
         const auto assetDirectory = (std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory).lexically_normal();
         const auto path = std::filesystem::path(texturePath);
+        if (m_storage && path.is_absolute())
+            if (const auto reference = m_storage->FindReferenceByPath(path)) return PersistLogicalReference(*reference);
         const auto normalizedPath = path.is_absolute() ? path.lexically_normal() : (assetDirectory / path).lexically_normal();
         std::filesystem::path relativePath;
         if (TryMakeRelativePath(normalizedPath, assetDirectory, relativePath))
-            return relativePath.generic_string();
+        {
+            const auto logical = PersistLogicalReference(std::string(Project::kProjectAssetScheme) + relativePath.generic_string());
+            return logical.starts_with("asset://") ? logical : relativePath.generic_string();
+        }
 
         // External textures remain absolute because no valid asset-relative
         // reference exists. Importing them into Assets will make subsequent saves relative.
@@ -3161,6 +3479,9 @@ namespace PlutoGE::assets
 
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)
     {
+        m_catalog.reset();
+        m_storage.reset();
+        m_logicalReferenceTypes.clear();
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
@@ -3180,6 +3501,7 @@ namespace PlutoGE::assets
 
     void AssetManager::ClearProjectContext()
     {
+        m_catalog.reset();
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();

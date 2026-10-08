@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
 #include <cstdint>
 #include <filesystem>
@@ -11,32 +12,6 @@
 
 namespace PlutoGE::assets
 {
-    enum class ProjectAssetType
-    {
-        Unknown,
-        Scene,
-        Prefab,
-        Script,
-        Mesh,
-        Animation,
-        AnimationClip,
-        Model,
-        Material,
-        ShaderGraph,
-        AnimationGraph,
-        ParticleSystem,
-        PostProcessPreset,
-        Audio,
-        Texture,
-        Assembly,
-        ScriptableObject,
-        RmlDocument,
-        InputMapping,
-        SurfaceResponse,
-        LoadingScreen,
-        Count,
-    };
-
     struct ProjectAssetEntry
     {
         std::string reference;
@@ -84,6 +59,10 @@ namespace PlutoGE::assets
     {
         std::string name = "UntitledProject";
         std::string assetDirectory = "Assets";
+        // Version 2 gates persistent settings/correspondence; version 3 stores
+        // imported products in Library. Existing projects retain their persisted
+        // version until explicitly migrated; Project::Create selects version 3.
+        std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
         render::LoadingScreenStyle loadingScreen;
         std::string scriptAssembly;
@@ -162,6 +141,8 @@ namespace PlutoGE::assets
     // Embedded capability metadata: require a matching reader before exporting.
     inline constexpr std::string_view kRuntimeContentPackMarker = "PLUTOGE_RUNTIME_CONTENT_PACK_VERSION=2";
     bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath);
+    inline constexpr std::string_view kRuntimeAssetPipelineMarker = "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=3";
+    bool IsRuntimeAssetPipelineCompatible(const std::filesystem::path &runtimeExecutablePath, std::uint32_t version);
     struct ExportOptions
     {
         bool compress = true;

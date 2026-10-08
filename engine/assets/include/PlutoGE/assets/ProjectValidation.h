@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -9,6 +10,7 @@
 
 namespace PlutoGE::assets
 {
+    class AssetCatalog;
     enum class ValidationSeverity { Warning, Error };
     struct ValidationDiagnostic
     {
@@ -29,6 +31,7 @@ namespace PlutoGE::assets
         std::set<std::string> builtinReferences;
         std::function<std::filesystem::path(const std::string &)> resolveEngineReference;
         std::optional<std::string> currentScene;
+        std::shared_ptr<const AssetCatalog> assetCatalog;
         std::string currentSceneOwner = "Current unsaved scene";
     };
     struct ProjectValidationResult

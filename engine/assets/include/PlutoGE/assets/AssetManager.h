@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/AssetCatalog.h"
+#include "PlutoGE/assets/AssetStorageMap.h"
 #include "PlutoGE/assets/AnimationGraph.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
@@ -11,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <string>
 #include <vector>
@@ -51,6 +54,22 @@ namespace PlutoGE::assets
         std::string GetStableAssetId(const std::string &assetReference) const;
         std::string ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference = {}) const;
         std::string ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const;
+        // Call on the resource-owning thread after publishing a database scan.
+        // Publish both snapshots on the owning thread; preserve borrowed materials
+        // when an unambiguous identity moves to another physical generation.
+        void SetAssetSnapshot(std::shared_ptr<const AssetCatalog> catalog,
+            std::shared_ptr<const AssetStorageMap> storage);
+        void SetAssetCatalog(std::shared_ptr<const AssetCatalog> catalog);
+        std::shared_ptr<const AssetCatalog> GetAssetCatalog() const { return m_catalog; }
+        // Install a database-validated snapshot alongside its catalog on the owning thread.
+        void SetAssetStorageMap(std::shared_ptr<const AssetStorageMap> storage) { m_storage = std::move(storage); }
+        // Catalog ownership applies to logical IDs and physical location aliases.
+        bool IsImportedAsset(const std::string &reference) const;
+        // The project format owner opts in only types whose readers support IDs.
+        // Context changes reset this list to preserve legacy writer behavior.
+        void SetLogicalReferenceTypes(const std::vector<ProjectAssetType> &types);
+        bool LoadAssetCatalog(const std::string &path, std::string *errorMessage = nullptr);
+        std::string ResolveAssetReference(const AssetReference &reference) const;
 
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
@@ -60,6 +79,12 @@ namespace PlutoGE::assets
                                                const std::string &newMaterialReference,
                                                std::string *errorMessage = nullptr);
         const MeshAssetMetadata &GetMeshAssetMetadata(const std::string &assetReference);
+        // Authored bindings stay in Assets even when geometry lives in Library.
+        std::filesystem::path GetMeshAssetMaterialOverridePath(const std::string &assetReference) const;
+        // CPU-only decoding; failure leaves every output unchanged.
+        bool LoadMeshAssetData(const std::string &reference, render::MeshConfig &config,
+                               std::vector<std::string> &materialReferences, MeshAssetMetadata &metadata,
+                               std::string *errorMessage = nullptr) const;
         bool SaveMeshAsset(const std::string &assetReference,
                            const render::MeshConfig &config,
                            const std::vector<std::string> &materialReferences,
@@ -74,9 +99,14 @@ namespace PlutoGE::assets
         bool SaveAnimationClipAsset(const std::string &assetReference,
                                     const render::AnimationClip &clip,
                                     std::string *errorMessage = nullptr);
+        // IO-free lookup; useful for distinguishing borrowed assets from instance clones.
+        render::Material *FindLoadedMaterialAsset(const std::string &assetReference) const;
         render::Material *LoadMaterialAsset(const std::string &assetReference);
         // Reread saved assets while preserving Material pointers held by scenes.
         void ReloadMaterialAssets();
+        // Resource-owning thread only. Existing mesh/texture borrowers remain
+        // alive; subsequent loads and metadata reads use the published files.
+        void RefreshImportedAssets(const std::vector<std::string> &references);
         bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::ShaderGraph LoadShaderGraphAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage = nullptr);
@@ -108,6 +138,11 @@ namespace PlutoGE::assets
             std::uintmax_t size = 0;
             std::unordered_map<std::uint64_t, std::string> objects;
         };
+        std::shared_ptr<const AssetCatalog> m_catalog;
+        std::shared_ptr<const AssetStorageMap> m_storage;
+        std::unordered_set<ProjectAssetType> m_logicalReferenceTypes;
+        std::string PersistLogicalReference(const std::string &reference) const;
+        std::string PersistDependencyReference(const std::string &reference) const;
         mutable std::unordered_map<std::string, std::string> m_stableIdReferenceCache;
         mutable std::unordered_map<std::string, ModelResolutionCache> m_modelResolutionCache;
         std::string m_assetDirectory = "assets/"; // Base directory for assets

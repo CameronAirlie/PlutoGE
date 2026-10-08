@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/AssetPathPolicy.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetDatabase.h"
@@ -35,7 +36,7 @@ namespace PlutoGE::assets
     namespace
     {
         constexpr std::string_view kProjectHeader = "PLUTOPROJECT";
-        constexpr int kProjectVersion = 1;
+        constexpr int kProjectVersion = 3;
         constexpr int kRuntimeSearchAncestorLimit = 8;
         constexpr std::string_view kBundledDotnetRuntimeDirectory = "DotnetRuntime";
 
@@ -558,6 +559,7 @@ namespace PlutoGE::assets
         }
 
         ProjectManifest manifest;
+        manifest.assetPipelineVersion = kProjectVersion;
         if (!projectName.empty())
         {
             manifest.name = std::move(projectName);
@@ -628,11 +630,12 @@ namespace PlutoGE::assets
             if (tokens[0] == kProjectHeader && tokens.size() >= 2)
             {
                 int version = 0;
-                if (!ParseInteger(tokens[1], version) || version != kProjectVersion)
+                if (!ParseInteger(tokens[1], version) || version < 1 || version > kProjectVersion)
                 {
                     SetError(errorMessage, "Unsupported project manifest version.");
                     return nullptr;
                 }
+                manifest.assetPipelineVersion = static_cast<std::uint32_t>(version);
                 hasValidHeader = true;
                 continue;
             }
@@ -1101,6 +1104,11 @@ namespace PlutoGE::assets
 
     bool Project::Save(std::string *errorMessage) const
     {
+        if (m_manifest.assetPipelineVersion < 1 || m_manifest.assetPipelineVersion > kProjectVersion)
+        {
+            SetError(errorMessage, "Unsupported asset pipeline version; project was not written.");
+            return false;
+        }
         std::ofstream output(m_manifestPath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
@@ -1108,7 +1116,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        output << kProjectHeader << '\t' << kProjectVersion << '\n';
+        output << kProjectHeader << '\t' << m_manifest.assetPipelineVersion << '\n';
         output << "NAME\t" << EscapeText(m_manifest.name) << '\n';
         output << "ASSET_DIR\t" << EscapeText(m_manifest.assetDirectory) << '\n';
         output << "STARTUP_SCENE\t" << EscapeText(m_manifest.startupScene) << '\n';
@@ -1202,6 +1210,11 @@ namespace PlutoGE::assets
              iterator != end;
              iterator.increment(errorCode))
         {
+            if (IsAssetInfrastructurePath(GetRootDirectory(), iterator->path()) || iterator->path().lexically_normal() == m_manifestPath.lexically_normal())
+            {
+                iterator.disable_recursion_pending();
+                continue;
+            }
             if (errorCode || !iterator->is_regular_file())
             {
                 continue;
@@ -1320,20 +1333,36 @@ namespace PlutoGE::assets
         return executablePath.parent_path() / packFileName;
     }
 
+    namespace
+    {
+        bool RuntimeHasMarker(const std::filesystem::path &runtimeExecutablePath, std::string_view marker)
+        {
+            std::ifstream input(runtimeExecutablePath, std::ios::binary);
+            std::array<char, 64 * 1024> buffer{};
+            std::string window;
+            while (input)
+            {
+                input.read(buffer.data(), buffer.size());
+                window.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
+                if (window.find(marker) != std::string::npos) return true;
+                if (window.size() >= marker.size())
+                    window.erase(0, window.size() - (marker.size() - 1));
+            }
+            return false;
+        }
+
+    }
+
     bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath)
     {
-        std::ifstream input(runtimeExecutablePath, std::ios::binary);
-        std::array<char, 64 * 1024> buffer{};
-        std::string window;
-        while (input)
-        {
-            input.read(buffer.data(), buffer.size());
-            window.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
-            if (window.find(kRuntimeContentPackMarker) != std::string::npos) return true;
-            if (window.size() >= kRuntimeContentPackMarker.size())
-                window.erase(0, window.size() - (kRuntimeContentPackMarker.size() - 1));
-        }
-        return false;
+        return RuntimeHasMarker(runtimeExecutablePath, kRuntimeContentPackMarker);
+    }
+
+    bool IsRuntimeAssetPipelineCompatible(const std::filesystem::path &runtimeExecutablePath, std::uint32_t version)
+    {
+        if (version < 1 || version > 3 || !IsRuntimeContentPackCompatible(runtimeExecutablePath)) return false;
+        return version == 1 || RuntimeHasMarker(runtimeExecutablePath, kRuntimeAssetPipelineMarker) ||
+            (version == 2 && RuntimeHasMarker(runtimeExecutablePath, "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=2"));
     }
 
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot)
@@ -1372,9 +1401,9 @@ namespace PlutoGE::assets
             return false;
         }
 
-        if (!IsRuntimeContentPackCompatible(normalizedRuntimeExecutablePath))
+        if (!IsRuntimeAssetPipelineCompatible(normalizedRuntimeExecutablePath, project.GetManifest().assetPipelineVersion))
         {
-            SetError(errorMessage, "The selected runtime does not advertise support for this content pack version. Rebuild PlutoGERuntime and export again: " +
+            SetError(errorMessage, "The selected runtime does not advertise support for this content pack and asset pipeline version. Rebuild PlutoGERuntime and export again: " +
                                    PathToUtf8String(normalizedRuntimeExecutablePath));
             return false;
         }

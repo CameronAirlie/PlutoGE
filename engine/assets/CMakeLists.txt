@@ -1,4 +1,21 @@
 add_library(PlutoGEAssets
+    src/ModelHierarchyAsset.cpp
+    src/ModelNodeCorrespondence.cpp
+    src/ModelArtifactStorage.cpp
+    src/AssetStorageMap.cpp
+    src/AssetMigrationSerialization.cpp
+    src/AssetMigrationRenames.cpp
+    src/AssetMigrationPlan.cpp
+    src/AssetMigrationAudit.cpp
+    src/AssetPathPolicy.cpp
+    src/ProjectAssetLock.cpp
+    src/ModelSourcePackage.cpp
+    src/ModelImportSettings.cpp
+    src/MaterialAssetSerialization.cpp
+    src/AssetCatalogSerialization.cpp
+    src/AssetCatalog.cpp
+    src/AssetReference.cpp
+    src/AssetMetadata.cpp
     src/AssetDatabase.cpp
     src/AssetReferences.cpp
     src/ProjectValidation.cpp

@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
+#include "PlutoGE/platform/FilesystemPaths.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/Prefab.h"
@@ -50,6 +51,19 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        std::filesystem::path ResolvePrefabComparisonPath(const std::filesystem::path &path)
+        {
+            // Virtual mount keys retain their lexical root (including Windows aliases).
+            if (content::IsMounted(path)) return std::filesystem::absolute(path).lexically_normal();
+            if (std::filesystem::exists(path)) return std::filesystem::canonical(path);
+            std::filesystem::path parent;
+            std::string error;
+            const auto absolute = std::filesystem::absolute(path);
+            if (!content::ResolveDirectoryForCreation(absolute.parent_path(), parent, &error))
+                throw std::runtime_error(error);
+            return (parent / absolute.filename()).lexically_normal();
+        }
+
         using ProfileClock = std::chrono::steady_clock;
         double ElapsedMs(ProfileClock::time_point start)
         {
@@ -539,7 +553,7 @@ namespace PlutoGE::scene
         std::unique_ptr<Scene> ResolvePrefab(std::string_view reference, std::set<std::string> &stack,
             std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> &dependencies, bool geometryPreview = false)
         {
-            const auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(reference)).string();
+            const auto path = ResolvePrefabComparisonPath(ResolvePrefabPath(reference)).string();
             if (stack.size() >= 64 || !stack.insert(path).second)
                 throw std::runtime_error("Prefab dependency cycle: " + path);
             std::error_code timestampError;
@@ -602,11 +616,11 @@ namespace PlutoGE::scene
             std::set<std::string> seen;
             try
             {
-                const auto targetPath = std::filesystem::weakly_canonical(ResolvePrefabPath(target));
+                const auto targetPath = ResolvePrefabComparisonPath(ResolvePrefabPath(target));
                 std::string next(reference);
                 while (seen.size() < 64)
                 {
-                    auto path = std::filesystem::weakly_canonical(ResolvePrefabPath(next));
+                    auto path = ResolvePrefabComparisonPath(ResolvePrefabPath(next));
                     if (path == targetPath) return true;
                     if (!seen.insert(path.string()).second) return false;
                     VariantData variant;
@@ -1028,8 +1042,8 @@ namespace PlutoGE::scene
                 throw std::runtime_error("Create a variant from a prefab instance root.");
             if (destination.extension() != kFileExtension) throw std::runtime_error("Variants require .plutoprefab files.");
             VariantData data;
-            const auto sourcePath = std::filesystem::weakly_canonical(ResolvePrefabPath(instance.GetPrefabSource()));
-            const auto targetPath = std::filesystem::weakly_canonical(destination);
+            const auto sourcePath = ResolvePrefabComparisonPath(ResolvePrefabPath(instance.GetPrefabSource()));
+            const auto targetPath = ResolvePrefabComparisonPath(destination);
             const bool applying = sourcePath == targetPath;
             if (applying)
             {

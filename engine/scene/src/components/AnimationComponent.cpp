@@ -3683,6 +3683,17 @@ namespace PlutoGE::scene
             m_pendingRagdollImpulse += impulse;
     }
 
+    void AnimationComponent::NotifyMeshChanged()
+    {
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
+        m_retargetBindingSkeleton = nullptr;
+        m_nodeBindingNodes = nullptr;
+        m_nodeMaskNodes = nullptr;
+        m_resolvedNodeMasks.clear();
+        ClearRagdollPhysicsPose();
+    }
+
     void AnimationComponent::ResetRagdoll()
     {
         m_pendingRagdollImpulse = glm::vec3(0.0f);

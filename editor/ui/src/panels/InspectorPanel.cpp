@@ -804,7 +804,9 @@ namespace PlutoGE::ui
                              const std::string &meshAssetReference,
                              core::Engine &engine)
         {
-            if (assets::Project::GetAssetTypeForReference(meshAssetReference) != assets::ProjectAssetType::Mesh)
+            const auto &manager = engine.GetAssetManager();
+            const auto catalog = manager.GetAssetCatalog();
+            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(catalog.get(), meshAssetReference)) != assets::ProjectAssetType::Mesh)
             {
                 return false;
             }
@@ -824,9 +826,10 @@ namespace PlutoGE::ui
             else
             {
                 const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshAssetReference);
-                if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0)
-                    return false;
-                meshComponent.SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
+                if (!metadata.sourceAssetId.empty() && metadata.sourceObjectId != 0)
+                    meshComponent.SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
+                else
+                    meshComponent.SetModelObjectIdentity({}, 0);
             }
             meshComponent.SetUseGeneratedLods(false);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/import/MeshImportOptions.h"
+#include "PlutoGE/import/ImportedModelHierarchy.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
 
@@ -67,8 +68,15 @@ namespace PlutoGE::assetimport
         const std::vector<render::AnimationClip> *animations = nullptr;
     };
 
+    enum class MeshSourceCachePolicy { UseLegacyCache, Bypass };
+
     struct ImportedMeshSourceAsset
     {
+        // Complete file dependencies are available when bypassing the legacy
+        // source-stamp cache, which predates dependency tracking.
+        std::vector<std::string> sourceDependencies;
+        // Populated by fresh parsing; the legacy source-stamp cache predates topology.
+        ImportedModelHierarchy hierarchy;
         render::MeshData meshData;
         std::vector<render::Submesh> submeshes;
         std::vector<ImportedMaterialData> materials;
@@ -90,7 +98,8 @@ namespace PlutoGE::assetimport
         // slots and skin influences intact; native assets use the same policy.
         static void BuildMeshLods(render::MeshData &data, std::vector<render::Submesh> &submeshes);
 
-        ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options = {}) const;
+        ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options = {},
+                                                     MeshSourceCachePolicy cachePolicy = MeshSourceCachePolicy::UseLegacyCache) const;
         ImportedMeshAsset GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options = {});
         ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options = {});
         ImportedMeshAsset ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options = {});

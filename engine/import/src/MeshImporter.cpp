@@ -955,12 +955,15 @@ namespace PlutoGE::assetimport
 
         std::string ResolveImageSourcePath(const std::string &filePath, const tinygltf::Image &image)
         {
-            if (image.uri.empty())
+            if (image.uri.empty() || tinygltf::IsDataURI(image.uri))
             {
                 return {};
             }
 
-            return (std::filesystem::path(filePath).parent_path() / std::filesystem::path(image.uri)).lexically_normal().string();
+            std::string decoded;
+            if (!tinygltf::URIDecode(image.uri, &decoded, nullptr))
+                throw std::runtime_error("Cannot decode external glTF URI.");
+            return (std::filesystem::path(filePath).parent_path() / std::filesystem::path(decoded)).lexically_normal().string();
         }
 
         int ResolveImageIndex(const tinygltf::Model &model, int textureIndex)
@@ -2928,6 +2931,7 @@ namespace PlutoGE::assetimport
             uint32_t vertexCount = 0;
             uint32_t indexCount = 0;
             unsigned int primaryUvChannel = 0;
+            int nodeIndex = -1;
             int animatedNodeIndex = -1;
             std::string name;
             bool hasSkinning = false;
@@ -3857,6 +3861,7 @@ namespace PlutoGE::assetimport
                     .vertexCount = sourceMesh.mNumVertices,
                     .indexCount = indexCount,
                     .primaryUvChannel = primaryUvChannel,
+                    .nodeIndex = nodeIndex,
                     .animatedNodeIndex = hasSkinning ? -1 : nodeIndex,
                     .name = std::move(submeshName),
                     .hasSkinning = hasSkinning,
@@ -4488,6 +4493,10 @@ namespace PlutoGE::assetimport
 
             ImportedMeshSourceAsset asset;
             asset.animationNodes = BuildAssimpAnimationNodes(nodes);
+            if (!nodes.empty()) asset.hierarchy.sceneRoots.push_back(0);
+            asset.hierarchy.nodes.reserve(nodes.size());
+            for (const auto &node : nodes)
+                asset.hierarchy.nodes.push_back({node.name, node.parentNodeIndex, node.localTransform, node.globalTransform});
             asset.materials.reserve(scene->mNumMaterials + 1);
             std::vector<unsigned int> materialPrimaryUvChannels;
             materialPrimaryUvChannels.reserve(scene->mNumMaterials + 1);
@@ -4527,6 +4536,10 @@ namespace PlutoGE::assetimport
             meshWorkItems.reserve(scene->mNumMeshes);
             CollectAssimpMeshWorkItems(*scene, nodes, nodeToIndex, 0, animatedNodeIndices, -1, materialPrimaryUvChannels, meshWorkItems);
             AssignAssimpMeshWorkItemStorage(meshWorkItems, asset);
+            asset.hierarchy.bindings.reserve(meshWorkItems.size());
+            for (const auto &item : meshWorkItems)
+                asset.hierarchy.bindings.push_back({item.nodeIndex, static_cast<std::uint32_t>(item.slot),
+                    item.transform, item.animatedNodeIndex, item.hasSkinning});
 
             std::vector<uint8_t> meshMissingNormalFallbacks(meshWorkItems.size(), 0);
             auto writeMesh = [&](const AssimpMeshWorkItem &workItem)
@@ -4582,7 +4595,7 @@ namespace PlutoGE::assetimport
             return asset;
         }
 
-        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
+        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions, bool useLegacyCache = true)
         {
             const auto importStart = ImportClock::now();
             auto logProgress = [&](std::string_view stage)
@@ -4605,7 +4618,7 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
             }
 
-            if (auto cookedAsset = TryLoadCookedMeshAsset(filePath, cookOptions))
+            if (auto cookedAsset = useLegacyCache ? TryLoadCookedMeshAsset(filePath, cookOptions) : std::nullopt)
             {
                 logProgress("Loaded cooked cache; finished");
                 return std::move(*cookedAsset);
@@ -4621,7 +4634,9 @@ namespace PlutoGE::assetimport
 
                 auto asset = ParseAssimpMeshAsset(filePath, cookOptions, &profile);
                 logProgress("FBX parsed; writing cooked cache");
-                StoreCookedMeshAsset(filePath, cookOptions, asset);
+                for (const auto &texture : asset.textures)
+                    if (!texture.sourcePath.empty()) asset.sourceDependencies.push_back(texture.sourcePath);
+                if (useLegacyCache) StoreCookedMeshAsset(filePath, cookOptions, asset);
                 logProgress("Finished");
                 return asset;
             }
@@ -4656,9 +4671,42 @@ namespace PlutoGE::assetimport
             logProgress("GLB decoded; parsing skeleton and animations");
             std::vector<glm::mat4> nodeGlobals;
             std::vector<int> nodeParents;
+            std::vector<ImportedModelNode> sourceNodes(model.nodes.size());
+            for (std::size_t index = 0; index < model.nodes.size(); ++index)
+            {
+                sourceNodes[index].name = model.nodes[index].name;
+                sourceNodes[index].localTransform = ComposeNodeTransform(model.nodes[index]);
+                for (const int child : model.nodes[index].children)
+                {
+                    if (child < 0 || child >= static_cast<int>(sourceNodes.size()) || sourceNodes[child].parentNodeIndex != -1)
+                        throw std::runtime_error("glTF hierarchy contains an invalid or multiply-parented child.");
+                    sourceNodes[child].parentNodeIndex = static_cast<int>(index);
+                }
+            }
+            ImportedModelHierarchy sourceHierarchy;
+            std::string hierarchyError;
+            if (!BuildImportedModelHierarchy(std::move(sourceNodes), sourceHierarchy, &hierarchyError))
+                throw std::runtime_error(hierarchyError);
+            if (!model.scenes.empty())
+            {
+                const int selectedScene = model.defaultScene >= 0 ? model.defaultScene : 0;
+                if (selectedScene >= static_cast<int>(model.scenes.size())) throw std::runtime_error("Invalid glTF default scene.");
+                sourceHierarchy.sceneRoots = model.scenes[selectedScene].nodes;
+                for (const int root : sourceHierarchy.sceneRoots)
+                    if (root < 0 || root >= static_cast<int>(sourceHierarchy.nodes.size())) throw std::runtime_error("Invalid glTF scene root.");
+            }
             ComputeNodeGlobals(model, nodeGlobals, nodeParents);
 
             ImportedMeshSourceAsset parsedMeshAsset;
+            parsedMeshAsset.hierarchy = std::move(sourceHierarchy);
+
+            for (const auto &buffer : model.buffers)
+            {
+                tinygltf::Image external;
+                external.uri = buffer.uri;
+                const auto dependency = ResolveImageSourcePath(filePath, external);
+                if (!dependency.empty()) parsedMeshAsset.sourceDependencies.push_back(dependency);
+            }
             parsedMeshAsset.skeleton = ParseSkeleton(model, FindPrimarySkinIndex(model), nodeGlobals, nodeParents);
             parsedMeshAsset.animationNodes = ParseAnimationNodes(model, nodeParents);
             parsedMeshAsset.animations = ParseAnimations(model, parsedMeshAsset.skeleton, nodeGlobals, nodeParents);
@@ -4725,6 +4773,10 @@ namespace PlutoGE::assetimport
             }
 
             AssignPrimitiveWorkItemStorage(primitiveWorkItems, parsedMeshAsset);
+            parsedMeshAsset.hierarchy.bindings.reserve(primitiveWorkItems.size());
+            for (const auto &item : primitiveWorkItems)
+                parsedMeshAsset.hierarchy.bindings.push_back({item.nodeIndex, static_cast<std::uint32_t>(item.slot),
+                    item.worldTransform, item.animatedNodeIndex, item.jointsView.has_value() && item.weightsView.has_value()});
 
             std::vector<double> primitiveVertexAssemblyTimes(primitiveWorkItems.size(), 0.0);
             std::vector<double> primitiveIndexAssemblyTimes(primitiveWorkItems.size(), 0.0);
@@ -4782,7 +4834,9 @@ namespace PlutoGE::assetimport
             DeduplicateImportedMaterials(parsedMeshAsset);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             logProgress("Mesh optimized; writing cooked cache");
-            StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
+            for (const auto &texture : parsedMeshAsset.textures)
+                if (!texture.sourcePath.empty()) parsedMeshAsset.sourceDependencies.push_back(texture.sourcePath);
+            if (useLegacyCache) StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
             logProgress("Finished");
             return parsedMeshAsset;
         }
@@ -4799,9 +4853,10 @@ namespace PlutoGE::assetimport
         return extension == ".glb" || extension == ".gltf" || extension == ".fbx";
     }
 
-    ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options) const
+    ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options,
+                                                                         MeshSourceCachePolicy cachePolicy) const
     {
-        return ParseMeshAsset(filePath, ResolveMeshCookOptions(options));
+        return ParseMeshAsset(filePath, ResolveMeshCookOptions(options), cachePolicy == MeshSourceCachePolicy::UseLegacyCache);
     }
 
     void MeshImporter::BuildMeshLods(render::MeshData &data, std::vector<render::Submesh> &submeshes)

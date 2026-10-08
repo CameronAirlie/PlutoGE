@@ -431,7 +431,8 @@ namespace PlutoGE::scene
         {
             if (componentType == "MeshComponent")
             {
-                return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
+                return propertyName == "SourceMesh" || propertyName == "MeshAssetReference" ||
+                       propertyName == "SourceMeshPath" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
             }
             if (componentType == "TerrainComponent")
             {
@@ -478,7 +479,7 @@ namespace PlutoGE::scene
 
         std::string CanonicalizeStoredAssetPath(assets::AssetManager &assetManager, const std::string &value)
         {
-            if (value.empty() || assets::Project::IsProjectAssetReference(value) ||
+            if (value.empty() || value.starts_with("asset://") || assets::Project::IsProjectAssetReference(value) ||
                 assets::Project::IsEngineAssetReference(value))
                 return value;
             if (std::filesystem::path(value).is_absolute())

@@ -107,6 +107,9 @@ int main(int argc, char **argv)
         assert(assets::SaveModelAsset(manifest.string(), resolutionModel));
         assets::AssetManager resolver;
         resolver.SetProjectContext(resolutionRoot.string());
+        assert(resolver.GetStableAssetId("project://Model.fbx") == "model-id");
+        const auto initialSource = resolver.ResolveStableAssetId("model-id");
+        assert(initialSource == "project://Model.fbx");
         assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
         assert(resolver.ResolveModelObject("model-id", 42) == "project://first.plutomesh");
         assert(resolver.ResolveModelObject("model-id", 99).empty());

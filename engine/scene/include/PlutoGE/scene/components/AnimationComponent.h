@@ -147,6 +147,8 @@ namespace PlutoGE::scene
         const std::string &GetAnimationGraphAssetReference() const { return m_animationGraphAssetReference; }
 
         const std::vector<render::AnimationClip> &GetClips() const { return m_clips; }
+        // Resource changes invalidate binding/pose caches without resetting playback or authored state.
+        void NotifyMeshChanged();
         bool IsJointPoseDirty() const { return m_jointMatricesDirty; }
         std::uint64_t GetJointPoseRevision() const { return m_jointPoseRevision; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);

@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
+#include "PlutoGE/scene/AssetReconciliation.h"
 #include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -126,6 +127,9 @@ namespace PlutoGE::scene
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
         bool DestroyEntity(EntityID entityId);
+        // Rebind imported geometry while retaining explicit instance overrides.
+        AssetReconciliationReport ApplyModelAssetGeneration(const std::string &sourceAssetId,
+            const std::string &sourceReference, assets::AssetManager &manager, const ModelAssetSnapshot &previous);
         std::size_t RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
         std::size_t RemapMaterialAsset(const std::string &oldMaterialAssetReference,
                                        const std::string &newMaterialAssetReference,

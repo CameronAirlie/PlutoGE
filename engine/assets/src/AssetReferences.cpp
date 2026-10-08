@@ -1,6 +1,8 @@
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/assets/AssetReference.h"
 
 #include <algorithm>
+#include <exception>
 #include <array>
 #include <charconv>
 #include <cctype>
@@ -53,10 +55,11 @@ namespace PlutoGE::assets
             return result;
         }
 
-        void Add(AssetReferenceScan &scan, std::string_view value, std::size_t line)
+        void Add(AssetReferenceScan &scan, std::string_view value, std::size_t line, AssetReferenceRole role = AssetReferenceRole::Runtime)
         {
             auto reference = NormalizeAssetReference(value);
-            if (!reference.empty()) scan.occurrences.push_back({std::move(reference), line});
+            if (!reference.empty()) scan.occurrences.push_back({std::move(reference), line, role});
+            else if (value.starts_with("asset://")) scan.errors.push_back("Invalid logical reference at line " + std::to_string(line));
         }
 
         void SplitValues(AssetReferenceScan &scan, std::string_view value, char delimiter,
@@ -71,6 +74,31 @@ namespace PlutoGE::assets
                 if (end == std::string_view::npos) break;
                 value.remove_prefix(end + 1);
             }
+        }
+
+        bool DecodeRelativeUri(std::string_view uri, std::string &decoded)
+        {
+            auto hex = [](unsigned char c) -> int
+            {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            decoded.clear();
+            for (std::size_t index = 0; index < uri.size(); ++index)
+            {
+                auto character = static_cast<unsigned char>(uri[index]);
+                if (character == '%')
+                {
+                    if (index + 2 >= uri.size() || hex(uri[index + 1]) < 0 || hex(uri[index + 2]) < 0) return false;
+                    character = static_cast<unsigned char>((hex(uri[index + 1]) << 4) | hex(uri[index + 2]));
+                    index += 2;
+                }
+                if (character < 32 || character == 127) return false;
+                decoded.push_back(static_cast<char>(character));
+            }
+            return true;
         }
 
         void QuotedValues(AssetReferenceScan &scan, std::string_view value, std::size_t line,
@@ -115,12 +143,27 @@ namespace PlutoGE::assets
                     key = before.substr(begin == std::string_view::npos ? 0 : begin + 1);
                 }
                 if (key != "src" && key != "href" && key != "uri") continue;
-                for (std::size_t amp = 0; (amp = field.find("&amp;", amp)) != std::string::npos; ++amp)
-                    field.replace(amp, 5, "&");
+                if (Extension(path) != ".gltf")
+                    for (std::size_t amp = 0; (amp = field.find("&amp;", amp)) != std::string::npos; ++amp)
+                        field.replace(amp, 5, "&");
+                if (key == "uri" && Extension(path) == ".gltf")
+                {
+                    std::string decoded;
+                    if (!DecodeRelativeUri(field, decoded))
+                    { scan.errors.push_back("Invalid glTF URI at line " + std::to_string(line)); continue; }
+                    field = std::move(decoded);
+                }
                 const auto base = key == "src" && path.extension() == ".rml"
                     ? path.parent_path().parent_path() : path.parent_path();
-                const auto resolved = (base / FromUtf8(field)).lexically_normal();
-                Add(scan, "project://" + Utf8(resolved.lexically_relative(root)), line);
+                try
+                {
+                    const auto resolved = (base / FromUtf8(field)).lexically_normal();
+                    const auto reference = "project://" + Utf8(resolved.lexically_relative(root));
+                    if (key == "uri" && Extension(path) == ".gltf" && NormalizeAssetReference(reference).empty())
+                        scan.errors.push_back("glTF URI escapes the asset root at line " + std::to_string(line));
+                    else Add(scan, reference, line);
+                }
+                catch (const std::exception &) { scan.errors.push_back("Invalid relative dependency path at line " + std::to_string(line)); }
             }
         }
 
@@ -175,13 +218,48 @@ namespace PlutoGE::assets
                     Add(scan, "project://" + std::string(value), number);
                 else Add(scan, value, number);
             }
+            else if ((extension == ".plutomaterial" || extension == ".mat") && key == "ShaderGraphTexture")
+            {
+                const auto delimiter = value.find('|');
+                if (delimiter == std::string_view::npos || delimiter == 0 || value.find('|', delimiter + 1) != std::string_view::npos)
+                    scan.errors.push_back("Malformed shader graph texture at line " + std::to_string(number));
+                else Add(scan, value.substr(delimiter + 1), number);
+            }
             else if (extension == ".plutoanimgraph" || extension == ".plutoshadergraph")
                 SplitValues(scan, value, '|', number, false);
             else
                 Add(scan, value, number);
         }
 
-        void ScanBinaryStrings(std::istream &input, AssetReferenceScan &scan, std::stop_token stop)
+        bool IsMeshSourceTrailer(std::istream &input, std::uint32_t version, std::streamoff fileSize)
+        {
+            if (version != 4 && version != 5) return false;
+            const auto position = input.tellg();
+            if (position < 0 || fileSize < static_cast<std::streamoff>(position)) return false;
+            const auto remaining = fileSize - static_cast<std::streamoff>(position);
+            bool source = false;
+            if (version == 4) source = remaining == 3;
+            else if (remaining >= 19)
+            {
+                std::array<unsigned char, 8> bytes{};
+                input.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
+                std::uint64_t ownerSize = 0;
+                for (std::size_t index = 0; index < bytes.size(); ++index) ownerSize |= std::uint64_t(bytes[index]) << (index * 8);
+                source = input.good() && ownerSize <= MaxReferenceSize && ownerSize == static_cast<std::uint64_t>(remaining - 19);
+                if (source) input.seekg(position + static_cast<std::streamoff>(8 + ownerSize + 8));
+            }
+            if (source)
+            {
+                std::array<unsigned char, 3> flags{};
+                input.read(reinterpret_cast<char *>(flags.data()), flags.size());
+                source = input.good() && std::all_of(flags.begin(), flags.end(), [](auto flag) { return flag <= 1; });
+            }
+            input.clear();
+            input.seekg(position);
+            return source;
+        }
+
+        void ScanBinaryStrings(std::istream &input, AssetReferenceScan &scan, std::stop_token stop, std::uint32_t meshVersion, std::streamoff fileSize)
         {
             // Native mesh/clip/animation files use uint64 length-prefixed UTF-8
             // strings. Recognize whole reference strings, not printable fragments
@@ -193,7 +271,7 @@ namespace PlutoGE::assets
             {
                 if ((cursor & 4095) == 0 && stop.stop_requested()) { scan.cancelled = true; return; }
                 history[cursor++ % history.size()] = c;
-                for (std::string_view prefix : {"project://", "engine://"})
+                for (std::string_view prefix : {"project://", "engine://", "asset://"})
                 {
                     if (cursor < prefix.size() + 8) continue;
                     bool matches = true;
@@ -211,7 +289,8 @@ namespace PlutoGE::assets
                         scan.errors.push_back("Truncated serialized reference string.");
                         return;
                     }
-                    Add(scan, reference, 0);
+                    const auto role = IsMeshSourceTrailer(input, meshVersion, fileSize) ? AssetReferenceRole::ImportSource : AssetReferenceRole::Runtime;
+                    Add(scan, reference, 0, role);
                     cursor = 0; // Direct reads consumed the rest of this string.
                     break;
                 }
@@ -231,6 +310,14 @@ namespace PlutoGE::assets
 
     std::string NormalizeAssetReference(std::string_view reference)
     {
+        if (reference.starts_with("asset://"))
+        {
+            AssetReference identity;
+            std::string normalized;
+            if (reference.size() > MaxReferenceSize || !ParseAssetReference(reference, identity) ||
+                !SerializeAssetReference(identity, normalized)) return {};
+            return normalized;
+        }
         const std::size_t prefix = reference.starts_with("project://") ? 10 : reference.starts_with("engine://") ? 9 : 0;
         if (!prefix || reference.size() <= prefix || reference.size() > MaxReferenceSize ||
             std::any_of(reference.begin(), reference.end(), [](unsigned char c) { return c < 32; })) return {};
@@ -261,7 +348,21 @@ namespace PlutoGE::assets
         input.clear();
         input.seekg(0);
         if (binary)
-            ScanBinaryStrings(input, result, stop);
+        {
+            std::uint32_t meshVersion = 0;
+            if (magic == std::array<char, 4>{'L','P','G','M'})
+            {
+                std::array<unsigned char, 4> version{};
+                input.seekg(4);
+                input.read(reinterpret_cast<char *>(version.data()), version.size());
+                for (std::size_t index = 0; index < version.size(); ++index) meshVersion |= std::uint32_t(version[index]) << (index * 8);
+            }
+            input.clear();
+            input.seekg(0, std::ios::end);
+            const auto size = static_cast<std::streamoff>(input.tellg());
+            input.seekg(0);
+            ScanBinaryStrings(input, result, stop, meshVersion, size);
+        }
         else
         {
             std::string line;

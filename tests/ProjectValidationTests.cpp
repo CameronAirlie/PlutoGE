@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/AssetCatalog.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include <algorithm>
 #include <chrono>
@@ -48,6 +49,18 @@ int main()
         Write(main, good);
         auto result = ValidateProject(input);
         Require(result.diagnostics.empty(), "Valid scene produced diagnostics");
+        input.currentScene = good + "COMPONENT\t1\tMeshComponent\t1\nPROPERTY\tMesh\t2\tasset://model-owner#42\t0\nEND_COMPONENT\n";
+        input.currentSceneOwner = "project://Main.plutoscene";
+        Require(Has(ValidateProject(input), "asset.unverified"), "Logical reference without catalog silently ignored");
+        auto logicalCatalog = std::make_shared<AssetCatalog>();
+        Require(logicalCatalog->Replace({{.identity={"model-owner",42}, .type=ProjectAssetType::Mesh,
+                    .location="engine://builtin/mesh/cube"}}), "Cannot create validation catalog");
+        input.assetCatalog = logicalCatalog;
+        Require(ValidateProject(input).diagnostics.empty(), "Catalog-backed logical reference rejected");
+        Require(logicalCatalog->Replace({}), "Cannot clear validation catalog");
+        Require(Has(ValidateProject(input), "asset.missing"), "Missing logical object not reported");
+        input.currentScene.reset();
+        input.assetCatalog.reset();
         const std::string terrainScene = good + "COMPONENT\t1\tTerrainComponent\t1\nPROPERTY\tHeightSamples\t2\t" +
             std::string(3 * 1024 * 1024, '0') + "\t0\nEND_COMPONENT\n";
         Write(main, terrainScene);

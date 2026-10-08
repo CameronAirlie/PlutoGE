@@ -610,7 +610,9 @@ namespace PlutoGE::ui
         }
 
         ImGui::Separator();
-        ImGui::BeginDisabled(engineMaterial || !m_dirty);
+        const bool importedMaterial = core::Engine::GetInstance().GetAssetManager().IsImportedAsset(reference);
+        if (importedMaterial) ImGui::TextWrapped("Imported material: extract an authored copy to edit it.");
+        ImGui::BeginDisabled(engineMaterial || importedMaterial || !m_dirty);
         if (ImGui::Button("Save"))
         {
             render::MaterialConfig config;

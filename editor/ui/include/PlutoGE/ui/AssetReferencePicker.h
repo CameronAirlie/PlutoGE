@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/AssetCatalog.h"
 
 #include <functional>
 #include <span>
@@ -38,7 +39,15 @@ namespace PlutoGE::ui
         std::span<const AssetReferenceOption> builtinOptions;
         // Further narrows the offered assets (for example by extension).
         std::function<bool(const AssetReferenceOption &)> filter;
+        // Immutable catalog for this project. Pure choice collection never
+        // reaches into global engine state; rendering supplies the active snapshot.
+        const assets::AssetCatalog *catalog = nullptr;
     };
+
+    // Normalize identity aliases to catalog locations for UI comparison and
+    // filters. Unknown identities are preserved so they remain diagnosable.
+    [[nodiscard]] std::string ResolveAssetPickerReference(const assets::AssetCatalog *catalog,
+                                                          const std::string &reference);
 
     // The choices a picker offers: builtin options, then the project's assets
     // of `types` (and engine built-ins when requested) that pass the filter,

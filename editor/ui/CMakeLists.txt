@@ -6,6 +6,7 @@ add_library(PlutoGEEditorUI
     src/RmlDocumentPreview.cpp
     src/panels/RmlDocumentEditorPanel.cpp
     src/EditorShell.cpp
+    src/EditorAssetImports.cpp
     src/SceneRecovery.cpp
     src/SceneRecoveryUI.cpp
     src/ProjectValidationUI.cpp
@@ -61,6 +62,7 @@ if (NOT WIN32)
 endif()
 
 target_link_libraries(PlutoGEEditorUI PUBLIC
+    PlutoGE::AssetImport
     PlutoGE::Core
     PlutoGE::Scene
     PlutoGE::glm

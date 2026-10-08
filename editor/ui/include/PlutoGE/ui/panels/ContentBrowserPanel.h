@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/import/MeshImportOptions.h"
+
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
@@ -14,6 +16,7 @@
 namespace PlutoGE::assets
 {
     class Project;
+    class AssetCatalog;
 }
 
 namespace PlutoGE::core { class Engine; }
@@ -95,11 +98,18 @@ namespace PlutoGE::ui
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
         std::string m_selectedFolder;
+        std::string m_modelSettingsReference;
+        assetimport::MeshImportOptions m_modelSettingsDraft{true, true, true};
+        assetimport::MeshImportOptions m_modelSettingsCommitted{true, true, true};
+        std::string m_modelSettingsError;
+        bool m_modelSettingsValid = false;
+        bool m_modelSettingsAwaitingImport = false;
         std::string m_openModelReference;
         std::string m_openModelName;
         std::vector<assets::ModelSubAsset> m_openModelObjects;
         bool m_assetCacheDirty = true;
         const assets::Project *m_cachedProject = nullptr;
+        std::shared_ptr<const assets::AssetCatalog> m_cachedCatalog;
         std::string m_cachedFilter;
         std::string m_cachedFolder;
         std::vector<std::string> m_cachedAssetReferences;

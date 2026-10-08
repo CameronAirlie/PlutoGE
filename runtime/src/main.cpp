@@ -12,6 +12,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
@@ -222,7 +223,8 @@ int RunRuntime(int argc, char **argv)
 {
     if (argc == 2 && std::string_view(argv[1]) == "--pack-version")
     {
-        std::cout << PlutoGE::assets::kRuntimeContentPackMarker << '\n';
+        std::cout << PlutoGE::assets::kRuntimeContentPackMarker << '\n'
+                  << PlutoGE::assets::kRuntimeAssetPipelineMarker << '\n';
         return 0;
     }
     if (argc > 1 && std::string_view(argv[1]) == "--pack")
@@ -443,6 +445,31 @@ int RunRuntime(int argc, char **argv)
 
     auto &engine = PlutoGE::core::Engine::GetInstance();
     engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory);
+    const auto catalogPath = project->GetRootDirectory() / "PlutoAssetCatalog.manifest";
+    std::error_code catalogError;
+    const bool hasCatalog = PlutoGE::content::IsRegularFile(catalogPath, catalogError);
+    if (hasCatalog && !engine.GetAssetManager().LoadAssetCatalog(catalogPath.string(), &errorMessage))
+    {
+        std::cerr << "Failed to load runtime asset catalog: " << errorMessage << std::endl;
+        return 1;
+    }
+    if (!hasCatalog)
+    {
+        // Source projects need the same identity and Library routes as the
+        // editor. Startup is read-only; importing remains an explicit action.
+        PlutoGE::assets::AssetDatabase database;
+        PlutoGE::assets::AssetScanOptions options;
+        options.createMissingMetadata = false;
+        options.hashContent = false;
+        options.collectDependencies = false;
+        if (!database.Scan(*project, options, &errorMessage))
+        {
+            std::cerr << "Failed to load source project asset catalog: " << errorMessage << std::endl;
+            return 1;
+        }
+        engine.GetAssetManager().SetAssetSnapshot(database.GetCatalog(), database.GetStorageMap());
+    }
+
 
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.Log("Project root: " + project->GetRootDirectory().string());

@@ -14,10 +14,13 @@ namespace PlutoGE::assets
     // Terrain height samples are serialized as a single scene property.
     inline constexpr std::size_t MaxSceneRecordSize = 64ull * 1024 * 1024;
 
+    enum class AssetReferenceRole { Runtime, ImportSource };
+
     struct AssetReferenceOccurrence
     {
         std::string reference;
         std::size_t line = 0; // Zero for a binary serialized string.
+        AssetReferenceRole role = AssetReferenceRole::Runtime;
     };
 
     struct AssetReferenceScan

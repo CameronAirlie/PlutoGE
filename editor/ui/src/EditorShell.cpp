@@ -1,3 +1,7 @@
+#include "PlutoGE/asset_import/ModelImportTask.h"
+#include "PlutoGE/assets/AssetDatabase.h"
+#include "PlutoGE/assets/ProjectAssetLock.h"
+#include "PlutoGE/asset_import/ImportFileTransaction.h"
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
@@ -853,7 +857,7 @@ namespace PlutoGE::ui
 
     EditorShell::EditorShell() = default;
 
-    EditorShell::~EditorShell() = default;
+    EditorShell::~EditorShell() { CancelModelImport(); }
 
     void EditorShell::InitializeEditorCamera()
     {
@@ -866,15 +870,60 @@ namespace PlutoGE::ui
 
     void EditorShell::ApplyProjectContext()
     {
+        CancelModelImport();
+        m_importWatchPrimed = false;
+        ++m_assetContextEpoch;
+        m_modelImportErrors.clear();
+        m_lastModelImportError.clear();
+        m_activeModelAssetSnapshot = {};
         m_bookmarkPath.clear();
         auto &assetManager = m_engine.GetAssetManager();
         if (m_project)
         {
             assetManager.SetProjectContext(m_project->GetRootDirectory().string(), m_project->GetManifest().assetDirectory);
+            const bool refreshed = RefreshProjectAssets();
+            m_assetRefreshPending = !refreshed && IsModelImportRunning();
+            m_assetReconciliationRequested = refreshed && m_project->GetManifest().assetPipelineVersion >= 2;
+
             return;
         }
 
         assetManager.ClearProjectContext();
+    }
+
+    bool EditorShell::RefreshProjectAssets()
+    {
+        if (!m_project) return false;
+        if (IsModelImportRunning())
+        {
+            Log(ConsoleSeverity::Info, "Asset refresh will follow the active model import.");
+            return false;
+        }
+        assets::AssetDatabase database;
+        std::string error;
+        assets::ProjectAssetLock lock;
+        if (!lock.TryAcquire(m_project->GetRootDirectory(), &error))
+        {
+            Log(ConsoleSeverity::Error, "Cannot refresh asset catalog: " + error);
+            return false;
+        }
+        if (!assetimport::ImportFileTransaction::Recover(m_project->GetRootDirectory(), m_project->GetAssetDirectoryPath(), &error) ||
+            !database.Scan(*m_project, assets::AssetScanOptions{.allowUnavailableImportedStorage=true}, &error))
+        {
+            Log(ConsoleSeverity::Error, "Cannot refresh asset catalog: " + error);
+            return false;
+        }
+        auto &assetManager = m_engine.GetAssetManager();
+        assetManager.SetAssetSnapshot(database.GetCatalog(), database.GetStorageMap());
+        if (m_project->GetManifest().assetPipelineVersion >= 2)
+            assetManager.SetLogicalReferenceTypes({assets::ProjectAssetType::Mesh, assets::ProjectAssetType::Material,
+                assets::ProjectAssetType::Texture, assets::ProjectAssetType::Animation, assets::ProjectAssetType::AnimationClip,
+                assets::ProjectAssetType::AnimationGraph});
+        else
+            assetManager.SetLogicalReferenceTypes({});
+        m_reconciliationChangedPaths.clear();
+        m_assetReconciliationRequested = m_project->GetManifest().assetPipelineVersion >= 2;
+        return true;
     }
 
     void EditorShell::LoadRecentProjects()
@@ -1484,6 +1533,11 @@ namespace PlutoGE::ui
 
     bool EditorShell::StartEditorRuntime(ViewportPanel &gameViewport)
     {
+        if (IsModelImportRunning())
+        {
+            m_statusMessage = "Wait for asset processing to finish before starting Play.";
+            return false;
+        }
         if (m_engine.IsRuntimeRunning())
         {
             return true;
@@ -2542,6 +2596,11 @@ namespace PlutoGE::ui
 
     bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath)
     {
+        if (IsModelImportRunning())
+        {
+            m_statusMessage = "Finish or cancel the active model import before exporting.";
+            return false;
+        }
         if (!m_project)
         {
             m_statusMessage = "No project loaded.";
@@ -3069,6 +3128,7 @@ namespace PlutoGE::ui
             core::CpuScope eventsScope("PollEvents", core::CpuCategory::Other);
             const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();
+            PollModelImport();
             eventsScope.End();
             const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();

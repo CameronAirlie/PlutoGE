@@ -547,6 +547,7 @@ namespace PlutoGE::scene
         auto *sourceMaterial = GetMaterialForMaterialSlot(materialSlotIndex);
         auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
         SetMaterialForMaterialSlot(materialSlotIndex, uniqueMaterial);
+        SetMaterialAssetForMaterialSlot(materialSlotIndex, {});
         return uniqueMaterial;
     }
 
@@ -576,6 +577,7 @@ namespace PlutoGE::scene
         auto *sourceMaterial = GetMaterialForSubmesh(submeshIndex);
         auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
         SetMaterialForSubmesh(submeshIndex, uniqueMaterial);
+        SetMaterialAssetForSubmesh(submeshIndex, {});
         return uniqueMaterial;
     }
 
@@ -831,13 +833,16 @@ namespace PlutoGE::scene
             const auto &config = material->ReadConfig();
             const std::string prefix = std::string(kMaterialSlotPrefix) + std::to_string(materialSlotIndex) + ".";
             const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
-            if (!materialAssetReference.empty())
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            if (!materialAssetReference.empty() && assetManager.FindLoadedMaterialAsset(materialAssetReference) == material)
             {
                 // Mesh assets already own their default material table. Repeating that
                 // table on every submesh entity made large imported hierarchies grow
                 // quadratically. Only persist an actual per-component override.
                 if (assetMaterialReferences && materialSlotIndex < assetMaterialReferences->size() &&
-                    materialAssetReference == (*assetMaterialReferences)[materialSlotIndex])
+                    (materialAssetReference == (*assetMaterialReferences)[materialSlotIndex] ||
+                     (!assetManager.ResolveAssetPath(materialAssetReference).empty() &&
+                      assetManager.ResolveAssetPath(materialAssetReference) == assetManager.ResolveAssetPath((*assetMaterialReferences)[materialSlotIndex]))))
                 {
                     continue;
                 }

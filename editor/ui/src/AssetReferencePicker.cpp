@@ -1,6 +1,9 @@
 #include "PlutoGE/ui/AssetReferencePicker.h"
 
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 
 #include <imgui.h>
 
@@ -143,7 +146,7 @@ namespace PlutoGE::ui
 
     std::string ToProjectAssetReference(const assets::Project &project, const std::string &pathOrReference)
     {
-        if (pathOrReference.empty() || assets::Project::IsProjectAssetReference(pathOrReference) ||
+        if (pathOrReference.empty() || pathOrReference.starts_with("asset://") || assets::Project::IsProjectAssetReference(pathOrReference) ||
             assets::Project::IsEngineAssetReference(pathOrReference))
             return pathOrReference;
         std::filesystem::path path(pathOrReference);
@@ -152,6 +155,14 @@ namespace PlutoGE::ui
             path = project.GetAssetDirectoryPath() / path;
         const auto reference = project.MakeAssetReference(path);
         return assets::Project::IsProjectAssetReference(reference) ? reference : pathOrReference;
+    }
+
+    std::string ResolveAssetPickerReference(const assets::AssetCatalog *catalog, const std::string &reference)
+    {
+        assets::AssetReference identity;
+        if (catalog && assets::ParseAssetReference(reference, identity))
+            if (const auto *object = catalog->Find(identity)) return object->location;
+        return reference;
     }
 
     std::vector<AssetReferenceOption> CollectProjectAssetChoices(const assets::Project *project,
@@ -170,8 +181,20 @@ namespace PlutoGE::ui
         };
         for (const auto type : types)
         {
+            if (project && options.catalog)
+                for (const auto &object : options.catalog->GetObjects())
+                {
+                    if (object.type != type) continue;
+                    auto display = object.location;
+                    if (display.starts_with(assets::Project::kProjectAssetScheme))
+                        display.erase(0, assets::Project::kProjectAssetScheme.size());
+                    offer({object.location, std::move(display)});
+                }
             for (const auto &option : GetCachedAssetReferenceOptions(project, type))
+            {
+                if (options.catalog && assets::Project::IsProjectAssetReference(option.reference)) continue;
                 offer(option);
+            }
             // Built-ins stay available even when the manifest does not list them.
             if (options.includeEngineAssets && project)
                 for (const auto &option : GetCachedAssetReferenceOptions(nullptr, type))
@@ -196,16 +219,24 @@ namespace PlutoGE::ui
                                   std::span<const assets::ProjectAssetType> types, std::string &reference,
                                   const ProjectAssetPickerOptions &options)
     {
-        const auto choices = CollectProjectAssetChoices(project, types, options);
+        auto effectiveOptions = options;
+        // Keep the snapshot alive throughout rendering, including drag/drop.
+        const auto snapshot = project && project == EditorShell::GetInstance().GetProject()
+            ? core::Engine::GetInstance().GetAssetManager().GetAssetCatalog() : nullptr;
+        if (!effectiveOptions.catalog) effectiveOptions.catalog = snapshot.get();
+        const auto choices = CollectProjectAssetChoices(project, types, effectiveOptions);
+        const auto resolvedReference = ResolveAssetPickerReference(effectiveOptions.catalog, reference);
         const auto current = std::find_if(choices.begin(), choices.end(),
-                                          [&](const auto &choice) { return choice.reference == reference; });
+                                          [&](const auto &choice) { return choice.reference == resolvedReference; });
         const bool invalid = !reference.empty() && current == choices.end();
         // Distinguish an existing asset the site's filter rejects (for example
         // the wrong scriptable object class) from one deleted or renamed.
         const bool incompatible = invalid && options.filter &&
-            std::ranges::any_of(CollectProjectAssetChoices(project, types, {.includeEngineAssets = options.includeEngineAssets}),
-                                [&](const auto &choice) { return choice.reference == reference; });
-        const bool missing = invalid && !incompatible && assets::Project::IsProjectAssetReference(reference);
+            std::ranges::any_of(CollectProjectAssetChoices(project, types, {.includeEngineAssets = options.includeEngineAssets,
+                                                                          .catalog = effectiveOptions.catalog}),
+                                [&](const auto &choice) { return choice.reference == resolvedReference; });
+        const bool missing = invalid && !incompatible &&
+            (assets::Project::IsProjectAssetReference(reference) || reference.starts_with("asset://"));
         const char *emptyPreview = options.emptyPreview ? options.emptyPreview
                                    : options.noneLabel  ? options.noneLabel
                                                         : "None";
@@ -217,7 +248,10 @@ namespace PlutoGE::ui
 
         bool changed = false;
         const auto choose = [&](const std::string &value) {
-            if (value == reference)
+            // Preserve an existing stable identity when its location was chosen.
+            // Consumers still accept compatibility project paths; persistence
+            // converts them through AssetManager at the owning boundary.
+            if (value == resolvedReference)
                 return;
             reference = value;
             changed = true;
@@ -250,7 +284,7 @@ namespace PlutoGE::ui
             {
                 if (search[0] != '\0' && !ContainsInsensitive(choice.displayName, search.data()))
                     continue;
-                const bool selected = choice.reference == reference;
+                const bool selected = choice.reference == resolvedReference;
                 if (ImGui::Selectable(choice.displayName.c_str(), selected))
                     choose(choice.reference);
                 if (selected)
@@ -268,8 +302,9 @@ namespace PlutoGE::ui
                 const auto *data = static_cast<const char *>(payload->Data);
                 const std::string dropped(data, data + payload->DataSize - 1);
                 // Drops follow the same rule as the list.
-                if (std::any_of(choices.begin(), choices.end(), [&](const auto &choice) { return choice.reference == dropped; }))
-                    choose(dropped);
+                const auto resolvedDrop = ResolveAssetPickerReference(effectiveOptions.catalog, dropped);
+                if (std::any_of(choices.begin(), choices.end(), [&](const auto &choice) { return choice.reference == resolvedDrop; }))
+                    choose(resolvedDrop);
             }
             ImGui::EndDragDropTarget();
         }

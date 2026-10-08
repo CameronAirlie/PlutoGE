@@ -4,6 +4,8 @@
 #endif
 
 #include "PlutoGE/assets/ModelAsset.h"
+#include "PlutoGE/assets/ModelSourcePackage.h"
+#include <stdexcept>
 
 #include <cassert>
 #include <filesystem>
@@ -31,6 +33,65 @@ int main()
         }},
     };
 
+    source.generatedFiles.push_back({source.objects.front().reference, {}});
+    source.extensionRecords.push_back("FUTURE_RECORD\tkept");
+    std::string encoded;
+    std::string codecError;
+    assert(SerializeModelAsset(source, encoded, &codecError));
+    ModelAsset decoded;
+    assert(ParseModelAsset(encoded, decoded, &codecError));
+    assert(decoded.generatedFiles.size() == 1 && decoded.extensionRecords == source.extensionRecords);
+    std::string crlf;
+    for (const auto character : encoded) { if (character == '\n') crlf += '\r'; crlf += character; }
+    assert(ParseModelAsset(crlf, decoded, &codecError));
+    for (const auto &invalid : {
+        std::string("PLUTOMODEL\t1\nSOURCE\tproject://Robot.fbx\nSOURCE_HASH\t12junk\n"),
+        std::string("PLUTOMODEL\t1\nSOURCE\tproject://Robot.fbx\nOBJECT\t0\tMesh\tRobot\tproject://Robot.plutomesh\n"),
+        encoded + "SOURCE\tproject://Duplicate.fbx\n",
+        encoded + "OUTPUT_HASH\tproject://Invalid.plutomesh\tbad-digest\n",
+        std::string("PLUTOMODEL\t2\nSOURCE\tproject://Robot.fbx\n")})
+    {
+        decoded.sourceReference = "sentinel";
+        assert(!ParseModelAsset(invalid, decoded, &codecError) && decoded.sourceReference == "sentinel");
+    }
+    auto invalidObject = source;
+    invalidObject.objects.push_back(source.objects.front());
+    encoded = "sentinel";
+    assert(!SerializeModelAsset(invalidObject, encoded, &codecError) && encoded == "sentinel");
+    {
+        const auto Require = [](bool value, const char *message) { if (!value) throw std::runtime_error(message); };
+        AssetMetadata metadata{.id="owner", .extensionRecords={"CUSTOM\tkeep"}};
+        std::string error;
+        ModelAsset package;
+        package.sourceReference = "project://Robot.fbx";
+        package.sourceAssetId = metadata.id;
+        package.importerVersion = 4;
+        package.objects.push_back({42, ProjectAssetType::Mesh, "Robot", "project://Robot.plutomesh"});
+        package.generatedFiles.push_back({"project://Robot.plutomesh", {}});
+        package.extensionRecords.push_back("FUTURE_PACKAGE\tretained");
+        Require(WriteModelSourcePackage(metadata, package, &error), "Source package write failed");
+        ModelAsset restored;
+        Require(ReadModelSourcePackage(metadata, restored, &error) == ModelSourcePackageStatus::Success &&
+                restored.objects.front().localId == 42 && restored.generatedFiles.size() == 1 &&
+                restored.extensionRecords == package.extensionRecords, "Source package round trip lost provenance");
+        Require(metadata.extensionRecords.front() == "CUSTOM\tkeep", "Package update lost unrelated metadata");
+        auto escapingPackage = package;
+        escapingPackage.objects.front().reference = "project://../Outside.plutomesh";
+        const auto validPackageRecords = metadata.extensionRecords;
+        Require(!WriteModelSourcePackage(metadata, escapingPackage, &error) && metadata.extensionRecords == validPackageRecords, "Escaping package location was published");
+        auto brokenPackage = metadata;
+        brokenPackage.id = "other-owner";
+        Require(ReadModelSourcePackage(brokenPackage, restored, &error) == ModelSourcePackageStatus::Invalid &&
+                restored.sourceAssetId == metadata.id, "Package owner mismatch accepted or changed output");
+        brokenPackage = metadata;
+        brokenPackage.extensionRecords.push_back("MODEL_PACKAGE\t1");
+        Require(ReadModelSourcePackage(brokenPackage, restored, &error) == ModelSourcePackageStatus::Invalid, "Duplicate package header accepted");
+        brokenPackage = metadata;
+        for (auto &record : brokenPackage.extensionRecords) if (record == "MODEL_PACKAGE\t1") record = "MODEL_PACKAGE\t2";
+        const auto futurePackage = brokenPackage.extensionRecords;
+        Require(ReadModelSourcePackage(brokenPackage, restored, &error) == ModelSourcePackageStatus::UnsupportedVersion &&
+                !WriteModelSourcePackage(brokenPackage, package, &error) && brokenPackage.extensionRecords == futurePackage, "Future source package overwritten");
+    }
     const auto path = std::filesystem::current_path() / "ModelAssetTests.plutomodel";
     std::string error;
     assert(SaveModelAsset(path.string(), source, &error));
@@ -93,6 +154,10 @@ int main()
     std::filesystem::create_directories(legacyManifest.parent_path());
     std::ofstream(legacyManifest) << "legacy";
     assert(FindModelManifestPath(project, sourceReference) == legacyManifest);
+
+    ModelAsset otherOwner{.sourceReference="project://Other/Robot.fbx", .sourceAssetId="other-owner"};
+    assert(SaveModelAsset(legacyManifest.string(), otherOwner, &error));
+    assert(FindModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");
 
     std::ofstream(packageRoot / "Robot.plutomodel") << "canonical";
     assert(FindModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");

@@ -1,4 +1,6 @@
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AssetCatalog.h"
+#include "PlutoGE/assets/AssetStorageMap.h"
 #include "PlutoGE/platform/Window.h"
 #include "EmissionMaterialChecks.h"
 #include <chrono>
@@ -58,6 +60,39 @@ int main() try
     assets.ReloadMaterialAssets();
     require(assets.LoadMaterialAsset(reference) == material && material->GetConfig().alphaMode == render::AlphaMode::Opaque,
         "A missing material file invalidated the last loaded material");
+    const auto generationA = root / "Library" / "A" / "interior.plutomaterial";
+    const auto generationB = root / "Library" / "B" / "interior.plutomaterial";
+    for (const auto &generation : {generationA, generationB})
+        std::filesystem::create_directories(generation.parent_path());
+    { std::ofstream file(generationA); file << "Color=1,1,1,1\nAlphaMode=Blend\n"; }
+    { std::ofstream file(generationB); file << "Color=1,1,1,1\nAlphaMode=Mask\nAlphaCutoff=0.3\n"; }
+    auto catalog = std::make_shared<assets::AssetCatalog>();
+    require(catalog->Replace({{{"material-owner", 1}, assets::ProjectAssetType::Material,
+        assets::AssetOwnership::Imported, "Interior", reference}}), "Could not create material catalog");
+    auto storageA = std::make_shared<assets::AssetStorageMap>();
+    auto storageB = std::make_shared<assets::AssetStorageMap>();
+    require(storageA->Replace({{reference, generationA}}) && storageB->Replace({{reference, generationB}}),
+        "Could not create material storage snapshots");
+    assets.SetAssetSnapshot(catalog, storageA);
+    auto *borrowed = assets.LoadMaterialAsset("asset://material-owner#1");
+    require(borrowed && borrowed->GetConfig().alphaMode == render::AlphaMode::Blend,
+        "Could not load first material generation");
+    render::Material privateCopy(borrowed->GetConfig());
+    auto unavailable = std::make_shared<assets::AssetStorageMap>();
+    require(unavailable->Replace({{reference, generationA, {}, false}}), "Cannot create unavailable snapshot");
+    assets.SetAssetSnapshot(catalog, unavailable);
+    require(assets.ResolveAssetPath("asset://material-owner#1").empty() &&
+        borrowed->GetConfig().alphaMode == render::AlphaMode::Blend,
+        "Unavailable generation discarded the last borrowed material");
+    assets.SetAssetSnapshot(catalog, storageB);
+    require(assets.LoadMaterialAsset("asset://material-owner#1") == borrowed &&
+        assets.LoadMaterialAsset(generationB.string()) == borrowed &&
+        borrowed->GetConfig().alphaMode == render::AlphaMode::Mask,
+        "Relocated generation did not preserve and refresh borrowed material");
+    require(privateCopy.GetConfig().alphaMode == render::AlphaMode::Blend,
+        "Generation publication changed a scene-owned material copy");
+    require(assets.LoadMaterialAsset(generationA.string()) != borrowed,
+        "Old physical generation still aliases the new material");
     CheckEmissionMaterial(assets, root);
     std::cout << "Material reload and emissive import checks passed\n";
     return 0;

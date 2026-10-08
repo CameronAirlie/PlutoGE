@@ -1,4 +1,4 @@
-add_library(PlutoGEContent src/ContentPack.cpp)
+add_library(PlutoGEContent src/ContentPack.cpp src/ContentDigest.cpp src/FilesystemPaths.cpp)
 add_library(PlutoGE::Content ALIAS PlutoGEContent)
 target_include_directories(PlutoGEContent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(PlutoGEContent PRIVATE

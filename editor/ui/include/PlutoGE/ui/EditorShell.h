@@ -17,12 +17,19 @@
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/assets/ProjectValidation.h"
+#include "PlutoGE/import/MeshImportOptions.h"
+#include "PlutoGE/asset_import/ImportState.h"
+#include "PlutoGE/asset_import/ImportWatch.h"
 #include <chrono>
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <future>
+#include <deque>
+#include <unordered_map>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -35,6 +42,8 @@ namespace PlutoGE::assets
 {
     class Project;
 }
+
+namespace PlutoGE::assetimport { class ModelImportTask; struct ModelImportResult; }
 
 namespace PlutoGE::scene
 {
@@ -268,6 +277,24 @@ namespace PlutoGE::ui
         void ClearConsoleMessages();
         TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
         void MarkSceneDirty();
+        // Recovers publications and refreshes a validated catalog; logical writers are format-gated.
+        bool RefreshProjectAssets();
+        bool BeginModelImport(std::string sourceReference,
+                              std::optional<assetimport::MeshImportOptions> options = std::nullopt,
+                              std::string *errorMessage = nullptr, bool forceReimport = false);
+        // Owning thread only, shared by asynchronous and source-copy imports.
+        void PublishModelImportResult(const std::string &sourceReference, const assetimport::ModelImportResult &result,
+                                      const scene::ModelAssetSnapshot &previous);
+        bool IsModelImportRunning() const;
+        std::string GetModelImportProgress() const;
+        const std::string &GetLastModelImportError() const { return m_lastModelImportError; }
+        const std::string &GetModelImportError(const std::string &sourceReference) const
+        {
+            static const std::string empty;
+            const auto found = m_modelImportErrors.find(sourceReference);
+            return found == m_modelImportErrors.end() ? empty : found->second;
+        }
+        void CancelModelImport();
         void MarkProjectDirty();
         [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
         [[nodiscard]] bool IsProjectDirty() const { return m_projectDirty; }
@@ -295,6 +322,8 @@ namespace PlutoGE::ui
 
         void InitializeEditorCamera();
         void ApplyProjectContext();
+        void PollModelImport();
+        void PollImportWatch();
         std::filesystem::path ResolveProjectScriptAssemblyPath() const;
         bool ReloadProjectScriptAssembly(std::string *errorMessage = nullptr);
         std::filesystem::path GetProjectScriptSourceDirectory() const;
@@ -432,5 +461,41 @@ namespace PlutoGE::ui
         bool m_openInputMappingEditorRequested = false;
         std::optional<std::filesystem::path> m_pendingProjectLoad;
         std::optional<render::rhi::GraphicsApi> m_pendingGraphicsApi;
+        struct AssetReconciliationCompletion
+        {
+            std::filesystem::path projectPath;
+            std::uint64_t contextEpoch = 0;
+            bool succeeded = false;
+            bool cancelled = false;
+            std::vector<assetimport::ImportAssessment> assessments;
+            std::string error;
+        };
+        struct ImportWatchCompletion
+        {
+            std::filesystem::path projectPath;
+            std::uint64_t contextEpoch = 0;
+            bool succeeded = false;
+            bool cancelled = false;
+            assetimport::ImportWatchSnapshot snapshot;
+            std::string error;
+        };
+        assetimport::ImportWatchDebouncer m_importWatchDebouncer;
+        bool m_importWatchPrimed = false;
+        std::stop_source m_importWatchStop;
+        std::future<ImportWatchCompletion> m_importWatchFuture;
+        std::chrono::steady_clock::time_point m_nextImportWatch{};
+        std::string m_importWatchError;
+        std::uint64_t m_assetContextEpoch = 0;
+        std::uint64_t m_activeModelImportEpoch = 0;
+        bool m_assetRefreshPending = false;
+        bool m_assetReconciliationRequested = false;
+        std::vector<std::filesystem::path> m_reconciliationChangedPaths;
+        std::deque<std::string> m_pendingModelImports;
+        std::stop_source m_assetReconciliationStop;
+        std::future<AssetReconciliationCompletion> m_assetReconciliation;
+        scene::ModelAssetSnapshot m_activeModelAssetSnapshot;
+        std::unordered_map<std::string, std::string> m_modelImportErrors;
+        std::string m_lastModelImportError;
+        std::unique_ptr<assetimport::ModelImportTask> m_modelImportTask;
     };
 }

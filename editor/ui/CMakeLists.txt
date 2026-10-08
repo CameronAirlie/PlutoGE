@@ -19,6 +19,7 @@ add_library(PlutoGEEditorUI
     src/StaticModelHierarchyPlacement.cpp
     src/StaticModelHierarchyDialog.cpp
     src/ModelHierarchyView.cpp
+    src/ModelImportDependenciesInspector.cpp
     src/ModelHierarchyInspector.cpp
     src/SurfacePlacement.cpp
     src/GroundPlacement.cpp

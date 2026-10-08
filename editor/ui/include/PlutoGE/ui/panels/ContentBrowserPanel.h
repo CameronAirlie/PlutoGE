@@ -36,6 +36,7 @@ namespace PlutoGE::ui
     void ClearCachedMaterialPreviews();
     class AssetThumbnailCache;
     class AssetReferenceSearchPanel;
+    class ModelImportDependenciesInspector;
     class ModelHierarchyInspector;
     class StaticModelHierarchyDialog;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
@@ -56,6 +57,7 @@ namespace PlutoGE::ui
 
     private:
         std::unique_ptr<AssetReferenceSearchPanel> m_referenceSearch;
+        std::unique_ptr<ModelImportDependenciesInspector> m_importDependenciesInspector;
         std::unique_ptr<ModelHierarchyInspector> m_modelHierarchyInspector;
         std::unique_ptr<StaticModelHierarchyDialog> m_staticHierarchyDialog;
         enum class PendingMenuAction

@@ -119,8 +119,10 @@ namespace PlutoGE::render
             std::array<glm::vec4, 32> pointDirectionSpot{};
             std::array<glm::mat4, 24> pointShadowMatrices{};
             glm::vec4 pointParameters{0.0f};
+            std::array<glm::vec4, 4> iblOriginIntensity{}, iblSizeBlend{}, iblSettings{};
+            std::array<glm::vec4, 36> iblIrradiance{};
         };
-        static_assert(sizeof(BasicFrameParameters) == 4496);
+        static_assert(sizeof(BasicFrameParameters) == 5264);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -563,6 +565,10 @@ namespace PlutoGE::render
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float};
             descriptor.resourceBindings = {
+                {27,0,27,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
+                {28,0,28,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
+                {29,0,29,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
+                {30,0,30,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {26,1,18,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {22,1,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {23,1,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
@@ -1907,6 +1913,15 @@ namespace PlutoGE::render
         frameParameters.pointParameters = {static_cast<float>(pointCount + spotCount),
                                            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f,
                                            static_cast<float>(geometryMode)};
+        for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
+        {
+            const auto &capture = lighting.iblCaptures[i];
+            frameParameters.iblOriginIntensity[i] = glm::vec4(capture.origin, capture.atlas ? capture.intensity : 0);
+            frameParameters.iblSizeBlend[i] = glm::vec4(capture.size, capture.blendDistance);
+            frameParameters.iblSettings[i] = glm::vec4(capture.atlas ? 1 : 0, capture.resolution,
+                std::floor(std::log2(std::max(capture.resolution, 1.0f))), 0);
+            std::copy(capture.irradiance.begin(), capture.irradiance.end(), frameParameters.iblIrradiance.begin() + i * 9);
+        }
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -2485,7 +2500,11 @@ namespace PlutoGE::render
                 boundDrawPipeline = pipeline;
             }
             if (!geometryResourcesBound)
+            {
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
+                for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
+                    commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
+            }
             if (!instanced)
             {
                 const bool singleInstance = draw.instanceModels && draw.instanceModels->size() == 1;

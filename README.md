@@ -27,6 +27,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 
 ### Editor
 
+- Playable project templates, reusable gameplay kits, visual RML construction, automatic C# builds, and project editor commands: [authoring workflows](docs/EDITOR_AUTHORING.md)
 - Dockable ImGui editor with editor and game viewports
 - Scene hierarchy, inspector, content browser, console, and profiler
 - Translate, rotate, and scale gizmos with local/world modes and snapping

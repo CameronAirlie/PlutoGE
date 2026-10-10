@@ -42,6 +42,11 @@ namespace PlutoGE::render
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
         [[nodiscard]] std::span<const unsigned char> GetRgba8Pixels() const noexcept { return m_rgba8Pixels; }
+        [[nodiscard]] std::span<const float> GetCubemapPixels() const noexcept { return m_cubemapPixels; }
+        // Linear HDR faces in +X,-X,+Y,-Y,+Z,-Z order, bottom-up within each face.
+        static Texture *CpuColorCubemap(int resolution, std::span<const float> pixels);
+        bool SetCubemapPixels(std::span<const float> pixels);
+        bool EnsureCubemapGpuTexture();
 
         // Lazily creates a stable depth-only framebuffer view owned by this
         // texture. Cubemaps use one view per face; 2D textures ignore face.
@@ -70,6 +75,7 @@ namespace PlutoGE::render
         // Decoded source pixels are retained independently of the active GPU
         // backend. This is the upload source for both OpenGL and Vulkan.
         std::vector<unsigned char> m_rgba8Pixels;
+        std::vector<float> m_cubemapPixels;
         std::array<GLuint, 6> m_depthFramebuffers{};
 
     };

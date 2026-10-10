@@ -1,4 +1,5 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scripting/ScriptBuildProcess.h"
 #include "PlutoGE/render/DebugDraw.h"
 
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
@@ -96,7 +97,17 @@ namespace PlutoGE::scripting
         }
 
         result.command = command.str();
-        result.exitCode = std::system(result.command.c_str());
+        const auto utf8 = [](const std::filesystem::path &path) { const auto text = path.u8string(); return std::string(text.begin(), text.end()); };
+        std::vector<std::string> arguments{"dotnet", "build", utf8(config.projectPath), "-c", config.configuration, "--nologo"};
+        if (!config.outputDirectory.empty()) { arguments.push_back("-o"); arguments.push_back(utf8(config.outputDirectory)); }
+        if (!config.framework.empty()) { arguments.push_back("-f"); arguments.push_back(config.framework); }
+        const auto output = RunBuildProcess(arguments);
+        result.exitCode = output.exitCode;
+        result.output = output.text;
+        std::istringstream lines(result.output);
+        for (std::string line; std::getline(lines, line);)
+            DispatchScriptLog(line.find(": error ") != std::string::npos ? ScriptLogSeverity::Error :
+                line.find(": warning ") != std::string::npos ? ScriptLogSeverity::Warning : ScriptLogSeverity::Info, line);
         result.succeeded = result.exitCode == 0;
         return result;
     }
@@ -316,7 +327,7 @@ namespace PlutoGE::scripting
 
         for (const auto &[fullName, registeredClass] : m_classes)
         {
-            if (registeredClass.definition.kind == ScriptClassKind::Behaviour &&
+            if (registeredClass.definition.kind == ScriptClassKind::Behaviour && !registeredClass.definition.IsEditorCommand() &&
                 std::find(registeredClass.definition.assignableTypeNames.begin(), registeredClass.definition.assignableTypeNames.end(),
                     "PlutoGE.ScriptCore.LoadingScreenController") == registeredClass.definition.assignableTypeNames.end())
             {
@@ -336,6 +347,14 @@ namespace PlutoGE::scripting
                 "PlutoGE.ScriptCore.LoadingScreenController") != item.definition.assignableTypeNames.end()) result.push_back(name);
         std::sort(result.begin(), result.end());
         return result;
+    }
+
+    std::vector<std::string> ScriptEngine::GetEditorCommandClassNames() const
+    {
+        std::vector<std::string> names;
+        for (const auto &[name, item] : m_classes) if (item.definition.IsEditorCommand()) names.push_back(name);
+        std::sort(names.begin(), names.end());
+        return names;
     }
 
     std::vector<std::string> ScriptEngine::GetScriptableObjectClassNames() const

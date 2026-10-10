@@ -1270,9 +1270,10 @@ namespace PlutoGE::render
                 for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
                 {
                     const int textureSlot = kIblCaptureTextureSlotStart + captureIndex;
-                    const auto *captureTexture = captureIndex < static_cast<int>(iblCaptureVolumes.size())
+                    auto *captureTexture = captureIndex < static_cast<int>(iblCaptureVolumes.size())
                                                      ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture
                                                      : nullptr;
+                    if (captureTexture) captureTexture->EnsureCubemapGpuTexture();
                     Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
                     Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, captureTexture && captureTexture->GetType() == GL_TEXTURE_CUBE_MAP ? captureTexture->GetTextureID() : 0);
                     shader->SetUniform(iblCaptureMapNames[captureIndex], textureSlot);

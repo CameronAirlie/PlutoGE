@@ -64,7 +64,7 @@ namespace PlutoGE::ui
         void ShutdownPanels();
         void OnProjectChanged();
 
-        void BeginPanelUpdate();
+        void BeginPanelUpdate(bool workspace = true);
 
         void EndPanelUpdate();
         // Replays the completed editor frame with one viewport overlay. No panel

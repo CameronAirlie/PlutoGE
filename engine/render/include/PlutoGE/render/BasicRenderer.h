@@ -411,6 +411,14 @@ namespace PlutoGE::render
         }
     }
 
+    struct BasicIblCapture
+    {
+        rhi::TextureHandle atlas;
+        glm::vec3 origin{0}, size{1};
+        float intensity = 0, blendDistance = 0, resolution = 1;
+        std::array<glm::vec4, 9> irradiance{};
+    };
+
     struct BasicLighting
     {
         // Declare external surface-buffer consumers (for example readback tools).
@@ -424,6 +432,8 @@ namespace PlutoGE::render
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
+        std::array<BasicIblCapture, 4> iblCaptures{};
+        bool localIblEnabled = true;
         // Directional environment used by the RHI PBR path. Physical sky
         // parameters share the layout used by the sky post-process pass so
         // the background and surface lighting cannot drift apart.

@@ -43,6 +43,9 @@ namespace PlutoGE::ui
 
         bool Initialize(render::rhi::GraphicsApi graphicsApi, render::rhi::IRenderDevice *sharedDevice = nullptr);
         void Shutdown();
+        // Offline linear HDR capture, independent of viewport temporal history and post processing.
+        std::vector<float> CaptureIbl(const glm::vec3 &position, int resolution, float farPlane,
+                                     render::RenderCommandView commands, const scene::Scene &scene);
         bool SetGraphicsQuality(const render::GraphicsQuality &quality) noexcept;
         void SetRuntimeGraphicsQuality(std::optional<render::GraphicsQuality> quality) noexcept;
         [[nodiscard]] const render::GraphicsQuality &GetGraphicsQuality() const noexcept

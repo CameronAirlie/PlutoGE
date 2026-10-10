@@ -27,6 +27,12 @@ namespace PlutoGE::ui
         void RenderPendingPrompts();
         void RenderSourceTabs();
         void RenderPreviewPane();
+        void RenderVisualAuthoring();
+        std::size_t m_selectedElement = 0;
+        std::array<char, 256> m_widgetId{};
+        int m_widgetType = 0;
+        int m_styleProperty = 0;
+        std::array<char, 256> m_styleValue{}, m_elementText{};
         RmlDocumentEditSession m_session;
         RmlDocumentPreview m_preview;
         EditorTextureHandle m_texture;

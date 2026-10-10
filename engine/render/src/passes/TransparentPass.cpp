@@ -165,6 +165,7 @@ namespace PlutoGE::render
                                         iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].IsValid() &&
                                         iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
                 const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
+                if (hasCapture) captureVolume.environmentMapTexture->EnsureCubemapGpuTexture();
                 const int textureSlot = kTransparentIblCaptureTextureSlotStart + captureIndex;
                 Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
                 Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, hasCapture ? captureVolume.environmentMapTexture->GetTextureID() : 0);

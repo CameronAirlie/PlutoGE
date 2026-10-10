@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/ui/SourceTextEditor.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/ui/RmlSourceTools.h"
 #include <algorithm>
 #include <imgui_internal.h>
 
@@ -137,6 +138,7 @@ namespace PlutoGE::ui
         if (ImGui::BeginTable("UI document workspace", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
         {
             ImGui::TableNextColumn();
+            RenderVisualAuthoring();
             RenderSourceTabs();
             ImGui::TableNextColumn();
             RenderPreviewPane();
@@ -226,8 +228,23 @@ namespace PlutoGE::ui
         for (const auto &diagnostic : m_preview.GetDiagnostics()) ImGui::TextWrapped("%s", diagnostic.c_str());
         if (ImGui::BeginChild("Preview viewport", {0, 0}, ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar))
         {
-            if (m_texture.IsValid()) ImGui::Image(static_cast<ImTextureID>(EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_texture)),
-                {m_width * m_zoom, m_height * m_zoom}, {0, 1}, {1, 0});
+            if (m_texture.IsValid())
+            {
+                const auto origin = ImGui::GetCursorScreenPos();
+                ImGui::Image(static_cast<ImTextureID>(EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_texture)),
+                    {m_width * m_zoom, m_height * m_zoom}, {0, 1}, {1, 0});
+                if (ImGui::IsItemClicked() && m_previewRevision == m_session.GetRevision())
+                {
+                    const auto mouse = ImGui::GetIO().MousePos;
+                    const auto id = m_preview.PickElement((mouse.x - origin.x) / m_zoom, (mouse.y - origin.y) / m_zoom);
+                    try
+                    {
+                        const auto elements = RmlSourceTools::Parse(m_session.GetBuffers().front().source);
+                        for (std::size_t i = 0; i < elements.size(); ++i) if (!id.empty() && elements[i].id == id) { m_selectedElement = i; break; }
+                    }
+                    catch (const std::exception &error) { m_error = error.what(); }
+                }
+            }
         }
         ImGui::EndChild();
     }

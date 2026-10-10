@@ -198,6 +198,8 @@ namespace PlutoGE::render::rhi
         virtual void UpdateBuffer(BufferHandle buffer, std::size_t offset, std::span<const std::byte> data) = 0;
         virtual void DestroyBuffer(BufferHandle buffer) = 0;
         virtual void DestroyTexture(TextureHandle texture) = 0;
+        // Synchronous offline HDR capture. Returns linear RGBA, preserving values above one.
+        [[nodiscard]] virtual std::vector<float> ReadTextureRgbaFloat(TextureHandle) { return {}; }
         virtual void DestroySampler(SamplerHandle sampler) = 0;
         virtual void DestroyPipeline(PipelineHandle pipeline) = 0;
         [[nodiscard]] virtual ICommandContext &GetImmediateContext() = 0;

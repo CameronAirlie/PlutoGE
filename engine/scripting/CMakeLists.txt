@@ -1,6 +1,7 @@
 add_library(PlutoGEScripting
     src/HostFxrScriptRuntime.cpp
     src/ScriptEngine.cpp
+    src/ScriptBuildProcess.cpp
 )
 
 add_library(PlutoGE::Scripting ALIAS PlutoGEScripting)

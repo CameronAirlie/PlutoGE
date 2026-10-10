@@ -3272,6 +3272,7 @@ namespace PlutoGE::ui
     void InspectorPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
+        editorShell.RenderExtensionInspectors();
         if (editorShell.IsEditorCameraSelected())
         {
             RenderEditorCameraInspector(editorShell.GetEditorCamera());

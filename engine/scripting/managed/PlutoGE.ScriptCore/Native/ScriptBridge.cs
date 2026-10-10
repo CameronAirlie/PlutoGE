@@ -497,7 +497,8 @@ internal static unsafe partial class ScriptBridge
     {
         foreach (var scriptClass in DiscoverScriptClasses(typeof(ScriptBehaviour).Assembly))
         {
-            if (scriptClass.FullName.StartsWith("PlutoGE.ScriptCore.Examples.", StringComparison.Ordinal))
+            if (scriptClass.FullName.StartsWith("PlutoGE.ScriptCore.Examples.", StringComparison.Ordinal) ||
+                scriptClass.FullName.StartsWith("PlutoGE.ScriptCore.Gameplay.", StringComparison.Ordinal))
             {
                 yield return scriptClass;
             }

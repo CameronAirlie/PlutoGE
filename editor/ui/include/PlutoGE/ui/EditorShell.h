@@ -2,6 +2,9 @@
 #pragma once
 
 #include "PlutoGE/ui/EntitySelection.h"
+#include "PlutoGE/ui/AuthoringRegistry.h"
+#include "PlutoGE/ui/ScriptSourceWatch.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
@@ -63,6 +66,11 @@ namespace PlutoGE::ui
     class EditorShell
     {
     public:
+        AuthoringRegistry &GetAuthoringRegistry() { return m_authoring; }
+        void RenderExtensionInspectors();
+        void RenderScriptBuildDiagnostics();
+        void UpdateAuthoring() { PollModelImport(); PollScriptSources(); }
+        bool IsScriptBuildRunning() const { return m_scriptBuildFuture.valid(); }
         enum class ConsoleSeverity
         {
             Info,
@@ -166,7 +174,8 @@ namespace PlutoGE::ui
             const std::string &GetPostProcessPresetAssetReference() const { return postProcessPresetAssetReference; }
         };
 
-        bool Initialize(const std::filesystem::path &startupProject = {});
+        bool Initialize(const std::filesystem::path &startupProject = {}, bool visible = true);
+        bool CreateProjectAtPath(const std::filesystem::path &manifestPath, const std::string &templateId = "pluto.empty");
         void Render();
         void Shutdown();
 
@@ -345,7 +354,19 @@ namespace PlutoGE::ui
         std::filesystem::path GetDefaultExportExecutablePath() const;
         bool SaveSceneToPath(const std::filesystem::path &scenePath);
         bool SaveActiveSceneIntoProject();
-        bool CreateProjectAtPath(const std::filesystem::path &manifestPath);
+        void PollScriptSources();
+        void RenderAuthoringMenu();
+        AuthoringRegistry m_authoring;
+        ScriptSourceWatch m_scriptWatch;
+        std::future<ScriptSourceWatch::Snapshot> m_scriptWatchFuture;
+        std::filesystem::path m_scriptWatchRoot;
+        ScriptSourceWatch::Clock::time_point m_nextScriptScan{};
+        bool m_autoBuildScripts = true;
+        std::future<scripting::ScriptBuildResult> m_scriptBuildFuture;
+        std::filesystem::path m_scriptBuildProject;
+        std::string m_scriptBuildOutput;
+        bool m_showScriptBuildDiagnostics = false;
+        bool m_persistEditorSettings = true;
         bool SaveProjectToDisk();
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool RunTestBuild();
@@ -376,6 +397,7 @@ namespace PlutoGE::ui
         void MarkProjectClean();
         void HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
         void LoadRecentProjects();
+        bool RunProjectLauncher();
         void SaveRecentProjects() const;
         void AddRecentProject(const std::filesystem::path &manifestPath);
 

@@ -50,6 +50,7 @@ namespace PlutoGE::render::rhi::vulkan
         void UpdateBuffer(BufferHandle, std::size_t, std::span<const std::byte>) override;
         void DestroyBuffer(BufferHandle) override;
         void DestroyTexture(TextureHandle) override;
+        [[nodiscard]] std::vector<float> ReadTextureRgbaFloat(TextureHandle texture) override;
         void DestroySampler(SamplerHandle) override;
         void DestroyPipeline(PipelineHandle) override;
         [[nodiscard]] ICommandContext &GetImmediateContext() override;

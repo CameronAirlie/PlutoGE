@@ -1,0 +1,17 @@
+<rml>
+<head><title>Project menu</title><link type="text/rcss" href="starter.rcss"/></head>
+<body>
+  <div id="screen">
+    <div id="menu">
+      <h1 id="title">Project menu</h1>
+      <button id="continue">Continue</button>
+      <div class="row"><button id="save">Save</button><button id="load">Load</button></div>
+      <label for="interface-scale">Interface size</label>
+      <input id="interface-scale" type="range" min="0.5" max="3" step="0.05" value="1"/>
+      <div class="row"><button id="english">English</button><button id="french">Français</button></div>
+      <div id="message"></div>
+      <button id="quit">Quit</button>
+    </div>
+  </div>
+</body>
+</rml>

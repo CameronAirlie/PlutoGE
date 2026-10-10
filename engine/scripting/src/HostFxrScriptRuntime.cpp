@@ -4143,8 +4143,10 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnCreate)
                 {
                     const auto result = m_impl->invokeOnCreate(m_instanceHandle);
-                    if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
-                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
+                    if (!result && (std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end() ||
+                        std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                        "PlutoGE.ScriptCore.Authoring.EditorCommand") != m_scriptClass.assignableTypeNames.end()))
                         throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
                 }
             }

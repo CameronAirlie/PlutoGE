@@ -608,7 +608,9 @@ namespace PlutoGE::scene
             return;
         }
 
-        m_instance = core::Engine::GetInstance().GetScriptEngine().CreateInstance(m_scriptClass);
+        auto &scripts = core::Engine::GetInstance().GetScriptEngine();
+        if (const auto *definition = scripts.FindClass(m_scriptClass); definition && definition->IsEditorCommand()) return;
+        m_instance = scripts.CreateInstance(m_scriptClass);
         if (!m_instance)
         {
             return;

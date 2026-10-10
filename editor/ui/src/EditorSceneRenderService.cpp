@@ -13,6 +13,8 @@
 #include "PlutoGE/scene/Scene.h"
 
 #include <glad/glad.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 #include <iostream>
 #include <vector>
@@ -93,6 +95,60 @@ namespace PlutoGE::ui
             std::cerr << "Failed to initialize editor scene RHI: " << error.what() << '\n';
             Shutdown();
             return false;
+        }
+    }
+
+    std::vector<float> EditorSceneRenderService::CaptureIbl(const glm::vec3 &position, int resolution,
+                                                            float farPlane, render::RenderCommandView commands,
+                                                            const scene::Scene &scene)
+    {
+        if (!m_device || resolution < 32 || resolution > 2048) return {};
+        try
+        {
+            render::RhiSceneRenderer capture;
+            if (!capture.Initialize(*m_device, render::ShaderArtifactLibrary{}.LoadBasicRendererPackage())) return {};
+            capture.SetImmediateTextureUploads(true);
+            capture.SetSceneEffectsEnabled(false);
+            constexpr glm::vec3 directions[] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+            constexpr glm::vec3 ups[] = {{0,-1,0},{0,-1,0},{0,0,1},{0,0,-1},{0,-1,0},{0,-1,0}};
+            std::vector<float> pixels;
+            const std::size_t faceSize = static_cast<std::size_t>(resolution) * resolution * 4;
+            pixels.reserve(faceSize * 6);
+            for (int face = 0; face < 6; ++face)
+            {
+                render::CameraData camera;
+                camera.view = glm::lookAt(position, position + directions[face], ups[face]);
+                camera.nearPlane = 0.1f;
+                camera.farPlane = std::max(farPlane, 1.0f);
+                // RhiSceneRenderer translates GL clip depth to the active backend.
+                camera.projection = glm::perspective(glm::radians(90.0f), 1.0f, camera.nearPlane, camera.farPlane);
+                camera.renderRuntimeUI = false;
+                auto lighting = render::BuildSceneLighting(camera, &scene);
+                lighting.localIblEnabled = false; // Never bake a probe's previous result into itself.
+                const auto atmosphere = render::BuildSceneAtmosphere(&scene, lighting);
+                capture.ResetTemporalHistory();
+                if (!capture.Render(resolution, resolution, camera, lighting, commands, commands, {}, atmosphere,
+                                    ReadTexturePixels, render::PostProcessDebugView::None, true, &scene,
+                                    std::nullopt, {}, true)) return {};
+                auto facePixels = m_device->ReadTextureRgbaFloat(capture.GetColorTexture());
+                if (facePixels.size() != faceSize) return {};
+                // Vulkan framebuffer rows start at the top; retained cubemap faces use GL row order.
+                if (m_isVulkan)
+                    for (int y = 0; y < resolution / 2; ++y)
+                        for (int x = 0; x < resolution * 4; ++x)
+                            std::swap(facePixels[static_cast<std::size_t>(y) * resolution * 4 + x],
+                                      facePixels[static_cast<std::size_t>(resolution - 1 - y) * resolution * 4 + x]);
+                pixels.insert(pixels.end(), facePixels.begin(), facePixels.end());
+            }
+            m_lastRenderError.clear();
+            return pixels;
+        }
+        catch (const std::exception &error)
+        {
+            m_device->GetImmediateContext().RecoverInterruptedFrame();
+            m_lastRenderError = std::string("IBL capture failed: ") + error.what();
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, m_lastRenderError);
+            return {};
         }
     }
 

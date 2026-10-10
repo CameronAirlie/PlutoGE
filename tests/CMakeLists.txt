@@ -1,3 +1,14 @@
+add_executable(PlutoGEAuthoringToolsTests AuthoringToolsTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/RmlSourceTools.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ScriptSourceWatch.cpp)
+target_include_directories(PlutoGEAuthoringToolsTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+target_compile_features(PlutoGEAuthoringToolsTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEAuthoringToolsTests COMMAND PlutoGEAuthoringToolsTests)
+add_executable(PlutoGEScriptBuildProcessTests ScriptBuildProcessTests.cpp
+    ${CMAKE_SOURCE_DIR}/engine/scripting/src/ScriptBuildProcess.cpp)
+target_include_directories(PlutoGEScriptBuildProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/scripting/include)
+target_compile_features(PlutoGEScriptBuildProcessTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEScriptBuildProcessTests COMMAND PlutoGEScriptBuildProcessTests)
 # Links the whole engine. MinGW needs the mutually dependent static libraries
 # rescanned; other toolchains resolve them through the transitive link graph.
 function(pluto_link_engine target)
@@ -101,6 +112,8 @@ target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
+add_test(NAME PlutoGEOpenGLIblTests COMMAND PlutoGEOpenGLRhiTests --ibl-only)
+add_test(NAME PlutoGEVulkanIblTests COMMAND PlutoGEVulkanRhiTests --ibl-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)
 add_test(NAME PlutoGEVulkanGeometryDiagnosticTests COMMAND PlutoGEVulkanRhiTests --geometry-diagnostics)
 add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
@@ -237,6 +250,10 @@ target_include_directories(PlutoGEDebugDrawTests PRIVATE ../engine/render/includ
 target_link_libraries(PlutoGEDebugDrawTests PRIVATE glm::glm)
 add_test(NAME PlutoGEDebugDrawTests COMMAND PlutoGEDebugDrawTests)
 find_program(PLUTOGE_TEST_DOTNET dotnet)
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGEAuthoringManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.AuthoringTests/PlutoGE.AuthoringTests.csproj --configuration Release)
+endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEGraphicsQualitySmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.GraphicsQualitySmokeTests/PlutoGE.GraphicsQualitySmokeTests.csproj --configuration Release)
@@ -407,6 +424,11 @@ add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests 
 add_test(NAME PlutoGEVulkanUiRenderTexture COMMAND PlutoGERmlUiAntialiasingTests --render-texture)
 
 if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEAuthoringIntegrationTests AuthoringIntegrationTests.cpp)
+    target_link_libraries(PlutoGEAuthoringIntegrationTests PRIVATE PlutoGE::EditorUI RmlUi::Core)
+    pluto_link_engine(PlutoGEAuthoringIntegrationTests)
+    add_test(NAME PlutoGEAuthoringIntegrationTests COMMAND PlutoGEAuthoringIntegrationTests)
+    set_tests_properties(PlutoGEAuthoringIntegrationTests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_executable(PlutoGEEditorLoadingScreenTests EditorLoadingScreenTests.cpp)
     target_link_libraries(PlutoGEEditorLoadingScreenTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGEEditorLoadingScreenTests)
@@ -564,6 +586,10 @@ add_test(NAME PlutoGEVulkanUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTe
 add_test(NAME PlutoGEOpenGLUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTests --opengl)
 
 if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEIblCaptureTests IblCaptureTests.cpp)
+    target_link_libraries(PlutoGEIblCaptureTests PRIVATE PlutoGE::EditorUI)
+    add_test(NAME PlutoGEVulkanIblCaptureTests COMMAND PlutoGEIblCaptureTests)
+    add_test(NAME PlutoGEOpenGLIblCaptureTests COMMAND PlutoGEIblCaptureTests --opengl)
     add_executable(PlutoGECameraUiVisibilityTests CameraUiVisibilityTests.cpp)
     target_link_libraries(PlutoGECameraUiVisibilityTests PRIVATE PlutoGE::EditorUI)
     add_test(NAME PlutoGEVulkanCameraUiVisibility COMMAND PlutoGECameraUiVisibilityTests)

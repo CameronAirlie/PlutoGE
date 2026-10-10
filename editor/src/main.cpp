@@ -32,8 +32,7 @@ int RunEditor(int argc, char **argv)
     if (argc > 1 && !editor.LoadProjectFromPath(argv[1]))
     {
         std::cerr << "Failed to load project: " << argv[1] << std::endl;
-        editor.Shutdown();
-        return 1;
+        // Let the user select another project in the launcher.
     }
 
     editor.Render();

@@ -28,6 +28,7 @@ namespace PlutoGE::render::rhi::opengl
         void UpdateBuffer(BufferHandle buffer, std::size_t offset, std::span<const std::byte> data) override;
         void DestroyBuffer(BufferHandle buffer) override;
         void DestroyTexture(TextureHandle texture) override;
+        [[nodiscard]] std::vector<float> ReadTextureRgbaFloat(TextureHandle texture) override;
         void DestroySampler(SamplerHandle sampler) override;
         void DestroyPipeline(PipelineHandle pipeline) override;
         [[nodiscard]] ICommandContext &GetImmediateContext() override;

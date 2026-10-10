@@ -23,6 +23,8 @@ namespace PlutoGE::ui
         render::rhi::TextureHandle GetTexture() const { return m_target.Get(); }
         const std::vector<std::string> &GetDiagnostics() const { return m_diagnostics; }
         bool IsStale() const { return m_stale; }
+        std::string PickElement(float x, float y) const;
+        std::vector<std::string> InspectElement(const std::string &id) const;
     private:
         std::shared_ptr<render::RmlLoadingDocument> m_document;
         render::rhi::Texture m_target;

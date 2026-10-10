@@ -425,7 +425,7 @@ namespace PlutoGE::ui
         m_panels.clear();
     }
 
-    void PanelManager::BeginPanelUpdate()
+    void PanelManager::BeginPanelUpdate(bool workspace)
     {
         core::CpuScope frameScope("ImGui frame startup", core::CpuCategory::UI);
         const auto beginPanelUpdateStart = std::chrono::high_resolution_clock::now();
@@ -456,8 +456,8 @@ namespace PlutoGE::ui
         }
         { core::CpuScope scope("ImGui core new frame", core::CpuCategory::UI); ImGui::NewFrame(); }
         ImGuizmo::BeginFrame();
-        const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
-        if (m_applyDefaultLayout)
+        const ImGuiID dockspaceId = workspace ? ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID) : 0;
+        if (workspace && m_applyDefaultLayout)
         {
             BuildDefaultEditorLayout(dockspaceId);
             m_applyDefaultLayout = false;

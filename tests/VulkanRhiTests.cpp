@@ -1,3 +1,4 @@
+#include "IblRenderingChecks.h"
 #include "OrthographicUpscalerChecks.h"
 #include "CameraStackRenderingChecks.h"
 #include "RenderTextureRenderingChecks.h"
@@ -200,6 +201,11 @@ int main(int argc, char **argv)
             {
                 return device.ReadTextureRgba8(texture);
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
+        {
+            CheckIblRendering(device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")

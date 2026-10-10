@@ -15,6 +15,11 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 
 [[vk::binding(13, 1)]] Sampler2D pointShadowAtlas : register(t13, space1);
 
+[[vk::binding(27, 0)]] Sampler2D iblAtlas0 : register(t27, space0);
+[[vk::binding(28, 0)]] Sampler2D iblAtlas1 : register(t28, space0);
+[[vk::binding(29, 0)]] Sampler2D iblAtlas2 : register(t29, space0);
+[[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -79,7 +84,84 @@ cbuffer CameraParameters : register(b0, space0)
     float4 pointDirectionSpot[32];
     column_major float4x4 pointShadowMatrices[24];
     float4 pointParameters;
+    float4 iblOriginIntensity[4];
+    float4 iblSizeBlend[4];
+    float4 iblSettings[4];
+    float4 iblIrradiance[36];
 };
+
+float iblWeight(int index, float3 position)
+{
+    if (iblSettings[index].x < 0.5) return 0;
+    const float3 local = position - iblOriginIntensity[index].xyz;
+    const float3 edge = min(local, iblSizeBlend[index].xyz - local);
+    const float distance = min(edge.x, min(edge.y, edge.z));
+    if (distance < 0) return 0;
+    return iblSizeBlend[index].w > 0 ? saturate(distance / iblSizeBlend[index].w) : 1;
+}
+
+float3 iblRadiance(int index, float3 position, float3 direction, float roughness)
+{
+    const float3 lo = iblOriginIntensity[index].xyz;
+    const float3 hi = lo + iblSizeBlend[index].xyz;
+    // Box projection retains nearby walls in the reflected direction as the receiver moves.
+    const float3 safeDirection = float3(direction.x >= 0 ? 1 : -1, direction.y >= 0 ? 1 : -1,
+                                       direction.z >= 0 ? 1 : -1) * max(abs(direction), 0.000001);
+    const float3 intersections = max((lo - position) / safeDirection, (hi - position) / safeDirection);
+    direction = position + direction * min(intersections.x, min(intersections.y, intersections.z)) - (lo + hi) * 0.5;
+    const float3 a = abs(direction);
+    float2 faceUV;
+    int face;
+    if (a.x >= a.y && a.x >= a.z)
+    {
+        face = direction.x >= 0 ? 0 : 1;
+        faceUV = float2(direction.x >= 0 ? -direction.z : direction.z, -direction.y) / max(a.x, 0.000001);
+    }
+    else if (a.y >= a.z)
+    {
+        face = direction.y >= 0 ? 2 : 3;
+        faceUV = float2(direction.x, direction.y >= 0 ? direction.z : -direction.z) / max(a.y, 0.000001);
+    }
+    else
+    {
+        face = direction.z >= 0 ? 4 : 5;
+        faceUV = float2(direction.z >= 0 ? direction.x : -direction.x, -direction.y) / max(a.z, 0.000001);
+    }
+    const float lod = roughness * iblSettings[index].z;
+    const float inset = min(0.5, 0.5 * exp2(ceil(lod)) / iblSettings[index].y);
+    faceUV = clamp(faceUV * 0.5 + 0.5, inset, 1.0 - inset);
+    const float2 uv = float2(faceUV.x, (faceUV.y + face) / 6.0);
+    float3 radiance;
+    if (index == 0) radiance = iblAtlas0.SampleLevel(uv, lod).rgb;
+    else if (index == 1) radiance = iblAtlas1.SampleLevel(uv, lod).rgb;
+    else if (index == 2) radiance = iblAtlas2.SampleLevel(uv, lod).rgb;
+    else radiance = iblAtlas3.SampleLevel(uv, lod).rgb;
+    return max(radiance, 0.0) * iblOriginIntensity[index].w;
+}
+
+float3 iblDiffuse(int index, float3 n)
+{
+    const float basis[9] = {0.282095, 0.488603*n.y, 0.488603*n.z, 0.488603*n.x,
+        1.092548*n.x*n.y, 1.092548*n.y*n.z, 0.315392*(3*n.z*n.z-1),
+        1.092548*n.x*n.z, 0.546274*(n.x*n.x-n.y*n.y)};
+    float3 irradiance = float3(0);
+    for (int coefficient = 0; coefficient < 9; ++coefficient)
+        irradiance += iblIrradiance[index * 9 + coefficient].rgb * basis[coefficient];
+    return max(irradiance, 0.0) * iblOriginIntensity[index].w;
+}
+
+float3 blendIblReflection(float3 fallback, float3 position, float3 direction, float roughness)
+{
+    float3 radiance = float3(0);
+    float weightSum = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        const float weight = iblWeight(i, position);
+        if (weight > 0) radiance += iblRadiance(i, position, direction, roughness) * weight;
+        weightSum += weight;
+    }
+    return lerp(fallback, radiance / max(weightSum, 0.0001), saturate(weightSum));
+}
 
 [[vk::binding(0, 2)]]
 cbuffer ObjectParameters : register(b0, space2)
@@ -975,6 +1057,23 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                            (1.0 - materialRoughness * 0.45);
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
     }
+    {
+        float3 capturedAmbient = float3(0);
+        float weightSum = 0;
+        const float3 fresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
+        for (int i = 0; i < 4; ++i)
+        {
+            const float weight = iblWeight(i, input.worldPosition);
+            if (weight > 0)
+            {
+                const float3 diffuse = iblDiffuse(i, normal) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
+                const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * fresnel * (1.0 - materialRoughness * 0.45);
+                capturedAmbient += (diffuse + specular) * weight;
+            }
+            weightSum += weight;
+        }
+        ambient = lerp(ambient, capturedAmbient / max(weightSum, 0.0001), saturate(weightSum));
+    }
     float3 directionalLighting=(direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility;
     if(customLighting)
     {
@@ -1017,9 +1116,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         const float3 viewFresnel = float3(dielectricFresnel(ndotv, glassParameters.z));
         const float3 reflectionDirection = normalize(lerp(reflect(-viewDirection, normal), normal,
                                                           materialRoughness * materialRoughness));
-        const float3 environment = physicalSkySettings.x > 0.5
+        const float3 fallbackEnvironment = physicalSkySettings.x > 0.5
             ? samplePhysicalSkyEnvironment(reflectionDirection, 0.0) * physicalSkySettings.z
             : float3(cameraPositionAmbient.w);
+        const float3 environment = blendIblReflection(fallbackEnvironment, input.worldPosition, reflectionDirection, materialRoughness);
         const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
             directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
         const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *

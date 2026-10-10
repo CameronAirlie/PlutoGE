@@ -1,0 +1,20 @@
+@font-face { font-family: Starter; src: url("MartianMono-StdRg.ttf"); }
+body { width: 100%; height: 100%; margin: 0; font-family: Starter; font-size: 18dp; color: #eef2ff; }
+#screen { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background-color: #101827bb; }
+#menu { width: 400dp; max-width: 95%; max-height: 95%; overflow: auto; box-sizing: border-box; padding: 24dp; background-color: #182638; border-radius: 12dp; word-break: break-all; }
+h1 { display: block; font-size: 26dp; margin: 0 0 20dp; }
+label { display: block; margin-top: 16dp; }
+button { display: block; width: 100%; min-height: 44dp; margin-bottom: 8dp; border-width: 0; border-radius: 6dp; background-color: #2a4664; color: #ffffff; text-align: center; padding: 10dp; box-sizing: border-box; }
+button:hover, button:focus { background-color: #3c648c; }
+button:active { background-color: #1d354e; }
+.row { display: flex; gap: 8dp; }
+.row button { flex: 1; min-width: 0; }
+#message { display: block; min-height: 32dp; margin: 12dp 0; }
+input.range { display: block; width: 100%; height: 36dp; margin: 8dp 0; }
+input.range slidertrack { height: 6dp; margin-top: 15dp; background-color: #314860; }
+input.range sliderprogress { background-color: #74b6ff; }
+input.range sliderbar { width: 18dp; height: 30dp; margin-top: -12dp; background-color: #e5efff; }
+input.range sliderarrowdec, input.range sliderarrowinc { display: none; }
+scrollbarvertical { width: 8dp; }
+scrollbarhorizontal { height: 8dp; }
+scrollbarvertical sliderbar, scrollbarhorizontal sliderbar { background-color: #617e9e; }

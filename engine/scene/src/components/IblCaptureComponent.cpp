@@ -170,6 +170,7 @@ namespace PlutoGE::scene
     {
         if (m_captureTexture && m_captureTexture->GetWidth() == m_resolution && m_captureTexture->GetHeight() == m_resolution)
         {
+            m_captureTexture->EnsureCubemapGpuTexture();
             return m_captureTexture.get();
         }
 
@@ -197,6 +198,13 @@ namespace PlutoGE::scene
                                            static_cast<std::size_t>(m_resolution) * 4;
         m_capturePixels.assign(facePixelCount * 6, 0.0f);
 
+        if (!m_captureTexture->GetTextureID() && !m_captureTexture->GetCubemapPixels().empty())
+        {
+            const auto pixels = m_captureTexture->GetCubemapPixels();
+            m_capturePixels.assign(pixels.begin(), pixels.end());
+            return true;
+        }
+        if (!m_captureTexture->GetTextureID()) return false;
         glBindTexture(GL_TEXTURE_CUBE_MAP, m_captureTexture->GetTextureID());
         for (unsigned int face = 0; face < 6; ++face)
         {
@@ -208,6 +216,18 @@ namespace PlutoGE::scene
         }
         glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
+        m_captureTexture->SetCubemapPixels(m_capturePixels);
+        return true;
+    }
+
+    bool IblCaptureComponent::SetCapturePixels(std::span<const float> pixels)
+    {
+        std::unique_ptr<render::Texture> texture(render::Texture::CpuColorCubemap(m_resolution, pixels));
+        if (!texture) return false;
+        std::vector<float> retained(pixels.begin(), pixels.end());
+        m_capturePixels = std::move(retained);
+        m_captureTexture = std::move(texture);
+        m_dirty = false;
         return true;
     }
 
@@ -334,7 +354,7 @@ namespace PlutoGE::scene
                 {
                     m_capturePixels.resize(facePixelCount * 6);
                     std::memcpy(m_capturePixels.data(), decoded.data(), decoded.size());
-                    EnsureCaptureTexture();
+                    SetCapturePixels(m_capturePixels);
                     m_dirty = false;
                 }
             }

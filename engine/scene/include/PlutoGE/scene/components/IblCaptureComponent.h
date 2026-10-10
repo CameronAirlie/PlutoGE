@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
+#include <span>
 
 namespace PlutoGE::render
 {
@@ -43,6 +44,7 @@ namespace PlutoGE::scene
         render::Texture *EnsureCaptureTexture();
         void DiscardCaptureResult();
         bool StoreCapturePixelsFromTexture();
+        bool SetCapturePixels(std::span<const float> pixels);
         glm::mat4 GetVolumeTransform() const;
         IblCaptureVolume BuildCaptureVolume() const;
 

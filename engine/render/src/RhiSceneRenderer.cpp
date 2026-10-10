@@ -218,6 +218,7 @@ namespace PlutoGE::render
         }
         if (m_drawPreparation)
             m_drawPreparation->Reset();
+        m_iblCaptures.clear();
         m_meshes.clear();
         m_skinningCache = std::make_shared<SkinningCache>();
         m_reusedSkinningFrame.reset();
@@ -232,6 +233,7 @@ namespace PlutoGE::render
         m_sortedParticles.clear();
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
+        m_iblCaptures.clear();
         m_meshes.clear();
         m_skinningCache = std::make_shared<SkinningCache>();
         m_reusedSkinningFrame.reset();
@@ -986,6 +988,93 @@ namespace PlutoGE::render
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)
                     effectiveLighting.spotLights.push_back({local, light->direction, light->spotCone});
+            }
+        }
+        if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.iblCaptures = {};
+        // Retained HDR faces work independently of the original OpenGL texture.
+        std::erase_if(m_iblCaptures, [](const auto &entry) { return entry.second.version.lifetime.expired(); });
+        if (scene && effectiveLighting.localIblEnabled)
+        {
+            std::size_t index = 0;
+            for (const auto &capture : scene->GetIblCaptureVolumes())
+            {
+                if (index == effectiveLighting.iblCaptures.size()) break;
+                if (!capture.IsValid()) continue;
+                const auto *source = capture.environmentMapTexture;
+                const auto pixels = source->GetCubemapPixels();
+                const int resolution = source->GetWidth();
+                if (resolution <= 0 || source->GetHeight() != resolution ||
+                    pixels.size() != static_cast<std::size_t>(resolution) * resolution * 24) continue;
+                auto &cached = m_iblCaptures[source];
+                if (!cached.atlas || cached.version.identity != source->GetIdentity() ||
+                    cached.version.revision != source->GetContentRevision() || cached.version.lifetime.expired())
+                {
+                    cached.irradiance = {};
+                    double totalWeight = 0;
+                    const int step = std::max(resolution / 64, 1);
+                    for (int face = 0; face < 6; ++face)
+                        for (int y = 0; y < resolution; y += step)
+                            for (int x = 0; x < resolution; x += step)
+                            {
+                                const int blockWidth = std::min(step, resolution - x);
+                                const int blockHeight = std::min(step, resolution - y);
+                                const float u = (x + blockWidth * 0.5f) * 2.0f / resolution - 1.0f;
+                                const float v = (y + blockHeight * 0.5f) * 2.0f / resolution - 1.0f;
+                                const glm::vec3 directions[] = {{1,-v,-u},{-1,-v,u},{u,1,v},{u,-1,-v},{u,-v,1},{-u,-v,-1}};
+                                const auto d = glm::normalize(directions[face]);
+                                const float weight = static_cast<float>(blockWidth * blockHeight) / std::pow(1 + u*u + v*v, 1.5f);
+                                totalWeight += weight;
+                                const auto offset = ((static_cast<std::size_t>(face) * resolution + y + blockHeight / 2) * resolution + x + blockWidth / 2) * 4;
+                                const glm::vec3 color = glm::max(glm::vec3(pixels[offset], pixels[offset+1], pixels[offset+2]), glm::vec3(0));
+                                const float basis[] = {0.282095f, 0.488603f*d.y, 0.488603f*d.z, 0.488603f*d.x,
+                                    1.092548f*d.x*d.y, 1.092548f*d.y*d.z, 0.315392f*(3*d.z*d.z-1),
+                                    1.092548f*d.x*d.z, 0.546274f*(d.x*d.x-d.y*d.y)};
+                                for (int coefficient = 0; coefficient < 9; ++coefficient)
+                                    cached.irradiance[coefficient] += glm::vec4(color * (basis[coefficient] * weight), 0);
+                            }
+                    for (int coefficient = 0; coefficient < 9; ++coefficient)
+                        cached.irradiance[coefficient] *= static_cast<float>(12.566370614359 / totalWeight) *
+                            (coefficient == 0 ? 3.14159265f : coefficient < 4 ? 2.0943951f : 0.78539816f);
+                    rhi::TextureDescriptor descriptor;
+                    unsigned atlasResolution = 1;
+                    while (atlasResolution < static_cast<unsigned>(resolution)) atlasResolution *= 2;
+                    descriptor.width = atlasResolution;
+                    descriptor.height = atlasResolution * 6;
+                    descriptor.format = rhi::Format::R32G32B32A32Float;
+                    descriptor.debugName = "Local IBL HDR faces";
+                    // Stop at one texel per face; higher levels would mix unrelated faces.
+                    descriptor.mipLevels = static_cast<unsigned>(std::log2(atlasResolution)) + 1;
+                    // Each face must start on a mip-aligned boundary, including authored non-power-of-two captures.
+                    std::vector<float> resampled;
+                    std::span<const float> atlasPixels = pixels;
+                    if (atlasResolution != static_cast<unsigned>(resolution))
+                    {
+                        resampled.resize(static_cast<std::size_t>(atlasResolution) * atlasResolution * 24);
+                        for (unsigned face = 0; face < 6; ++face)
+                            for (unsigned y = 0; y < atlasResolution; ++y)
+                                for (unsigned x = 0; x < atlasResolution; ++x)
+                                {
+                                    const float sx = (x + 0.5f) * resolution / atlasResolution - 0.5f;
+                                    const float sy = (y + 0.5f) * resolution / atlasResolution - 0.5f;
+                                    const int x0 = static_cast<int>(std::floor(sx)), y0 = static_cast<int>(std::floor(sy));
+                                    const float tx = sx - x0, ty = sy - y0;
+                                    const auto sample = [&](int px, int py, unsigned c) {
+                                        return pixels[((static_cast<std::size_t>(face) * resolution + std::clamp(py, 0, resolution-1)) * resolution + std::clamp(px, 0, resolution-1)) * 4 + c];
+                                    };
+                                    for (unsigned c = 0; c < 4; ++c)
+                                        resampled[((static_cast<std::size_t>(face) * atlasResolution + y) * atlasResolution + x) * 4 + c] =
+                                            glm::mix(glm::mix(sample(x0,y0,c), sample(x0+1,y0,c), tx),
+                                                     glm::mix(sample(x0,y0+1,c), sample(x0+1,y0+1,c), tx), ty);
+                                }
+                        atlasPixels = resampled;
+                    }
+                    cached.atlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(atlasPixels)));
+                    cached.version = {source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()};
+                }
+                unsigned atlasResolution = 1;
+                while (atlasResolution < static_cast<unsigned>(resolution)) atlasResolution *= 2;
+                effectiveLighting.iblCaptures[index++] = {cached.atlas.Get(), capture.origin, capture.size,
+                    capture.intensity, capture.blendDistance, static_cast<float>(atlasResolution), cached.irradiance};
             }
         }
         // Camera-relative lighting consumers (surface cascade selection,

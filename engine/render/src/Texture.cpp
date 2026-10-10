@@ -107,6 +107,45 @@ namespace PlutoGE::render
         return texture;
     }
 
+    Texture *Texture::CpuColorCubemap(int resolution, std::span<const float> pixels)
+    {
+        if (resolution <= 0 || pixels.size() != static_cast<std::size_t>(resolution) * resolution * 24) return nullptr;
+        auto *texture = new Texture(TextureConfig{});
+        texture->m_type = GL_TEXTURE_CUBE_MAP;
+        texture->m_width = texture->m_height = resolution;
+        texture->m_channels = 4;
+        texture->SetCubemapPixels(pixels);
+        return texture;
+    }
+
+    bool Texture::SetCubemapPixels(std::span<const float> pixels)
+    {
+        if (m_type != GL_TEXTURE_CUBE_MAP || pixels.size() != static_cast<std::size_t>(m_width) * m_height * 24) return false;
+        m_cubemapPixels.assign(pixels.begin(), pixels.end());
+        ++m_contentRevision;
+        return true;
+    }
+
+    bool Texture::EnsureCubemapGpuTexture()
+    {
+        if (m_textureID) return true;
+        if (m_type != GL_TEXTURE_CUBE_MAP || m_cubemapPixels.empty() || !PrepareTextureGpuAccess()) return false;
+        glGenTextures(1, &m_textureID);
+        Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, m_textureID);
+        const auto faceSize = static_cast<std::size_t>(m_width) * m_height * 4;
+        for (unsigned face = 0; face < 6; ++face)
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGBA16F, m_width, m_height, 0,
+                         GL_RGBA, GL_FLOAT, m_cubemapPixels.data() + faceSize * face);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        return m_textureID != 0;
+    }
+
     Texture *Texture::ColorCubemap(int width, int height)
     {
         auto &engine = PlutoGE::core::Engine::GetInstance();

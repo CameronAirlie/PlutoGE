@@ -292,6 +292,13 @@ namespace PlutoGE::render
           std::uint64_t residencyRevision = 1;
       };
       std::shared_ptr<TextureCache> m_textureCache;
+      struct CachedIblCapture
+      {
+          TextureVersion version;
+          rhi::Texture atlas;
+          std::array<glm::vec4, 9> irradiance{};
+      };
+      std::unordered_map<const Texture *, CachedIblCapture> m_iblCaptures;
       // One CPU-only job bounds worker count and temporary image memory.
       std::future<std::vector<std::byte>> m_normalMipJob;
       const Texture *m_pendingNormalSource = nullptr;

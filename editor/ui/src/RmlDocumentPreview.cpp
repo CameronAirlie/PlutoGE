@@ -5,9 +5,34 @@
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include <algorithm>
 #include <stdexcept>
+#include <RmlUi/Core.h>
 
 namespace PlutoGE::ui
 {
+    std::string RmlDocumentPreview::PickElement(float x, float y) const
+    {
+        if (!m_document || m_stale) return {};
+        auto *document = m_document->GetDocument();
+        if (!document || !document->GetContext()) return {};
+        auto *element = document->GetContext()->GetElementAtPoint({x, y});
+        while (element && element->GetId().empty()) element = element->GetParentNode();
+        return element ? element->GetId() : std::string{};
+    }
+
+    std::vector<std::string> RmlDocumentPreview::InspectElement(const std::string &id) const
+    {
+        if (!m_document || m_stale || id.empty()) return {};
+        auto *document = m_document->GetDocument();
+        auto *element = document ? document->GetElementById(id) : nullptr;
+        if (!element) return {};
+        const auto offset = element->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const auto size = element->GetBox().GetSize(Rml::BoxArea::Border);
+        std::vector<std::string> result{"Layout: " + std::to_string(offset.x) + ", " + std::to_string(offset.y) + " / " + std::to_string(size.x) + " x " + std::to_string(size.y)};
+        for (const auto *name : {"display", "position", "width", "height", "font-size", "color", "background-color", "overflow-x", "overflow-y"})
+            if (const auto *property = element->GetProperty(name)) result.push_back(std::string(name) + ": " + property->ToString());
+        return result;
+    }
+
     bool RmlDocumentPreview::Rebuild(core::Engine &engine, const RmlDocumentEditSession &session)
     {
         m_diagnostics.clear();

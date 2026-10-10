@@ -3045,7 +3045,8 @@ namespace PlutoGE::render::rhi::vulkan
             constexpr VkFormatFeatureFlags blitFeatures = VK_FORMAT_FEATURE_BLIT_SRC_BIT |
                 VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
             const bool gpuMips = !descriptor.normalMap && descriptor.depth == 1 && stored->mipLevels > 1 &&
-                (descriptor.format == Format::R8G8B8A8Srgb || descriptor.format == Format::R8G8B8A8Unorm) &&
+                (descriptor.format == Format::R8G8B8A8Srgb || descriptor.format == Format::R8G8B8A8Unorm ||
+                 descriptor.format == Format::R16G16B16A16Float || descriptor.format == Format::R32G32B32A32Float) &&
                 (formatProperties.optimalTilingFeatures & blitFeatures) == blitFeatures;
             core::CpuScope mipScope("CPU normal mipmaps", core::CpuCategory::Rendering);
             auto mipData = descriptor.normalMap && !descriptor.normalMipmapsProvided
@@ -3056,6 +3057,7 @@ namespace PlutoGE::render::rhi::vulkan
             copies.reserve(stored->mipLevels);
             std::uint32_t mipWidth = descriptor.width;
             std::uint32_t mipHeight = descriptor.height;
+            const auto texelBytes = BytesPerPixel(descriptor.format);
             std::size_t levelOffset = 0;
             copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {mipWidth, mipHeight, descriptor.depth}});
             for (std::uint32_t level = 1; !gpuMips && descriptor.depth == 1 && level < stored->mipLevels; ++level)
@@ -3063,16 +3065,52 @@ namespace PlutoGE::render::rhi::vulkan
                 const std::uint32_t nextWidth = (std::max)(1u, mipWidth / 2u);
                 const std::uint32_t nextHeight = (std::max)(1u, mipHeight / 2u);
                 const std::size_t sourceOffset = levelOffset;
-                levelOffset += static_cast<std::size_t>(mipWidth) * mipHeight * 4;
+                levelOffset += static_cast<std::size_t>(mipWidth) * mipHeight * texelBytes;
                 if (!descriptor.normalMap)
                 {
-                    mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * 4);
+                    mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * texelBytes);
                     for (std::uint32_t y = 0; y < nextHeight; ++y)
                     {
                         for (std::uint32_t x = 0; x < nextWidth; ++x)
                         {
                             for (std::uint32_t channel = 0; channel < 4; ++channel)
                             {
+                                if (descriptor.format == Format::R16G16B16A16Float || descriptor.format == Format::R32G32B32A32Float)
+                                {
+                                    float sum = 0;
+                                    const bool half = descriptor.format == Format::R16G16B16A16Float;
+                                    for (std::uint32_t oy = 0; oy < 2; ++oy)
+                                        for (std::uint32_t ox = 0; ox < 2; ++ox)
+                                        {
+                                            const auto sx = (std::min)(mipWidth - 1, x * 2 + ox);
+                                            const auto sy = (std::min)(mipHeight - 1, y * 2 + oy);
+                                            const auto offset = sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * texelBytes;
+                                            if (half)
+                                            {
+                                                std::uint16_t value;
+                                                std::memcpy(&value, mipData.data() + offset + channel * sizeof(value), sizeof(value));
+                                                sum += glm::unpackHalf1x16(value);
+                                            }
+                                            else
+                                            {
+                                                float value;
+                                                std::memcpy(&value, mipData.data() + offset + channel * sizeof(value), sizeof(value));
+                                                sum += value;
+                                            }
+                                        }
+                                    const auto offset = levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * texelBytes;
+                                    if (half)
+                                    {
+                                        const auto value = glm::packHalf1x16(sum * 0.25f);
+                                        std::memcpy(mipData.data() + offset + channel * sizeof(value), &value, sizeof(value));
+                                    }
+                                    else
+                                    {
+                                        const float value = sum * 0.25f;
+                                        std::memcpy(mipData.data() + offset + channel * sizeof(value), &value, sizeof(value));
+                                    }
+                                    continue;
+                                }
                                 unsigned int sum = 0;
                                 float linearSum = 0.0f;
                                 for (std::uint32_t oy = 0; oy < 2; ++oy)
@@ -3692,6 +3730,42 @@ namespace PlutoGE::render::rhi::vulkan
         Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)");
         vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount);
         auto pixels = ConvertToRgba8(mapped, pixelCount, texture->descriptor.format);
+        vmaUnmapMemory(m_impl->allocator, memory);
+        return pixels;
+    }
+
+    std::vector<float> VulkanDevice::ReadTextureRgbaFloat(TextureHandle handle)
+    {
+        auto *texture = m_impl->textures.Get(handle);
+        if (!texture || (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float))
+            throw std::invalid_argument("Invalid Vulkan color texture readback");
+        const std::size_t pixelCount = static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height;
+        const std::size_t byteCount = pixelCount * BytesPerPixel(texture->descriptor.format);
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = byteCount;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO;
+        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+        VkBuffer buffer{};
+        VmaAllocation memory{};
+        Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
+        ScopeExit releaseReadback([&] { vmaDestroyBuffer(m_impl->allocator, buffer, memory); });
+        const auto previousLayout = texture->layout;
+        ScopeExit failedReadback([&] { texture->layout = previousLayout; });
+        m_impl->Immediate([&](VkCommandBuffer command)
+                          { m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {texture->descriptor.width, texture->descriptor.height, 1}; vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy); });
+        failedReadback.Dismiss();
+        void *mapped = nullptr;
+        Check(vmaMapMemory(m_impl->allocator, memory, &mapped), "vmaMapMemory(readback)");
+        vmaInvalidateAllocation(m_impl->allocator, memory, 0, byteCount);
+        std::vector<float> pixels(pixelCount * 4);
+        if (texture->descriptor.format == Format::R16G16B16A16Float)
+        {
+            const auto *halves = static_cast<const std::uint16_t *>(mapped);
+            for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = glm::unpackHalf1x16(halves[i]);
+        }
+        else std::memcpy(pixels.data(), mapped, pixels.size() * sizeof(float));
         vmaUnmapMemory(m_impl->allocator, memory);
         return pixels;
     }

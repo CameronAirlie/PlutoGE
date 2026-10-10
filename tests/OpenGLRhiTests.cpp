@@ -1,3 +1,4 @@
+#include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -283,6 +284,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
+        {
+            CheckIblRendering(device, shaders);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")
         {
             const auto read = [&](render::rhi::TextureHandle texture) {

@@ -1,4 +1,9 @@
 add_library(PlutoGEEditorUI
+    src/BuiltinAuthoring.cpp
+    src/AuthoringUI.cpp
+    src/ScriptSourceWatch.cpp
+    src/RmlSourceTools.cpp
+    src/RmlVisualAuthoringUI.cpp
     src/EntityTransformEditing.cpp
     src/MultiEntityEdit.cpp
     src/IKInspector.cpp
@@ -78,6 +83,11 @@ target_link_libraries(PlutoGEEditorUI PUBLIC
     PlutoGE::imguizmo
     PlutoGE::glfw
 )
+
+get_target_property(PLUTO_EDITOR_RMLUI_TYPE RmlUi::Core TYPE)
+if (PLUTO_EDITOR_RMLUI_TYPE STREQUAL "STATIC_LIBRARY")
+    set_source_files_properties(src/RmlDocumentPreview.cpp PROPERTIES COMPILE_DEFINITIONS RMLUI_STATIC_LIB)
+endif()
 
 target_compile_definitions(PlutoGEEditorUI PRIVATE
     PLUTO_RHI_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")

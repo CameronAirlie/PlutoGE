@@ -221,3 +221,15 @@ The optional real CoD regression/capture command is `PlutoGERmlUiInterfaceScaleT
 For UI tasks, read this guide, [the pinned feature reference](RMLUI_REFERENCE.md), the target project's theme source/generator, and its controllers before editing. Use dp for scalable screen layout, keep viewport roots untransformed, preserve physical/projected geometry, and keep world UI independent. Do not infer browser features from familiar HTML/CSS spelling. Do not claim parser-only or backend-specific features work everywhere. Keep generated `.rcss` and `.rcss.in` consistent. Register new assets with project metadata/export tooling. Leave unrelated scene/assets/build configuration edits intact.
 
 When updating RmlUi, regenerate the pinned property/instancer inventory, review the backend capability matrix, run interface-scale/preview/font tests, and update this guide. Upstream feature manuals provide exhaustive syntax: [RML](https://mikke89.github.io/RmlUiDoc/pages/rml.html), [RCSS](https://mikke89.github.io/RmlUiDoc/pages/rcss.html), [forms and generated controls](https://mikke89.github.io/RmlUiDoc/pages/style_guide.html), [native data bindings](https://mikke89.github.io/RmlUiDoc/pages/data_bindings.html). The local pinned inventory takes precedence over newer upstream additions.
+
+## Visual authoring and managed view binding
+
+The Visual UI builder adds a source hierarchy, stable-ID preview picking,
+computed layout/style inspection, widget insertion/deletion, escaped leaf text,
+and undoable attribute/inline-style editing. It conservatively edits source spans;
+unsupported markup stays available through source editing. RmlViewBinder in
+PlutoGE.ScriptCore.Authoring binds escaped text, public properties, localized
+strings and actions. Call Refresh during updates and Dispose on controller
+shutdown. It detects recreated elements through private data-pluto-binding-*
+markers; reserve this attribute prefix for the engine. It does not register
+native data-model expressions. See [authoring workflows](EDITOR_AUTHORING.md).

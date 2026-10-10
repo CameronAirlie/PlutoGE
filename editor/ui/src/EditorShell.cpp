@@ -855,7 +855,7 @@ namespace PlutoGE::ui
 #endif
     }
 
-    EditorShell::EditorShell() = default;
+    EditorShell::EditorShell() { RegisterBuiltinAuthoring(m_authoring); }
 
     EditorShell::~EditorShell() { CancelModelImport(); }
 
@@ -958,6 +958,7 @@ namespace PlutoGE::ui
 
     void EditorShell::AddRecentProject(const std::filesystem::path &manifestPath)
     {
+        if (!m_persistEditorSettings) return;
         std::error_code error;
         auto normalizedPath = std::filesystem::absolute(manifestPath, error).lexically_normal();
         if (error)
@@ -1210,7 +1211,11 @@ namespace PlutoGE::ui
         scriptProjectContent += "  </Target>\n";
         scriptProjectContent += "</Project>\n";
 
-        if (!WriteTextFile(scriptProjectPath, scriptProjectContent, errorMessage))
+        // Preserve the timestamp for unchanged generated inputs; otherwise the
+        // source watcher would trigger another build after every build.
+        std::ifstream existingScriptProject(scriptProjectPath);
+        const std::string existingScriptProjectContent((std::istreambuf_iterator<char>(existingScriptProject)), {});
+        if (existingScriptProjectContent != scriptProjectContent && !WriteTextFile(scriptProjectPath, scriptProjectContent, errorMessage))
         {
             return false;
         }
@@ -1301,6 +1306,11 @@ namespace PlutoGE::ui
 
     bool EditorShell::BuildProjectScripts()
     {
+        if (m_scriptBuildFuture.valid())
+        {
+            m_statusMessage = "An automatic script build is in progress.";
+            return false;
+        }
         std::string errorMessage;
         if (!EnsureProjectScriptBuildScaffold(&errorMessage))
         {
@@ -1331,6 +1341,8 @@ namespace PlutoGE::ui
         buildConfig.framework = "net8.0";
 
         const auto buildResult = scriptEngine.BuildProject(buildConfig);
+        m_scriptBuildOutput = buildResult.output;
+        if (!buildResult.succeeded) m_showScriptBuildDiagnostics = true;
         if (!buildResult.succeeded)
         {
             m_statusMessage = "Failed to build scripts (exit code " + std::to_string(buildResult.exitCode) + ").";
@@ -1684,7 +1696,14 @@ namespace PlutoGE::ui
         std::string errorMessage;
         SceneGenerationRetention beforeGenerations, afterGenerations;
         const bool capturedBefore = CaptureSceneState(beforeState, &errorMessage, &beforeGenerations);
-        edit();
+        const bool wasDirty = m_sceneDirty;
+        try { edit(); }
+        catch (...)
+        {
+            if (capturedBefore && RestoreSceneState(beforeState, &errorMessage, false)) m_sceneDirty = wasDirty;
+            else { MarkSceneDirty(); Log(ConsoleSeverity::Error, "Cannot roll back failed scene edit: " + errorMessage); }
+            throw;
+        }
 
         if (!capturedBefore)
         {
@@ -2514,7 +2533,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::CreateProjectAtPath(const std::filesystem::path &manifestPath)
+    bool EditorShell::CreateProjectAtPath(const std::filesystem::path &manifestPath, const std::string &templateId)
     {
         if (!StopEditorRuntime())
             return false;
@@ -2559,10 +2578,25 @@ namespace PlutoGE::ui
 
         ReloadProjectScriptAssembly();
 
+        try
+        {
+            const auto templates = m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate);
+            const auto selected = std::find_if(templates.begin(), templates.end(), [&](const auto &entry) { return entry.id == templateId; });
+            if (selected == templates.end()) throw std::runtime_error("Unknown project template: " + templateId);
+            selected->execute(*this);
+        }
+        catch (const std::exception &error)
+        {
+            m_statusMessage = "Project template failed: " + std::string(error.what());
+            return false;
+        }
+
         if (!SaveProjectToDisk())
         {
             return false;
         }
+
+        if (templateId != "pluto.empty" && !BuildProjectScripts()) return false;
 
         m_statusMessage = "Created project: " + m_project->GetManifest().name;
         m_undoStack.clear();
@@ -2874,15 +2908,16 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::Initialize(const std::filesystem::path &startupProject)
+    bool EditorShell::Initialize(const std::filesystem::path &startupProject, bool visible)
     {
+        m_persistEditorSettings = visible;
         auto config = core::EngineConfig{
             platform::WindowConfig{
                 .title = "PlutoGE Editor",
                 .width = 1280,
                 .height = 720,
                 .resizable = true,
-                .visible = true,
+                .visible = visible,
                 .fullscreen = false,
             }};
         config.vSync = false;
@@ -2928,8 +2963,7 @@ namespace PlutoGE::ui
         InitializeEditorCamera();
         LoadRecentProjects();
         ApplyProjectContext();
-        SetScene(CreateEmptyScene());
-        m_statusMessage = "Ready";
+        m_statusMessage = "Open or create a project to begin.";
         UpdateWindowTitle();
 
         if (!m_panelManager.InitializeImGui(&m_engine.GetWindow(), m_engine.GetRenderDevice(), m_engine.GetSwapchain()))
@@ -2943,11 +2977,100 @@ namespace PlutoGE::ui
             return false;
         }
 
+        if (!visible) ImGui::GetIO().IniFilename = nullptr;
+
+        return true;
+    }
+
+    bool EditorShell::RunProjectLauncher()
+    {
+        // A separate frame loop keeps scene updates, shortcuts and workspace panels dormant.
+        while (!m_project)
+        {
+            auto &window = m_engine.GetWindow();
+            window.PollEvents();
+            if (window.ShouldClose()) return false;
+            window.SetScriptInputEnabled(false);
+            std::filesystem::path openPath;
+            std::filesystem::path createPath;
+            std::string templateId;
+            const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
+            m_engine.GetRenderer().BeginFrame();
+            m_panelManager.BeginPanelUpdate(false);
+            const auto *viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->WorkPos);
+            ImGui::SetNextWindowSize(viewport->WorkSize);
+            ImGui::Begin("Project Launcher", nullptr, ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking);
+            ImGui::Spacing();
+            ImGui::TextUnformatted("PlutoGE");
+            ImGui::TextUnformatted("Open or create a project to start building.");
+            ImGui::Separator();
+            if (ImGui::Button("Open Project...")) openPath = ShowOpenFileDialog(kProjectFileFilter);
+            ImGui::SameLine();
+            if (ImGui::Button("Create Project...")) ImGui::OpenPopup("Project template");
+            if (ImGui::BeginPopup("Project template"))
+            {
+                for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate))
+                {
+                    if (ImGui::MenuItem(entry.label.c_str(), nullptr, false, !entry.available || entry.available(*this)))
+                    {
+                        templateId = entry.id;
+                        createPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.description.c_str());
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Quit")) window.RequestClose();
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", m_statusMessage.c_str());
+            ImGui::Separator();
+            ImGui::TextUnformatted("Recent projects");
+            if (m_recentProjects.empty()) ImGui::TextDisabled("No recent projects. Open an existing project or create one above.");
+            ImGui::BeginChild("Recent project list", ImVec2(0, 0), false);
+            for (const auto &path : m_recentProjects)
+            {
+                ImGui::PushID(path.string().c_str());
+                std::error_code error;
+                const bool exists = std::filesystem::is_regular_file(path, error);
+                if (ImGui::Selectable(path.stem().string().c_str(), false) && exists) openPath = path;
+                ImGui::TextDisabled("%s%s", path.string().c_str(), exists ? "" : " (unavailable)");
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            ImGui::End();
+            m_panelManager.EndPanelUpdate();
+            if (vulkan) static_cast<void>(m_engine.GetRhiRenderService().Present());
+            else m_engine.GetRenderer().EndFrame();
+            if (window.ShouldClose()) return false;
+
+            // Execute after presentation: project changes can replace the native window/backend.
+            if (!openPath.empty())
+            {
+                std::string error;
+                const auto project = assets::Project::Load(openPath, &error);
+                if (!project) { m_statusMessage = error.empty() ? "Failed to open project." : error; continue; }
+                if (project->GetManifest().graphicsApi != m_engine.GetConfig().graphicsApi)
+                {
+                    const bool visible = m_persistEditorSettings;
+                    Shutdown();
+                    if (!Initialize(openPath, visible)) return false;
+                }
+                LoadProjectFromPath(openPath);
+            }
+            else if (!createPath.empty()) CreateProjectAtPath(createPath, templateId);
+            else glfwWaitEventsTimeout(1.0 / 60.0);
+        }
         return true;
     }
 
     void EditorShell::Render()
     {
+        // Do not create workspace panels or viewport targets before project selection.
+        if (!m_project && !RunProjectLauncher()) return;
         auto &window = m_engine.GetWindow();
         auto &renderer = m_engine.GetRenderer();
         auto deltaTime = std::chrono::duration<float>::zero();
@@ -3162,7 +3285,7 @@ namespace PlutoGE::ui
             core::CpuScope eventsScope("PollEvents", core::CpuCategory::Other);
             const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();
-            PollModelImport();
+            UpdateAuthoring();
             eventsScope.End();
             const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
@@ -3412,35 +3535,43 @@ namespace PlutoGE::ui
                         continue;
                     }
 
-                    iblCaptureComponent->DiscardCaptureResult();
+                    const auto *previousTexture = iblCaptureComponent->GetCaptureTexture();
+                    auto previousVolumes = m_scene->GetIblCaptureVolumes();
+                    bool storedCapturePixels = false;
+                    if (m_editorSceneRenderService && m_editorSceneRenderService->IsInitialized())
+                    {
+                        auto pixels = m_editorSceneRenderService->CaptureIbl(entity->GetWorldPosition(),
+                            iblCaptureComponent->GetResolution(), iblCaptureComponent->GetFarPlane(),
+                            renderer.GetSceneRenderCommandView(), *m_scene);
+                        storedCapturePixels = iblCaptureComponent->SetCapturePixels(pixels);
+                    }
+                    else
+                    {
+                        auto *texture = iblCaptureComponent->EnsureCaptureTexture();
+                        if (texture && renderer.CaptureSceneCubemap(entity->GetWorldPosition(),
+                                iblCaptureComponent->GetResolution(), iblCaptureComponent->GetFarPlane(),
+                                texture, m_scene->GetLights(), m_scene.get()))
+                            storedCapturePixels = iblCaptureComponent->StoreCapturePixelsFromTexture();
+                    }
+                    if (!storedCapturePixels)
+                    {
+                        m_statusMessage = "IBL capture failed; previous capture retained.";
+                        continue;
+                    }
+                    iblCaptureComponent->ClearDirty();
+                    // Replace borrowers before the next draw; preserve other authored volumes.
                     m_scene->ClearIblCaptureVolumes();
-
-                    auto *captureTexture = iblCaptureComponent->EnsureCaptureTexture();
-                    if (!captureTexture)
+                    bool replaced = false;
+                    for (auto &volume : previousVolumes)
                     {
-                        m_statusMessage = "IBL capture failed: could not create cubemap.";
-                        continue;
+                        if (previousTexture && volume.environmentMapTexture == previousTexture)
+                        {
+                            volume = iblCaptureComponent->BuildCaptureVolume();
+                            replaced = true;
+                        }
+                        m_scene->AddIblCaptureVolume(std::move(volume));
                     }
-
-                    const bool captured = renderer.CaptureSceneCubemap(
-                        entity->GetWorldPosition(),
-                        iblCaptureComponent->GetResolution(),
-                        iblCaptureComponent->GetFarPlane(),
-                        captureTexture,
-                        m_scene->GetLights(),
-                        m_scene.get());
-                    if (!captured)
-                    {
-                        m_statusMessage = "IBL capture failed.";
-                        continue;
-                    }
-
-                    const bool storedCapturePixels = iblCaptureComponent->StoreCapturePixelsFromTexture();
-                    if (storedCapturePixels)
-                    {
-                        iblCaptureComponent->ClearDirty();
-                    }
-                    m_scene->AddIblCaptureVolume(iblCaptureComponent->BuildCaptureVolume());
+                    if (!replaced) m_scene->AddIblCaptureVolume(iblCaptureComponent->BuildCaptureVolume());
                     m_statusMessage = storedCapturePixels ? "IBL capture complete." : "IBL capture complete, but could not store pixels.";
                 }
             }
@@ -3654,14 +3785,14 @@ namespace PlutoGE::ui
                 if (ConsumeInputMappingEditorOpenRequest())
                     inputMappingEditorPanel->SetOpen(true);
 
-                const auto newProject = [&]()
+                const auto newProject = [&](const std::string &templateId = "pluto.empty")
                 {
                     if (ConfirmContinueWithUnsavedChanges())
                     {
                         const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
                         if (!projectPath.empty())
                         {
-                            CreateProjectAtPath(projectPath);
+                            CreateProjectAtPath(projectPath, templateId);
                         }
                     }
                 };
@@ -3807,6 +3938,15 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("New Project...", "Ctrl+N"))
                     {
                         newProject();
+                    }
+                    if (ImGui::BeginMenu("New Project from Template"))
+                    {
+                        for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate))
+                        {
+                            if (ImGui::MenuItem(entry.label.c_str())) newProject(entry.id);
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.description.c_str());
+                        }
+                        ImGui::EndMenu();
                     }
                     if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
                     {
@@ -4040,6 +4180,11 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("Scripts"))
                 {
+                    if (ImGui::MenuItem("Automatically Build Changed Scripts", nullptr, &m_autoBuildScripts))
+                    {
+                        m_scriptWatch.Reset();
+                        m_nextScriptScan = {};
+                    }
                     ImGui::BeginDisabled(m_project == nullptr || IsRuntimeExportProject());
                     if (ImGui::MenuItem("Build Scripts"))
                     {
@@ -4065,6 +4210,7 @@ namespace PlutoGE::ui
                     }
                     ImGui::EndMenu();
                 }
+                RenderAuthoringMenu();
                 if (!m_statusMessage.empty())
                 {
                     ImGui::Separator();
@@ -4072,6 +4218,7 @@ namespace PlutoGE::ui
                 }
                 ImGui::EndMainMenuBar();
             }
+            RenderScriptBuildDiagnostics();
 
             RenderPlayModeChanges();
             RenderViewportBookmarks();
@@ -4593,6 +4740,9 @@ namespace PlutoGE::ui
 
     void EditorShell::Shutdown()
     {
+        // Compiler logging captures this editor; join before tearing down its sink.
+        if (m_scriptBuildFuture.valid()) m_scriptBuildFuture.wait();
+        if (m_scriptWatchFuture.valid()) m_scriptWatchFuture.wait();
         if (m_activeBakeTask)
         {
             m_activeBakeTask->Cancel();

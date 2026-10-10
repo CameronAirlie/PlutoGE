@@ -5,6 +5,7 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+#include <algorithm>
 
 #include <glm/glm.hpp>
 
@@ -68,6 +69,11 @@ namespace PlutoGE::scripting
         ScriptClassKind kind = ScriptClassKind::Behaviour;
         std::vector<std::string> assignableTypeNames;
         std::vector<ScriptFieldDefinition> fields;
+        [[nodiscard]] bool IsEditorCommand() const
+        {
+            return std::find(assignableTypeNames.begin(), assignableTypeNames.end(),
+                "PlutoGE.ScriptCore.Authoring.EditorCommand") != assignableTypeNames.end();
+        }
 
         [[nodiscard]] std::string GetFullName() const
         {

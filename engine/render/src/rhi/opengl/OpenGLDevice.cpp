@@ -881,6 +881,25 @@ namespace PlutoGE::render::rhi::opengl
         }
     }
     ICommandContext &OpenGLDevice::GetImmediateContext() { return *m_impl->context; }
+    std::vector<float> OpenGLDevice::ReadTextureRgbaFloat(TextureHandle handle)
+    {
+        const auto *texture = m_impl->textures.Get(handle);
+        if (!texture || texture->descriptor.depth != 1 ||
+            (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float))
+            throw std::invalid_argument("Invalid OpenGL HDR color texture readback");
+        std::vector<float> pixels(static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height * 4);
+        // The engine supports OpenGL 4.3; direct-state-access readback requires 4.5.
+        GLint previousTexture = 0, previousPackBuffer = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPackBuffer);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, texture->name);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, pixels.data());
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(previousPackBuffer));
+        return pixels;
+    }
+
     std::uint64_t OpenGLDevice::GetTextureNativeHandle(TextureHandle handle) const noexcept
     {
         const auto *texture = m_impl->textures.Get(handle);

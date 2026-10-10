@@ -3,6 +3,7 @@
 #include "Component.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scripting/ScriptTypes.h"
+#include "PlutoGE/assets/ManagedAssetFieldMetadata.h"
 
 #include <cstdint>
 #include <memory>
@@ -65,6 +66,10 @@ namespace PlutoGE::scene
 
         std::string m_scriptClass;
         std::unordered_map<std::string, scripting::ScriptFieldValue> m_fieldValues;
+        // Persisted field roles survive a missing assembly/class. Current
+        // reflection replaces a stored role when the field type is known.
+        std::map<std::string, assets::ManagedAssetFieldKind, std::less<>> m_assetFieldKinds;
+        bool m_assetFieldMetadataDeclared = false;
         std::unique_ptr<scripting::ScriptInstance> m_instance;
         bool m_started = false;
     };

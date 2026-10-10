@@ -1,5 +1,9 @@
 #include "PlutoGE/assets/AssetReferences.h"
 #include "PlutoGE/assets/AssetReference.h"
+#include "PlutoGE/assets/ManagedAssetFieldMetadata.h"
+#include "PlutoGE/assets/SceneModelInstanceRecord.h"
+#include <unordered_map>
+#include "ShaderGraphReferenceFields.h"
 
 #include <algorithm>
 #include <exception>
@@ -55,11 +59,213 @@ namespace PlutoGE::assets
             return result;
         }
 
-        void Add(AssetReferenceScan &scan, std::string_view value, std::size_t line, AssetReferenceRole role = AssetReferenceRole::Runtime)
+        void Add(AssetReferenceScan &scan, std::string_view value, std::size_t line, AssetReferenceRole role = AssetReferenceRole::Runtime, ProjectAssetType expectedType = ProjectAssetType::Unknown)
         {
             auto reference = NormalizeAssetReference(value);
-            if (!reference.empty()) scan.occurrences.push_back({std::move(reference), line, role});
+            if (!reference.empty()) scan.occurrences.push_back({std::move(reference), line, role, {}, expectedType});
             else if (value.starts_with("asset://")) scan.errors.push_back("Invalid logical reference at line " + std::to_string(line));
+        }
+
+        struct ModelSceneScanContext
+        {
+            bool linked = false, sawEntity = false, componentOpen = false;
+            std::size_t bytes = 0;
+            std::set<std::uint32_t> claimed;
+            std::unordered_map<std::uint32_t, std::uint32_t> parents;
+            std::set<std::uint32_t> meshComponents;
+            std::set<std::string> inlineVersions;
+            std::uint32_t componentEntity = 0;
+            std::unordered_map<std::uint32_t, std::map<std::string, std::string>> bindingProperties;
+            std::unordered_map<std::uint32_t, std::shared_ptr<const StaticModelInstanceState>> bindings;
+            std::shared_ptr<const StaticModelInstanceState> component;
+        };
+        std::string_view Field(std::string_view &line)
+        {
+            const auto delimiter = line.find('\t');
+            const auto field = line.substr(0, delimiter);
+            line = delimiter == std::string_view::npos ? std::string_view{} : line.substr(delimiter + 1);
+            return field;
+        }
+        bool OwnedBy(const std::string &reference, const StaticModelInstanceState &state)
+        {
+            AssetReference identity;
+            return ParseAssetReference(reference, identity) && identity.assetId == state.accepted.layout.sourceAssetId && identity.localObjectId;
+        }
+        bool ModelSceneRecord(AssetReferenceScan &scan, ModelSceneScanContext &context,
+            std::string_view line, std::size_t number)
+        {
+            auto fields = line;
+            const auto record = Field(fields);
+            if (record == "SCENE")
+            {
+                if (context.linked && number != 1) scan.errors.push_back("Duplicate linked scene header.");
+                if (number == 1) context.linked = fields == "3";
+            }
+            if (record == "MODEL_INSTANCE")
+            {
+                auto state = std::make_shared<StaticModelInstanceState>(); std::string error;
+                if (!context.linked || context.sawEntity || context.componentOpen || scan.modelInstances.size() >= 4096 ||
+                    line.size() > MaxSceneRecordSize - context.bytes || !ParseSceneModelInstanceRecord(line, *state, &error))
+                { scan.errors.push_back("Invalid or misplaced model instance at line " + std::to_string(number) + ": " + error); return true; }
+                context.bytes += line.size();
+                const auto claim = [&](std::uint32_t id) { return context.claimed.insert(id).second; };
+                bool unique = claim(state->rootEntityId);
+                for (const auto &node : state->nodeEntities) unique = claim(node.sceneEntityId) && unique;
+                for (const auto id : state->bindingEntities) unique = claim(id) && unique;
+                if (!unique) { scan.errors.push_back("Duplicate model entity ownership at line " + std::to_string(number)); return true; }
+                for (const auto id : state->bindingEntities) context.bindings.emplace(id, state);
+                const auto firstOccurrence = scan.occurrences.size();
+                Add(scan, state->accepted.layout.meshReference, number, AssetReferenceRole::AcceptedGeneration);
+                Add(scan, state->packageArtifact.reference, number, AssetReferenceRole::AcceptedGeneration);
+                std::string source;
+                if (SerializeAssetReference({state->accepted.layout.sourceAssetId, 0}, source))
+                    Add(scan, source, number, AssetReferenceRole::ImportSource);
+                const auto dependency = [&](const std::string &reference)
+                { Add(scan, reference, number, OwnedBy(reference, *state) ? AssetReferenceRole::AcceptedGeneration : AssetReferenceRole::Runtime); };
+                for (const auto &reference : state->defaultMaterials) dependency(reference);
+                for (const auto &override : state->overrides.materials) dependency(override.reference);
+                for (std::size_t index = firstOccurrence; index < scan.occurrences.size(); ++index)
+                    if (scan.occurrences[index].role == AssetReferenceRole::AcceptedGeneration)
+                        scan.occurrences[index].acceptedInstance = state;
+                scan.modelInstances.push_back(std::move(state));
+                return true;
+            }
+            if (!context.linked)
+            {
+                if (record == "PROPERTY")
+                {
+                    const auto name = Field(fields);
+                    if ((name.starts_with("MaterialSlots.") || name.starts_with("SubmeshOverrides.")) && name.ends_with(".InlineMaterialVersion"))
+                        scan.errors.push_back("Complete inline materials require scene format 3 at line " + std::to_string(number));
+                }
+                return false;
+            }
+            if (record == "ENTITY")
+            {
+                context.sawEntity = true;
+                if (context.componentOpen) scan.errors.push_back("Unterminated linked component.");
+                context.componentOpen = false; context.component.reset();
+                const auto idField = Field(fields); const auto parentField = Field(fields);
+                std::uint32_t id = 0, parent = 0;
+                const auto parsedId = std::from_chars(idField.data(), idField.data() + idField.size(), id);
+                const auto parsedParent = std::from_chars(parentField.data(), parentField.data() + parentField.size(), parent);
+                if (!id || parsedId.ec != std::errc{} || parsedId.ptr != idField.data() + idField.size() ||
+                    parsedParent.ec != std::errc{} || parsedParent.ptr != parentField.data() + parentField.size() ||
+                    !context.parents.emplace(id, parent).second)
+                    scan.errors.push_back("Invalid or duplicate linked entity at line " + std::to_string(number));
+            }
+            else if (record == "END_COMPONENT") { context.componentOpen = false; context.component.reset(); }
+            else if (record == "COMPONENT")
+            {
+                if (context.componentOpen) scan.errors.push_back("Nested linked component.");
+                context.componentOpen = true;
+                context.component.reset();
+                context.inlineVersions.clear();
+                const auto idField = Field(fields); const auto type = Field(fields);
+                std::uint32_t id = 0;
+                const auto parsed = std::from_chars(idField.data(), idField.data() + idField.size(), id);
+                if (parsed.ec != std::errc{} || parsed.ptr != idField.data() + idField.size())
+                    scan.errors.push_back("Invalid linked component entity at line " + std::to_string(number));
+                else if (!context.parents.contains(id)) scan.errors.push_back("Missing linked component owner.");
+                else if (type == "MeshComponent")
+                {
+                    if (!context.meshComponents.insert(id).second && context.bindings.contains(id)) scan.errors.push_back("Duplicate linked mesh component.");
+                    if (const auto found = context.bindings.find(id); found != context.bindings.end())
+                    { context.component = found->second; context.componentEntity = id; }
+                }
+            }
+            if (record == "PROPERTY")
+            {
+                const auto name = Field(fields); Field(fields); const auto value = Field(fields);
+                if ((name.starts_with("MaterialSlots.") || name.starts_with("SubmeshOverrides.")) && name.ends_with(".InlineMaterialVersion"))
+                    if (!context.componentOpen || value != "2" || !context.inlineVersions.insert(std::string(name)).second)
+                        scan.errors.push_back("Unsupported, duplicate or misplaced inline material version at line " + std::to_string(number));
+                if (context.component && (name == "MeshAssetReference" || name == "SourceMeshPath" || name == "SubmeshIndex" || name == "SubmeshCount"))
+                    if (!context.bindingProperties[context.componentEntity].emplace(std::string(name), Unescape(value)).second)
+                        scan.errors.push_back("Duplicate generated binding property.");
+            }
+            return false;
+        }
+
+        struct ManagedSceneScanContext
+        {
+            struct Property { std::string name, value; std::size_t line = 0; bool isString = false; };
+            bool active = false, invalid = false;
+            unsigned sceneVersion = 0;
+            std::size_t bytes = 0;
+            std::vector<Property> properties;
+        };
+        void FinishManagedComponent(AssetReferenceScan &scan, ManagedSceneScanContext &context,
+            const std::filesystem::path &root)
+        {
+            if (!context.active || context.invalid) return;
+            std::vector<ManagedAssetFieldRecord> records;
+            records.reserve(context.properties.size());
+            for (const auto &property : context.properties)
+                records.push_back({property.name, property.value, property.isString});
+            ManagedAssetFieldMetadata metadata;
+            std::string error;
+            if (!ReadManagedAssetFieldMetadata(records, metadata, &error))
+            { scan.errors.push_back(error); return; }
+            if (metadata.declared && context.sceneVersion != 3)
+            { scan.errors.push_back("Typed managed asset fields require scene format 3."); return; }
+            for (const auto &property : context.properties)
+            {
+                if (!metadata.declared) { Add(scan, property.value, property.line); continue; }
+                const auto kind = metadata.fields.find(property.name);
+                if (kind == metadata.fields.end() || property.value.empty()) continue;
+                const auto expected = ManagedAssetFieldAssetType(kind->second);
+                auto reference = property.value;
+                if (reference.find("://") == std::string::npos)
+                {
+                    const auto path = FromUtf8(reference);
+                    if (path.is_absolute())
+                    {
+                        if (root.empty()) { scan.errors.push_back("Typed managed field has an absolute path without an asset root."); continue; }
+                        reference = "project://" + Utf8(path.lexically_normal().lexically_relative(root.lexically_normal()));
+                    }
+                    else reference = "project://" + reference;
+                }
+                if (NormalizeAssetReference(reference).empty())
+                { scan.errors.push_back("Invalid typed managed asset reference at line " + std::to_string(property.line)); continue; }
+                Add(scan, reference, property.line, AssetReferenceRole::Runtime, expected);
+            }
+        }
+        bool ManagedSceneRecord(AssetReferenceScan &scan, ManagedSceneScanContext &context,
+            std::string_view line, std::size_t number, const std::filesystem::path &root)
+        {
+            auto fields = line;
+            const auto record = Field(fields);
+            if (record == "SCENE") context.sceneVersion = fields == "3" ? 3 : fields == "2" ? 2 : fields == "1" ? 1 : 0;
+            if (record == "ENTITY" || record == "COMPONENT")
+            {
+                if (context.active) scan.errors.push_back("Unterminated managed script component.");
+                context.active = false;
+                context.invalid = false;
+                context.bytes = 0;
+                context.properties.clear();
+                if (record == "COMPONENT") { Field(fields); context.active = Field(fields) == "ScriptComponent"; }
+            }
+            if (record == "END_COMPONENT" && context.active)
+            {
+                FinishManagedComponent(scan, context, root);
+                context.active = false;
+                context.properties.clear();
+                return true;
+            }
+            if (record != "PROPERTY" || !context.active) return false;
+            if (context.invalid) return true;
+            if (line.size() > MaxSceneRecordSize - context.bytes || context.properties.size() >= kMaxManagedAssetFields * 2 + 2)
+            {
+                scan.errors.push_back("Managed script component exceeds its field metadata limits.");
+                context.invalid = true;
+                context.properties.clear();
+                return true;
+            }
+            context.bytes += line.size();
+            const auto name = Field(fields), type = Field(fields), value = Field(fields);
+            context.properties.push_back({Unescape(name), Unescape(value), number, type == "2"});
+            return true;
         }
 
         void SplitValues(AssetReferenceScan &scan, std::string_view value, char delimiter,
@@ -169,10 +375,12 @@ namespace PlutoGE::assets
 
         void ParseLine(AssetReferenceScan &scan, std::string_view line, std::size_t number,
                        const std::string &extension, const std::filesystem::path &path,
-                       const std::filesystem::path &root)
+                       const std::filesystem::path &root, ModelSceneScanContext *models = nullptr, ManagedSceneScanContext *managed = nullptr)
         {
             if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
             if (line.empty()) return;
+            if (models && (extension == ".plutoscene" || extension == ".plutoprefab") && ModelSceneRecord(scan, *models, line, number)) return;
+            if (managed && (extension == ".plutoscene" || extension == ".plutoprefab") && ManagedSceneRecord(scan, *managed, line, number, root)) return;
             if (extension == ".plutoscene" || extension == ".plutoprefab" ||
                 extension == ".plutoscriptable" || extension == ".plutomodel")
             {
@@ -193,7 +401,15 @@ namespace PlutoGE::assets
                     else scan.errors.push_back("Malformed variant override at line " + std::to_string(number));
                     return;
                 }
+                const auto firstOccurrence = scan.occurrences.size();
                 SplitValues(scan, line, '\t', number, extension != ".plutomodel");
+                if (models && models->component && record == "PROPERTY")
+                    for (std::size_t index = firstOccurrence; index < scan.occurrences.size(); ++index)
+                        if (OwnedBy(scan.occurrences[index].reference, *models->component))
+                        {
+                            scan.occurrences[index].role = AssetReferenceRole::AcceptedGeneration;
+                            scan.occurrences[index].acceptedInstance = models->component;
+                        }
                 return;
             }
             if (extension == ".plutopostprocess")
@@ -204,6 +420,16 @@ namespace PlutoGE::assets
             if (extension == ".cs" || extension == ".rml" || extension == ".rcss" || extension == ".gltf")
             {
                 QuotedValues(scan, line, number, path, extension == ".cs" ? std::filesystem::path{} : root);
+                return;
+            }
+            if (extension == ".plutoshadergraph")
+            {
+                std::size_t offset = 0, size = 0;
+                const auto status = detail::ShaderGraphReferenceField(line, offset, size);
+                if (status == detail::ReferenceFieldStatus::Malformed)
+                    scan.errors.push_back("Malformed shader graph dependency field at line " + std::to_string(number));
+                else if (status == detail::ReferenceFieldStatus::Reference)
+                    Add(scan, line.substr(offset, size), number);
                 return;
             }
             const auto equals = line.find('=');
@@ -225,7 +451,7 @@ namespace PlutoGE::assets
                     scan.errors.push_back("Malformed shader graph texture at line " + std::to_string(number));
                 else Add(scan, value.substr(delimiter + 1), number);
             }
-            else if (extension == ".plutoanimgraph" || extension == ".plutoshadergraph")
+            else if (extension == ".plutoanimgraph")
                 SplitValues(scan, value, '|', number, false);
             else
                 Add(scan, value, number);
@@ -368,13 +594,15 @@ namespace PlutoGE::assets
             std::string line;
             std::size_t number = 1, bytes = 0;
             bool oversized = false;
+            ModelSceneScanContext models;
+            ManagedSceneScanContext managed;
             char c;
             while (input.get(c))
             {
                 if ((++bytes & 4095) == 0 && stop.stop_requested()) { result.cancelled = true; return result; }
                 if (c == '\n')
                 {
-                    if (!oversized) ParseLine(result, line, number, extension, path, assetRoot);
+                    if (!oversized) ParseLine(result, line, number, extension, path, assetRoot, &models, &managed);
                     else result.errors.push_back(recordLimitError + std::to_string(number));
                     line.clear(); oversized = false; ++number;
                 }
@@ -382,7 +610,53 @@ namespace PlutoGE::assets
                 else oversized = true;
             }
             if (oversized) result.errors.push_back(recordLimitError + std::to_string(number));
-            else if (!line.empty()) ParseLine(result, line, number, extension, path, assetRoot);
+            else if (!line.empty()) ParseLine(result, line, number, extension, path, assetRoot, &models, &managed);
+            if (managed.active) result.errors.push_back("Unterminated managed script component.");
+            if (models.linked)
+            {
+                if (models.componentOpen) result.errors.push_back("Unterminated linked component.");
+                for (const auto id : models.claimed)
+                    if (!models.parents.contains(id)) result.errors.push_back("Missing generated model entity.");
+                for (const auto &[id, state] : models.bindings)
+                    if (!models.meshComponents.contains(id)) result.errors.push_back("Missing generated model mesh component.");
+                for (const auto &state : result.modelInstances)
+                    for (std::size_t index = 0; index < state->bindingEntities.size(); ++index)
+                    {
+                        const auto &properties = models.bindingProperties[state->bindingEntities[index]];
+                        const auto mesh = properties.find("MeshAssetReference");
+                        const auto legacy = properties.find("SourceMeshPath");
+                        const auto submesh = properties.find("SubmeshIndex");
+                        const auto count = properties.find("SubmeshCount");
+                        std::uint64_t address = 0;
+                        bool valid = submesh != properties.end();
+                        if (valid)
+                        {
+                            const auto &value = submesh->second;
+                            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), address);
+                            valid = parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
+                        }
+                        if (!valid || address != state->accepted.layout.bindings[index].submeshIndex ||
+                            count == properties.end() || count->second != "1" ||
+                            (mesh == properties.end() && legacy == properties.end()) ||
+                            (mesh != properties.end() && mesh->second != state->accepted.layout.meshReference) ||
+                            (legacy != properties.end() && legacy->second != state->accepted.layout.meshReference))
+                            result.errors.push_back("Generated mesh binding differs from its accepted layout.");
+                    }
+                std::set<std::uint32_t> checked;
+                for (const auto &[id, parent] : models.parents)
+                {
+                    auto ancestor = id;
+                    std::set<std::uint32_t> visited;
+                    while (ancestor && !checked.contains(ancestor))
+                    {
+                        const auto found = models.parents.find(ancestor);
+                        if (found == models.parents.end() || !visited.insert(ancestor).second)
+                        { result.errors.push_back("Missing or cyclic linked entity parent."); break; }
+                        ancestor = found->second;
+                    }
+                    checked.insert(visited.begin(), visited.end());
+                }
+            }
         }
         if (input.bad()) result.errors.push_back("I/O error while reading asset.");
         result.cancelled = result.cancelled || stop.stop_requested();
@@ -423,6 +697,10 @@ namespace PlutoGE::assets
                         const auto afterTime = ec ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(path, ec);
                         if (ec || afterSize != size || afterTime != modified)
                             scan.errors.push_back("Asset changed during scan; retrying on the next refresh.");
+                        // Where-used queries need reference locations, not full
+                        // accepted layouts. Direct cooker scans retain their scope.
+                        for (auto &occurrence : scan.occurrences) occurrence.acceptedInstance.reset();
+                        scan.modelInstances.clear();
                         cached = m_files.insert_or_assign(path, CachedFile{size, modified, std::move(scan)}).first;
                     }
                     ++result.scannedFiles;

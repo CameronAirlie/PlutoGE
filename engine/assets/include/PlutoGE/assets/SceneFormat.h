@@ -13,7 +13,7 @@ namespace PlutoGE::assets
         if (text.starts_with("\xef\xbb\xbf")) text.remove_prefix(3);
         auto header = text.substr(0, text.find('\n'));
         if (header.ends_with('\r')) header.remove_suffix(1);
-        return header == "SCENE\t1" ? 1 : header == "SCENE\t2" ? 2 : 0;
+        return header == "SCENE\t1" ? 1 : header == "SCENE\t2" ? 2 : header == "SCENE\t3" ? 3 : 0;
     }
 
     inline bool ParseSceneLinearCorrection(std::string_view text, std::array<float, 9> &values)

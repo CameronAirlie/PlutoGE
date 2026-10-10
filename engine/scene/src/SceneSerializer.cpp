@@ -8,6 +8,15 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/SceneFormat.h"
+#include "PlutoGE/assets/SceneModelInstanceRecord.h"
+#include "PlutoGE/assets/ModelGenerationRetention.h"
+#include "PlutoGE/assets/AssetMetadata.h"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -44,6 +53,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <map>
 #include <unordered_set>
 #include <optional>
 #include <sstream>
@@ -437,7 +447,7 @@ namespace PlutoGE::scene
             if (componentType == "MeshComponent")
             {
                 return propertyName == "SourceMesh" || propertyName == "MeshAssetReference" ||
-                       propertyName == "SourceMeshPath" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
+                       propertyName.ends_with("Path") || propertyName.ends_with("MaterialAsset");
             }
             if (componentType == "TerrainComponent")
             {
@@ -516,16 +526,54 @@ namespace PlutoGE::scene
                 if (errorMessage) *errorMessage = "Affine scene transforms require explicit project version 4 conversion.";
                 return false;
             }
-            const auto transformVector = [affine](const glm::vec3 &value)
+            const bool linked = !scene.GetStaticModelInstances().empty();
+            const bool extendedMaterials = std::any_of(entities.begin(), entities.end(), [](const Entity *entity)
             {
-                if (!affine) return SerializeVec3(value);
+                for (const auto *mesh : entity->GetComponents<MeshComponent>())
+                    for (const auto &property : mesh->Serialize())
+                        if (property.name.ends_with(".InlineMaterialVersion")) return true;
+                return false;
+            });
+            const bool extendedManagedFields = std::any_of(entities.begin(), entities.end(), [](const Entity *entity)
+            {
+                for (const auto *script : entity->GetComponents<ScriptComponent>())
+                    for (const auto &property : script->Serialize())
+                        if (assets::IsManagedAssetFieldMetadata(property.name)) return true;
+                return false;
+            });
+            const bool version5 = linked || extendedMaterials || extendedManagedFields;
+            if (version5 && (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < assets::kLinkedModelSceneProjectVersion))
+            {
+                if (errorMessage) *errorMessage = "Linked models, complete inline materials and typed managed asset fields require project version 5.";
+                return false;
+            }
+            const auto transformVector = [precise = affine || version5](const glm::vec3 &value)
+            {
+                if (!precise) return SerializeVec3(value);
                 std::ostringstream text;
                 text.imbue(std::locale::classic());
                 text << std::setprecision(std::numeric_limits<float>::max_digits10)
-                     << value.x << ',' << value.y << ',' << value.z;
+                     << (value.x == 0.0f ? 0.0f : value.x) << ','
+                     << (value.y == 0.0f ? 0.0f : value.y) << ','
+                     << (value.z == 0.0f ? 0.0f : value.z);
                 return text.str();
             };
-            output << "SCENE\t" << (affine ? 2 : 1) << '\n';
+            output << "SCENE\t" << (version5 ? 3 : affine ? 2 : 1) << '\n';
+            // Deterministic order keeps scene history and source-control diffs stable.
+            std::map<EntityID, const StaticModelSceneInstance *> instances;
+            for (const auto &[id, instance] : scene.GetStaticModelInstances()) instances.emplace(id, &instance);
+            std::size_t instanceBytes = 0;
+            if (instances.size() > 4096) { if (errorMessage) *errorMessage = "Too many linked model instances."; return false; }
+            for (const auto &[id, instance] : instances)
+            {
+                assets::StaticModelInstanceState captured; std::string record;
+                if (!CaptureStaticModelInstance(scene, *instance, captured, errorMessage) ||
+                    !assets::SerializeSceneModelInstanceRecord(captured, record, errorMessage)) return false;
+                if (record.size() > 64u * 1024u * 1024u - instanceBytes)
+                { if (errorMessage) *errorMessage = "Linked model scene records exceed their total byte limit."; return false; }
+                instanceBytes += record.size();
+                output << record << '\n';
+            }
 
             auto &assetManager = core::Engine::GetInstance().GetAssetManager();
 
@@ -617,16 +665,33 @@ namespace PlutoGE::scene
                         const auto componentType = ResolveComponentTypeName(*component);
                         if (componentType.empty())
                         {
+                            if (linked) { if (errorMessage) *errorMessage = "Linked scene contains an unsupported component."; return false; }
                             continue;
                         }
 
                         output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\t'
                                << (component->IsEnabled() ? 1 : 0) << '\n';
-                        for (const auto &property : component->Serialize())
+                        const auto *meshComponent = dynamic_cast<const MeshComponent *>(component);
+                        const auto privateReader = meshComponent ? meshComponent->GetRetainedAssetReader() : nullptr;
+                        auto &componentAssets = privateReader ? *privateReader : assetManager;
+                        const auto properties = component->Serialize();
+                        assets::ManagedAssetFieldMetadata managedFields;
+                        if (componentType == "ScriptComponent")
                         {
-                            const std::string serializedValue = IsAssetPathProperty(componentType, property.name)
-                                                                    ? assetManager.PersistAssetPath(property.value)
-                                                                    : property.value;
+                            std::vector<assets::ManagedAssetFieldRecord> records;
+                            records.reserve(properties.size());
+                            for (const auto &property : properties)
+                                records.push_back({property.name, property.value, property.type == PropertyType::String});
+                            if (!assets::ReadManagedAssetFieldMetadata(records, managedFields, errorMessage)) return false;
+                        }
+                        for (const auto &property : properties)
+                        {
+                            std::string serializedValue = (IsAssetPathProperty(componentType, property.name) || managedFields.fields.contains(property.name))
+                                ? componentAssets.PersistAssetPath(property.value) : property.value;
+                            if (privateReader && IsAssetPathProperty(componentType, property.name))
+                                if (const auto catalog = componentAssets.GetAssetCatalog())
+                                    if (const auto identity = catalog->FindIdentityByLocation(serializedValue))
+                                        assets::SerializeAssetReference(*identity, serializedValue);
                             output << "PROPERTY\t"
                                    << EscapeText(property.name) << '\t'
                                    << static_cast<int>(property.type) << '\t'
@@ -647,29 +712,78 @@ namespace PlutoGE::scene
         }
     }
 
+    bool SceneSerializer::PrepareSave(const Scene &scene, std::string &outputText, std::string *errorMessage)
+    {
+        try
+        {
+            std::string prepared;
+            if (!SaveToString(scene, prepared, errorMessage)) return false;
+            auto &manager = core::Engine::GetInstance().GetAssetManager();
+            if (!scene.GetStaticModelInstances().empty())
+            {
+                assets::ProjectManifest manifest;
+                manifest.assetDirectory = manager.GetProjectAssetDirectory();
+                manifest.assetPipelineVersion = manager.GetAssetPipelineVersion();
+                const assets::Project project(std::filesystem::path(manager.GetProjectRootDirectory()) / "linked-context.plutoproject", manifest);
+                for (const auto &[id, instance] : scene.GetStaticModelInstances())
+                {
+                    assets::StaticModelInstanceState captured; assets::ModelGenerationSnapshot retained;
+                    if (!CaptureStaticModelInstance(scene, instance, captured, errorMessage) ||
+                        !assets::RetainStaticModelInstance(project, captured, manager.GetAssetCatalog(), manager.GetAssetStorageMap(), retained, errorMessage)) return false;
+                }
+            }
+            outputText = std::move(prepared);
+            if (errorMessage) errorMessage->clear();
+            return true;
+        }
+        catch (const std::exception &error)
+        { if (errorMessage) *errorMessage = error.what(); return false; }
+    }
+
     bool SceneSerializer::Save(const Scene &scene, const std::string &filePath, std::string *errorMessage)
     {
-        // Complete format validation before opening/truncating the destination.
-        std::string prepared;
-        if (!SaveToString(scene, prepared, errorMessage)) return false;
-        std::ofstream output(filePath, std::ios::out | std::ios::trunc);
-        if (!output.is_open())
+        std::filesystem::path staging;
+        try
         {
-            if (errorMessage)
+            std::string prepared;
+            if (!PrepareSave(scene, prepared, errorMessage)) return false;
+            const auto destination = std::filesystem::absolute(filePath).lexically_normal();
+            for (unsigned attempt = 0; attempt < 32; ++attempt)
             {
-                *errorMessage = "Failed to open scene file for writing.";
+                const auto candidate = destination.parent_path() / (".pluto-scene-" + assets::GenerateAssetId());
+                if (std::filesystem::create_directory(candidate)) { staging = candidate; break; }
             }
-            return false;
+            if (staging.empty()) throw std::runtime_error("Failed to create scene staging directory.");
+            const auto temporary = staging / "scene";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                output.write(prepared.data(), static_cast<std::streamsize>(prepared.size()));
+                output.close();
+                if (!output) throw std::runtime_error("Failed to write staged scene.");
+            }
+#ifdef _WIN32
+            if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Failed to publish scene");
+#else
+            std::filesystem::rename(temporary, destination);
+#endif
+            std::error_code ignored;
+            std::filesystem::remove(staging, ignored);
+            if (errorMessage) errorMessage->clear();
+            return true;
         }
-
-        output << prepared;
-        output.flush();
-        if (!output.good())
+        catch (const std::exception &error)
         {
-            if (errorMessage) *errorMessage = "Failed to write scene file.";
+            // Remove only the file and empty directory created by this operation.
+            if (!staging.empty())
+            {
+                std::error_code ignored;
+                std::filesystem::remove(staging / "scene", ignored);
+                std::filesystem::remove(staging, ignored);
+            }
+            if (errorMessage) *errorMessage = error.what();
             return false;
         }
-        return true;
     }
 
     std::string SceneSerializer::GetComponentTypeName(const Component &component)
@@ -679,14 +793,19 @@ namespace PlutoGE::scene
 
     bool SceneSerializer::SaveToString(const Scene &scene, std::string &outputText, std::string *errorMessage)
     {
-        std::ostringstream output;
-        if (!SaveSceneToStream(scene, output, errorMessage))
+        try
         {
+            std::ostringstream output;
+            if (!SaveSceneToStream(scene, output, errorMessage)) return false;
+            outputText = output.str();
+            if (errorMessage) errorMessage->clear();
+            return true;
+        }
+        catch (const std::exception &error)
+        {
+            if (errorMessage) *errorMessage = error.what();
             return false;
         }
-
-        outputText = output.str();
-        return true;
     }
 
     namespace
@@ -725,12 +844,20 @@ namespace PlutoGE::scene
             if (!header.empty() && header.back() == '\r') header.pop_back();
             const unsigned formatVersion = assets::SceneFormatVersion(header);
             auto &context = core::Engine::GetInstance().GetAssetManager();
-            if (!formatVersion || (formatVersion == 2 && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion))
+            if (!formatVersion || (formatVersion >= 2 && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() < assets::kAffineSceneProjectVersion) ||
+                (formatVersion == 3 && (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < assets::kLinkedModelSceneProjectVersion)))
             {
                 if (errorMessage) *errorMessage = "Unsupported scene format or incompatible project version.";
                 return nullptr;
             }
 
+            const auto parseEntityId = [formatVersion](const std::string &token) -> EntityID
+            {
+                if (formatVersion != 3) return static_cast<EntityID>(std::stoul(token));
+                EntityID id = 0;
+                if (!ParseNumber(token, id)) throw std::runtime_error("Invalid linked-scene entity ID.");
+                return id;
+            };
             auto scene = std::make_unique<Scene>();
             if (!filePath.empty())
             {
@@ -763,6 +890,20 @@ namespace PlutoGE::scene
             std::string line;
             std::size_t lineNumber = 1;
             std::unordered_set<EntityID> linearTransforms;
+            struct PreparedLinkedGeneration
+            {
+                assets::StaticModelGenerationSnapshot snapshot;
+                std::shared_ptr<assets::AssetManager> reader;
+            };
+            std::unordered_map<std::string, PreparedLinkedGeneration> linkedGenerations;
+            std::vector<StaticModelSceneInstance> instances;
+            std::unordered_map<EntityID, std::shared_ptr<assets::AssetManager>> linkedResources;
+            std::unordered_set<EntityID> instanceEntities;
+            std::size_t instanceBytes = 0;
+            assets::ProjectManifest manifest;
+            manifest.assetDirectory = context.GetProjectAssetDirectory();
+            manifest.assetPipelineVersion = context.GetAssetPipelineVersion();
+            const assets::Project project(std::filesystem::path(context.GetProjectRootDirectory()) / "linked-context.plutoproject", manifest);
             while (std::getline(input, line))
             {
                 platform::LoadingWork::Checkpoint();
@@ -776,6 +917,7 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                if (formatVersion == 3 && line.empty()) continue;
                 // Structural format records are fatal, rather than recoverable:
                 // skipping one could turn a successful save into silent data loss.
                 if (tokens[0] == "SCENE")
@@ -783,11 +925,51 @@ namespace PlutoGE::scene
                     if (errorMessage) *errorMessage = "Duplicate scene format header.";
                     return nullptr;
                 }
+                if (tokens[0] == "MODEL_INSTANCE")
+                {
+                    assets::StaticModelInstanceState state; std::string error;
+                    if (formatVersion != 3 || !entityMap.empty() || activeComponent || instances.size() >= 4096 ||
+                        line.size() > 64u * 1024u * 1024u - instanceBytes ||
+                        !assets::ParseSceneModelInstanceRecord(line, state, &error))
+                    {
+                        if (errorMessage) *errorMessage = "Invalid or misplaced model instance record: " + error;
+                        return nullptr;
+                    }
+                    instanceBytes += line.size();
+                    const auto claim = [&](EntityID id) { return instanceEntities.insert(id).second; };
+                    bool unique = claim(state.rootEntityId);
+                    for (const auto &node : state.nodeEntities) unique = claim(node.sceneEntityId) && unique;
+                    for (const auto id : state.bindingEntities) unique = claim(id) && unique;
+                    if (!unique)
+                    { if (errorMessage) *errorMessage = "Duplicate linked model entity ownership."; return nullptr; }
+                    const auto key = content::DigestToHex(state.artifactGenerationKey);
+                    auto cached = linkedGenerations.find(key);
+                    if (cached == linkedGenerations.end())
+                    {
+                        assets::ModelGenerationSnapshot snapshot;
+                        assets::StaticModelGenerationSnapshot prepared;
+                        if (!assets::ReadModelGenerationSnapshot(project, state.accepted.layout.sourceAssetId,
+                            state.artifactGenerationKey, state.packageArtifact, context.GetAssetCatalog(), context.GetAssetStorageMap(), snapshot, &error) ||
+                            !assets::PrepareStaticModelGenerationSnapshot(project, snapshot, prepared, &error))
+                        { if (errorMessage) *errorMessage = "Invalid accepted model generation: " + error; return nullptr; }
+                        auto reader = std::make_shared<assets::AssetManager>(assets::AssetManager::ResourceLifetime::Scoped,
+                            &context, state.accepted.layout.sourceAssetId);
+                        reader->SetProjectContext(context.GetProjectRootDirectory(), context.GetProjectAssetDirectory(), context.GetAssetPipelineVersion());
+                        reader->SetAssetSnapshot(snapshot.catalog, snapshot.storage);
+                        cached = linkedGenerations.emplace(key, PreparedLinkedGeneration{std::move(prepared), std::move(reader)}).first;
+                    }
+                    if (!assets::ValidateStaticModelInstanceBaseline(state, cached->second.snapshot, &error))
+                    { if (errorMessage) *errorMessage = "Invalid accepted model generation: " + error; return nullptr; }
+                    auto reader = cached->second.reader;
+                    for (const auto id : state.bindingEntities) linkedResources.emplace(id, reader);
+                    instances.push_back({std::move(state), std::move(reader)});
+                    continue;
+                }
                 if (tokens[0] == "LINEAR_TRANSFORM")
                 {
                     EntityID id = 0;
                     glm::mat4 correction;
-                    if (formatVersion != 2 || tokens.size() != 3 || !ParseNumber(tokens[1], id) ||
+                    if (formatVersion < 2 || tokens.size() != 3 || !ParseNumber(tokens[1], id) ||
                         !entityMap.contains(id) || !linearTransforms.insert(id).second ||
                         !ParseLinearTransformCorrection(tokens[2], correction) ||
                         !entityMap.at(id)->SetLocalTransformCorrection(correction))
@@ -838,8 +1020,11 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "ENTITY" && tokens.size() >= 8)
                 {
-                    const EntityID serializedId = static_cast<EntityID>(std::stoul(tokens[1]));
-                    const EntityID parentId = static_cast<EntityID>(std::stoul(tokens[2]));
+                    if (formatVersion == 3 && activeComponent) throw std::runtime_error("Unterminated linked-scene component.");
+                    const EntityID serializedId = parseEntityId(tokens[1]);
+                    const EntityID parentId = parseEntityId(tokens[2]);
+                    if (formatVersion == 3 && (!serializedId || entityMap.contains(serializedId)))
+                        throw std::runtime_error("Duplicate or invalid linked-scene entity ID.");
                     const bool isActive = tokens[3] == "1";
 
                     reportTrace("Scene load line " + std::to_string(lineNumber) +
@@ -861,8 +1046,10 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "COMPONENT" && tokens.size() >= 3)
                 {
+                    if (formatVersion == 3 && (activeComponent || !entityMap.contains(parseEntityId(tokens[1]))))
+                        throw std::runtime_error("Invalid linked-scene component owner or nesting.");
                     activeComponent = PendingComponent{
-                        .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
+                        .entityId = parseEntityId(tokens[1]),
                         .typeName = tokens[2],
                         .enabled = tokens.size() < 4 || tokens[3] == "1" || tokens[3] == "true" || tokens[3] == "True",
                     };
@@ -874,12 +1061,12 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "PREFAB" && tokens.size() >= 5)
                 {
-                    const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                    const EntityID entityId = parseEntityId(tokens[1]);
                     const auto entityIt = entityMap.find(entityId);
                     if (entityIt != entityMap.end())
                     {
                         entityIt->second->SetPrefabLink(tokens[2],
-                                                        static_cast<EntityID>(std::stoul(tokens[3])),
+                                                        parseEntityId(tokens[3]),
                                                         tokens[4] == "1");
                         if (tokens.size() >= 6)
                         {
@@ -895,7 +1082,7 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "TAGS" && tokens.size() >= 3)
                 {
-                    const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                    const EntityID entityId = parseEntityId(tokens[1]);
                     const auto entityIt = entityMap.find(entityId);
                     if (entityIt != entityMap.end())
                     {
@@ -933,6 +1120,21 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "END_COMPONENT" && activeComponent.has_value())
                 {
+                    if (activeComponent->typeName == "ScriptComponent")
+                    {
+                        std::vector<assets::ManagedAssetFieldRecord> records;
+                        records.reserve(activeComponent->properties.size());
+                        for (const auto &property : activeComponent->properties)
+                            records.push_back({property.name, property.value, property.type == PropertyType::String});
+                        assets::ManagedAssetFieldMetadata metadata;
+                        std::string error;
+                        if (!assets::ReadManagedAssetFieldMetadata(records, metadata, &error)) throw std::runtime_error(error);
+                        if (metadata.declared && formatVersion < 3)
+                            throw std::runtime_error("Typed managed asset fields require scene format 3 and project format 5.");
+                        for (auto &property : activeComponent->properties)
+                            if (metadata.fields.contains(property.name))
+                                property.value = CanonicalizeStoredAssetPath(assetManager, property.value);
+                    }
                     const auto entityIt = entityMap.find(activeComponent->entityId);
                     if (entityIt != entityMap.end())
                     {
@@ -953,45 +1155,71 @@ namespace PlutoGE::scene
                                         " (" + std::to_string(activeComponent->properties.size()) + " properties)");
                             try
                             {
-                                componentPtr->Deserialize(activeComponent->properties);
+                                if (auto *mesh = dynamic_cast<MeshComponent *>(componentPtr); mesh && linkedResources.contains(activeComponent->entityId))
+                                    mesh->DeserializeWithAssetManager(activeComponent->properties, linkedResources.at(activeComponent->entityId));
+                                else componentPtr->Deserialize(activeComponent->properties);
                                 componentPtr->SetEnabled(activeComponent->enabled);
                                 reportTrace("Scene load line " + std::to_string(lineNumber) +
                                             ": loaded " + componentContext);
                             }
                             catch (const std::exception &exception)
                             {
+                                if (formatVersion == 3) throw;
                                 entityIt->second->RemoveComponent(componentPtr);
                                 reportRecovery("Removed " + componentContext + " because it could not be deserialized: " + exception.what());
                             }
                             catch (...)
                             {
+                                if (formatVersion == 3) throw;
                                 entityIt->second->RemoveComponent(componentPtr);
                                 reportRecovery("Removed " + componentContext + " because it could not be deserialized.");
                             }
                         }
                         else
                         {
+                            if (formatVersion == 3 && allowed) throw std::runtime_error("Unknown component in linked scene.");
                             reportTrace("Scene load line " + std::to_string(lineNumber) +
                                         ": skipped unknown " + componentContext);
                         }
                     }
                     activeComponent.reset();
+                    continue;
                 }
+                if (formatVersion == 3) throw std::runtime_error("Unknown or malformed linked-scene record.");
                 }
                 catch (const std::exception &exception)
                 {
+                    if (formatVersion == 3) throw;
                     reportRecovery("Skipped invalid record at line " + std::to_string(lineNumber) + ": " + exception.what());
                     if (tokens[0] == "COMPONENT" || tokens[0] == "PROPERTY" || tokens[0] == "END_COMPONENT")
                         activeComponent.reset();
                 }
                 catch (...)
                 {
+                    if (formatVersion == 3) throw;
                     reportRecovery("Skipped invalid record at line " + std::to_string(lineNumber) + ".");
                     if (tokens[0] == "COMPONENT" || tokens[0] == "PROPERTY" || tokens[0] == "END_COMPONENT")
                         activeComponent.reset();
                 }
             }
 
+            if (formatVersion == 3)
+            {
+                if (activeComponent) throw std::runtime_error("Unterminated linked-scene component.");
+                std::unordered_map<EntityID, EntityID> parents;
+                for (const auto &pending : pendingParents) parents.emplace(pending.id, pending.parentId);
+                for (const auto &[id, parent] : parents)
+                {
+                    std::unordered_set<EntityID> visited{id};
+                    auto current = parent;
+                    while (current)
+                    {
+                        if (!parents.contains(current) || !visited.insert(current).second)
+                            throw std::runtime_error("Missing or cyclic linked-scene parent.");
+                        current = parents.at(current);
+                    }
+                }
+            }
             for (const auto &pendingParent : pendingParents)
             {
                 platform::LoadingWork::Checkpoint();
@@ -1012,6 +1240,9 @@ namespace PlutoGE::scene
                 parentIt->second->AddChild(entityIt->second);
                 reportTrace("Scene hierarchy: attached entity " + std::to_string(pendingParent.id));
             }
+
+            for (auto &instance : instances)
+                if (!scene->InstallStaticModelInstance(std::move(instance), errorMessage)) return nullptr;
 
             if (!geometryPreview && bakedProbeVolume.IsValid())
             {

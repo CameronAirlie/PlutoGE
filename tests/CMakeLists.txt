@@ -141,6 +141,9 @@ pluto_link_engine(PlutoGELargeMeshOptimizationTests)
 
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
 add_test(NAME PlutoGEMeshLodGenerationTests COMMAND PlutoGELargeMeshOptimizationTests --lod-only)
+# Both invocations exercise the same on-disk importer/cache fixture.
+set_tests_properties(PlutoGELargeMeshOptimizationTests PlutoGEMeshLodGenerationTests
+    PROPERTIES RESOURCE_LOCK PlutoGELargeMeshFixtures)
 
 # Copy at configure time so nested LINK_GROUP expressions are evaluated normally.
 get_target_property(pluto_import_test_libraries PlutoGELargeMeshOptimizationTests LINK_LIBRARIES)
@@ -246,6 +249,8 @@ if (PLUTOGE_TEST_DOTNET)
         --configuration Release)
 endif()
 add_executable(PlutoGEProjectValidationTests ProjectValidationTests.cpp
+    ../engine/assets/src/AssetType.cpp
+    ../engine/assets/src/AssetPathPolicy.cpp
     ../engine/assets/src/AssetCatalog.cpp
     ../engine/assets/src/ProjectValidation.cpp ../engine/assets/src/AssetReferences.cpp
     ../engine/assets/src/AssetReference.cpp)
@@ -305,7 +310,8 @@ add_test(NAME PlutoGEColliderCcdTests COMMAND PlutoGEColliderCcdTests)
 
 add_executable(PlutoGEMultiEntityEditTests
     MultiEntityEditTests.cpp
-    ../editor/ui/src/MultiEntityEdit.cpp)
+    ../editor/ui/src/MultiEntityEdit.cpp
+    ../editor/ui/src/EntityTransformEditing.cpp)
 target_include_directories(PlutoGEMultiEntityEditTests PRIVATE ../editor/ui/include)
 pluto_link_engine(PlutoGEMultiEntityEditTests)
 add_test(NAME PlutoGEMultiEntityEditTests COMMAND PlutoGEMultiEntityEditTests)
@@ -649,6 +655,8 @@ target_compile_features(PlutoGEModelImportSettingsTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEModelImportSettingsTests COMMAND PlutoGEModelImportSettingsTests)
 
 add_executable(PlutoGEArtifactCacheTests ArtifactCacheTests.cpp
+    ../engine/assets/src/ArtifactGenerationLock.cpp
+    ../engine/platform/src/FilesystemPaths.cpp
     ../engine/assets/src/ProjectAssetLock.cpp
     ../engine/asset_import/src/ArtifactCache.cpp
     ../engine/assets/src/AssetMetadata.cpp
@@ -668,7 +676,7 @@ add_test(NAME PlutoGEImportedModelHierarchyTests COMMAND PlutoGEImportedModelHie
 # Build the asset-pipeline verification graph once, sharing engine dependencies.
 add_custom_target(PlutoGEAssetPipelineChecks DEPENDS
     PlutoGEFbxImportTests PlutoGESkinningCpuTests PlutoGEImportedModelHierarchyTests
-    PlutoGEImportedAssetLifetimeTests PlutoGELargeMeshOptimizationTests PlutoGEMeshLodGenerationTests
+    PlutoGEImportedAssetLifetimeTests PlutoGELargeMeshOptimizationTests
     PlutoGEAssetReferencesTests PlutoGEProjectValidationTests PlutoGEArtifactCacheTests
     PlutoGEModelImportSettingsTests PlutoGEImportFileTransactionTests
     PlutoGEModelImportServiceTests PlutoGEImportModel PlutoGEAssetCatalogTests
@@ -686,10 +694,10 @@ endif()
 
 add_executable(PlutoGEAffineTransformTests AffineTransformTests.cpp ../engine/scene/src/AffineTransform.cpp)
 target_include_directories(PlutoGEAffineTransformTests PRIVATE ../engine/scene/include ../engine/assets/include)
-target_link_libraries(PlutoGEAffineTransformTests PRIVATE PlutoGE::glm)
+target_link_libraries(PlutoGEAffineTransformTests PRIVATE PlutoGE::Math)
 target_compile_features(PlutoGEAffineTransformTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEAffineTransformTests COMMAND PlutoGEAffineTransformTests)
-add_dependencies(PlutoGEAssetPipelineChecks PlutoGEAffineTransformTests PlutoGESceneHistoryTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEAffineTransformTests PlutoGESceneHistoryTests PlutoGESceneStreamingTests)
 
 add_executable(PlutoGEModelHierarchyViewTests ModelHierarchyViewTests.cpp ../editor/ui/src/ModelHierarchyView.cpp)
 target_include_directories(PlutoGEModelHierarchyViewTests PRIVATE ../editor/ui/include)
@@ -711,6 +719,12 @@ if(TARGET PlutoGEEditorUI)
     pluto_link_engine(PlutoGEStaticModelHierarchyPlacementTests)
     add_test(NAME PlutoGEStaticModelHierarchyPlacementTests COMMAND PlutoGEStaticModelHierarchyPlacementTests)
     add_dependencies(PlutoGEAssetPipelineChecks PlutoGEStaticModelHierarchyPlacementTests)
+    add_executable(PlutoGELinkedModelScenePersistenceTests LinkedModelScenePersistenceTests.cpp)
+    target_include_directories(PlutoGELinkedModelScenePersistenceTests PRIVATE ../editor/ui/include)
+    target_link_libraries(PlutoGELinkedModelScenePersistenceTests PRIVATE PlutoGE::AssetImport)
+    pluto_link_engine(PlutoGELinkedModelScenePersistenceTests)
+    add_test(NAME PlutoGELinkedModelScenePersistenceTests COMMAND PlutoGELinkedModelScenePersistenceTests)
+    add_dependencies(PlutoGEAssetPipelineChecks PlutoGELinkedModelScenePersistenceTests)
 endif()
 
 if(TARGET PlutoGEEditorUI)
@@ -719,4 +733,121 @@ if(TARGET PlutoGEEditorUI)
     pluto_link_engine(PlutoGEModelImportDependenciesInspectorTests)
     add_test(NAME PlutoGEModelImportDependenciesInspectorTests COMMAND PlutoGEModelImportDependenciesInspectorTests)
     add_dependencies(PlutoGEAssetPipelineChecks PlutoGEModelImportDependenciesInspectorTests)
+endif()
+
+# Migration preparation is CPU-only and must remain usable by headless tools.
+add_executable(PlutoGEAssetMigrationSerializationTests
+    AssetMigrationSerializationTests.cpp
+    ../engine/assets/src/AssetMigrationSerialization.cpp
+    ../engine/assets/src/AssetReference.cpp
+    ../engine/assets/src/AssetReferences.cpp
+    ../engine/platform/src/ContentDigest.cpp)
+target_include_directories(PlutoGEAssetMigrationSerializationTests PRIVATE
+    ../engine/assets/include ../engine/platform/include ../engine/render/include)
+target_link_libraries(PlutoGEAssetMigrationSerializationTests PRIVATE glm::glm)
+add_test(NAME PlutoGEAssetMigrationSerializationTests COMMAND PlutoGEAssetMigrationSerializationTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEAssetMigrationSerializationTests)
+
+add_executable(PlutoGEModelInstanceReconciliationTests ModelInstanceReconciliationTests.cpp
+    ../engine/assets/src/ModelInstanceReconciliation.cpp
+    ../engine/assets/src/AssetReference.cpp ../engine/assets/src/AssetReferences.cpp)
+target_include_directories(PlutoGEModelInstanceReconciliationTests PRIVATE
+    ../engine/assets/include ../engine/import/include ../engine/platform/include ../engine/render/include)
+target_link_libraries(PlutoGEModelInstanceReconciliationTests PRIVATE PlutoGE::glm)
+target_compile_features(PlutoGEModelInstanceReconciliationTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEModelInstanceReconciliationTests COMMAND PlutoGEModelInstanceReconciliationTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEModelInstanceReconciliationTests)
+
+add_executable(PlutoGEModelInstanceStateTests ModelInstanceStateTests.cpp
+    ../engine/assets/src/SceneModelInstanceRecord.cpp
+    ../engine/assets/src/ModelInstanceState.cpp ../engine/assets/src/ModelInstanceReconciliation.cpp
+    ../engine/assets/src/AssetReference.cpp ../engine/assets/src/AssetReferences.cpp)
+target_include_directories(PlutoGEModelInstanceStateTests PRIVATE
+    ../engine/assets/include ../engine/import/include ../engine/platform/include ../engine/render/include)
+target_link_libraries(PlutoGEModelInstanceStateTests PRIVATE PlutoGE::glm)
+target_compile_features(PlutoGEModelInstanceStateTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEModelInstanceStateTests COMMAND PlutoGEModelInstanceStateTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEModelInstanceStateTests)
+
+add_executable(PlutoGEArtifactGenerationLockTests ArtifactGenerationLockTests.cpp
+    ../engine/assets/src/ArtifactGenerationLock.cpp
+    ../engine/platform/src/ContentDigest.cpp ../engine/platform/src/FilesystemPaths.cpp)
+target_include_directories(PlutoGEArtifactGenerationLockTests PRIVATE ../engine/assets/include ../engine/platform/include)
+target_compile_features(PlutoGEArtifactGenerationLockTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEArtifactGenerationLockTests COMMAND PlutoGEArtifactGenerationLockTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEArtifactGenerationLockTests)
+
+add_executable(PlutoGEArtifactCollectionTests ArtifactCollectionTests.cpp)
+target_link_libraries(PlutoGEArtifactCollectionTests PRIVATE PlutoGEAssetImport)
+pluto_link_engine(PlutoGEArtifactCollectionTests)
+add_test(NAME PlutoGEArtifactCollectionTests COMMAND PlutoGEArtifactCollectionTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEArtifactCollectionTests)
+
+# Structural scene references share bounded CPU codecs with headless scans.
+function(pluto_add_model_reference_codecs target)
+    get_target_property(existing_sources ${target} SOURCES)
+    foreach(codec ModelInstanceState ModelInstanceReconciliation SceneModelInstanceRecord)
+        set(codec_source "../engine/assets/src/${codec}.cpp")
+        list(FIND existing_sources "${codec_source}" codec_index)
+        if(codec_index EQUAL -1)
+            target_sources(${target} PRIVATE "${codec_source}")
+        endif()
+    endforeach()
+    target_include_directories(${target} PRIVATE ../engine/import/include ../engine/platform/include ../engine/render/include)
+    target_link_libraries(${target} PRIVATE PlutoGE::Math)
+endfunction()
+foreach(target PlutoGEAssetReferencesTests PlutoGEProjectValidationTests PlutoGEAssetMigrationSerializationTests PlutoGEModelInstanceReconciliationTests PlutoGEModelInstanceStateTests)
+    pluto_add_model_reference_codecs(${target})
+endforeach()
+
+if(TARGET PlutoGEAssetImport)
+    add_executable(PlutoGEModelInstanceSceneReconciliationTests ModelInstanceSceneReconciliationTests.cpp ../editor/ui/src/ModelInstanceRefresh.cpp)
+    target_include_directories(PlutoGEModelInstanceSceneReconciliationTests PRIVATE ../editor/ui/include)
+    target_link_libraries(PlutoGEModelInstanceSceneReconciliationTests PRIVATE PlutoGE::AssetImport)
+    pluto_link_engine(PlutoGEModelInstanceSceneReconciliationTests)
+    add_test(NAME PlutoGEModelInstanceSceneReconciliationTests COMMAND PlutoGEModelInstanceSceneReconciliationTests)
+    add_dependencies(PlutoGEAssetPipelineChecks PlutoGEModelInstanceSceneReconciliationTests)
+endif()
+
+if(TARGET PlutoGECore)
+    add_executable(PlutoGETextureRefreshTests TextureRefreshTests.cpp)
+    pluto_link_engine(PlutoGETextureRefreshTests)
+    add_test(NAME PlutoGETextureRefreshTests COMMAND PlutoGETextureRefreshTests)
+    add_test(NAME PlutoGETextureRefreshOpenGLTests COMMAND PlutoGETextureRefreshTests opengl)
+    add_dependencies(PlutoGEAssetPipelineChecks PlutoGETextureRefreshTests)
+endif()
+
+if(TARGET PlutoGEOpenGLRhiTests)
+    add_test(NAME PlutoGESourceTextureRefreshOpenGLTests COMMAND PlutoGEOpenGLRhiTests --source-texture-refresh)
+endif()
+if(TARGET PlutoGEVulkanRhiTests)
+    add_test(NAME PlutoGESourceTextureRefreshVulkanTests COMMAND PlutoGEVulkanRhiTests --source-texture-refresh)
+    add_test(NAME PlutoGEMeshReplacementVulkanTests COMMAND PlutoGEVulkanRhiTests --mesh-replacement)
+endif()
+
+add_executable(PlutoGEManagedAssetFieldMetadataTests ManagedAssetFieldMetadataTests.cpp)
+target_include_directories(PlutoGEManagedAssetFieldMetadataTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../engine/assets/include)
+add_test(NAME PlutoGEManagedAssetFieldMetadataTests COMMAND PlutoGEManagedAssetFieldMetadataTests)
+add_dependencies(PlutoGEAssetPipelineChecks PlutoGEManagedAssetFieldMetadataTests)
+
+if (PLUTOGE_TEST_DOTNET)
+    set(PLUTO_ASSET_REFERENCE_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ManagedAssetReferenceProbe")
+    add_custom_command(OUTPUT "${PLUTO_ASSET_REFERENCE_PROBE_OUTPUT}/PlutoGE.AssetReferenceProbe.dll"
+        COMMAND "${PLUTOGE_TEST_DOTNET}" build
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.AssetReferenceProbe/PlutoGE.AssetReferenceProbe.csproj"
+            --configuration Release --output "${PLUTO_ASSET_REFERENCE_PROBE_OUTPUT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.AssetReferenceProbe/PlutoGE.AssetReferenceProbe.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.AssetReferenceProbe/Probe.cs" PlutoGEScriptCore
+        VERBATIM)
+    add_custom_target(PlutoGEManagedAssetReferenceProbe DEPENDS "${PLUTO_ASSET_REFERENCE_PROBE_OUTPUT}/PlutoGE.AssetReferenceProbe.dll")
+    add_executable(PlutoGEManagedAssetReferenceTests ManagedAssetReferenceTests.cpp)
+    target_compile_definitions(PlutoGEManagedAssetReferenceTests PRIVATE
+        PLUTOGE_ASSET_REFERENCE_PROBE_ASSEMBLY="${PLUTO_ASSET_REFERENCE_PROBE_OUTPUT}/PlutoGE.AssetReferenceProbe.dll")
+    pluto_link_engine(PlutoGEManagedAssetReferenceTests)
+    add_dependencies(PlutoGEManagedAssetReferenceTests PlutoGEManagedAssetReferenceProbe)
+    if (TARGET PlutoGETestOpenAL)
+        add_dependencies(PlutoGEManagedAssetReferenceTests PlutoGETestOpenAL)
+    endif()
+    add_test(NAME PlutoGEManagedAssetReferenceTests COMMAND PlutoGEManagedAssetReferenceTests)
+    add_dependencies(PlutoGEAssetPipelineChecks PlutoGEManagedAssetReferenceTests)
 endif()

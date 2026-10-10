@@ -16,8 +16,10 @@
 #include "PlutoGE/ui/GroundPlacement.h"
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/ui/SceneRecovery.h"
+#include "PlutoGE/ui/ModelInstanceRefresh.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/import/MeshImportOptions.h"
+#include "PlutoGE/asset_import/ModelNodeRepairService.h"
 #include "PlutoGE/asset_import/ImportState.h"
 #include "PlutoGE/asset_import/ImportWatch.h"
 #include <chrono>
@@ -283,8 +285,13 @@ namespace PlutoGE::ui
                               std::optional<assetimport::MeshImportOptions> options = std::nullopt,
                               std::string *errorMessage = nullptr, bool forceReimport = false);
         // Owning thread only, shared by asynchronous and source-copy imports.
-        void PublishModelImportResult(const std::string &sourceReference, const assetimport::ModelImportResult &result,
-                                      const scene::ModelAssetSnapshot &previous);
+        bool PublishModelImportResult(const std::string &sourceReference, const assetimport::ModelImportResult &result,
+                                      const scene::ModelAssetSnapshot &previous, std::string *errorMessage = nullptr);
+        const auto &GetModelInstanceConflicts() const { return m_modelInstanceConflicts; }
+        const auto &GetModelInstanceMessages() const { return m_modelInstanceMessages; }
+        void RenderModelInstanceInspector(scene::Entity &entity);
+        bool ApplyReviewedModelNodeRepair(const assetimport::ModelNodeRepairProposal &proposal,
+            std::string *errorMessage = nullptr);
         bool IsModelImportRunning() const;
         std::string GetModelImportProgress() const;
         const std::string &GetLastModelImportError() const { return m_lastModelImportError; }
@@ -344,9 +351,12 @@ namespace PlutoGE::ui
         bool RunTestBuild();
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
-        bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;
+        bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr, SceneGenerationRetention *retained = nullptr) const;
         void PushSceneHistoryEntry(SceneHistoryEntry entry);
         void FlushUntrackedSceneEdit();
+        void PollModelInstances();
+        bool UnpackModelInstance(std::uint32_t rootEntityId, std::string &error);
+        void RecordModelInstanceRefresh(const PreparedModelInstanceRefresh &prepared);
         void SynchronizeHistoryState();
         void UpdateSceneRecovery();
         void RenderSceneRecovery();
@@ -394,6 +404,7 @@ namespace PlutoGE::ui
         bool m_sceneDirty = false;
         bool m_untrackedSceneEdit = false;
         std::string m_observedSceneState;
+        SceneGenerationRetention m_observedSceneGenerations;
         std::string m_savedSceneState;
         std::filesystem::path m_recoveryDirectory;
         RecoverySettings m_recoverySettings;
@@ -418,6 +429,7 @@ namespace PlutoGE::ui
         bool m_sceneEditInProgress = false;
         std::string m_sceneEditLabel;
         std::string m_sceneEditBeforeState;
+        SceneGenerationRetention m_sceneEditBeforeGenerations;
         std::vector<ConsoleMessage> m_consoleMessages;
         mutable std::mutex m_consoleMessagesMutex;
         std::string m_activeMaterialAssetReference;
@@ -432,6 +444,7 @@ namespace PlutoGE::ui
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
+        SceneGenerationRetention m_runtimeSceneGenerations;
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
         bool m_runtimeSceneReplaced = false;
@@ -487,6 +500,14 @@ namespace PlutoGE::ui
         std::string m_importWatchError;
         std::uint64_t m_assetContextEpoch = 0;
         std::uint64_t m_activeModelImportEpoch = 0;
+        bool m_modelInstancesNeedRefresh = false;
+        std::uint32_t m_requestedModelInstanceUnpack = 0;
+        std::uint32_t m_modelInstanceUnpackErrorRoot = 0;
+        std::string m_modelInstanceUnpackError;
+        std::vector<scene::StaticModelSceneConflict> m_modelInstanceConflicts;
+        std::vector<std::string> m_modelInstanceMessages;
+        std::vector<StaticModelSourceDiagnostic> m_modelInstanceSourceDiagnostics;
+        std::string m_modelInstanceRefreshError;
         bool m_assetRefreshPending = false;
         bool m_assetReconciliationRequested = false;
         std::vector<std::filesystem::path> m_reconciliationChangedPaths;

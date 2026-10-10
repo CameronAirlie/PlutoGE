@@ -248,7 +248,10 @@ namespace PlutoGE::scene
         {
             destination.SetEnabled(source.IsEnabled());
             auto properties = source.Serialize();
-            destination.Deserialize(properties);
+            const auto *sourceMesh = dynamic_cast<const MeshComponent *>(&source);
+            if (auto *mesh = dynamic_cast<MeshComponent *>(&destination); mesh && sourceMesh && sourceMesh->GetRetainedAssetReader())
+                mesh->DeserializeWithAssetManager(properties, sourceMesh->GetRetainedAssetReader());
+            else destination.Deserialize(properties);
         }
 
         void CopyEntityFields(Entity &destination, const Entity &source)
@@ -988,6 +991,7 @@ namespace PlutoGE::scene
             if (clonedRoot)
             {
                 RemapClonedScriptEntityReferences(entity, *clonedRoot);
+                if (!CopyStaticModelInstanceLinks(entity, *clonedRoot, errorMessage)) return false;
             }
             if (auto roots = prefabScene.GetRootEntities(); !roots.empty() && clearPrefabLink)
             {
@@ -1087,9 +1091,12 @@ namespace PlutoGE::scene
             std::string loadError;
             auto base = LoadPrefabScene(data.base, &loadError);
             if (!base) throw std::runtime_error(loadError);
+            if (!base->GetStaticModelInstances().empty())
+                throw std::runtime_error("Linked model variants require coordinated generation overrides; save an authored prefab instead.");
             Scene normalized;
             auto *root = CloneEntityTreeIntoScenePreservingIds(normalized, instance, nullptr);
             RemapClonedScriptEntityReferences(instance, *root);
+            if (!CopyStaticModelInstanceLinks(instance, *root, error)) return false;
             std::vector<Entity *> entities, inherited;
             CollectEntitiesRecursive(root, entities);
             for (auto *baseRoot : base->GetRootEntities()) CollectEntitiesRecursive(baseRoot, inherited);
@@ -1199,6 +1206,8 @@ namespace PlutoGE::scene
         const auto hierarchyStart = ProfileClock::now();
         core::CpuScope hierarchyScope("Prefab hierarchy and components", core::CpuCategory::Other);
         auto *instanceRoot = CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+        if (instanceRoot && !CopyStaticModelInstanceLinks(*roots.front(), *instanceRoot, errorMessage))
+        { scene.RemoveEntity(instanceRoot); instanceRoot = nullptr; }
         hierarchyScope.End();
         profile.hierarchyAllocationMs = std::max(0.0, ElapsedMs(hierarchyStart) -
                                                        profile.componentConstructionMs -
@@ -1231,6 +1240,8 @@ namespace PlutoGE::scene
         if (duplicateRoot)
         {
             RemapClonedScriptEntityReferences(source, *duplicateRoot);
+            if (!CopyStaticModelInstanceLinks(source, *duplicateRoot))
+            { scene.RemoveEntity(duplicateRoot); return nullptr; }
         }
         return duplicateRoot;
     }
@@ -1263,6 +1274,19 @@ namespace PlutoGE::scene
             return false;
         }
 
+        bool linked = !prefabScene->GetStaticModelInstances().empty();
+        std::vector<const Entity *> inspected{&instanceRoot};
+        while (!inspected.empty())
+        {
+            const auto *entity = inspected.back(); inspected.pop_back();
+            linked = linked || scene->GetStaticModelInstances().contains(entity->GetID());
+            for (const auto *child : entity->GetChildren()) inspected.push_back(child);
+        }
+        if (linked)
+        {
+            if (errorMessage) *errorMessage = "Linked model hierarchy updates require coordinated instance reconciliation.";
+            return false;
+        }
         auto *prefabRoot = FindPrefabEntity(*prefabScene, instanceRoot.GetPrefabEntityID());
         if (!prefabRoot)
         {

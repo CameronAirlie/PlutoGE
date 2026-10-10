@@ -1,5 +1,6 @@
 #include <climits>
 #include "PlutoGE/platform/ContentPack.h"
+#include "PlutoGE/platform/ContentDigest.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTexture.h"
@@ -353,6 +354,25 @@ namespace PlutoGE::render
         }
     }
 
+    TextureManager::~TextureManager()
+    {
+        if (!m_ownResources) return;
+        // Every insertion owns a fresh allocation. Retire GPU storage using
+        // this manager's context, before the generic Texture fallback destructor.
+        const bool gpu = PrepareForGpuAccess();
+        for (const auto &[key, texture] : m_textureCache)
+        {
+            for (auto &framebuffer : texture->m_depthFramebuffers)
+            {
+                if (gpu && framebuffer) Graphics::DeleteFramebuffers(1, &framebuffer);
+                framebuffer = 0;
+            }
+            if (gpu && texture->m_textureID) Graphics::DeleteTextures(1, &texture->m_textureID);
+            texture->m_textureID = 0;
+            delete texture;
+        }
+    }
+
     bool TextureManager::PrepareForGpuAccess() const
     {
         if (!m_window || !m_window->IsOpen() ||
@@ -395,6 +415,61 @@ namespace PlutoGE::render
         }
 
         return nullptr;
+    }
+
+    bool TextureManager::ReloadFileTexture(const std::string &filePath, std::string *error)
+    {
+        const auto fail = [&](const char *message) { if (error) *error = message; return false; };
+        if (filePath.empty() || RenderTexture::IsAssetPath(filePath))
+            return fail("Ordinary image refresh requires a file texture.");
+        std::vector<std::pair<Texture *, TextureColorSpace>> cached;
+        for (const auto colorSpace : {TextureColorSpace::Linear, TextureColorSpace::SRGB})
+            if (const auto found = m_textureCache.find(BuildTextureCacheKey(filePath, colorSpace)); found != m_textureCache.end())
+                cached.emplace_back(found->second, colorSpace);
+        if (cached.empty()) { if (error) error->clear(); return true; }
+        const auto hash = [&](content::ContentDigest &digest)
+        {
+            if (!content::IsMounted(filePath)) return content::HashFileContent(filePath, digest, error);
+            std::string bytes;
+            if (!content::ReadFile(filePath, bytes)) return fail("Cannot read packed image for refresh.");
+            digest = content::HashContent(std::as_bytes(std::span(bytes.data(), bytes.size())));
+            return true;
+        };
+        const bool expectsGpu = m_window && m_window->IsOpen() &&
+            m_window->GetClientApi() == platform::WindowClientApi::OpenGL;
+        if (expectsGpu && !PrepareForGpuAccess()) return fail("Cannot acquire the image upload context; cached pixels were retained.");
+        content::ContentDigest before, after;
+        if (!hash(before)) return false;
+        TextureManager staging(true);
+        staging.SetWindow(m_window);
+        std::vector<std::pair<Texture *, Texture *>> replacements;
+        for (const auto &[texture, colorSpace] : cached)
+        {
+            auto *replacement = staging.LoadTextureFromFile(filePath.c_str(), colorSpace);
+            if (!replacement || (expectsGpu && !replacement->m_textureID))
+                return fail("Changed image could not be decoded or uploaded; cached pixels were retained.");
+            replacements.emplace_back(texture, replacement);
+        }
+        if (!hash(after)) return false;
+        if (before != after) return fail("Image changed while preparing its refresh; cached pixels were retained.");
+        for (const auto &[texture, replacement] : replacements)
+        {
+            std::swap(texture->m_textureID, replacement->m_textureID);
+            std::swap(texture->m_width, replacement->m_width);
+            std::swap(texture->m_height, replacement->m_height);
+            std::swap(texture->m_channels, replacement->m_channels);
+            texture->m_rgba8Pixels.swap(replacement->m_rgba8Pixels);
+            ++texture->m_contentRevision;
+            // Retire the previous GL allocation using this manager's current
+            // context. Vulkan uploads observe the stable object's new revision.
+            if (replacement->m_textureID && PrepareForGpuAccess())
+            {
+                Graphics::DeleteTextures(1, &replacement->m_textureID);
+                replacement->m_textureID = 0;
+            }
+        }
+        if (error) error->clear();
+        return true;
     }
 
     Texture *TextureManager::LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace)

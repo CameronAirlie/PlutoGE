@@ -79,6 +79,9 @@ namespace PlutoGE::scene
                 object.ownership == assets::AssetOwnership::Imported) importedMeshes.push_back(&object);
         for (auto *component : m_meshComponents)
         {
+            // Private generation readers require coordinated hierarchy publication.
+            // Replacing just their mesh invalidates accepted baked compensation.
+            if (component && component->GetRetainedAssetReader()) continue;
             if (!component || assets::Project::IsEngineAssetReference(component->GetMeshAssetReference())) continue;
             const auto currentReference = component->GetMeshAssetReference();
             auto identity = Identity(currentReference, catalog.get(), manager);

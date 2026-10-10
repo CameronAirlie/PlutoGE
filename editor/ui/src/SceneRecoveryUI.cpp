@@ -14,6 +14,8 @@ namespace PlutoGE::ui
         if (!CaptureSceneState(state, &m_recoveryError)) return;
         const auto identity = m_scene->GetFilePath() + '\0' + state;
         if (identity == m_lastRecoveryState) return;
+        if (!scene::SceneSerializer::PrepareSave(*m_scene, state, &m_recoveryError))
+        { Log(ConsoleSeverity::Warning, "Autosave: " + m_recoveryError); return; }
         if (SceneRecovery::Save(m_recoveryDirectory, m_scene->GetFilePath(), state, m_recoverySettings.retainedBackups, m_recoveryError))
         {
             m_lastRecoveryState = identity;

@@ -10,6 +10,10 @@ add_library(PlutoGEScene
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp
     src/PrefabMeshExporter.cpp
+    src/StaticModelHierarchy.cpp
+    src/ModelInstance.cpp
+    src/ModelInstanceReconciliation.cpp
+    src/ModelInstanceUnpacking.cpp
     src/AssetReconciliation.cpp
     src/Scene.cpp
     src/SceneBaker.cpp
@@ -72,6 +76,7 @@ target_include_directories(PlutoGEScene PUBLIC
 )
 
 target_link_libraries(PlutoGEScene PUBLIC
+    PlutoGE::Math
     PlutoGE::Core
     PlutoGE::Render
     PlutoGE::Assets

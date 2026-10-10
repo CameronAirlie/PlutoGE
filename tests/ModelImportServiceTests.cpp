@@ -1,3 +1,7 @@
+#include "PlutoGE/asset_import/ModelNodeRepairService.h"
+#include "PlutoGE/asset_import/ModelGenerationRetention.h"
+#include "PlutoGE/assets/ModelGenerationSnapshot.h"
+#include "PlutoGE/asset_import/ArtifactCollection.h"
 #include "PlutoGE/asset_import/ModelImportTask.h"
 #include "PlutoGE/asset_import/ImportState.h"
 #include "PlutoGE/asset_import/ImportWatch.h"
@@ -64,6 +68,12 @@ namespace
         }
         return files;
     }
+    struct ImportDiagnostics
+    {
+        std::ostringstream text;
+        std::streambuf *previous = std::clog.rdbuf(text.rdbuf());
+        ~ImportDiagnostics() { std::clog.rdbuf(previous); }
+    };
     struct Scratch
     {
         std::filesystem::path root = std::filesystem::temp_directory_path() /
@@ -75,6 +85,7 @@ namespace
 
 int main()
 {
+    ImportDiagnostics diagnostics;
     using namespace PlutoGE;
     try
     {
@@ -630,7 +641,7 @@ Connections: {
                 "Authored output collision was not reported");
         Require(Snapshot(scratch.root / "Assets").at("Other.plutomesh") == "authored-content", "Authored file overwritten");
         for (const auto &entry : std::filesystem::directory_iterator(scratch.root / ".pluto-import-transactions"))
-            Require(false, "Import staging leaked after completion");
+            Require(false, "Import staging leaked after completion: " + entry.path().string());
         for (const auto extractionVersion : {1u, 2u})
         {
             Scratch extractionProject;
@@ -1011,6 +1022,144 @@ Connections: {
             "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],
             "nodes":[{"name":"EmptyRoot","children":[1]},{"name":"MeshNode","mesh":0,"translation":[3,4,5],"scale":[-2,3,4]},{"name":"Unused","translation":[9,8,7]}],"scenes":[{"nodes":[0]}],"scene":0
         })JSON");
+        {
+            Scratch repairScratch;
+            assets::ProjectManifest repairManifest; repairManifest.assetPipelineVersion = 5;
+            assets::Project repairProject(repairScratch.root / "Repair.plutoproject", repairManifest);
+            const auto repairAssets = repairScratch.root / "Assets";
+            auto sourceBytes = Snapshot(externalAssets).at("Triangle.gltf");
+            Write(repairAssets / "Triangle.gltf", sourceBytes);
+            Write(repairAssets / "geometry data.bin", buffer);
+            assetimport::ModelImportRequest repairRequest{.sourceReference="project://Triangle.gltf"};
+            assetimport::ModelImportResult repairResult;
+            Require(service.Import(repairProject, repairRequest, repairResult, &error), "Repair baseline import: " + error);
+            assets::ModelHierarchyAsset repairHierarchy;
+            Require(assets::LoadModelHierarchyAsset(repairProject, repairRequest.sourceReference, repairHierarchy, &error), error);
+            const auto oldNode = repairHierarchy.identities[1].localId;
+            const auto renamedPosition = sourceBytes.find("MeshNode");
+            Require(renamedPosition != std::string::npos, "Missing rename fixture");
+            sourceBytes.replace(renamedPosition, 8, "RenamedMesh");
+            Write(repairAssets / "Triangle.gltf", sourceBytes);
+            Require(service.Import(repairProject, repairRequest, repairResult, &error) &&
+                assets::LoadModelHierarchyAsset(repairProject, repairRequest.sourceReference, repairHierarchy, &error), error);
+            const auto incomingNode = repairHierarchy.identities[1].localId;
+            Require(incomingNode != oldNode, "Import guessed rename identity");
+            assetimport::ModelNodeRepairService repairService;
+            assetimport::ModelNodeRepairProposal proposal;
+            const auto beforeReview = Snapshot(repairAssets);
+            Require(repairService.Prepare(repairProject, repairRequest.sourceReference, incomingNode, oldNode, proposal, &error) &&
+                proposal.changedNodeCount == 1 && Snapshot(repairAssets) == beforeReview, "Repair preparation wrote assets: " + error);
+            auto altered = proposal; ++altered.changedNodeCount;
+            Require(!repairService.Apply(repairProject, altered, &error) && Snapshot(repairAssets) == beforeReview,
+                "Altered repair review was published");
+            const auto repairMetadataPath = assets::GetAssetMetadataPath(repairAssets / "Triangle.gltf");
+            assets::AssetMetadata repairMetadata;
+            Require(assets::LoadAssetMetadata(repairMetadataPath, repairMetadata, &error) == assets::AssetMetadataStatus::Success, error);
+            repairMetadata.extensionRecords.push_back("CUSTOM\trepair-preserve");
+            Require(assets::SaveAssetMetadata(repairMetadataPath, repairMetadata, assets::AssetMetadataWriteMode::ReplaceExisting, &error), error);
+            const auto beforeStale = Snapshot(repairAssets);
+            Require(!repairService.Apply(repairProject, proposal, &error) && Snapshot(repairAssets) == beforeStale,
+                "Stale metadata review overwrote authored changes");
+            Require(repairService.Prepare(repairProject, repairRequest.sourceReference, incomingNode, oldNode, proposal, &error), error);
+            auto changedBuffer = buffer; changedBuffer[0] ^= 1;
+            Write(repairAssets / "geometry data.bin", changedBuffer);
+            const auto beforeChangedSource = Snapshot(repairAssets);
+            Require(!repairService.Apply(repairProject, proposal, &error) && Snapshot(repairAssets) == beforeChangedSource,
+                "Changed external source input accepted a stale repair");
+            Write(repairAssets / "geometry data.bin", buffer);
+            Require(repairService.Apply(repairProject, proposal, &error), "Repair publication: " + error);
+            Require(assets::LoadAssetMetadata(repairMetadataPath, repairMetadata, &error) == assets::AssetMetadataStatus::Success &&
+                std::find(repairMetadata.extensionRecords.begin(), repairMetadata.extensionRecords.end(),
+                    "CUSTOM\trepair-preserve") != repairMetadata.extensionRecords.end(), "Repair discarded unknown metadata");
+            assets::ModelImportSettings repairSettings;
+            Require(assets::ReadModelImportSettings(repairMetadata, repairSettings, &error) == assets::ModelImportSettingsStatus::Success &&
+                repairSettings.nodeAliases.size() == 1, "Repair alias was not persisted");
+            Require(!repairService.Apply(repairProject, proposal, &error), "Duplicate repair review was applied twice");
+            Require(service.Import(repairProject, repairRequest, repairResult, &error) &&
+                assets::LoadModelHierarchyAsset(repairProject, repairRequest.sourceReference, repairHierarchy, &error) &&
+                repairHierarchy.identities[1].localId == oldNode, "Reimport failed to honor reviewed correspondence: " + error);
+            auto legacyManifest = repairManifest; legacyManifest.assetPipelineVersion = 4;
+            assets::Project legacyRepairProject(repairScratch.root / "Repair.plutoproject", legacyManifest);
+            assetimport::MeshImportOptions legacyOptions;
+            Require(!service.ReadOptions(legacyRepairProject, repairRequest.sourceReference, legacyOptions, &error),
+                "Legacy project silently enabled repaired node settings");
+        }
+        {
+            Scratch rigid;
+            assets::ProjectManifest rigidManifest; rigidManifest.assetPipelineVersion = 3;
+            assets::Project rigidProject(rigid.root / "Rigid.plutoproject", rigidManifest);
+            std::filesystem::copy_file(externalAssets / "Triangle.gltf", rigid.root / "Assets/Triangle.gltf");
+            Write(rigid.root / "Assets/geometry data.bin", buffer);
+            assetimport::ModelImportResult rigidResult;
+            assetimport::ModelImportRequest rigidRequest{.sourceReference = "project://Triangle.gltf"};
+            if (!service.Import(rigidProject, rigidRequest, rigidResult, &error)) throw std::runtime_error(error);
+            assetimport::ImportState rigidAccepted;
+            Require(assetimport::ImportStateStore(rigid.root).Load(rigidResult.sourceAssetId, rigidAccepted, &error) == assets::AssetMetadataStatus::Success, error);
+            assetimport::ArtifactManifest rigidManifestBytes;
+            Require(assetimport::ArtifactCache(rigid.root / "Library/Artifacts").Find(rigidAccepted.generation, rigidManifestBytes, &error) == assetimport::ArtifactCacheStatus::Hit, error);
+            assets::ModelGeneratedFile rigidPackage;
+            for (const auto &file : rigidManifestBytes.outputs) if (file.relativePath.extension() == ".plutomodel")
+                rigidPackage = {"project://" + file.relativePath.generic_string(), file.digest};
+            assets::ModelGenerationSnapshot rigidRetained;
+            if (!assetimport::RetainModelGeneration(rigidProject, rigidResult.sourceAssetId, rigidAccepted.generation,
+                rigidPackage, rigidResult.catalog, rigidResult.storage, rigidRetained, &error)) throw std::runtime_error(error);
+            assets::StaticModelGenerationSnapshot linkedBaseline;
+            if (!assets::PrepareStaticModelGenerationSnapshot(rigidProject, rigidRetained, linkedBaseline, &error))
+                throw std::runtime_error("Prepare retained static baseline: " + error);
+            Require(
+                linkedBaseline.generation.layout.sourceAssetId == rigidResult.sourceAssetId &&
+                !linkedBaseline.generation.layout.nodes.empty() && !linkedBaseline.generation.layout.bindings.empty(),
+                "Authored accepted static baseline could not be prepared: " + error);
+            auto invalidBaseline = rigidRetained;
+            invalidBaseline.hierarchy.identities.front().status = assets::ModelNodeIdentityStatus::Anonymous;
+            const auto oldGeneration = linkedBaseline.generation.meshDigest;
+            Require(!assets::PrepareStaticModelGenerationSnapshot(rigidProject, invalidBaseline, linkedBaseline, &error) &&
+                linkedBaseline.generation.meshDigest == oldGeneration,
+                "Unresolved source nodes replaced a prepared linked baseline");
+            assets::StaticModelInstanceState savedInstance;
+            savedInstance.rootEntityId = 1;
+            savedInstance.artifactGenerationKey = rigidAccepted.generation;
+            savedInstance.packageArtifact = rigidPackage;
+            savedInstance.accepted = linkedBaseline.generation;
+            savedInstance.defaultMaterials = linkedBaseline.defaultMaterials;
+            savedInstance.overrides.meshDigest = savedInstance.accepted.meshDigest;
+            savedInstance.overrides.hierarchyDigest = savedInstance.accepted.layout.hierarchyDigest;
+            std::uint32_t nextEntity = 2;
+            for (const auto &node : savedInstance.accepted.layout.nodes)
+                savedInstance.nodeEntities.push_back({node.sourceNodeId, nextEntity++});
+            for (std::size_t binding = 0; binding < savedInstance.accepted.layout.bindings.size(); ++binding)
+                savedInstance.bindingEntities.push_back(nextEntity++);
+            Require(assetimport::RetainStaticModelInstance(rigidProject, savedInstance, rigidResult.catalog, rigidResult.storage, rigidRetained, &error), error);
+            savedInstance.accepted.layout.nodes.front().name += "stale baseline";
+            const auto acceptedCatalog = rigidRetained.catalog;
+            Require(!assetimport::RetainStaticModelInstance(rigidProject, savedInstance, rigidResult.catalog, rigidResult.storage, rigidRetained, &error) &&
+                rigidRetained.catalog == acceptedCatalog, "Stale saved baseline replaced accepted snapshot state");
+            savedInstance.accepted = linkedBaseline.generation;
+            std::filesystem::create_directories(rigid.root / ".pluto-import-transactions/pending");
+            Require(!assetimport::RetainStaticModelInstance(rigidProject, savedInstance, rigidResult.catalog,
+                rigidResult.storage, rigidRetained, &error) && rigidRetained.catalog == acceptedCatalog,
+                "Pending importer transaction allowed authored snapshot save preparation");
+            std::filesystem::remove(rigid.root / ".pluto-import-transactions/pending");
+            std::filesystem::remove(rigid.root / ".pluto-import-transactions");
+            rigidResult.storage.reset(); rigidManifestBytes.generationLease.reset();
+            std::filesystem::remove_all(rigid.root / "Library");
+            Write(rigid.root / "Assets/Triangle.gltf", "changed source cannot reproduce the accepted generation");
+            Require(assetimport::RetainStaticModelInstance(rigidProject, savedInstance, {}, {}, rigidRetained, &error) &&
+                !std::filesystem::exists(rigid.root / "Library"),
+                "Saved instance could not retain accepted bytes after source changes and cache deletion");
+            Scratch relocated;
+            std::filesystem::copy(rigid.root / "ModelSnapshots", relocated.root / "ModelSnapshots",
+                std::filesystem::copy_options::recursive);
+            assets::Project relocatedProject(relocated.root / "Relocated.plutoproject", rigidManifest);
+            assets::ModelGenerationSnapshot portable;
+            Require(assetimport::RetainStaticModelInstance(relocatedProject, savedInstance, {}, {}, portable, &error) &&
+                portable.authoredSnapshot && !std::filesystem::exists(relocated.root / "Library"),
+                "Accepted authored snapshot depended on its original project path");
+            Require(assets::IsAssetInfrastructurePath(relocated.root, relocated.root / "ModelSnapshots/Files/Native.plutomesh") &&
+                !assets::IsAssetInfrastructurePath(relocated.root, relocated.root / "Assets/ModelSnapshots/Authored.plutomesh"),
+                "Shared snapshot infrastructure policy excluded unrelated authored folders");
+
+        }
         const auto gltfTopology = assetimport::MeshImporter{}.ImportMeshSourceAsset((externalAssets / "Triangle.gltf").string(), {}, assetimport::MeshSourceCachePolicy::Bypass);
         Require(gltfTopology.hierarchy.nodes.size() == 3 && gltfTopology.hierarchy.bindings.size() == 1 &&
                 gltfTopology.hierarchy.nodes[1].parentNodeIndex == 0 && gltfTopology.hierarchy.nodes[0].name == "EmptyRoot" && gltfTopology.hierarchy.sceneRoots == std::vector<int>{0},
@@ -1147,7 +1296,9 @@ Connections: {
                     "Packed Library-derived texture was missing or materialized loose assets");
             content::UnmountAll();
             const auto validLibraryCatalog = libraryDatabase.GetCatalog();
-            const auto validLibraryStorage = libraryDatabase.GetStorageMap();
+            auto validLibraryStorage = libraryDatabase.GetStorageMap();
+            Require(std::all_of(validLibraryStorage->GetEntries().begin(), validLibraryStorage->GetEntries().end(),
+                [](const auto &entry) { return static_cast<bool>(entry.generationLease); }), "Explicit generation storage did not retain reader leases");
             auto invalidStorage = std::make_shared<assets::AssetStorageMap>();
             auto invalidEntries = storageEntries;
             invalidEntries.front().path = texturedAssets / "Textured.gltf";
@@ -1198,6 +1349,13 @@ Connections: {
             recoveryReader.SetAssetCatalog(recoveryDatabase.GetCatalog());
             recoveryReader.SetAssetStorageMap(recoveryDatabase.GetStorageMap());
             Require(recoveryReader.ResolveAssetPath(corrupted.reference).empty(), "Unavailable generation fell back to an inactive Assets file");
+            libraryReader.ClearProjectContext();
+            libraryDatabase = {};
+            validLibraryStorage.reset();
+            recoveryReader.ClearProjectContext();
+            recoveryDatabase = {};
+            persistentLibraryDatabase = {};
+            texturedGeneration.generationLease.reset();
             std::filesystem::remove_all(textured.root / "Library");
             Require(recoveryDatabase.Scan(texturedProject, recoveryScan, &error) && recoveryDatabase.GetStorageMap() &&
                     std::none_of(recoveryDatabase.GetStorageMap()->GetEntries().begin(), recoveryDatabase.GetStorageMap()->GetEntries().end(),
@@ -1302,6 +1460,78 @@ Connections: {
             if (!service.Import(project3, request3, result3, &error)) throw std::runtime_error("Library cold import: " + error);
             Require(result3.storage && !result3.storage->GetEntries().empty() && result3.modelReference == request3.sourceReference,
                 "Library import did not publish storage and source placement reference");
+            assetimport::ArtifactCollectionInspection activeInspection;
+            Require(assetimport::InspectArtifactCache(project3, activeInspection, &error), error);
+            Require(activeInspection.entries.size() == 1 && activeInspection.entries.front().disposition == assetimport::ArtifactCollectionDisposition::Active,
+                "Active model generation was offered for collection");
+            auto staleActiveInspection = activeInspection;
+            staleActiveInspection.entries.front().disposition = assetimport::ArtifactCollectionDisposition::Eligible;
+            assetimport::ArtifactCollectionResult retainedActive;
+            Require(!assetimport::CollectArtifactCache(project3, staleActiveInspection, retainedActive, &error) && retainedActive.collected.empty(),
+                "Collection trusted stale eligibility for an active source generation");
+            content::ContentDigest retainedGeneration;
+            assets::ModelGeneratedFile retainedPackage;
+            std::string retainedSourceOwner;
+            {
+                assetimport::ImportState accepted;
+                Require(assetimport::ImportStateStore(project3.GetRootDirectory()).Load(result3.sourceAssetId, accepted, &error) == assets::AssetMetadataStatus::Success, error);
+                assetimport::ArtifactCache cache(project3.GetRootDirectory() / "Library/Artifacts");
+                assetimport::ArtifactManifest manifest;
+                Require(cache.Find(accepted.generation, manifest, &error) == assetimport::ArtifactCacheStatus::Hit, error);
+                assets::ModelGeneratedFile packageArtifact;
+                std::size_t packages = 0;
+                for (const auto &output : manifest.outputs)
+                    if (output.relativePath.extension() == ".plutomodel")
+                    { packageArtifact = {"project://" + output.relativePath.generic_string(), output.digest}; ++packages; }
+                Require(packages == 1, "Accepted import did not identify exactly one model package");
+                auto replacement = std::make_shared<assets::AssetCatalog>();
+                std::vector<assets::AssetObjectDescriptor> descriptors;
+                std::string oldMesh, oldLocation;
+                for (const auto &object : result3.catalog->GetObjects())
+                {
+                    if (object.identity.assetId != result3.sourceAssetId || object.identity.localObjectId == 0) descriptors.push_back(object);
+                    else if (object.type == assets::ProjectAssetType::Mesh)
+                    { assets::SerializeAssetReference(object.identity, oldMesh); oldLocation = object.location; }
+                }
+                descriptors.push_back({{"unrelated-authored", 0}, assets::ProjectAssetType::Mesh, assets::AssetOwnership::Authored, "Unrelated", oldLocation});
+                Require(replacement->Replace(std::move(descriptors), &error), error);
+                assets::ModelGenerationSnapshot retained;
+                Require(assets::ReadModelGenerationSnapshot(project3, result3.sourceAssetId, accepted.generation,
+                    packageArtifact, replacement, {}, retained, &error), error);
+                assets::AssetManager retainedReader;
+                retainedReader.SetProjectContext(project3.GetRootDirectory().string(), project3.GetManifest().assetDirectory, 3);
+                retainedReader.SetAssetSnapshot(retained.catalog, retained.storage);
+                render::MeshConfig retainedGeometry;
+                std::vector<std::string> retainedMaterials;
+                assets::MeshAssetMetadata retainedMetadata;
+                Require(retainedReader.LoadMeshAssetData(oldMesh, retainedGeometry, retainedMaterials, retainedMetadata, &error) &&
+                    !retainedGeometry.data.vertices.empty(), "Retired source object could not resolve from its accepted generation");
+                Require(retainedReader.ResolveAssetPath("asset://unrelated-authored#0") == project3.ResolveAssetReference(oldLocation).string(),
+                    "Retained generation shadowed an unrelated authored object");
+                Require(std::all_of(retained.storage->GetEntries().begin(), retained.storage->GetEntries().end(),
+                    [](const auto &entry) { return entry.generationLease && entry.reference.starts_with("project://.pluto-generations/"); }),
+                    "Retained generation omitted scoped locations or leases");
+                const auto retainedCatalog = retained.catalog;
+                auto stalePackage = packageArtifact; stalePackage.digest[0] ^= 1;
+                Require(!assets::ReadModelGenerationSnapshot(project3, result3.sourceAssetId, accepted.generation,
+                    stalePackage, replacement, {}, retained, &error) && retained.catalog == retainedCatalog,
+                    "Stale package proof replaced a retained snapshot");
+                Require(!assets::ReadModelGenerationSnapshot(project3, "other-owner", accepted.generation,
+                    packageArtifact, replacement, {}, retained, &error) && retained.catalog == retainedCatalog,
+                    "Wrong source owner replaced a retained snapshot");
+                Require(assetimport::RetainModelGeneration(project3, result3.sourceAssetId, accepted.generation,
+                    packageArtifact, replacement, {}, retained, &error) && retained.authoredSnapshot, error);
+                assets::StaticModelGenerationSnapshot unsupportedStatic;
+                Require(!assets::PrepareStaticModelGenerationSnapshot(project3, retained, unsupportedStatic, &error) &&
+                    !error.empty(), "Draw-time FBX transforms were incorrectly accepted by the static-only reader");
+                const auto durableTree = Snapshot(libraryProject.root / "ModelSnapshots");
+                Require(assetimport::RetainModelGeneration(project3, result3.sourceAssetId, accepted.generation,
+                    packageArtifact, replacement, {}, retained, &error) &&
+                    Snapshot(libraryProject.root / "ModelSnapshots") == durableTree,
+                    "Repeated retention changed a shared authored generation");
+                retainedGeneration = accepted.generation; retainedPackage = packageArtifact; retainedSourceOwner = result3.sourceAssetId;
+
+            }
             assets::ModelHierarchyAsset persistedTree3;
             if (!assets::LoadModelHierarchyAsset(project3, request3.sourceReference, persistedTree3, &error))
                 throw std::runtime_error("Read persisted Library hierarchy: " + error);
@@ -1325,6 +1555,7 @@ Connections: {
             Require(result3.usedCachedArtifacts, "Library import did not reuse its generation");
             assets::AssetManager reader3;
             reader3.SetProjectContext(libraryProject.root.string());
+            reader3.SetProjectContext(project3.GetRootDirectory().string(), project3.GetManifest().assetDirectory, project3.GetManifest().assetPipelineVersion);
             reader3.SetAssetSnapshot(result3.catalog, result3.storage);
             std::string mesh3, material3;
             for (const auto &object : objects)
@@ -1356,7 +1587,39 @@ Connections: {
             std::vector<assetimport::ImportAssessment> assessment3;
             Require(assetimport::ReconcileModelImports(project3, assessment3, &error) && assessment3.front().status == assetimport::ImportReconciliationStatus::Current,
                 "Library import was not current: " + error);
+            // Simulate cache loss after closing readers: live generation leases
+            // deliberately prevent replacing their lock files on Windows.
+            reader3.ClearProjectContext();
+            result3.storage.reset();
             std::filesystem::remove_all(libraryProject.root / "Library");
+            {
+                assets::ModelGenerationSnapshot durable;
+                Require(assets::ReadModelGenerationSnapshot(project3, retainedSourceOwner, retainedGeneration,
+                    retainedPackage, {}, {}, durable, &error) && durable.authoredSnapshot &&
+                    !std::filesystem::exists(libraryProject.root / "Library"),
+                    "Authored accepted generation required disposable Library: " + error);
+                assets::AssetManager durableReader;
+                durableReader.SetProjectContext(project3.GetRootDirectory().string(), project3.GetManifest().assetDirectory, 3);
+                durableReader.SetAssetSnapshot(durable.catalog, durable.storage);
+                Require(durableReader.LoadMeshAssetData(mesh3, geometry3, bindings3, meshMetadata3, &error),
+                    "Authored accepted geometry failed after cache deletion: " + error);
+                const auto keep = durable.catalog;
+                const auto snapshotPackage = libraryProject.root / "ModelSnapshots" / content::DigestToHex(retainedGeneration) /
+                    "Files" / retainedPackage.reference.substr(assets::Project::kProjectAssetScheme.size());
+                const auto oldBytes = Snapshot(snapshotPackage.parent_path()).at(snapshotPackage.filename().generic_string());
+                Write(snapshotPackage, "damaged authored snapshot");
+                Require(!assets::ReadModelGenerationSnapshot(project3, retainedSourceOwner, retainedGeneration,
+                    retainedPackage, {}, {}, durable, &error) && durable.catalog == keep,
+                    "Damaged authored snapshot replaced accepted reader state");
+                Require(!assetimport::RetainModelGeneration(project3, retainedSourceOwner, retainedGeneration,
+                    retainedPackage, {}, {}, durable, &error) && durable.catalog == keep,
+                    "Retention silently repaired damaged authored data");
+                Write(snapshotPackage, oldBytes);
+                Require(assetimport::RetainModelGeneration(project3, retainedSourceOwner, retainedGeneration,
+                    retainedPackage, {}, {}, durable, &error) && !std::filesystem::exists(libraryProject.root / "Library"),
+                    "Existing authored snapshot could not be reused without Library: " + error);
+            }
+
             const auto retainedOwner = persistedTree3.sourceAssetId;
             Require(!assets::LoadModelHierarchyAsset(project3, request3.sourceReference, persistedTree3, &error) && persistedTree3.sourceAssetId == retainedOwner,
                 "Missing hierarchy cache discarded prior decoded data");
@@ -1377,6 +1640,8 @@ Connections: {
             request3.progress = {};
             Require(assetimport::ReconcileModelImports(project3, assessment3, &error) && assessment3.front().automaticImportSafe &&
                 assessment3.front().status == assetimport::ImportReconciliationStatus::NeedsImport, "Corrupt Library was not safely rebuildable");
+            Require(!service.Import(project3, request3, result3, &error), "Corrupt generation was displaced while its snapshot was leased");
+            result3.storage.reset();
             if (!service.Import(project3, request3, result3, &error)) throw std::runtime_error("Corrupt Library rebuild: " + error);
             assets::ModelAsset hierarchyPackage3;
             assets::ModelHierarchyArtifact hierarchyDescriptor3;
@@ -1397,14 +1662,18 @@ Connections: {
                 "Private hierarchy corruption was not observed/rejected");
             Require(assetimport::ReconcileModelImports(project3, assessment3, &error) && assessment3.front().automaticImportSafe &&
                 assessment3.front().status == assetimport::ImportReconciliationStatus::NeedsImport, "Private hierarchy corruption did not request reconstruction");
+            result3.storage.reset();
             if (!service.Import(project3, request3, result3, &error) ||
                 !assets::LoadModelHierarchyAsset(project3, request3.sourceReference, persistedTree3, &error))
                 throw std::runtime_error("Private hierarchy reconstruction: " + error);
             assetimport::ModelObjectExtractionResult extracted3;
             if (!assetimport::ModelObjectExtractionService{}.Extract(project3, material3, "project://Extracted.plutomaterial", extracted3, &error, true))
                 throw std::runtime_error("Library material extraction: " + error);
+            result3.storage.reset();
+            extracted3.storage.reset();
             std::filesystem::remove_all(libraryProject.root / "Library");
             if (!service.Import(project3, request3, result3, &error)) throw std::runtime_error("Library remap rebuild: " + error);
+            reader3.SetProjectContext(project3.GetRootDirectory().string(), project3.GetManifest().assetDirectory, project3.GetManifest().assetPipelineVersion);
             reader3.SetAssetSnapshot(result3.catalog, result3.storage);
             reader3.RefreshImportedAssets(result3.changedAssets);
             const auto remapped3 = reader3.GetMeshAssetMaterialReferences(mesh3);
@@ -1418,6 +1687,8 @@ Connections: {
     catch (const std::exception &exception)
     {
         std::cerr << exception.what() << '\n';
+        const auto trace = diagnostics.text.str();
+        std::cerr << trace.substr(trace.size() > 16384 ? trace.size() - 16384 : 0);
         return 1;
     }
 }

@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/core/Engine.h"
 
 #include <GLFW/glfw3.h>
 
@@ -105,6 +106,20 @@ namespace PlutoGE::render
                 }
             }
         }
+    }
+
+    Shader::~Shader()
+    {
+        if (!m_programID) return;
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (!window.IsOpen() || !window.EnsureOpenGLContextCurrent() || !glad_glDeleteProgram) return;
+        auto &cache = GetRenderStateCache();
+        if (cache.boundProgram == m_programID)
+        {
+            glUseProgram(0);
+            cache.boundProgram = 0;
+        }
+        glDeleteProgram(m_programID);
     }
 
     // Helper: Compile shader

@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/ModelGenerationSnapshot.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include <imgui.h>
@@ -27,7 +28,20 @@ namespace PlutoGE::ui
         assets::ProjectValidationInput input;
         input.assetPipelineVersion = m_project->GetManifest().assetPipelineVersion;
         input.assetRoot = m_project->GetAssetDirectoryPath();
+        input.projectRoot = m_project->GetRootDirectory();
         input.assetCatalog = m_engine.GetAssetManager().GetAssetCatalog();
+        input.prepareModelInstance = [&](const assets::StaticModelInstanceState &state, std::string *error)
+            -> std::shared_ptr<const assets::AssetCatalog>
+        {
+            assets::ModelGenerationSnapshot generation;
+            assets::StaticModelGenerationSnapshot prepared;
+            auto &manager = m_engine.GetAssetManager();
+            if (!assets::ReadModelGenerationSnapshot(*m_project, state.accepted.layout.sourceAssetId,
+                    state.artifactGenerationKey, state.packageArtifact, manager.GetAssetCatalog(), manager.GetAssetStorageMap(), generation, error) ||
+                !assets::PrepareStaticModelGenerationSnapshot(*m_project, generation, prepared, error) ||
+                !assets::ValidateStaticModelInstanceBaseline(state, prepared, error)) return {};
+            return generation.catalog;
+        };
         input.startupScene = m_project->GetManifest().startupScene;
         if (!m_project->GetManifest().scriptAssembly.empty()) input.scriptAssembly = ResolveProjectScriptAssemblyPath();
         const auto builtins = assets::Project::GetBuiltinAssetReferences();

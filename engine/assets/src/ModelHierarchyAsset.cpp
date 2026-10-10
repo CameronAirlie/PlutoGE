@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/ModelHierarchyAsset.h"
 #include "PlutoGE/assets/ModelArtifactStorage.h"
+#include "PlutoGE/assets/ArtifactGenerationLock.h"
 #include "PlutoGE/assets/ModelSourcePackage.h"
 #include "PlutoGE/platform/FilesystemPaths.h"
 #include <algorithm>
@@ -328,6 +329,8 @@ namespace PlutoGE::assets
             const auto generationStatus = ReadModelArtifactGeneration(metadata, generation, errorMessage);
             if (generationStatus == ModelArtifactGenerationStatus::Missing) return Fail(errorMessage, "Model has no active Library generation.");
             if (generationStatus != ModelArtifactGenerationStatus::Success) return false;
+            ArtifactGenerationLock lease;
+            if (!lease.TryAcquire(project.GetRootDirectory(), generation, ArtifactGenerationLockMode::SharedReader, errorMessage)) return false;
             const auto library = project.GetRootDirectory() / "Library";
             if (std::filesystem::is_symlink(std::filesystem::symlink_status(library))) throw std::runtime_error("Hierarchy Library root cannot be a symbolic link.");
             const auto canonicalLibrary = std::filesystem::canonical(library);

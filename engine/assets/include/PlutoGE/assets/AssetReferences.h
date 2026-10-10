@@ -1,9 +1,11 @@
 #pragma once
 
+#include "PlutoGE/assets/AssetType.h"
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -14,19 +16,26 @@ namespace PlutoGE::assets
     // Terrain height samples are serialized as a single scene property.
     inline constexpr std::size_t MaxSceneRecordSize = 64ull * 1024 * 1024;
 
-    enum class AssetReferenceRole { Runtime, ImportSource };
+    struct StaticModelInstanceState;
+    // AcceptedGeneration references resolve inside a pinned model reader.
+    enum class AssetReferenceRole { Runtime, ImportSource, AcceptedGeneration };
 
     struct AssetReferenceOccurrence
     {
         std::string reference;
         std::size_t line = 0; // Zero for a binary serialized string.
         AssetReferenceRole role = AssetReferenceRole::Runtime;
+        // Exact instance scope, including distinct generations of the same source.
+        std::shared_ptr<const StaticModelInstanceState> acceptedInstance{};
+        // Explicit serialized field type, independent of script reflection.
+        ProjectAssetType expectedType = ProjectAssetType::Unknown;
     };
 
     struct AssetReferenceScan
     {
         std::vector<AssetReferenceOccurrence> occurrences;
         std::vector<std::string> errors;
+        std::vector<std::shared_ptr<const StaticModelInstanceState>> modelInstances;
         bool cancelled = false;
     };
 

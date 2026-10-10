@@ -6,6 +6,7 @@
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/ui/EntityTransformEditing.h"
 
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
@@ -1653,52 +1654,12 @@ namespace PlutoGE::ui
             return message.str();
         }
 
-        void ApplyWorldTransformToEntity(scene::Entity &entity, const glm::mat4 &worldTransform)
+        void ApplyWorldTransformToEntity(scene::Entity &entity, const glm::mat4 &worldTransform, bool translationOnly)
         {
-            glm::mat4 localTransform = worldTransform;
-            if (auto *parent = entity.GetParent())
-            {
-                localTransform = glm::inverse(parent->GetWorldTransform()) * worldTransform;
-            }
-
-            const glm::vec3 translation(localTransform[3]);
-
-            glm::vec3 basisX(localTransform[0]);
-            glm::vec3 basisY(localTransform[1]);
-            glm::vec3 basisZ(localTransform[2]);
-
-            glm::vec3 scale(glm::length(basisX), glm::length(basisY), glm::length(basisZ));
-            if (scale.x <= std::numeric_limits<float>::epsilon() ||
-                scale.y <= std::numeric_limits<float>::epsilon() ||
-                scale.z <= std::numeric_limits<float>::epsilon())
-            {
-                return;
-            }
-
-            basisX /= scale.x;
-            basisY /= scale.y;
-            basisZ /= scale.z;
-
-            if (glm::dot(glm::cross(basisX, basisY), basisZ) < 0.0f)
-            {
-                scale.x = -scale.x;
-                basisX = -basisX;
-            }
-
-            glm::mat4 rotationMatrix(1.0f);
-            rotationMatrix[0] = glm::vec4(glm::normalize(basisX), 0.0f);
-            rotationMatrix[1] = glm::vec4(glm::normalize(basisY), 0.0f);
-            rotationMatrix[2] = glm::vec4(glm::normalize(basisZ), 0.0f);
-
-            float rotationX = 0.0f;
-            float rotationY = 0.0f;
-            float rotationZ = 0.0f;
-            glm::extractEulerAngleXYZ(rotationMatrix, rotationX, rotationY, rotationZ);
-            const glm::vec3 rotationDegrees = glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
-
-            entity.SetPosition(translation);
-            entity.SetRotation(rotationDegrees);
-            entity.SetScale(scale);
+            PreparedEntityTransformEdit prepared;
+            std::string error;
+            if (PrepareWorldTransformEdit(entity, worldTransform, translationOnly, prepared, error))
+                ApplyPreparedTransformEdit(prepared);
         }
 
         glm::vec3 ExtractRotationDegrees(const glm::mat4 &transform)
@@ -4234,7 +4195,7 @@ namespace PlutoGE::ui
                         const glm::vec3 previousScale = selectedEntity->GetScale();
                         if (entityGizmoUsesBoundsCenter)
                             entityTransform = entityGizmoDelta * entityWorldTransform;
-                        ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
+                        ApplyWorldTransformToEntity(*selectedEntity, entityTransform, m_gizmoOperation == ImGuizmo::TRANSLATE);
                         if (selectedEntity->GetPosition() != previousPosition)
                             selectedEntity->AddPrefabOverride("Transform.Position");
                         if (selectedEntity->GetRotation() != previousRotation)

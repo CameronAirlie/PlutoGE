@@ -1,3 +1,4 @@
+#include "PlutoGE/asset_import/ArtifactCollection.h"
 #include "PlutoGE/asset_import/ModelImportService.h"
 #include "PlutoGE/asset_import/ImportState.h"
 #include "PlutoGE/asset_import/ImportDependencyIndex.h"
@@ -18,6 +19,8 @@ namespace
     void Usage()
     {
         std::cerr << "Usage: PlutoGEImportModel <project.plutoproject> <project://source.fbx|--all> [--force]\n"
+                     "       PlutoGEImportModel <project.plutoproject> --cache-inspect\n"
+                     "       PlutoGEImportModel <project.plutoproject> --cache-collect\n"
                      "       PlutoGEImportModel <project.plutoproject> --check\n"
                      "       PlutoGEImportModel <project.plutoproject> --audit\n"
                      "       PlutoGEImportModel <project.plutoproject> --inspect-source <project://source.glb>\n"
@@ -37,6 +40,53 @@ int main(int argc, char **argv)
         std::string error;
         auto project = PlutoGE::assets::Project::Load(argv[1], &error);
         if (!project) { std::cerr << error << '\n'; return 1; }
+        if (std::string_view(argv[2]) == "--cache-inspect" || std::string_view(argv[2]) == "--cache-collect")
+        {
+            if (argc != 3) { Usage(); return 2; }
+            using namespace PlutoGE::assetimport;
+            ArtifactCollectionInspection inspection;
+            if (!InspectArtifactCache(*project, inspection, &error)) { std::cerr << error << '\n'; return 1; }
+            std::size_t eligible = 0;
+            for (const auto &entry : inspection.entries)
+            {
+                const auto status = entry.disposition == ArtifactCollectionDisposition::Active ? "active" :
+                    entry.disposition == ArtifactCollectionDisposition::InUse ? "in use" :
+                    entry.disposition == ArtifactCollectionDisposition::Recent ? "retained (24-hour grace period)" :
+                    entry.disposition == ArtifactCollectionDisposition::Eligible ? "eligible" : "invalid";
+                eligible += entry.disposition == ArtifactCollectionDisposition::Eligible;
+                std::cout << PlutoGE::content::DigestToHex(entry.generation) << "\t" << status;
+                if (entry.disposition != ArtifactCollectionDisposition::Active) std::cout << "\t" << entry.bytes << " bytes";
+                if (!entry.diagnostic.empty()) std::cout << "\t" << entry.diagnostic;
+                std::cout << '\n';
+            }
+            if (std::string_view(argv[2]) == "--cache-inspect")
+            { std::cout << eligible << " eligible generations. Inspection only.\n"; return 0; }
+            ArtifactCollectionInspection batch;
+            batch.projectRoot = inspection.projectRoot;
+            std::size_t collected = 0;
+            const auto collectBatch = [&]()
+            {
+                ArtifactCollectionResult result;
+                if (!CollectArtifactCache(*project, batch, result, &error))
+                {
+                    std::cerr << error << "\nCollected " << collected + result.collected.size() << " generations before failure.\n";
+                    for (const auto &path : result.quarantined) std::cerr << "Retained quarantine: " << path << '\n';
+                    return false;
+                }
+                collected += result.collected.size();
+                batch.entries.clear();
+                return true;
+            };
+            for (const auto &entry : inspection.entries)
+            {
+                if (entry.disposition != ArtifactCollectionDisposition::Eligible) continue;
+                batch.entries.push_back(entry);
+                if (batch.entries.size() == kMaxArtifactCollectionBatch && !collectBatch()) return 1;
+            }
+            if ((!batch.entries.empty() || collected == 0) && !collectBatch()) return 1;
+            std::cout << "Collected " << collected << " generations.\n";
+            return 0;
+        }
         if (std::string_view(argv[2]) == "--inspect-source")
         {
             if (argc != 4 || !PlutoGE::assets::Project::IsProjectAssetReference(argv[3]) ||

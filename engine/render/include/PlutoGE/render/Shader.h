@@ -28,7 +28,9 @@ namespace PlutoGE::render
     {
     public:
         Shader() = default;
-        ~Shader() = default;
+        ~Shader();
+        Shader(const Shader &) = delete;
+        Shader &operator=(const Shader &) = delete;
 
         static Shader *Create(const ShaderSource &source);
 

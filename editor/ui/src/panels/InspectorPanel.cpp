@@ -3299,6 +3299,7 @@ namespace PlutoGE::ui
             return;
         }
 
+        editorShell.RenderModelInstanceInspector(*entity);
         auto entityNameBuffer = std::array<char, 256>{};
         std::strncpy(entityNameBuffer.data(), entity->GetName().c_str(), entityNameBuffer.size() - 1);
         ImGui::Text("Entity Name: %s", entityNameBuffer.data());

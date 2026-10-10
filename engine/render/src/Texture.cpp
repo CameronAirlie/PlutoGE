@@ -4,6 +4,7 @@
 #include "PlutoGE/render/TextureManager.h"
 
 #include <iostream>
+#include <algorithm>
 
 namespace PlutoGE::render
 {
@@ -18,6 +19,7 @@ namespace PlutoGE::render
 
     Texture::~Texture()
     {
+        if (!m_textureID && std::all_of(m_depthFramebuffers.begin(), m_depthFramebuffers.end(), [](auto id) { return id == 0; })) return;
         if (PrepareTextureGpuAccess())
         {
             for (auto &framebuffer : m_depthFramebuffers)

@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -16,6 +17,8 @@ namespace PlutoGE::render
     class Mesh;
     class Material;
 }
+
+namespace PlutoGE::assets { class AssetManager; }
 
 namespace PlutoGE::scene
 {
@@ -56,9 +59,15 @@ namespace PlutoGE::scene
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
+        // Accepted linked generations must never resolve through the current global catalog.
+        std::shared_ptr<assets::AssetManager> GetRetainedAssetReader() const { return m_privateResources; }
+        void RetainAssetReader(std::shared_ptr<assets::AssetManager> manager) { m_privateResources = std::move(manager); }
+        void DeserializeWithAssetManager(const std::vector<Property> &properties, std::shared_ptr<assets::AssetManager> manager);
 
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
+        bool UsesRetainedGeometry(const render::Mesh *baseline) const
+        { return m_mesh == baseline || (m_lightmapGeometry && m_mesh == m_lightmapGeometry.get() && m_lightmapGeometrySource == baseline); }
         void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
         bool GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices);
         void SetStatic(bool isStatic)
@@ -248,11 +257,22 @@ namespace PlutoGE::scene
         std::size_t CompactSkeletonAttachmentEntities();
 
     private:
+        void DeserializeUsingAssets(const std::vector<Property> &properties, assets::AssetManager &assets, bool allowSourceImport);
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();
         void UpdateCachedPreviousModels();
         MeshComponent *FindMeshOffsetSource() const;
 
+        render::Material *CloneInstanceMaterial(render::Material *source);
+        assets::AssetManager &ResourceManager() const;
+        std::shared_ptr<assets::AssetManager> m_privateResources;
+        // Inline retained-instance materials die before the reader supplying
+        // their borrowed textures/shaders. Old clones survive slot replacement.
+        std::vector<std::shared_ptr<render::Material>> m_privateMaterials;
+        // Atlas edits own geometry; accepted/native cache meshes stay unchanged.
+        std::unique_ptr<render::Mesh> m_lightmapGeometry;
+        render::Mesh *m_lightmapGeometrySource = nullptr;
+        std::vector<std::unique_ptr<render::Mesh>> m_retiredLightmapGeometry;
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;

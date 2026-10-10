@@ -1,0 +1,5 @@
+add_library(PlutoGEMath src/AffineTransform.cpp)
+add_library(PlutoGE::Math ALIAS PlutoGEMath)
+target_include_directories(PlutoGEMath PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(PlutoGEMath PUBLIC PlutoGE::glm)
+target_compile_features(PlutoGEMath PUBLIC cxx_std_20)

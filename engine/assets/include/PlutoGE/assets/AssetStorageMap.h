@@ -3,6 +3,7 @@
 #include "PlutoGE/platform/ContentDigest.h"
 #include <filesystem>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -10,6 +11,7 @@
 
 namespace PlutoGE::assets
 {
+    class ArtifactGenerationLock;
     struct ImportedAssetStorage
     {
         std::string reference;
@@ -17,6 +19,8 @@ namespace PlutoGE::assets
         content::ContentDigest digest{};
         // Database recovery scans retain identities while disabling unsafe reads.
         bool available = true;
+        // Retained by immutable snapshots and resources borrowing these bytes.
+        std::shared_ptr<const ArtifactGenerationLock> generationLease{};
     };
 
     // Immutable snapshot once shared with consumers. Keeps project-relative

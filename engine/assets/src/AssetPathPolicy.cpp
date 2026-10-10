@@ -36,14 +36,16 @@ namespace PlutoGE::assets
         const auto first = text(*relative.begin());
 #ifdef _WIN32
         constexpr const char *library = "library";
+        constexpr const char *snapshots = "modelsnapshots";
         constexpr const char *build = "build";
 #else
         constexpr const char *library = "Library";
+        constexpr const char *snapshots = "ModelSnapshots";
         constexpr const char *build = "Build";
 #endif
-        if (first == library || first == build || first == ".git" || first == ".pluto-import-transactions" || first == ".pluto-import.lock" || first == ".pluto-migration-backups") return true;
+        if (first == snapshots || first == library || first == build || first == ".git" || first == ".pluto-import-transactions" || first == ".pluto-import.lock" || first == ".pluto-migration-backups") return true;
         for (const auto &component : relative)
-            if (text(component).starts_with(".pluto-metadata-")) return true;
+            if (text(component) == ".pluto-generations" || text(component).starts_with(".pluto-metadata-") || text(component).starts_with(".pluto-scene-")) return true;
         return false;
     }
 }

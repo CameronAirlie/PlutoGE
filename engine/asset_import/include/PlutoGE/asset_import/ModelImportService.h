@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/AssetCatalog.h"
 #include "PlutoGE/assets/AssetStorageMap.h"
+#include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/import/MeshImportOptions.h"
 
 #include <functional>
@@ -35,6 +36,9 @@ namespace PlutoGE::assetimport
         std::vector<std::string> changedAssets;
         std::string sourceAssetId;
         std::shared_ptr<const assets::AssetStorageMap> storage;
+        // Exact successfully accepted publication, including warm cache restores.
+        content::ContentDigest artifactGenerationKey{};
+        assets::ModelGeneratedFile packageArtifact;
     };
 
     // CPU-only orchestration shared by editor and command-line tooling.

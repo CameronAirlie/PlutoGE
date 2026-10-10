@@ -9,6 +9,8 @@
 #include "PlutoGE/assets/MaterialAssetSerialization.h"
 #include <PlutoGE/render/Mesh.h>
 #include <PlutoGE/render/Texture.h>
+#include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/core/Engine.h"
 #include <PlutoGE/render/Material.h>
 #include <PlutoGE/render/Shader.h>
 #include <PlutoGE/render/ShaderGraph.h>
@@ -22,12 +24,156 @@
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 #include <glm/gtc/type_ptr.hpp>
 
 namespace PlutoGE::assets
 {
+    struct AssetManager::OwnedResources
+    {
+        AssetManager *sharedAssets = nullptr;
+        std::string sourceAssetId;
+        std::vector<std::unique_ptr<render::Shader>> shaders;
+        render::TextureManager textureReader{true};
+        std::vector<std::unique_ptr<render::Mesh>> meshes;
+        std::vector<std::unique_ptr<render::Material>> materials;
+        std::vector<std::weak_ptr<render::Material>> instanceMaterials;
+        std::unordered_map<std::string, std::string> aliases;
+    };
+
+    AssetManager::AssetManager(ResourceLifetime lifetime, AssetManager *sharedAssets, std::string retainedSourceAssetId)
+        : m_ownedResources(lifetime == ResourceLifetime::Scoped ? std::make_unique<OwnedResources>() : nullptr)
+    {
+        if (sharedAssets && (!m_ownedResources || retainedSourceAssetId.empty() || sharedAssets->m_ownedResources))
+            throw std::invalid_argument("Shared assets require a scoped source reader and an application reader.");
+        if (m_ownedResources)
+        {
+            m_ownedResources->textureReader.SetWindow(&core::Engine::GetInstance().GetWindow());
+            m_ownedResources->sharedAssets = sharedAssets;
+            m_ownedResources->sourceAssetId = std::move(retainedSourceAssetId);
+            if (sharedAssets) sharedAssets->m_scopedReaders.insert(this);
+        }
+    }
+    AssetManager::~AssetManager()
+    {
+        if (m_ownedResources && m_ownedResources->sharedAssets)
+            m_ownedResources->sharedAssets->m_scopedReaders.erase(this);
+        for (auto *reader : m_scopedReaders) reader->m_ownedResources->sharedAssets = nullptr;
+    }
+
+    namespace
+    {
+        std::string RetainedRouteKey(const std::string &reference)
+        {
+            auto result = std::filesystem::path(reference).lexically_normal().generic_string();
+#ifdef _WIN32
+            for (auto &value : result) if (value >= 'A' && value <= 'Z') value += 'a' - 'A';
+#endif
+            return result;
+        }
+        bool IsRetainedRoute(const std::string &reference)
+        {
+            const auto key = RetainedRouteKey(reference);
+            return key.find(".pluto-generations/") != std::string::npos;
+        }
+    }
+
+    void AssetManager::RebuildRetainedAliases()
+    {
+        if (!m_ownedResources) return;
+        auto &aliases = m_ownedResources->aliases;
+        aliases.clear();
+        if (!m_catalog || m_ownedResources->sourceAssetId.empty()) return;
+        const std::string prefix = "project://.pluto-generations/";
+        const auto add = [&](const std::string &alias, const std::string &location)
+        {
+            auto [entry, inserted] = aliases.emplace(RetainedRouteKey(alias), location);
+            if (!inserted && entry->second != location) entry->second.clear();
+        };
+        for (const auto &object : m_catalog->GetObjects())
+        {
+            if (object.identity.assetId != m_ownedResources->sourceAssetId || !object.location.starts_with(prefix)) continue;
+            const auto suffix = object.location.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            if (slash != 64 || !std::all_of(suffix.begin(), suffix.begin() + 64,
+                    [](char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); })) continue;
+            const auto tail = suffix.substr(slash + 1);
+            const auto relative = std::filesystem::path(tail);
+            if (tail.empty() || relative.has_root_path() || relative.lexically_normal().generic_string() != tail ||
+                std::any_of(relative.begin(), relative.end(), [](const auto &part) { return part == ".."; })) continue;
+            add("project://" + tail, object.location);
+            add(tail, object.location);
+            add((std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / relative).string(), object.location);
+        }
+    }
+
+    const std::string *AssetManager::FindRetainedAlias(const std::string &reference) const
+    {
+        if (!m_ownedResources) return nullptr;
+        const auto found = m_ownedResources->aliases.find(RetainedRouteKey(reference));
+        return found == m_ownedResources->aliases.end() ? nullptr : &found->second;
+    }
+
+    bool AssetManager::IsUnresolvedRetainedReference(const std::string &reference) const
+    {
+        if (!m_ownedResources || reference.empty() || Project::IsEngineAssetReference(reference)) return false;
+        if (const auto *alias = FindRetainedAlias(reference)) return alias->empty();
+        AssetReference identity;
+        if (ParseAssetReference(reference, identity))
+            return identity.assetId == m_ownedResources->sourceAssetId &&
+                (!m_catalog || !m_catalog->Find(identity) || identity.localObjectId == 0);
+        if (m_storage && (m_storage->Find(reference) || m_storage->FindReferenceByPath(std::filesystem::path(reference)))) return false;
+        if (IsRetainedRoute(reference)) return true;
+        const auto *shared = m_ownedResources->sharedAssets;
+        if (!shared || shared->GetProjectRootDirectory() != m_projectRootDirectory ||
+                shared->GetProjectAssetDirectory() != m_projectAssetDirectory) return false;
+        const auto currentReference = reference.find("://") == std::string::npos && !std::filesystem::path(reference).is_absolute()
+            ? std::string(Project::kProjectAssetScheme) + std::filesystem::path(reference).generic_string() : reference;
+        const auto current = shared->PersistAssetPath(currentReference);
+        if (ParseAssetReference(current, identity) && identity.assetId == m_ownedResources->sourceAssetId) return true;
+        if (!shared->m_catalog) return false;
+        const auto location = Project::IsProjectAssetReference(current) || std::filesystem::path(current).is_absolute() ? current :
+            std::string(Project::kProjectAssetScheme) + std::filesystem::path(current).generic_string();
+        const auto key = RetainedRouteKey(location);
+        const auto physical = RetainedRouteKey(shared->ResolveAssetPath(currentReference));
+        for (const auto &object : shared->m_catalog->GetObjects())
+            if (object.identity.assetId == m_ownedResources->sourceAssetId &&
+                (RetainedRouteKey(object.location) == key || RetainedRouteKey(shared->ResolveAssetPath(object.location)) == physical)) return true;
+        return false;
+    }
+
+    bool AssetManager::UsesSharedAssets(const std::string &reference) const
+    {
+        if (!m_ownedResources || !m_ownedResources->sharedAssets) return false;
+        if (m_ownedResources->sharedAssets->GetProjectRootDirectory() != m_projectRootDirectory ||
+            m_ownedResources->sharedAssets->GetProjectAssetDirectory() != m_projectAssetDirectory) return false;
+        if (FindRetainedAlias(reference) || IsUnresolvedRetainedReference(reference)) return false;
+        AssetReference identity;
+        if (ParseAssetReference(reference, identity)) return identity.assetId != m_ownedResources->sourceAssetId;
+        auto location = reference;
+        if (m_storage)
+            if (const auto stored = m_storage->FindReferenceByPath(std::filesystem::path(reference))) location = *stored;
+        if (m_catalog)
+            if (const auto found = m_catalog->FindIdentityByLocation(location)) return found->assetId != m_ownedResources->sourceAssetId;
+        // Unrecognized retained routes must fail privately, never resolve against
+        // another generation through the application reader.
+        return location.find(".pluto-generations/") == std::string::npos &&
+            location.find(".pluto-generations\\") == std::string::npos;
+    }
+
+    render::Texture *AssetManager::LoadTextureResource(const char *path)
+    { return LoadTextureResource(path, render::TextureColorSpace::Linear); }
+
+    render::Texture *AssetManager::LoadTextureResource(const char *path, render::TextureColorSpace colorSpace)
+    {
+        if (!path || !*path) return nullptr;
+        if (UsesSharedAssets(path)) return m_ownedResources->sharedAssets->LoadTextureResource(path, colorSpace);
+        return m_ownedResources ? m_ownedResources->textureReader.LoadTextureFromFile(path, colorSpace)
+                                : render::Texture::LoadFromFile(path, colorSpace);
+    }
+
     std::string AssetManager::GetStableAssetId(const std::string &assetReference) const
     {
         if (!Project::IsProjectAssetReference(assetReference) || m_projectRootDirectory.empty())
@@ -163,6 +309,7 @@ namespace PlutoGE::assets
     void AssetManager::SetAssetCatalog(std::shared_ptr<const AssetCatalog> catalog)
     {
         m_catalog = std::move(catalog);
+        RebuildRetainedAliases();
         m_modelResolutionCache.clear();
     }
 
@@ -194,11 +341,12 @@ namespace PlutoGE::assets
 
     std::string AssetManager::PersistLogicalReference(const std::string &reference) const
     {
-        if (!m_catalog || m_logicalReferenceTypes.empty()) return reference;
+        if (!m_catalog || (m_logicalReferenceTypes.empty() && !m_ownedResources)) return reference;
         const auto identity = m_catalog->FindIdentityByLocation(reference);
         if (!identity) return reference;
         const auto *object = m_catalog->Find(*identity);
-        if (!object || !m_logicalReferenceTypes.contains(object->type)) return reference;
+        if (!object || (!m_logicalReferenceTypes.contains(object->type) &&
+                (!m_ownedResources || identity->assetId != m_ownedResources->sourceAssetId))) return reference;
         std::string encoded;
         return SerializeAssetReference(*identity, encoded) ? encoded : reference;
     }
@@ -235,6 +383,9 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveAssetReference(const AssetReference &reference) const
     {
+        std::string encoded;
+        if (SerializeAssetReference(reference, encoded) && UsesSharedAssets(encoded))
+            return m_ownedResources->sharedAssets->ResolveAssetReference(reference);
         if (!m_catalog) return {};
         const auto *object = m_catalog->Find(reference);
         return object ? object->location : std::string{};
@@ -465,29 +616,38 @@ namespace PlutoGE::assets
     }
 
     render::Texture *AssetManager::LoadTexture(const char *filePath)
+    { return LoadTexture(filePath, render::TextureColorSpace::Linear); }
+
+    render::Texture *AssetManager::LoadTexture(const char *filePath, render::TextureColorSpace colorSpace)
     {
         if (!filePath || !*filePath) return nullptr;
+        if (UsesSharedAssets(filePath)) return m_ownedResources->sharedAssets->LoadTexture(filePath, colorSpace);
         const auto resolved = ResolveAssetPath(filePath);
         if (resolved.empty()) return nullptr;
         filePath = resolved.c_str();
         // Check if the texture is already loaded
-        auto it = m_textureCache.find(filePath);
+        const auto cacheKey = std::string(colorSpace == render::TextureColorSpace::SRGB ? "srgb:" : "linear:") + resolved;
+        auto it = m_textureCache.find(cacheKey);
         if (it != m_textureCache.end())
         {
             return it->second; // Return cached texture
         }
 
         // Load the texture from file
-        render::Texture *texture = render::Texture::LoadFromFile(filePath);
+        render::Texture *texture = LoadTextureResource(filePath, colorSpace);
         if (texture)
         {
-            m_textureCache[filePath] = texture; // Cache the loaded texture
+            m_textureCache[cacheKey] = texture; // Cache the loaded texture
         }
         return texture;
     }
 
     render::Mesh *AssetManager::LoadMeshAsset(const std::string &assetReference)
     {
+        if (const auto *alias = FindRetainedAlias(assetReference)) return alias->empty() ? nullptr : LoadMeshAsset(*alias);
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->LoadMeshAsset(assetReference);
+        if (m_ownedResources && m_storage)
+            if (const auto stored = m_storage->FindReferenceByPath(std::filesystem::path(assetReference))) return LoadMeshAsset(*stored);
         if (assetReference.starts_with("asset://"))
         {
             AssetReference identity;
@@ -565,7 +725,16 @@ namespace PlutoGE::assets
 
         if (mesh)
         {
+            if (m_ownedResources)
+            {
+                const auto identity=m_catalog ? m_catalog->FindIdentityByLocation(assetReference) : std::nullopt;
+                if (identity && identity->assetId == m_ownedResources->sourceAssetId && identity->localObjectId) mesh->FreezeGeometry();
+                m_ownedResources->meshes.emplace_back(mesh);
+            }
             m_meshCache[assetReference] = mesh;
+            if (m_storage)
+                if (const auto *storage = m_storage->Find(assetReference); storage && storage->generationLease)
+                    m_meshGenerationLeases[mesh] = storage->generationLease;
         }
         return mesh;
     }
@@ -573,6 +742,10 @@ namespace PlutoGE::assets
     const std::vector<std::string> &AssetManager::GetMeshAssetMaterialReferences(const std::string &assetReference)
     {
         static const std::vector<std::string> empty;
+        if (const auto *alias = FindRetainedAlias(assetReference)) return alias->empty() ? empty : GetMeshAssetMaterialReferences(*alias);
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->GetMeshAssetMaterialReferences(assetReference);
+        if (m_ownedResources && m_storage)
+            if (const auto stored = m_storage->FindReferenceByPath(std::filesystem::path(assetReference))) return GetMeshAssetMaterialReferences(*stored);
         if (assetReference.starts_with("asset://"))
         {
             AssetReference identity;
@@ -639,6 +812,10 @@ namespace PlutoGE::assets
     const MeshAssetMetadata &AssetManager::GetMeshAssetMetadata(const std::string &assetReference)
     {
         static const MeshAssetMetadata empty;
+        if (const auto *alias = FindRetainedAlias(assetReference)) return alias->empty() ? empty : GetMeshAssetMetadata(*alias);
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->GetMeshAssetMetadata(assetReference);
+        if (m_ownedResources && m_storage)
+            if (const auto stored = m_storage->FindReferenceByPath(std::filesystem::path(assetReference))) return GetMeshAssetMetadata(*stored);
         if (assetReference.starts_with("asset://"))
         {
             AssetReference identity;
@@ -1617,6 +1794,7 @@ namespace PlutoGE::assets
 
     render::ShaderGraph AssetManager::LoadShaderGraphAsset(const std::string &assetReference, bool *loaded)
     {
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->LoadShaderGraphAsset(assetReference, loaded);
         static thread_local int graphLoadDepth=0;
         if(graphLoadDepth>=8){if(loaded)*loaded=false;return {};}
         struct DepthGuard { int &depth; DepthGuard(int &d):depth(d){++depth;} ~DepthGuard(){--depth;} } depthGuard(graphLoadDepth);
@@ -1771,6 +1949,8 @@ namespace PlutoGE::assets
 
     bool AssetManager::SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &requestedGraph, std::string *errorMessage)
     {
+        if (requestedGraph.version != 1)
+        { if (errorMessage) *errorMessage = "Unsupported shader graph version."; return false; }
         render::ShaderGraph graph=requestedGraph;
         std::unordered_set<std::string> dependencies{assetReference};
         size_t dependencyCount=0;
@@ -1798,6 +1978,14 @@ namespace PlutoGE::assets
         }
 
         if (!render::ValidateShaderGraph(graph, errorMessage)) return false;
+
+        // Persist only dependency fields. Node parameters also contain expressions
+        // and variable names, so ordinary parameters must remain unchanged.
+        for (auto &pass : graph.passes) pass = PersistDependencyReference(pass);
+        for (auto &texture : graph.textures) texture.reference = PersistDependencyReference(texture.reference);
+        for (auto &node : graph.nodes)
+            if (node.kind == render::ShaderGraphNodeKind::Subgraph)
+                node.parameter = PersistDependencyReference(node.parameter);
 
         const std::string graphPath = ResolveAssetPath(assetReference);
         if (graphPath.empty())
@@ -2341,6 +2529,25 @@ namespace PlutoGE::assets
                 material->SetConfig(std::move(config));
             }
         }
+        RefreshInstanceMaterialShaders();
+        for (auto *reader : m_scopedReaders) reader->RefreshCachedMaterialsForShaderGraph(shaderGraphReference);
+    }
+
+    void AssetManager::RegisterInstanceMaterial(const std::shared_ptr<render::Material> &material)
+    {
+        if (m_ownedResources && material) m_ownedResources->instanceMaterials.push_back(material);
+    }
+
+    void AssetManager::RefreshInstanceMaterialShaders()
+    {
+        if (!m_ownedResources) return;
+        std::erase_if(m_ownedResources->instanceMaterials, [](const auto &material) { return material.expired(); });
+        for (const auto &registered : m_ownedResources->instanceMaterials)
+            if (auto material = registered.lock())
+            {
+                auto config = material->ReadConfig();
+                if (ResolveMaterialShaderGraph(config)) material->SetConfig(std::move(config));
+            }
     }
 
     bool AssetManager::ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage)
@@ -2385,6 +2592,7 @@ namespace PlutoGE::assets
 
     render::Shader *AssetManager::CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage)
     {
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->CompileShaderGraphAsset(assetReference, errorMessage);
         bool loaded = false;
         render::ShaderGraph graph = LoadShaderGraphAsset(assetReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : assetReference, &loaded);
         if (!loaded)
@@ -2410,6 +2618,7 @@ namespace PlutoGE::assets
 
         if (shader)
         {
+            if (m_ownedResources) m_ownedResources->shaders.emplace_back(shader);
             m_shaderGraphShaderCache[cacheKey] = {hash, shader};
         }
         return shader;
@@ -2417,6 +2626,7 @@ namespace PlutoGE::assets
 
     render::Material *AssetManager::FindLoadedMaterialAsset(const std::string &assetReference) const
     {
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->FindLoadedMaterialAsset(assetReference);
         const auto key = Project::IsEngineAssetReference(assetReference) ? assetReference : ResolveAssetPath(assetReference);
         const auto found = m_materialCache.find(key);
         return found == m_materialCache.end() ? nullptr : found->second;
@@ -2438,6 +2648,8 @@ namespace PlutoGE::assets
                 references.push_back(reference);
         for (const auto &reference : references)
             LoadMaterialAsset(reference, true);
+        RefreshInstanceMaterialShaders();
+        for (auto *reader : m_scopedReaders) reader->ReloadMaterialAssets();
     }
 
     void AssetManager::RefreshImportedAssets(const std::vector<std::string> &references)
@@ -2448,12 +2660,15 @@ namespace PlutoGE::assets
             const auto path = ResolveAssetPath(reference);
             if (!path.empty() && !Project::IsEngineAssetReference(path)) paths.insert(path);
         }
+        if (!m_ownedResources)
+            for (const auto &path : paths) core::Engine::GetInstance().GetTextureManager().ReloadFileTexture(path);
         auto changed = [&](const auto &entry) { return paths.contains(ResolveAssetPath(entry.first)); };
         // Mesh and texture pointers are borrowed by live components. Eviction
         // changes future lookups without deleting those resources, matching the
         // existing SaveMeshAsset lifetime contract.
         std::erase_if(m_meshCache, changed);
-        std::erase_if(m_textureCache, changed);
+        std::erase_if(m_textureCache, [&](const auto &entry)
+        { return entry.second && paths.contains(ResolveAssetPath(entry.second->GetFilePath())); });
         std::erase_if(m_meshMetadataCache, changed);
         std::erase_if(m_meshMaterialReferenceCache, changed);
         std::vector<std::string> materials;
@@ -2462,10 +2677,12 @@ namespace PlutoGE::assets
         // Material reload preserves each existing Material pointer and refreshes
         // its texture bindings after the texture lookup cache was invalidated.
         for (const auto &reference : materials) LoadMaterialAsset(reference, true);
+        for (auto *reader : m_scopedReaders) reader->ReloadMaterialAssets();
     }
 
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference, bool reload)
     {
+        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->LoadMaterialAsset(assetReference, reload);
         if (assetReference.empty())
         {
             return nullptr;
@@ -2601,7 +2818,7 @@ namespace PlutoGE::assets
                     else if (key == "EmissionTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.emissionTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
+                        config.emissionTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str(), render::TextureColorSpace::SRGB);
                     }
                     else if (key == "EmissionChannelMask")
                         config.emissionChannelMask = value == "true" || value == "1";
@@ -2617,17 +2834,17 @@ namespace PlutoGE::assets
                     else if (key == "AlbedoTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
+                        config.albedoTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str(), render::TextureColorSpace::SRGB);
                     }
                     else if (key == "NormalTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.normalTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                        config.normalTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
                     }
                     else if (key == "MetallicTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.metallicTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                        config.metallicTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
                     }
                     else if (key == "MetallicTextureChannel")
                     {
@@ -2643,7 +2860,7 @@ namespace PlutoGE::assets
                     else if (key == "RoughnessTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.roughnessTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                        config.roughnessTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
                     }
                     else if (key == "RoughnessTextureChannel")
                     {
@@ -2683,7 +2900,7 @@ namespace PlutoGE::assets
                 }
                 ResolveMaterialShaderGraph(config);
                 if (config.emissionTexture && config.emissionChannelMask)
-                    config.emissionTexture = render::Texture::LoadFromFile(config.emissionTexture->GetFilePath().c_str(), render::TextureColorSpace::Linear);
+                    config.emissionTexture = LoadTextureResource(config.emissionTexture->GetFilePath().c_str(), render::TextureColorSpace::Linear);
                 material = new render::Material(config);
             }
         }
@@ -2698,6 +2915,7 @@ namespace PlutoGE::assets
                 delete material;
                 material = cachedMaterial;
             }
+            if (!cachedMaterial && m_ownedResources) m_ownedResources->materials.emplace_back(material);
             m_materialCache[cacheKey] = material;
         }
         else if (cachedMaterial)
@@ -2817,7 +3035,7 @@ namespace PlutoGE::assets
                 auto [textureIt, inserted] = reloadedTextures.emplace(cacheKey, nullptr);
                 if (inserted)
                 {
-                    textureIt->second = render::Texture::LoadFromFile(resolvedPath.c_str(), colorSpace);
+                    textureIt->second = LoadTextureResource(resolvedPath.c_str(), colorSpace);
                 }
                 return textureIt->second;
             };
@@ -3277,6 +3495,10 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveAssetPath(const std::string &assetPath) const
     {
+        if (const auto *alias = FindRetainedAlias(assetPath))
+            return alias->empty() ? std::string{} : ResolveAssetPath(*alias);
+        if (IsUnresolvedRetainedReference(assetPath)) return {};
+        if (UsesSharedAssets(assetPath)) return m_ownedResources->sharedAssets->ResolveAssetPath(assetPath);
         if (assetPath.starts_with("asset://"))
         {
             AssetReference identity;
@@ -3405,6 +3627,9 @@ namespace PlutoGE::assets
 
     std::string AssetManager::PersistAssetPath(const std::string &filePath) const
     {
+        if (const auto *alias = FindRetainedAlias(filePath)) return alias->empty() ? std::string{} : PersistLogicalReference(*alias);
+        if (IsUnresolvedRetainedReference(filePath)) return {};
+        if (UsesSharedAssets(filePath)) return m_ownedResources->sharedAssets->PersistAssetPath(filePath);
         if (filePath.empty() || filePath.starts_with("asset://") || Project::IsEngineAssetReference(filePath))
         {
             return filePath;
@@ -3432,6 +3657,8 @@ namespace PlutoGE::assets
 
     std::string AssetManager::ResolveMaterialTexturePath(const std::string &texturePath) const
     {
+        if (const auto *alias = FindRetainedAlias(texturePath)) return alias->empty() ? std::string{} : ResolveAssetPath(*alias);
+        if (IsUnresolvedRetainedReference(texturePath)) return {};
         if (texturePath.empty() || texturePath.starts_with("asset://") || Project::IsEngineAssetReference(texturePath) ||
             Project::IsProjectAssetReference(texturePath) || std::filesystem::path(texturePath).is_absolute())
         {
@@ -3447,6 +3674,9 @@ namespace PlutoGE::assets
 
     std::string AssetManager::PersistMaterialTexturePath(const std::string &texturePath) const
     {
+        if (const auto *alias = FindRetainedAlias(texturePath)) return alias->empty() ? std::string{} : PersistLogicalReference(*alias);
+        if (IsUnresolvedRetainedReference(texturePath)) return {};
+        if (UsesSharedAssets(texturePath)) return m_ownedResources->sharedAssets->PersistMaterialTexturePath(texturePath);
         if (texturePath.empty() || texturePath.starts_with("asset://") || Project::IsEngineAssetReference(texturePath))
             return texturePath;
 
@@ -3480,6 +3710,7 @@ namespace PlutoGE::assets
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory, std::uint32_t assetPipelineVersion)
     {
         m_catalog.reset();
+        if (m_ownedResources) m_ownedResources->aliases.clear();
         m_storage.reset();
         m_logicalReferenceTypes.clear();
         m_assetPipelineVersion = assetPipelineVersion;
@@ -3503,6 +3734,7 @@ namespace PlutoGE::assets
     void AssetManager::ClearProjectContext()
     {
         m_catalog.reset();
+        if (m_ownedResources) m_ownedResources->aliases.clear();
         m_storage.reset();
         m_logicalReferenceTypes.clear();
         m_assetPipelineVersion = 1;

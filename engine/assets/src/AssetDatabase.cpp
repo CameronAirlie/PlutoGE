@@ -2,6 +2,7 @@
 #include "PlutoGE/platform/FilesystemPaths.h"
 #include "PlutoGE/assets/AssetPathPolicy.h"
 #include "PlutoGE/assets/ProjectAssetLock.h"
+#include "PlutoGE/assets/ArtifactGenerationLock.h"
 #include "PlutoGE/assets/AssetCatalogSerialization.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetMetadata.h"
@@ -9,10 +10,14 @@
 #include "PlutoGE/assets/ModelSourcePackage.h"
 #include "PlutoGE/assets/ModelArtifactStorage.h"
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/assets/SceneFormat.h"
+#include "PlutoGE/assets/ModelGenerationSnapshot.h"
 #include "PlutoGE/platform/ContentPack.h"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <map>
 #include <fstream>
 #include <iomanip>
 #include <set>
@@ -154,6 +159,15 @@ namespace PlutoGE::assets
                     { SetError(errorMessage, "Library-backed models require persistent source metadata and asset pipeline version 2 or later."); return false; }
                     std::vector<ImportedAssetStorage> sourceStorage;
                     if (!BuildModelArtifactStorage(project, metadata, package, sourceStorage, errorMessage)) return false;
+                    auto lease = std::make_shared<ArtifactGenerationLock>();
+                    const bool leased = lease->TryAcquire(project.GetRootDirectory(), activeGeneration,
+                        ArtifactGenerationLockMode::SharedReader, errorMessage);
+                    if (!leased && !options.allowUnavailableImportedStorage) return false;
+                    for (auto &storage : sourceStorage)
+                    {
+                        storage.available = leased;
+                        if (leased) storage.generationLease = lease;
+                    }
                     persistedStorage.insert(persistedStorage.end(), sourceStorage.begin(), sourceStorage.end());
                 }
                 if (status == ModelSourcePackageStatus::Success)
@@ -274,8 +288,10 @@ namespace PlutoGE::assets
                     return content::IsPathWithinDirectory(path, root);
                 };
                 if (!contained(libraryRoot, projectRoot)) throw std::runtime_error("Imported storage Library escapes the project root.");
+                std::map<std::string, std::shared_ptr<const ArtifactGenerationLock>> suppliedLeases;
                 for (const auto &storage : combinedStorage)
                 {
+                    auto normalized = storage;
                     const auto imported = std::find_if(objects.begin(), objects.end(), [&](const auto &object)
                         { return object.ownership == AssetOwnership::Imported && object.location == storage.reference; });
                     if (imported == objects.end()) throw std::runtime_error("Storage override is not an imported object: " + storage.reference);
@@ -293,10 +309,43 @@ namespace PlutoGE::assets
                             throw std::runtime_error("Imported storage escapes project Library: " + storage.reference);
                         physical = (libraryRoot / relative).lexically_normal();
                     }
+                    // Supplied storage can name an older generation independently
+                    // of the active source package. Retain it before reading bytes.
+                    bool leaseAvailable = true;
+                    const auto relativeStorage = physical.lexically_relative(libraryRoot);
+                    auto part = relativeStorage.begin();
+                    if (part != relativeStorage.end())
+                    {
+                        auto directoryName = part->string();
+#ifdef _WIN32
+                        std::transform(directoryName.begin(), directoryName.end(), directoryName.begin(),
+                            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                        const bool artifacts = directoryName == "artifacts";
+#else
+                        const bool artifacts = directoryName == "Artifacts";
+#endif
+                        if (artifacts && ++part != relativeStorage.end())
+                        {
+                            content::ContentDigest key;
+                            const auto keyText = part->string();
+                            if (content::ParseContentDigest(keyText, key) &&
+                                (!normalized.generationLease || !normalized.generationLease->Owns(projectRoot, key, ArtifactGenerationLockMode::SharedReader)))
+                            {
+                                auto &lease = suppliedLeases[keyText];
+                                if (!lease)
+                                {
+                                    auto acquired = std::make_shared<ArtifactGenerationLock>();
+                                    if (acquired->TryAcquire(projectRoot, key, ArtifactGenerationLockMode::SharedReader, &locationError)) lease = std::move(acquired);
+                                }
+                                normalized.generationLease = lease;
+                                leaseAvailable = static_cast<bool>(lease);
+                            }
+                        }
+                    }
                     std::error_code fileError;
                     const auto fileStatus = inside ? std::filesystem::symlink_status(physical, fileError) : std::filesystem::file_status{};
                     content::ContentDigest digest;
-                    const bool available = inside && !fileError && std::filesystem::is_regular_file(fileStatus) &&
+                    const bool available = storage.available && leaseAvailable && inside && !fileError && std::filesystem::is_regular_file(fileStatus) &&
                         content::HashFileContent(physical, digest) && digest == storage.digest;
                     if (!available && !options.allowUnavailableImportedStorage)
                         throw std::runtime_error("Imported storage is missing, corrupt, or not an ordinary Library file: " + storage.reference);
@@ -310,7 +359,6 @@ namespace PlutoGE::assets
                         existing = std::prev(records.end());
                     }
                     if (existing->ownership == AssetOwnership::Authored) throw std::runtime_error("Imported storage cannot override an authored file: " + storage.reference);
-                    auto normalized = storage;
                     normalized.path = physical;
                     normalized.available = available;
                     normalizedStorage.push_back(std::move(normalized));
@@ -401,6 +449,9 @@ namespace PlutoGE::assets
         AssetDatabase database;
         AssetScanOptions scanOptions;
         scanOptions.importedStorage = options.importedStorage;
+        // Pruned exports need only reachable current objects; accepted generations
+        // have separate complete proofs below. Selected unavailable bytes still fail.
+        scanOptions.allowUnavailableImportedStorage = !options.includeUnreferencedAssets;
         if (!database.Scan(project, scanOptions, errorMessage)) return false;
         auto resolveLogical = [&](std::string &reference)
         {
@@ -452,6 +503,60 @@ namespace PlutoGE::assets
                 }
             }
         }
+        // Accepted generations belong to each linked instance, independently of
+        // the current catalog. Validate all baselines before creating output.
+        std::map<std::string, ModelGenerationSnapshot> linkedGenerations;
+        for (const auto &record : database.GetRecords())
+        {
+            if ((!options.includeUnreferencedAssets && !reachable.contains(record.reference)) ||
+                (record.type != ProjectAssetType::Scene && record.type != ProjectAssetType::Prefab)) continue;
+            const auto path = record.storagePath.empty() ? project.ResolveAssetReference(record.reference) : record.storagePath;
+            content::InputFile sceneInput(path);
+            std::string header; std::getline(sceneInput, header);
+            if (SceneFormatVersion(header) != 3) continue;
+            const auto scan = ScanAssetReferences(path, {}, project.GetAssetDirectoryPath());
+            if (!scan.errors.empty())
+            { SetError(errorMessage, "Invalid linked scene: " + record.reference + ": " + scan.errors.front()); return false; }
+            for (const auto &occurrence : scan.occurrences)
+            {
+                if (occurrence.expectedType == ProjectAssetType::Unknown) continue;
+                auto actualType = Project::GetAssetTypeForReference(occurrence.reference);
+                if (occurrence.reference.starts_with("engine://builtin/material/")) actualType = ProjectAssetType::Material;
+                if (occurrence.reference.starts_with("asset://"))
+                {
+                    AssetReference identity;
+                    const auto *object = ParseAssetReference(occurrence.reference, identity) ? database.GetCatalog()->Find(identity) : nullptr;
+                    if (!object) { SetError(errorMessage, "Missing typed managed asset: " + occurrence.reference); return false; }
+                    actualType = object->type;
+                }
+                if (actualType != occurrence.expectedType)
+                { SetError(errorMessage, "Asset type does not match its declared managed field in " + record.reference + ": " + occurrence.reference); return false; }
+            }
+            for (const auto &state : scan.modelInstances)
+            {
+                ModelGenerationSnapshot generation;
+                StaticModelGenerationSnapshot prepared;
+                if (!ReadModelGenerationSnapshot(project, state->accepted.layout.sourceAssetId,
+                        state->artifactGenerationKey, state->packageArtifact, database.GetCatalog(), database.GetStorageMap(), generation, errorMessage) ||
+                    !PrepareStaticModelGenerationSnapshot(project, generation, prepared, errorMessage) ||
+                    !ValidateStaticModelInstanceBaseline(*state, prepared, errorMessage)) return false;
+                for (const auto &occurrence : scan.occurrences)
+                {
+                    if (occurrence.acceptedInstance != state) continue;
+                    if (occurrence.reference == state->packageArtifact.reference) continue;
+                    AssetReference identity;
+                    if (!ParseAssetReference(occurrence.reference, identity) || !generation.catalog->Find(identity))
+                    { SetError(errorMessage, "Missing accepted-generation dependency: " + occurrence.reference); return false; }
+                }
+                const auto key = content::DigestToHex(state->artifactGenerationKey);
+                const auto found = linkedGenerations.find(key);
+                if (found != linkedGenerations.end() && (found->second.package.sourceAssetId != generation.package.sourceAssetId ||
+                    found->second.packageArtifact.reference != generation.packageArtifact.reference ||
+                    found->second.packageArtifact.digest != generation.packageArtifact.digest))
+                { SetError(errorMessage, "Conflicting accepted model generation proofs."); return false; }
+                linkedGenerations.emplace(key, std::move(generation));
+            }
+        }
         // A direct scene/animation reference to a source model is a runtime
         // dependency, unlike the source identity behind a generated .plutomodel.
         std::set<std::string> runtimeModelSources;
@@ -469,6 +574,38 @@ namespace PlutoGE::assets
         std::error_code error;
         std::filesystem::create_directories(destination, error);
         if (error) { SetError(errorMessage, "Failed to create cooked asset directory: " + error.message()); return false; }
+
+        // Only referenced generations are exported. Their logical identities stay
+        // private; they are never merged into the runtime's current catalog.
+        for (const auto &[key, generation] : linkedGenerations)
+        {
+            std::map<std::string, content::ContentDigest> files;
+            const auto add = [&](const ModelGeneratedFile &file)
+            {
+                const auto [entry, inserted] = files.emplace(file.reference, file.digest);
+                return inserted || entry->second == file.digest;
+            };
+            ModelHierarchyArtifact hierarchy;
+            if (ReadModelHierarchyArtifact(generation.package, hierarchy, errorMessage) != ModelHierarchyArtifactStatus::Success ||
+                !add(generation.packageArtifact) || !add({hierarchy.reference, hierarchy.digest})) return false;
+            for (const auto &file : generation.package.generatedFiles)
+                if (!add(file)) { SetError(errorMessage, "Conflicting accepted model file proofs."); return false; }
+            const auto source = generation.authoredSnapshot ? projectRoot / "ModelSnapshots" / key / "Files" :
+                projectRoot / "Library/Artifacts" / key / "Files";
+            for (const auto &[reference, expected] : files)
+            {
+                if (!Project::IsProjectAssetReference(reference) || NormalizeAssetReference(reference) != reference)
+                { SetError(errorMessage, "Invalid accepted model file location."); return false; }
+                const auto relative = std::filesystem::path(reference.substr(Project::kProjectAssetScheme.size()));
+                const auto target = destination / ".pluto-generations" / key / "Files" / relative;
+                std::filesystem::create_directories(target.parent_path(), error);
+                if (!error) std::filesystem::copy_file(source / relative, target, std::filesystem::copy_options::overwrite_existing, error);
+                if (error) { SetError(errorMessage, "Cannot cook accepted model generation: " + error.message()); return false; }
+                content::ContentDigest actual;
+                if (!content::HashFileContent(target, actual, errorMessage) || actual != expected)
+                { SetError(errorMessage, "Cooked model generation differs from its accepted proof."); return false; }
+            }
+        }
 
         // Preserve source-model IDs even when source bytes are not shipped.
         std::ofstream identities(destination.parent_path() / "PlutoAssetIds.manifest", std::ios::trunc);

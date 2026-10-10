@@ -91,5 +91,42 @@ inline void CheckMeshReplacementRendering(PlutoGE::render::rhi::IRenderDevice &d
         scene.RemoveEntity(child); require(frame().empty(), "Removed mesh survived scene queue");
     }
     frontend.ClearRenderCommands(); require(frontend.GetSceneRenderCommandView().empty(), "Scene destruction retained draws");
+    // UV authoring owns geometry while imported baselines remain shared.
+    {
+        MeshConfig uvConfig;
+        uvConfig.data.vertices = {
+            {{-.5f,-.5f,0},{0,0,1},{0,0},{1,0,0,1}},
+            {{.5f,-.5f,0},{0,0,1},{1,0},{1,0,0,1}},
+            {{0,.5f,0},{0,0,1},{.5f,1},{1,0,0,1}}};
+        uvConfig.data.indices = {0,1,2};
+        Mesh baseline(uvConfig);
+        baseline.FreezeGeometry();
+        const auto revision = baseline.GetContentRevision();
+        PlutoGE::scene::Scene scene;
+        auto *first = scene.AddEntity(std::make_unique<PlutoGE::scene::Entity>());
+        auto *second = scene.AddEntity(std::make_unique<PlutoGE::scene::Entity>());
+        auto *edited = first->CreateComponent<PlutoGE::scene::MeshComponent>(PlutoGE::scene::MeshComponentConfig{.mesh=&baseline,.material=&material});
+        auto *other = second->CreateComponent<PlutoGE::scene::MeshComponent>(PlutoGE::scene::MeshComponentConfig{.mesh=&baseline,.material=&material});
+        const auto frame = [&] {
+            frontend.ClearRenderCommands();
+            scene.SubmitRenderCommands();
+            const auto commands = frontend.GetSceneRenderCommandView();
+            require(commands.size() == 2, "UV geometry lost its scene producers");
+            require(renderer.Render(64,64,camera,lighting,commands,{}), "Owned UV scene render failed");
+            return renderer.GetTimingStats().meshUploadCount;
+        };
+        require(frame() == 1 && frame() == 0, "Shared baseline did not reuse one RHI upload");
+        require(edited->GenerateLightmapUvAtlasForSubmeshes({0}), "Owned UV generation failed");
+        require(edited->GetMesh() != &baseline && other->GetMesh() == &baseline &&
+            baseline.GetContentRevision() == revision, "UV editing mutated shared source geometry");
+        require(frame() == 1 && frame() == 0, "Owned UV geometry did not invalidate and settle its RHI upload");
+        const auto ownedLifetime = edited->GetMesh()->GetLifetimeToken();
+        scene.RemoveEntity(first);
+        frontend.ClearRenderCommands();
+        scene.SubmitRenderCommands();
+        require(frontend.GetSceneRenderCommandView().size() == 1 && ownedLifetime.expired(),
+            "Removed UV geometry retained ownership or scene draws");
+    }
+    frontend.ClearRenderCommands();
     renderer.Shutdown();
 }

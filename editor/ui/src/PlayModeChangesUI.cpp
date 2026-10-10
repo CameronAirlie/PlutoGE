@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/ui/SceneSnapshots.h"
 
 #include <imgui.h>
 
@@ -26,7 +27,8 @@ namespace PlutoGE::ui
     {
         std::string beforeState;
         std::string error;
-        if (!CaptureSceneState(beforeState, &error))
+        SceneGenerationRetention beforeGenerations;
+        if (!CaptureSceneState(beforeState, &error, &beforeGenerations))
         {
             m_statusMessage = "Could not capture the scene: " + error;
             return false;
@@ -40,6 +42,7 @@ namespace PlutoGE::ui
             Log(ConsoleSeverity::Error, m_statusMessage);
             return false;
         }
+        auto afterGenerations = CaptureSceneGenerationRetention(*candidate);
         candidate.reset();
         if (beforeState == afterState)
             return true;
@@ -50,7 +53,8 @@ namespace PlutoGE::ui
             return false;
         }
         PushSceneHistoryEntry(SceneHistoryEntry{.label = "Keep Play Mode Changes",
-            .beforeState = std::move(beforeState), .afterState = std::move(afterState)});
+            .beforeState = std::move(beforeState), .afterState = std::move(afterState),
+            .beforeGenerations = std::move(beforeGenerations), .afterGenerations = std::move(afterGenerations)});
         m_redoStack.clear();
         m_statusMessage = "Kept selected play-mode changes. Undo restores the pre-play values.";
         return true;

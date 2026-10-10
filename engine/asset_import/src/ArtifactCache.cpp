@@ -1,4 +1,5 @@
 #include "PlutoGE/asset_import/ArtifactCache.h"
+#include "PlutoGE/assets/ArtifactGenerationLock.h"
 #include "PlutoGE/asset_import/ProjectImportLock.h"
 #include "PlutoGE/assets/AssetMetadata.h"
 
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -16,6 +18,19 @@ namespace PlutoGE::assetimport
 {
     namespace
     {
+        std::optional<std::filesystem::path> ProjectCacheRoot(const std::filesystem::path &cache)
+        {
+            auto cacheName = cache.filename().string(), libraryName = cache.parent_path().filename().string();
+#ifdef _WIN32
+            for (auto &character : cacheName) if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+            for (auto &character : libraryName) if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+            if (cacheName == "artifacts" && libraryName == "library") return cache.parent_path().parent_path();
+#else
+            if (cacheName == "Artifacts" && libraryName == "Library") return cache.parent_path().parent_path();
+#endif
+            return std::nullopt;
+        }
+
         std::mutex CachePublicationMutex;
         constexpr std::uintmax_t MaxManifestBytes = 16 * 1024 * 1024;
 
@@ -183,8 +198,22 @@ namespace PlutoGE::assetimport
         return ReadGeneration(key, manifest, true, errorMessage);
     }
 
+    ArtifactCacheStatus ArtifactCache::FindUnderCollectionLock(const content::ContentDigest &key,
+        const assets::ArtifactGenerationLock &lock, ArtifactManifest &manifest, std::string *errorMessage) const
+    {
+        const auto project = ProjectCacheRoot(m_root);
+        std::error_code canonicalError;
+        const auto canonicalProject = project ? std::filesystem::canonical(*project, canonicalError) : std::filesystem::path{};
+        if (!project || canonicalError || !lock.Owns(canonicalProject, key, assets::ArtifactGenerationLockMode::ExclusiveCollector))
+        {
+            if (errorMessage) *errorMessage = "Artifact verification requires the matching exclusive generation lock.";
+            return ArtifactCacheStatus::IoError;
+        }
+        return ReadGeneration(key, manifest, true, errorMessage, false);
+    }
+
     ArtifactCacheStatus ArtifactCache::ReadGeneration(const content::ContentDigest &key, ArtifactManifest &manifest,
-                                                      bool verifyOutputs, std::string *errorMessage) const
+                                                      bool verifyOutputs, std::string *errorMessage, bool retainLease) const
     {
         auto corrupt = [&](const std::string &message)
         {
@@ -199,6 +228,14 @@ namespace PlutoGE::assetimport
                 if (errorMessage) errorMessage->clear();
                 return ArtifactCacheStatus::Missing;
             }
+            std::shared_ptr<assets::ArtifactGenerationLock> lease;
+            if (const auto project = ProjectCacheRoot(m_root); project && retainLease)
+            {
+                lease = std::make_shared<assets::ArtifactGenerationLock>();
+                std::string error;
+                if (!lease->TryAcquire(*project, key, assets::ArtifactGenerationLockMode::SharedReader, &error))
+                    throw std::runtime_error("Cannot retain artifact generation: " + error);
+            }
             const auto path = directory / "manifest";
             if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) > MaxManifestBytes)
                 return corrupt("Missing or oversized artifact manifest.");
@@ -207,6 +244,7 @@ namespace PlutoGE::assetimport
             std::getline(input, header);
             if (header != "PLUTOARTIFACT\t1") return corrupt("Unsupported artifact manifest schema.");
             ArtifactManifest parsed;
+            parsed.generationLease = std::move(lease);
             bool hasKey = false;
             bool hasRecipe = false;
             std::set<std::string> outputs;
@@ -424,7 +462,13 @@ namespace PlutoGE::assetimport
             if (status == ArtifactCacheStatus::IoError) throw std::runtime_error("Existing artifact cache cannot be read.");
             const auto destination = GetDirectory(candidate.key);
             if (status == ArtifactCacheStatus::Corrupt)
+            {
+                assets::ArtifactGenerationLock repairLock;
+                if (const auto project = ProjectCacheRoot(m_root))
+                    if (!repairLock.TryAcquire(*project, candidate.key, assets::ArtifactGenerationLockMode::ExclusiveCollector, errorMessage))
+                        return false;
                 std::filesystem::rename(destination, m_root / (".corrupt-" + assets::GenerateAssetId()));
+            }
             std::error_code error;
             std::filesystem::rename(staging.path, destination, error);
             if (error)
@@ -433,7 +477,10 @@ namespace PlutoGE::assetimport
                 if (Find(candidate.key, existing) != ArtifactCacheStatus::Hit || !SameOutputs(candidate, existing))
                     throw std::runtime_error("Cannot publish artifact generation: " + error.message());
             }
-            manifest = std::move(candidate);
+            // Reopen through the same verifier/lease boundary before returning
+            // published bytes to a caller outside the writer operation.
+            if (Find(candidate.key, existing, errorMessage) != ArtifactCacheStatus::Hit) return false;
+            manifest = std::move(existing);
             if (errorMessage) errorMessage->clear();
             return true;
         }

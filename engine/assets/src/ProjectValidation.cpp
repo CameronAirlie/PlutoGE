@@ -1,7 +1,10 @@
+#include "PlutoGE/assets/AssetPathPolicy.h"
 #include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/assets/ManagedAssetFieldMetadata.h"
 #include "PlutoGE/assets/AssetCatalog.h"
+#include "PlutoGE/assets/SceneModelInstanceRecord.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -66,6 +69,8 @@ namespace PlutoGE::assets
             bool enabled;
             std::size_t line;
             std::map<std::string, std::string> properties;
+            struct ScriptProperty { std::string name, value; bool isString; std::size_t line; };
+            std::vector<ScriptProperty> scriptProperties;
         };
         struct Entity
         {
@@ -81,11 +86,13 @@ namespace PlutoGE::assets
             void Add(std::string code, const std::string &owner, std::uint32_t entity, std::size_t line,
                      std::string message, ValidationSeverity severity = ValidationSeverity::Error)
             { result.diagnostics.push_back({severity, std::move(code), owner, entity, line, std::move(message)}); }
-            void Reference(const std::string &value, const std::string &owner, std::uint32_t entity, std::size_t line)
+            void Reference(const std::string &value, const std::string &owner, std::uint32_t entity, std::size_t line, ProjectAssetType expectedType = ProjectAssetType::Unknown)
             {
                 if (!value.starts_with("project://") && !value.starts_with("engine://") && !value.starts_with("asset://")) return;
                 auto reference = NormalizeAssetReference(value);
                 if (reference.empty()) { Add("asset.invalid", owner, entity, line, "Invalid asset reference: " + value); return; }
+                auto actualType = ClassifyAssetReference(reference);
+                if (reference.starts_with("engine://builtin/material/")) actualType = ProjectAssetType::Material;
                 if (reference.starts_with("asset://"))
                 {
                     if (!input.assetCatalog)
@@ -100,9 +107,12 @@ namespace PlutoGE::assets
                         Add("asset.missing", owner, entity, line, "Missing logical asset: " + reference);
                         return;
                     }
+                    actualType = object->type;
                     reference = NormalizeAssetReference(object->location);
                     if (reference.empty()) { Add("asset.invalid", owner, entity, line, "Unsupported catalog location."); return; }
                 }
+                if (expectedType != ProjectAssetType::Unknown && actualType != expectedType)
+                { Add("asset.type", owner, entity, line, "Asset type does not match its declared managed field: " + value); return; }
                 if (input.builtinReferences.contains(reference)) return;
                 std::filesystem::path path;
                 if (reference.starts_with("project://"))
@@ -145,6 +155,20 @@ namespace PlutoGE::assets
                 std::size_t number = 0;
                 unsigned formatVersion = 0;
                 std::set<std::uint32_t> linearTransforms;
+                std::map<std::uint32_t, std::shared_ptr<const StaticModelInstanceState>> generatedOwners;
+                std::map<std::uint32_t, std::shared_ptr<const AssetCatalog>> modelCatalogs;
+                std::map<std::uint32_t, std::shared_ptr<const StaticModelInstanceState>> bindingOwners;
+                std::set<std::uint32_t> modelRoots;
+                std::size_t modelBytes = 0;
+                const auto modelReference = [&](const std::string &reference, const StaticModelInstanceState &state,
+                    const std::shared_ptr<const AssetCatalog> &catalog, std::uint32_t entity, std::size_t recordLine)
+                {
+                    AssetReference identity;
+                    if (!ParseAssetReference(reference, identity) || identity.assetId != state.accepted.layout.sourceAssetId || !identity.localObjectId)
+                    { Reference(reference, owner, entity, recordLine); return; }
+                    if (!catalog || !catalog->Find(identity))
+                        Add("model.reference", owner, entity, recordLine, "Missing accepted-generation dependency: " + reference);
+                };
                 while (std::getline(stream, line))
                 {
                     ++number;
@@ -153,14 +177,35 @@ namespace PlutoGE::assets
                     if (number == 1)
                     {
                         formatVersion = SceneFormatVersion(line);
-                        if (!formatVersion || (formatVersion == 2 && input.assetPipelineVersion < kAffineSceneProjectVersion))
+                        if (!formatVersion || (formatVersion >= 2 && input.assetPipelineVersion < kAffineSceneProjectVersion) ||
+                            (formatVersion == 3 && input.assetPipelineVersion < kLinkedModelSceneProjectVersion))
                         { Add("scene.header", owner, 0, 1, "Unsupported scene header or incompatible project version."); return; }
                     }
                     if (line.size() > MaxSceneRecordSize) { Add("scan.incomplete", owner, 0, number, "Scene record exceeds 64 MiB; record not validated."); continue; }
                     const auto fields = Fields(line);
                     try
                     {
-                        if (fields[0] == "ENTITY")
+                        if (fields[0] == "MODEL_INSTANCE")
+                        {
+                            auto state = std::make_shared<StaticModelInstanceState>(); std::string error;
+                            if (formatVersion != 3 || !entities.empty() || component || modelRoots.size() >= 4096 ||
+                                line.size() > MaxSceneRecordSize - modelBytes || !ParseSceneModelInstanceRecord(line, *state, &error))
+                                throw std::invalid_argument("model instance record");
+                            modelBytes += line.size();
+                            if (!modelRoots.insert(state->rootEntityId).second) throw std::invalid_argument("duplicate model root");
+                            const auto claim = [&](std::uint32_t id)
+                            { if (!generatedOwners.emplace(id, state).second) throw std::invalid_argument("duplicate model ownership"); };
+                            claim(state->rootEntityId);
+                            for (const auto &node : state->nodeEntities) claim(node.sceneEntityId);
+                            for (const auto id : state->bindingEntities) { claim(id); bindingOwners.emplace(id, state); }
+                            auto catalog = input.prepareModelInstance ? input.prepareModelInstance(*state, &error) : nullptr;
+                            if (!catalog) Add("model.generation", owner, state->rootEntityId, number,
+                                error.empty() ? "Accepted model generation verification is unavailable." : error);
+                            modelCatalogs.emplace(state->rootEntityId, catalog);
+                            for (const auto &reference : state->defaultMaterials) modelReference(reference, *state, catalog, state->rootEntityId, number);
+                            for (const auto &override : state->overrides.materials) modelReference(override.reference, *state, catalog, state->rootEntityId, number);
+                        }
+                        else if (fields[0] == "ENTITY")
                         {
                             if (fields.size() < 8) throw std::invalid_argument("entity record");
                             const auto id = Id(fields[1]);
@@ -171,7 +216,7 @@ namespace PlutoGE::assets
                         else if (fields[0] == "LINEAR_TRANSFORM")
                         {
                             std::array<float, 9> values;
-                            if (formatVersion != 2 || fields.size() != 3) throw std::invalid_argument("linear transform record");
+                            if (formatVersion < 2 || fields.size() != 3) throw std::invalid_argument("linear transform record");
                             const auto id = Id(fields[1]);
                             if (!entities.contains(id) || !linearTransforms.insert(id).second || !ParseSceneLinearCorrection(fields[2], values))
                                 throw std::invalid_argument("linear transform record");
@@ -189,7 +234,16 @@ namespace PlutoGE::assets
                         {
                             if (!component || fields.size() < 4) throw std::invalid_argument("property record");
                             component->properties[fields[1]] = fields[3];
-                            Reference(fields[3], owner, component->entity, number);
+                            const auto binding = bindingOwners.find(component->entity);
+                            if (component->type == "MeshComponent" && binding != bindingOwners.end())
+                                modelReference(fields[3], *binding->second, modelCatalogs.at(binding->second->rootEntityId), component->entity, number);
+                            else if (component->type == "ScriptComponent")
+                            {
+                                if (component->scriptProperties.size() >= kMaxManagedAssetFields * 2 + 2)
+                                    throw std::invalid_argument("managed field inventory limit");
+                                component->scriptProperties.push_back({fields[1], fields[3], fields[2] == "2", number});
+                            }
+                            else Reference(fields[3], owner, component->entity, number);
                         }
                         else if (fields[0] == "PREFAB" && fields.size() >= 3) Reference(fields[2], owner, Id(fields[1]), number);
                         else if (fields[0] == "ENVIRONMENT" && fields.size() >= 2) Reference(fields[1], owner, 0, number);
@@ -199,6 +253,11 @@ namespace PlutoGE::assets
                 }
                 if (!number || stream.bad()) Add("scan.incomplete", owner, 0, number, "Scene is empty or could not be fully read.");
                 if (component) Add("scene.component", owner, component->entity, component->line, "Unterminated component record.");
+                for (const auto &[id, state] : generatedOwners)
+                    if (!entities.contains(id)) Add("model.entity", owner, id, 0, "Generated model entity is missing.");
+                for (const auto &[id, state] : bindingOwners)
+                    if (std::count_if(components.begin(), components.end(), [id](const auto &c) { return c.entity == id && c.type == "MeshComponent"; }) != 1)
+                        Add("model.binding", owner, id, 0, "Generated binding requires one mesh component.");
                 const auto active = [&](std::uint32_t id) {
                     std::set<std::uint32_t> visited;
                     while (id)
@@ -216,6 +275,29 @@ namespace PlutoGE::assets
                     if (c.type == "CameraComponent" && c.enabled && active(c.entity)) camera = true;
                     if (c.type == "ScriptComponent")
                     {
+                        std::vector<ManagedAssetFieldRecord> records;
+                        records.reserve(c.scriptProperties.size());
+                        for (const auto &property : c.scriptProperties)
+                            records.push_back({property.name, property.value, property.isString});
+                        ManagedAssetFieldMetadata metadata;
+                        std::string error;
+                        if (!ReadManagedAssetFieldMetadata(records, metadata, &error))
+                            Add("script.asset_schema", owner, c.entity, c.line, error);
+                        else if (metadata.declared && formatVersion != 3)
+                            Add("script.asset_schema", owner, c.entity, c.line, "Typed managed asset fields require scene format 3.");
+                        else for (const auto &property : c.scriptProperties)
+                        {
+                            if (!metadata.declared) { Reference(property.value, owner, c.entity, property.line); continue; }
+                            const auto kind = metadata.fields.find(property.name);
+                            if (kind == metadata.fields.end() || property.value.empty()) continue;
+                            auto reference = property.value;
+                            if (reference.find("://") == std::string::npos)
+                            {
+                                const auto path = std::filesystem::path(std::u8string(reference.begin(), reference.end()));
+                                reference = "project://" + (path.is_absolute() ? Utf8(path.lexically_normal().lexically_relative(input.assetRoot.lexically_normal())) : reference);
+                            }
+                            Reference(reference, owner, c.entity, property.line, ManagedAssetFieldAssetType(kind->second));
+                        }
                         const auto name = c.properties["Source"];
                         if (name.empty()) Add("script.empty", owner, c.entity, c.line, "Script component has no class assigned.", ValidationSeverity::Warning);
                         else if (!input.scriptClasses) Add("script.unverified", owner, c.entity, c.line, "Class catalogue unavailable; cannot verify " + name, ValidationSeverity::Warning);
@@ -286,6 +368,12 @@ namespace PlutoGE::assets
         while (!ec && it != end)
         {
             const auto path = it->path();
+            if (!input.projectRoot.empty() && IsAssetInfrastructurePath(input.projectRoot, path))
+            {
+                it.disable_recursion_pending();
+                it.increment(ec);
+                continue;
+            }
             if (it->is_regular_file(ec) && SupportsAssetReferenceScan(path))
             {
                 const auto owner = "project://" + Utf8(path.lexically_relative(input.assetRoot));
@@ -305,7 +393,7 @@ namespace PlutoGE::assets
                         const auto scan = ScanAssetReferences(path, {}, input.assetRoot);
                         for (const auto &error : scan.errors) v.Add("scan.incomplete", owner, 0, 0, error);
                         for (const auto &reference : scan.occurrences)
-                            if (reference.role == AssetReferenceRole::Runtime) v.Reference(reference.reference, owner, 0, reference.line);
+                            if (reference.role == AssetReferenceRole::Runtime) v.Reference(reference.reference, owner, 0, reference.line, reference.expectedType);
                     }
                 }
             }

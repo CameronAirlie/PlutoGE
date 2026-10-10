@@ -24,7 +24,7 @@ namespace PlutoGE::assetimport
         std::erase_if(semanticMetadata.extensionRecords, [](const auto &line)
         {
             const auto key = std::string_view(line).substr(0, line.find('\t'));
-            return key == "MODEL_PACKAGE" || key == "MODEL_PACKAGE_RECORD" || key == "MODEL_ARTIFACT";
+            return key == "MODEL_PACKAGE" || key == "MODEL_PACKAGE_RECORD" || key == "MODEL_ARTIFACT" || key == "MODEL_PACKAGE_ARTIFACT";
         });
         semanticMetadata.importerVersion = 1; // The recipe version carries importer compatibility.
         std::string metadataBytes;

@@ -37,6 +37,14 @@ namespace PlutoGE::scene
         glm::mat4 GetLocalTransform() const;
         // Exact affine import input; singular/non-affine input leaves state intact.
         bool SetLocalTransformMatrix(const glm::mat4 &matrix);
+        enum class TransformEditChannel : uint8_t { Position = 1, Rotation = 2, Scale = 4, Affine = 8 };
+        // Generated nodes track authored controls independently of their values.
+        // Installation/import publication resets tracking after capturing state.
+        void SetGeneratedTransformEditTracking(bool enabled)
+        { m_trackGeneratedTransformEdits = enabled; m_generatedTransformEdits = 0; }
+        uint8_t GetGeneratedTransformEdits() const { return m_generatedTransformEdits; }
+        void RecordTransformEdit(TransformEditChannel channel)
+        { if (m_trackGeneratedTransformEdits) m_generatedTransformEdits |= static_cast<uint8_t>(channel); }
         bool SetLocalTransformCorrection(const glm::mat4 &correction);
         const glm::mat4 &GetLocalTransformCorrection() const { return m_localTransformCorrection; }
         bool HasLocalTransformCorrection() const { return m_localTransformCorrection != glm::mat4(1); }
@@ -224,6 +232,8 @@ namespace PlutoGE::scene
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
         glm::mat4 m_localTransformCorrection{1.0f};
+        bool m_trackGeneratedTransformEdits = false;
+        uint8_t m_generatedTransformEdits = 0;
         Transform m_transform;           // Local transform of the entity
         mutable glm::mat4 m_cachedLocalTransform = glm::mat4(1.0f);
         mutable glm::mat4 m_cachedWorldTransform = glm::mat4(1.0f);

@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/assets/SceneModelInstanceRecord.h"
 
 #include <algorithm>
 #include <chrono>
@@ -47,6 +48,43 @@ namespace
                            [&](const auto &occurrence) { return occurrence.reference == reference; });
     }
 
+    void ManagedFields(const std::filesystem::path &root)
+    {
+        const auto path = root / "Managed.plutoscene";
+        const std::string prefix = "SCENE\t3\nENTITY\t1\t0\t1\tScript\t0,0,0\t0,0,0\t1,1,1\nCOMPONENT\t1\tScriptComponent\t1\n";
+        const std::string fields = "PROPERTY\tSource\t2\tMissing.Script\t0\n"
+            "PROPERTY\t__Pluto.AssetFields.Version\t2\t1\t0\n"
+            "PROPERTY\t__Pluto.AssetField.Template\t2\tPrefab\t0\n"
+            "PROPERTY\tTemplate\t2\tasset://prefab-owner#0\t0\n"
+            "PROPERTY\t__Pluto.AssetField.Data\t2\tScriptableObject\t0\n"
+            "PROPERTY\tData\t2\tData/Settings.plutoscriptable\t0\n"
+            "PROPERTY\t__Pluto.AssetField.Paint\t2\tMaterial\t0\n"
+            "PROPERTY\tPaint\t2\tasset://material-owner#9007199254740993\t0\n"
+            "PROPERTY\t__Pluto.AssetField.Controls\t2\tInputMapping\t0\n"
+            "PROPERTY\tControls\t2\tproject://Controls.plutoinput\t0\n"
+            "PROPERTY\tText\t2\tproject://Unused.plutomaterial\t0\n";
+        Write(path, prefix + fields + "END_COMPONENT\n");
+        auto scan = ScanAssetReferences(path, {}, root);
+        Require(scan.errors.empty() && scan.occurrences.size() == 4 && !Has(scan, "project://Unused.plutomaterial") &&
+            Has(scan, "project://Data/Settings.plutoscriptable") && Has(scan, "asset://material-owner#9007199254740993"),
+            "Typed managed scanning lost asset fields or promoted ordinary strings");
+        Require(scan.occurrences[0].expectedType == ProjectAssetType::Prefab &&
+            scan.occurrences[1].expectedType == ProjectAssetType::ScriptableObject &&
+            scan.occurrences[2].expectedType == ProjectAssetType::Material &&
+            scan.occurrences[3].expectedType == ProjectAssetType::InputMapping,
+            "Managed field roles did not survive dependency extraction");
+        Write(path, "SCENE\t1\n" + prefix.substr(prefix.find('\n') + 1) + fields + "END_COMPONENT\n");
+        Require(!ScanAssetReferences(path).errors.empty(), "Legacy scene accepted future managed field metadata");
+        Write(path, prefix + fields + "PROPERTY\t__Pluto.AssetField.Template\t2\tPrefab\t0\nEND_COMPONENT\n");
+        Require(!ScanAssetReferences(path).errors.empty(), "Duplicate managed role accepted");
+        Write(path, prefix + fields);
+        Require(!ScanAssetReferences(path).errors.empty(), "Unterminated managed component accepted");
+        Write(path, "SCENE\t1\nCOMPONENT\t1\tScriptComponent\t1\nPROPERTY\tLegacy\t2\tasset://legacy-owner#0\t0\nEND_COMPONENT\n");
+        scan = ScanAssetReferences(path);
+        Require(scan.errors.empty() && Has(scan, "asset://legacy-owner#0") && scan.occurrences[0].expectedType == ProjectAssetType::Unknown,
+            "Legacy missing-class fields lost conservative dependency scanning");
+    }
+
     void NativeFormats(const std::filesystem::path &root)
     {
         const std::string reference = "project://Textures/Rough, stone; 01.png";
@@ -64,6 +102,25 @@ namespace
         scan = ScanAssetReferences(root / "Wall.plutomaterial");
         Require(Has(scan, reference) && Has(scan, "engine://builtin/texture/normal") && scan.occurrences.size() == 3,
                 "Material-relative textures or shader references failed");
+        Write(root / "Surface.plutoshadergraph", "ShaderGraphVersion=1\r\n"
+            "Pass=asset://pass#0\n"
+            "TextureParameter=project://NameOnly|asset://texture#0|0|1\r\n"
+            "Node=1|Subgraph|project://NameOnly|0,0|1,1,1,1|Color|0|0,0|0|asset://child#0\n"
+            "Node=2|TextureSample|Sample|0,0|1,1,1,1|Color|0|0,0|0|project://NameOnly\n"
+            "Node=3|Expression|Formula|0,0|1,1,1,1|Color|0|0,0|0|A || B\n"
+            "Variable=project://NameOnly|0|0,0,0,0\nUnknown=project://NameOnly\n");
+        scan = ScanAssetReferences(root / "Surface.plutoshadergraph");
+        Require(scan.errors.empty() && scan.occurrences.size() == 3 &&
+            Has(scan, "asset://pass#0") && Has(scan, "asset://texture#0") && Has(scan, "asset://child#0") &&
+            scan.occurrences[0].line == 2 && scan.occurrences[1].line == 3 && scan.occurrences[2].line == 4,
+            "Shader graph scan confused names or expressions with reference fields");
+        for (const auto *field : {"ShaderGraphVersion=2", "TextureParameter=Name|asset://texture#0|0", "Node=1|Subgraph|NoParameter",
+            "Pass=asset://pass#0|unexpected", "TextureParameter=Name|asset://bad#invalid|0|0"})
+        {
+            Write(root / "Malformed.plutoshadergraph", std::string("ShaderGraphVersion=1\n") + field + "\n");
+            Require(!ScanAssetReferences(root / "Malformed.plutoshadergraph").errors.empty(),
+                "Malformed shader graph dependency silently accepted");
+        }
         Write(root / "Walk.plutoanimgraph", "AnimationGraphVersion=4\nState=1|Walk|Walk clip|0|0|0|1|1|project://Clips/Walk cycle.plutoclip\n");
         Require(Has(ScanAssetReferences(root / "Walk.plutoanimgraph"), "project://Clips/Walk cycle.plutoclip"), "Graph fields failed");
         Write(root / "Walk.plutoanim", "AnimationSetVersion=1\nClip=project://Clips/Walk cycle.plutoclip\n");
@@ -163,6 +220,56 @@ namespace
         Require(!oversized.errors.empty() && Has(oversized, reference), "Oversized record did not report incomplete coverage and continue");
     }
 
+    void LinkedModelScopes(const std::filesystem::path &root)
+    {
+        StaticModelInstanceState state;
+        state.rootEntityId = 1; state.artifactGenerationKey[0] = 1;
+        state.packageArtifact = {"project://Models/Accepted.plutomodel", {}}; state.packageArtifact.digest[0] = 2;
+        state.accepted.layout.sourceAssetId = "source"; state.accepted.layout.meshReference = "asset://source#2";
+        state.accepted.layout.hierarchyDigest[0] = 3; state.accepted.meshDigest[0] = 4;
+        state.accepted.submeshCount = 1; state.accepted.materialSlotCount = 1;
+        state.accepted.layout.nodes = {{1ull << 45, "Source", -1, glm::mat4(1)}};
+        state.accepted.layout.bindings = {{0, 0, glm::mat4(1)}};
+        state.defaultMaterials = {"asset://source#3"};
+        state.overrides.hierarchyDigest = state.accepted.layout.hierarchyDigest; state.overrides.meshDigest = state.accepted.meshDigest;
+        state.overrides.materials = {{0, 0, "asset://external#7"}};
+        state.nodeEntities = {{1ull << 45, 2}}; state.bindingEntities = {3};
+        std::string record, error;
+        Require(SerializeSceneModelInstanceRecord(state, record, &error), error);
+        const auto path = root / "Linked.plutoscene";
+        const std::string entities = "ENTITY\t1\t0\t1\tRoot\t0,0,0\t0,0,0\t1,1,1\n"
+            "ENTITY\t2\t1\t1\tSource\t0,0,0\t0,0,0\t1,1,1\n"
+            "ENTITY\t3\t2\t1\tGeometry 0\t0,0,0\t0,0,0\t1,1,1\n"
+            "COMPONENT\t3\tMeshComponent\t1\nPROPERTY\tMeshAssetReference\t2\tasset://source#2\t0\n"
+            "PROPERTY\tSubmeshIndex\t1\t0\t0\nPROPERTY\tSubmeshCount\t1\t1\t0\n"
+            "PROPERTY\tSubmeshOverrides.0.AlbedoPath\t2\tasset://source#4\t0\n"
+            "PROPERTY\tSubmeshOverrides.0.MaterialAsset\t2\tasset://external#7\t0\nEND_COMPONENT\n";
+        Write(path, "SCENE\t3\n" + record + "\n" + entities);
+        const auto scan = ScanAssetReferences(path);
+        Require(scan.errors.empty() && scan.modelInstances.size() == 1 && scan.modelInstances.front()->nodeEntities.front().sourceNodeId == (1ull << 45),
+            "Linked dependency scan lost accepted source evidence");
+        const auto hasRole = [&](const std::string &reference, AssetReferenceRole role)
+        { return std::any_of(scan.occurrences.begin(), scan.occurrences.end(), [&](const auto &occurrence) { return occurrence.reference == reference && occurrence.role == role; }); };
+        Require(hasRole("asset://source#0", AssetReferenceRole::ImportSource) &&
+            hasRole("asset://source#2", AssetReferenceRole::AcceptedGeneration) &&
+            hasRole("asset://source#4", AssetReferenceRole::AcceptedGeneration) &&
+            hasRole("asset://external#7", AssetReferenceRole::Runtime) &&
+            !hasRole("asset://source#2", AssetReferenceRole::Runtime), "Private generation dependencies leaked into the current catalog traversal");
+        Write(path, "SCENE\t3\n" + record + "\n" + record + "\n" + entities);
+        Require(!ScanAssetReferences(path).errors.empty(), "Duplicate generated ownership was scanned as complete");
+        Write(path, "SCENE\t3\n" + entities + record + "\n");
+        Require(!ScanAssetReferences(path).errors.empty(), "Late linked model record was scanned as complete");
+        auto missing = entities;
+        missing.erase(0, missing.find('\n') + 1);
+        Write(path, "SCENE\t3\n" + record + "\n" + missing);
+        Require(!ScanAssetReferences(path).errors.empty(), "Missing linked root was scanned as complete");
+        auto overflowing = entities;
+        overflowing.replace(overflowing.find("ENTITY\t1\t"), 8, "ENTITY\t4294967297\t");
+        Write(path, "SCENE\t3\n" + record + "\n" + overflowing);
+        Require(!ScanAssetReferences(path).errors.empty(), "Overflowing linked entity ID was truncated");
+        std::filesystem::remove(path);
+    }
+
     void InvalidationAndErrors(const std::filesystem::path &root)
     {
         std::filesystem::create_directories(root);
@@ -208,7 +315,9 @@ int main()
     {
         Scratch scratch;
         NativeFormats(scratch.root / "Formats");
+        ManagedFields(scratch.root / "Managed");
         BinaryAndLargeFiles(scratch.root / "Formats");
+        LinkedModelScopes(scratch.root / "Formats");
         InvalidationAndErrors(scratch.root / "Index");
         std::cout << "PASS: reference formats, large assets, exact matching, invalidation, errors and cancellation\n";
         return 0;

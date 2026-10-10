@@ -1,6 +1,9 @@
 add_library(PlutoGEAssetImport
+    src/ArtifactCollection.cpp
     src/AssetMigrationBackup.cpp
+    src/ModelNodeRepairService.cpp
     src/ModelObjectExtractionService.cpp
+    src/ModelGenerationExtraction.cpp
     src/AssetMoveService.cpp
     src/ImportWatch.cpp
     src/ImportDependencyIndex.cpp
@@ -14,6 +17,7 @@ add_library(PlutoGEAssetImport
     src/ImportFileTransaction.cpp
     src/ModelSourceSnapshot.cpp
     src/ModelOutputProvenance.cpp
+    src/ModelImportPublication.cpp
     src/ModelImportService.cpp
 )
 add_library(PlutoGE::AssetImport ALIAS PlutoGEAssetImport)

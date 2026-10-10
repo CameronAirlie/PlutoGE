@@ -1,7 +1,9 @@
 #pragma once
+#include <string_view>
 
 namespace PlutoGE::assets
 {
+    inline constexpr std::string_view kRenderTextureAssetExtension = ".plutorendertexture";
     enum class ProjectAssetType
     {
         Unknown,
@@ -28,4 +30,6 @@ namespace PlutoGE::assets
         Count,
     };
 
+    // CPU-only location classification; logical IDs require catalog resolution.
+    ProjectAssetType ClassifyAssetReference(std::string_view reference);
 }

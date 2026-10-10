@@ -1,4 +1,11 @@
 add_library(PlutoGEAssets
+    src/ModelActiveGeneration.cpp
+    src/ModelGenerationRetention.cpp
+    src/ModelGenerationSnapshot.cpp
+    src/ArtifactGenerationLock.cpp
+    src/SceneModelInstanceRecord.cpp
+    src/ModelInstanceState.cpp
+    src/ModelInstanceReconciliation.cpp
     src/ModelHierarchyAsset.cpp
     src/ModelNodeCorrespondence.cpp
     src/ModelArtifactStorage.cpp
@@ -16,6 +23,7 @@ add_library(PlutoGEAssets
     src/AssetCatalog.cpp
     src/AssetReference.cpp
     src/AssetMetadata.cpp
+    src/AssetType.cpp
     src/AssetDatabase.cpp
     src/AssetReferences.cpp
     src/ProjectValidation.cpp
@@ -31,6 +39,7 @@ add_library(PlutoGEAssets
 add_library(PlutoGE::Assets ALIAS PlutoGEAssets)
 
 target_link_libraries(PlutoGEAssets PUBLIC
+    PlutoGE::Math
     PlutoGE::Platform
     PlutoGE::Render
     PlutoGE::glm

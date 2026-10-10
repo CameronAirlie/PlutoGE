@@ -18,6 +18,8 @@
 #include "PreparationCacheChecks.h"
 #include "RenderOptimizationChecks.h"
 #include "ShaderGraphRenderingChecks.h"
+#include "SourceTextureRefreshRenderingChecks.h"
+#include "MeshReplacementRenderingChecks.h"
 #include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "SkinningRenderingChecks.h"
@@ -150,6 +152,17 @@ int main(int argc, char **argv)
         shaders.decalSnapshot = { { .spirv = ReadSpirv("DecalSnapshot.vertex.spv") }, { .spirv = ReadSpirv("DecalSnapshot.fragment.spv") } };
         shaders.particles.fragmentShader.spirv = ReadSpirv("Particles.fragment.spv");
         LoadRenderOptimizationShaders(shaders);
+        if (argc > 1 && std::string_view(argv[1]) == "--source-texture-refresh")
+        {
+            CheckSourceTextureRefreshRendering(device, shaders, [&](auto texture, unsigned, unsigned)
+            { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--mesh-replacement")
+        {
+            CheckMeshReplacementRendering(device, shaders);
+            return 0;
+        }
         BasicRenderer renderer;
         if (argc > 2 && std::string_view(argv[2]) == "--geometry-reference")
             renderer.SetGeometryOptimizations(false, false, false);

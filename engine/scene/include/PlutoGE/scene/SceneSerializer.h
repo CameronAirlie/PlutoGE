@@ -23,6 +23,9 @@ namespace PlutoGE::scene
         static std::unique_ptr<Scene> LoadGeometryPreview(const std::string &filePath,
                                                         std::string *errorMessage = nullptr);
 
+        // Prepare durable scene/recovery bytes: retain accepted model snapshots
+        // before publishing caller output. History uses the read-only SaveToString.
+        static bool PrepareSave(const Scene &scene, std::string &outputText, std::string *errorMessage = nullptr);
         static bool Save(const Scene &scene, const std::string &filePath, std::string *errorMessage = nullptr);
         static std::unique_ptr<Scene> Load(const std::string &filePath, std::string *errorMessage = nullptr);
         static std::unique_ptr<Scene> Load(const std::string &filePath,

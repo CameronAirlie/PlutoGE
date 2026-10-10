@@ -1,5 +1,8 @@
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/EntityTransformEditing.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/ui/HierarchyTransforms.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/ui/SceneHistory.h"
@@ -78,6 +81,58 @@ namespace
         for (int c = 0; c < 4; ++c)
             Require(glm::length(a[c] - b[c]) < 0.002f, "World matrix changed");
     }
+    void AffineGeneratedTransformEdits()
+    {
+        auto &manager = PlutoGE::core::Engine::GetInstance().GetAssetManager();
+        struct Context
+        {
+            PlutoGE::assets::AssetManager &manager;
+            std::string root = manager.GetProjectRootDirectory(), assets = manager.GetProjectAssetDirectory();
+            unsigned version = manager.GetAssetPipelineVersion();
+            ~Context() { manager.SetProjectContext(root, assets, version); }
+        } context{manager};
+        manager.SetProjectContext("", "Assets", 4);
+        Scene scene;
+        auto *parent = scene.AddEntity(std::make_unique<Entity>());
+        parent->SetScale({-2,3,.7f}); parent->SetRotation({17,29,31});
+        auto *child = scene.AddEntity(std::make_unique<Entity>(), parent);
+        auto shear = glm::mat4(1); shear[1][0] = .35f; shear[3] = {2,3,4,1};
+        Require(child->SetLocalTransformMatrix(shear), "Cannot create affine transform fixture");
+        child->SetGeneratedTransformEditTracking(true);
+        const auto linear = child->GetLocalTransform();
+        const auto rotation = child->GetRotation(), scale = child->GetScale();
+        const auto correction = child->GetLocalTransformCorrection();
+        std::string error;
+        PreparedEntityTransformEdit prepared;
+        auto desired = glm::translate(glm::mat4(1),{3,4,5}) * child->GetWorldTransform();
+        Require(PrepareWorldTransformEdit(*child, desired, true, prepared, error) && ApplyPreparedTransformEdit(prepared), error.c_str());
+        MatrixNear(child->GetWorldTransform(), desired);
+        Require(child->GetRotation() == rotation && child->GetScale() == scale &&
+            child->GetLocalTransformCorrection() == correction &&
+            child->GetGeneratedTransformEdits() == static_cast<uint8_t>(Entity::TransformEditChannel::Position),
+            "Translation changed imported linear controls or authored unrelated intent");
+        for (int column=0; column<3; ++column)
+            Require(child->GetLocalTransform()[column] == linear[column], "Translation changed exact imported affine basis");
+        child->SetGeneratedTransformEditTracking(true);
+        desired = glm::rotate(glm::mat4(1),.6f,glm::vec3(0,1,0)) * child->GetWorldTransform();
+        Require(PrepareWorldTransformEdit(*child, desired, false, prepared, error) && ApplyPreparedTransformEdit(prepared), error.c_str());
+        MatrixNear(child->GetWorldTransform(), desired);
+        Require(child->GetGeneratedTransformEdits() & static_cast<uint8_t>(Entity::TransformEditChannel::Affine),
+            "Changed affine correction was not retained as authored matrix intent");
+        auto *other = scene.AddEntity(std::make_unique<Entity>());
+        const auto delta = glm::rotate(glm::mat4(1),.4f,glm::vec3(0,0,1));
+        const auto childWorld = delta * child->GetWorldTransform(), otherWorld = delta * other->GetWorldTransform();
+        Require(TransformSelection({child,other},delta,error), error.c_str());
+        MatrixNear(child->GetWorldTransform(),childWorld); MatrixNear(other->GetWorldTransform(),otherWorld);
+        child->SetScale({0,2,3}); child->SetGeneratedTransformEditTracking(true);
+        desired = glm::translate(glm::mat4(1),{1,2,3}) * child->GetWorldTransform();
+        Require(PrepareWorldTransformEdit(*child,desired,true,prepared,error) && ApplyPreparedTransformEdit(prepared), error.c_str());
+        MatrixNear(child->GetWorldTransform(),desired);
+        Require(child->GetScale() == glm::vec3(0,2,3) &&
+            child->GetGeneratedTransformEdits() == static_cast<uint8_t>(Entity::TransformEditChannel::Position),
+            "Translation of authored zero scale was rejected or changed scale intent");
+    }
+
     void HierarchyPivots()
     {
         Scene scene;
@@ -255,7 +310,7 @@ namespace
 }
 int main()
 {
-    try { Selection(); Transforms(); HierarchyPivots(); SelectionPivots(); PropertiesAndHistory(); std::cout << "PASS: multi-selection, group transforms, common properties and history\n"; }
+    try { Selection(); Transforms(); HierarchyPivots(); SelectionPivots(); PropertiesAndHistory(); AffineGeneratedTransformEdits(); std::cout << "PASS: multi-selection, group transforms, common properties and history\n"; }
     catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
 

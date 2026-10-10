@@ -39,8 +39,17 @@ public sealed class InputActionMap
             ? assetReference[10..] : assetReference;
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         options.Converters.Add(new JsonStringEnumConverter());
-        var map = ProjectStorage.ReadAssetJson<InputActionMap>(relative, options)
-            ?? throw new InvalidDataException($"Input mapping asset '{assetReference}' is empty.");
+        InputActionMap? loaded;
+        if (Native.ScriptBridge.TryReadTextAsset(assetReference.StartsWith("asset://", StringComparison.Ordinal)
+                || assetReference.StartsWith("project://", StringComparison.OrdinalIgnoreCase)
+                || assetReference.StartsWith("engine://", StringComparison.OrdinalIgnoreCase)
+                ? assetReference : "project://" + relative, out var text))
+            loaded = JsonSerializer.Deserialize<InputActionMap>(text, options);
+        else if (assetReference.StartsWith("asset://", StringComparison.Ordinal))
+            throw new FileNotFoundException("The input mapping logical asset is unavailable.", assetReference);
+        else
+            loaded = ProjectStorage.ReadAssetJson<InputActionMap>(relative, options);
+        var map = loaded ?? throw new InvalidDataException($"Input mapping asset '{assetReference}' is empty.");
         map.RebuildLookup();
         return map;
     }

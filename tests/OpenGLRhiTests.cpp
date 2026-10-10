@@ -3,6 +3,7 @@
 #include "GeometryDiagnosticChecks.h"
 #include "SkyQuadratureChecks.h"
 #include "ShaderGraphRenderingChecks.h"
+#include "SourceTextureRefreshRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "RenderOptimizationChecks.h"
@@ -242,6 +243,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             shaders.vctPostProcess[index].vertex.glsl = ReadText((std::string(vctModules[index]) + ".vertex.glsl").c_str());
             shaders.vctPostProcess[index].fragment.glsl = ReadText((std::string(vctModules[index]) + ".fragment.glsl").c_str());
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--source-texture-refresh")
+        {
+            CheckSourceTextureRefreshRendering(device, shaders, [&](auto texture, unsigned width, unsigned height)
+            {
+                std::vector<std::byte> pixels(width * height * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--mesh-replacement")
         {

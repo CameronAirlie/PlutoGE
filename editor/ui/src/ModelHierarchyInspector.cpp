@@ -2,6 +2,8 @@
 #include "PlutoGE/ui/ModelHierarchyView.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetCatalog.h"
+#include "PlutoGE/assets/AssetMetadata.h"
+#include "PlutoGE/scene/Scene.h"
 #include <imgui.h>
 #include <algorithm>
 #include <array>
@@ -55,13 +57,22 @@ namespace PlutoGE::ui
         std::vector<ModelHierarchyRow> rows;
         bool selectedOnly = true, wasImportRunning = false, rowsDirty = true;
         int selectedNode = -1;
+        int repairSelectionNode = -1;
+        std::uint64_t repairTarget = 0;
+        std::optional<assetimport::ModelNodeRepairProposal> repair;
+        std::string repairMessage;
+        std::vector<content::ContentDigest> repairGenerations;
+        bool repairTargetsBuilt = false;
+        std::vector<std::pair<std::uint64_t, std::string>> repairTargets;
     };
 
     ModelHierarchyInspector::ModelHierarchyInspector() : m_state(std::make_unique<State>()) {}
     ModelHierarchyInspector::~ModelHierarchyInspector() = default;
 
     void ModelHierarchyInspector::Render(const assets::Project &project, const std::string &reference,
-        const assets::ModelAsset &package, std::shared_ptr<const assets::AssetCatalog> catalog, bool importRunning)
+        const assets::ModelAsset &package, std::shared_ptr<const assets::AssetCatalog> catalog, bool importRunning,
+        const scene::Scene *scene,
+        const std::function<bool(const assetimport::ModelNodeRepairProposal &, std::string *)> &applyRepair)
     {
         if (!ImGui::CollapsingHeader("Source Hierarchy", ImGuiTreeNodeFlags_DefaultOpen)) return;
         ImGui::PushID("SourceHierarchy");
@@ -96,6 +107,11 @@ namespace PlutoGE::ui
                 for (std::size_t index = 0; index < state.expanded.size(); ++index)
                     if (state.expanded[index] && identities[index].localId) expandedIds.insert(identities[index].localId);
             }
+            state.repair.reset();
+            state.repairTargetsBuilt = false;
+            state.repairTargets.clear();
+            state.repairTarget = 0;
+            state.repairMessage.clear();
             state.key = key;
             state.catalog = std::move(catalog);
             state.view.reset();
@@ -197,6 +213,99 @@ namespace PlutoGE::ui
             if (node.parentNodeIndex >= 0)
                 ImGui::TextWrapped("Source parent: %s", asset.hierarchy.nodes[node.parentNodeIndex].name.c_str());
             else ImGui::TextDisabled("Source root");
+            if (project.GetManifest().assetPipelineVersion >= 5 && scene && applyRepair)
+            {
+                if (state.repairSelectionNode != index)
+                {
+                    state.repairSelectionNode = index;
+                    state.repairTarget = 0;
+                    state.repair.reset();
+                    state.repairMessage.clear();
+                }
+                if (!identity.localId)
+                    ImGui::TextWrapped("Give this source node a unique authored name or persistent producer ID before repairing correspondence.");
+                else if (ImGui::TreeNode("Repair Correspondence"))
+                {
+                    auto &targets = state.repairTargets;
+                    std::vector<content::ContentDigest> generations;
+                    for (const auto &[root, instance] : scene->GetStaticModelInstances())
+                    {
+                        (void)root;
+                        if (instance.state.accepted.layout.sourceAssetId == asset.sourceAssetId)
+                            generations.push_back(instance.state.artifactGenerationKey);
+                    }
+                    std::sort(generations.begin(), generations.end());
+                    generations.erase(std::unique(generations.begin(), generations.end()), generations.end());
+                    if (!state.repairTargetsBuilt || state.repairGenerations != generations)
+                    {
+                        state.repairTargetsBuilt = true;
+                        state.repairGenerations = std::move(generations);
+                        targets.clear();
+                        assets::AssetMetadata metadata;
+                        assets::ModelImportSettings settings;
+                        if (assets::LoadAssetMetadata(assets::GetAssetMetadataPath(project.ResolveAssetReference(reference)), metadata) == assets::AssetMetadataStatus::Success &&
+                            assets::ReadModelImportSettings(metadata, settings) == assets::ModelImportSettingsStatus::Success)
+                        {
+                            std::unordered_set<std::uint64_t> listed, retired;
+                            for (const auto &object : settings.objects)
+                                if (object.retired && (object.sourceKey.starts_with("node/path/v1/") || object.sourceKey.starts_with("node/source/v1/")))
+                                    retired.insert(object.localId);
+                            for (const auto &[root, instance] : scene->GetStaticModelInstances())
+                            {
+                                (void)root;
+                                const auto &layout = instance.state.accepted.layout;
+                                if (layout.sourceAssetId != asset.sourceAssetId) continue;
+                                for (const auto &old : layout.nodes)
+                                {
+                                    if (!listed.insert(old.sourceNodeId).second) continue;
+                                    if (!retired.contains(old.sourceNodeId)) continue;
+                                    std::string path = old.name;
+                                    unsigned depth = 0;
+                                    for (int parent = old.parentIndex; parent >= 0; parent = layout.nodes[parent].parentIndex)
+                                    {
+                                        if (++depth > 64 || path.size() > 512) { path = ".../" + path; break; }
+                                        path = layout.nodes[parent].name + "/" + path;
+                                    }
+                                    targets.emplace_back(old.sourceNodeId, path + " [" + std::to_string(old.sourceNodeId) + "]");
+                                }
+                            }
+                        }
+                    }
+                    ImGui::TextWrapped("Map this incoming node to a retired identity from a retained instance. Unchanged descendants inherit the repaired correspondence. Displaced IDs remain retired.");
+                    const auto selected = std::find_if(targets.begin(), targets.end(), [&](const auto &target) { return target.first == state.repairTarget; });
+                    ImGui::BeginDisabled(importRunning);
+                    if (ImGui::BeginCombo("Retired source node", selected == targets.end() ? "Select retained node" : selected->second.c_str()))
+                    {
+                        for (const auto &[id, label] : targets)
+                            if (ImGui::Selectable(label.c_str(), state.repairTarget == id))
+                            { state.repairTarget = id; state.repair.reset(); state.repairMessage.clear(); }
+                        ImGui::EndCombo();
+                    }
+                    if (targets.empty()) ImGui::TextDisabled("No retired nodes are available in retained instances of this source.");
+                    ImGui::BeginDisabled(selected == targets.end());
+                    if (ImGui::Button("Review Repair"))
+                    {
+                        assetimport::ModelNodeRepairProposal proposal;
+                        if (assetimport::ModelNodeRepairService{}.Prepare(project, reference, identity.localId,
+                            state.repairTarget, proposal, &state.repairMessage)) state.repair = std::move(proposal);
+                        else state.repair.reset();
+                    }
+                    ImGui::EndDisabled();
+                    if (state.repair)
+                    {
+                        ImGui::Text("Reviewed identity changes: %zu", state.repair->changedNodeCount);
+                        ImGui::TextWrapped("Apply saves source import settings and reimports the model. Existing instance overrides are reconciled; conflicts retain their accepted instance.");
+                        if (ImGui::Button("Apply Repair and Reimport"))
+                        {
+                            if (applyRepair(*state.repair, &state.repairMessage))
+                            { state.repairMessage = "Repair saved. Reimport queued."; state.repair.reset(); }
+                        }
+                    }
+                    ImGui::EndDisabled();
+                    if (!state.repairMessage.empty()) ImGui::TextWrapped("%s", state.repairMessage.c_str());
+                    ImGui::TreePop();
+                }
+            }
             Matrix("Exact Local Matrix", node.localTransform);
             Matrix("Source World Matrix", node.worldTransform);
             ImGui::Text("Mesh bindings: %zu", view.GetBindings()[index].size());

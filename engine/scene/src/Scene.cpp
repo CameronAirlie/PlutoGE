@@ -1427,6 +1427,7 @@ namespace PlutoGE::scene
     void Scene::AdoptSectionEntities(Scene &source, std::uint64_t section)
     {
         if (&source == this || source.IsRuntimeStarted() || !section) throw std::runtime_error("Invalid section activation");
+        // Linked generation contexts must move with their complete scene entity maps.
         std::unordered_map<EntityID, EntityID> remap;
         for (const auto &entity : source.m_entityStorage)
         {
@@ -1465,6 +1466,17 @@ namespace PlutoGE::scene
                 if (!changed.empty()) component->Deserialize(changed);
             }
         }
+        std::vector<StaticModelSceneInstance> modelInstances;
+        modelInstances.reserve(source.m_staticModelInstances.size());
+        for (const auto &[root, instance] : source.m_staticModelInstances)
+        {
+            auto moved = instance;
+            moved.state.rootEntityId = remap.at(root);
+            for (auto &node : moved.state.nodeEntities) node.sceneEntityId = remap.at(node.sceneEntityId);
+            for (auto &binding : moved.state.bindingEntities) binding = remap.at(binding);
+            modelInstances.push_back(std::move(moved));
+        }
+        m_staticModelInstances.reserve(m_staticModelInstances.size() + modelInstances.size());
         m_entityStorage.reserve(m_entityStorage.size() + source.m_entityStorage.size());
         m_rootEntities.reserve(m_rootEntities.size() + source.m_rootEntities.size());
         m_entitiesById.reserve(m_entitiesById.size() + source.m_entityStorage.size());
@@ -1481,6 +1493,9 @@ namespace PlutoGE::scene
             m_rootEntities.push_back(root);
         }
         for (auto &entity : source.m_entityStorage) m_entityStorage.push_back(std::move(entity));
+        for (auto &instance : modelInstances)
+            m_staticModelInstances.emplace(instance.state.rootEntityId, std::move(instance));
+        source.m_staticModelInstances.clear();
         source.m_entityStorage.clear();
         source.m_rootEntities.clear();
         source.m_entitiesById.clear();
@@ -2562,6 +2577,9 @@ namespace PlutoGE::scene
         std::vector<Entity *> subtree;
         CollectEntitySubtree(entity, subtree);
         const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
+        std::vector<EntityID> removedInstanceRoots;
+        for (const auto *removed : subtree)
+            if (m_staticModelInstances.contains(removed->GetID())) removedInstanceRoots.push_back(removed->GetID());
         for (const auto *subtreeEntity : subtree)
         {
             m_sectionOwners.erase(subtreeEntity->GetID());
@@ -2577,6 +2595,8 @@ namespace PlutoGE::scene
                     return entitySet.contains(ownedEntity.get());
                 }),
             m_entityStorage.end());
+
+        for (const auto id : removedInstanceRoots) m_staticModelInstances.erase(id);
 
         if (affectsPhysics)
             ResetRuntimePhysicsState();

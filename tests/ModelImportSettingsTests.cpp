@@ -57,7 +57,7 @@ int main()
         invalid = metadata;
         invalid.extensionRecords.push_back("MODEL_OPTIONS\t8");
         Require(ReadModelImportSettings(invalid, settings, &error) == ModelImportSettingsStatus::Invalid, "Duplicate/unknown option flags accepted");
-        invalid = {.id = "owner", .extensionRecords = {"MODEL_IMPORT\t2", "MODEL_OPTIONS\t7"}};
+        invalid = {.id = "owner", .extensionRecords = {"MODEL_IMPORT\t3", "MODEL_OPTIONS\t7"}};
         const auto future = invalid.extensionRecords;
         Require(ReadModelImportSettings(invalid, settings, &error) == ModelImportSettingsStatus::UnsupportedVersion, "Future schema not rejected");
         Require(!WriteModelImportSettings(invalid, loaded, &error) && invalid.extensionRecords == future, "Future settings overwritten");
@@ -125,6 +125,93 @@ int main()
             ModelImportSettings deepSettings;
             Require(ReconcileModelNodeIdentities(deep, deepSettings, identities, &error) && identities.front().localId &&
                 identities.front().sourceKey.size() < 100, "Deep correspondence required recursion or unbounded path keys");
+        }
+        {
+            using namespace PlutoGE::assetimport;
+            ImportedModelHierarchy source;
+            source.nodes = {{"Root", -1}, {"Arm", 0}, {"Hand", 1}, {"Other", 0}};
+            ModelImportSettings originalSettings;
+            std::vector<ModelNodeIdentity> originalNodes;
+            Require(ReconcileModelNodeIdentities(source, originalSettings, originalNodes, &error), "Repair baseline failed");
+            source.nodes[1].name = "RenamedArm";
+            source.nodes[1].parentNodeIndex = 3;
+            auto incomingSettings = originalSettings;
+            std::vector<ModelNodeIdentity> incomingNodes;
+            Require(ReconcileModelNodeIdentities(source, incomingSettings, incomingNodes, &error), "Repair incoming failed");
+            const auto displacedId = incomingNodes[1].localId;
+            ModelImportSettings repaired;
+            std::vector<ModelNodeIdentity> repairedNodes;
+            Require(PrepareModelNodeIdentityRepair(source, incomingSettings, 1, originalNodes[1].localId,
+                repaired, repairedNodes, &error), "Reviewed rename/reparent repair failed");
+            Require(repairedNodes[1].localId == originalNodes[1].localId &&
+                repairedNodes[2].localId == originalNodes[2].localId && repairedNodes[3].localId == originalNodes[3].localId,
+                "Repair did not restore parent and descendant correspondence");
+            Require(std::any_of(repaired.objects.begin(), repaired.objects.end(), [&](const auto &object) {
+                return object.localId == displacedId && object.retired && object.sourceKey.starts_with("node/tombstone/v1/");
+            }), "Repair recycled the displaced identity");
+            AssetMetadata repairedMetadata{.id="repair-owner", .extensionRecords={"CUSTOM\tkeep"}};
+            Require(WriteModelImportSettings(repairedMetadata, repaired, &error), "Repair settings write failed");
+            Require(std::find(repairedMetadata.extensionRecords.begin(), repairedMetadata.extensionRecords.end(),
+                "MODEL_IMPORT\t2") != repairedMetadata.extensionRecords.end(), "Alias settings did not advance schema");
+            ModelImportSettings restored;
+            Require(ReadModelImportSettings(repairedMetadata, restored, &error) == ModelImportSettingsStatus::Success &&
+                ReconcileModelNodeIdentities(source, restored, repairedNodes, &error) &&
+                repairedNodes[1].localId == originalNodes[1].localId && repairedNodes[2].localId == originalNodes[2].localId,
+                "Repair aliases did not survive metadata round trip");
+            auto stableMetadata = repairedMetadata;
+            Require(WriteModelImportSettings(stableMetadata, restored, &error) &&
+                stableMetadata.extensionRecords == repairedMetadata.extensionRecords, "Repair serialization is unstable");
+            auto badVersion = repairedMetadata;
+            for (auto &line : badVersion.extensionRecords) if (line == "MODEL_IMPORT\t2") line = "MODEL_IMPORT\t1";
+            Require(ReadModelImportSettings(badVersion, restored, &error) == ModelImportSettingsStatus::Invalid,
+                "Legacy schema accepted node aliases");
+            const auto stableCount = repaired.objects.size();
+            const auto stableId = repairedNodes[1].localId;
+            Require(!PrepareModelNodeIdentityRepair(source, incomingSettings, 1, originalNodes[0].localId,
+                repaired, repairedNodes, &error) && repaired.objects.size() == stableCount && repairedNodes[1].localId == stableId,
+                "Active target repair changed output");
+            source.nodes.push_back({"Arm", 0});
+            auto collisionSettings = repaired;
+            Require(!ReconcileModelNodeIdentities(source, collisionSettings, repairedNodes, &error) &&
+                collisionSettings.objects.size() == stableCount && repairedNodes[1].localId == stableId,
+                "Two active nodes claimed one repaired identity or failure mutated outputs");
+            source.nodes.pop_back();
+            source.nodes.push_back({"Fresh", 0});
+            Require(ReconcileModelNodeIdentities(source, restored, repairedNodes, &error) &&
+                repairedNodes.back().localId != displacedId && repairedNodes.back().localId != originalNodes[1].localId,
+                "Fresh node reused displaced identity");
+            auto assertInvalid = [&](ModelImportSettings invalidSettings) {
+                auto unchanged = repairedMetadata;
+                Require(!WriteModelImportSettings(unchanged, invalidSettings, &error) &&
+                    unchanged.extensionRecords == repairedMetadata.extensionRecords, "Invalid aliases changed metadata");
+            };
+            auto invalidSettings = repaired;
+            invalidSettings.nodeAliases.push_back(invalidSettings.nodeAliases.front());
+            assertInvalid(invalidSettings);
+            invalidSettings = repaired;
+            invalidSettings.nodeAliases[0].canonicalSourceKey = invalidSettings.nodeAliases[0].sourceKey;
+            assertInvalid(invalidSettings);
+            invalidSettings = repaired;
+            invalidSettings.nodeAliases[0].canonicalSourceKey = "node/path/v1/" + std::string(64, 'a');
+            assertInvalid(invalidSettings);
+            invalidSettings = repaired;
+            invalidSettings.nodeAliases[0].sourceKey = originalNodes[0].sourceKey;
+            assertInvalid(invalidSettings);
+            const auto originalRetired = invalidSettings.objects;
+            Require(!ResolveModelObjectId(invalidSettings, originalNodes[0].sourceKey, 0, &error) &&
+                std::equal(originalRetired.begin(), originalRetired.end(), invalidSettings.objects.begin(),
+                    [](const auto &a, const auto &b) { return a.sourceKey == b.sourceKey && a.localId == b.localId && a.retired == b.retired; }),
+                "Direct resolution accepted a colliding alias or changed identities on failure");
+            invalidSettings = repaired;
+            invalidSettings.nodeAliases[0].sourceKey = "node/path/v1/not-a-digest";
+            assertInvalid(invalidSettings);
+            invalidSettings = repaired;
+            invalidSettings.nodeAliases.resize(4097, invalidSettings.nodeAliases.front());
+            assertInvalid(invalidSettings);
+            ImportedModelHierarchy anonymous;
+            anonymous.nodes = {{"", -1}};
+            Require(!PrepareModelNodeIdentityRepair(anonymous, incomingSettings, 0, originalNodes[1].localId,
+                repaired, repairedNodes, &error), "Anonymous node repaired by array index");
         }
         std::cout << "Model import settings tests passed\n";
         return 0;

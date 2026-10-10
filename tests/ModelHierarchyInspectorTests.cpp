@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/ModelHierarchyInspector.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/assets/ModelHierarchyAsset.h"
 #include "PlutoGE/assets/ModelSourcePackage.h"
 #include "PlutoGE/assets/ModelArtifactStorage.h"
@@ -34,14 +35,21 @@ namespace
     }
     std::string Frame(ui::ModelHierarchyInspector &inspector, const assets::Project &project,
         const std::string &reference, const assets::ModelAsset &package,
-        std::shared_ptr<const assets::AssetCatalog> catalog, bool importing = false)
+        std::shared_ptr<const assets::AssetCatalog> catalog, bool importing = false,
+        const scene::Scene *scene = nullptr,
+        const std::function<bool(const assetimport::ModelNodeRepairProposal &, std::string *)> &applyRepair = {})
     {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos({0, 0});
         ImGui::SetNextWindowSize({460, 850});
         ImGui::Begin("Hierarchy inspector test", nullptr, ImGuiWindowFlags_NoSavedSettings);
         ImGui::LogToBuffer();
-        inspector.Render(project, reference, package, std::move(catalog), importing);
+                if (scene)
+        {
+            const auto sourceId = ImHashStr("SourceHierarchy", 0, ImGui::GetCurrentWindow()->ID);
+            ImGui::GetStateStorage()->SetInt(ImHashStr("Repair Correspondence", 0, sourceId), 1);
+        }
+        inspector.Render(project, reference, package, std::move(catalog), importing, scene, applyRepair);
         const std::string log = ImGui::GetCurrentContext()->LogBuffer.c_str();
         ImGui::LogFinish();
         ImGui::End();
@@ -139,6 +147,24 @@ try
         Contains(log, "Hierarchy unavailable:");
         Require(log.find("Selected scene: 3 nodes") == std::string::npos, "Changing source retained previous source tree");
         Contains(Frame(inspector, project, package.sourceReference, package, catalog), "Selected scene: 3 nodes");
+        project.GetManifest().assetPipelineVersion = 5;
+        scene::Scene noRetainedInstances;
+        bool repairApplied = false;
+        auto applyRepair = [&](const assetimport::ModelNodeRepairProposal &, std::string *) {
+            repairApplied = true;
+            return true;
+        };
+        // A capability-5 source exposes repair review for a selected node, but
+        // must not invent retired identities when no accepted instance exists.
+        ImGui::GetIO().AddMousePosEvent(point.x, point.y);
+        Frame(inspector, project, package.sourceReference, package, catalog);
+        ImGui::GetIO().AddMouseButtonEvent(0, true);
+        Frame(inspector, project, package.sourceReference, package, catalog);
+        ImGui::GetIO().AddMouseButtonEvent(0, false);
+        log = Frame(inspector, project, package.sourceReference, package, catalog, false, &noRetainedInstances, applyRepair);
+        Contains(log, "Repair Correspondence");
+        Contains(log, "No retired nodes are available");
+        Require(!repairApplied, "Inspector applied an unreviewed repair");
         project.GetManifest().assetPipelineVersion = 2;
         Contains(Frame(inspector, project, package.sourceReference, package, catalog), "version 3 or later");
     }

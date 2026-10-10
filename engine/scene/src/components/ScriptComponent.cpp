@@ -2,6 +2,8 @@
 #include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
+#include <stdexcept>
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
@@ -15,6 +17,18 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        std::optional<assets::ManagedAssetFieldKind> AssetFieldKind(scripting::ScriptFieldType type)
+        {
+            switch (type)
+            {
+            case scripting::ScriptFieldType::PrefabAsset: return assets::ManagedAssetFieldKind::Prefab;
+            case scripting::ScriptFieldType::ScriptableObjectAsset: return assets::ManagedAssetFieldKind::ScriptableObject;
+            case scripting::ScriptFieldType::MaterialAsset: return assets::ManagedAssetFieldKind::Material;
+            case scripting::ScriptFieldType::InputMappingAsset: return assets::ManagedAssetFieldKind::InputMapping;
+            default: return std::nullopt;
+            }
+        }
+
         scene::PropertyType ToPropertyType(scripting::ScriptFieldType fieldType)
         {
             switch (fieldType)
@@ -354,9 +368,12 @@ namespace PlutoGE::scene
         const auto serializedFields = GetSerializedFields();
         properties.reserve(properties.size() + serializedFields.size() + m_fieldValues.size());
 
+        auto assetKinds = m_assetFieldKinds;
         for (const auto &field : serializedFields)
         {
             serializedFieldNames.insert(field.name);
+            if (const auto kind = AssetFieldKind(field.type)) assetKinds.insert_or_assign(field.name, *kind);
+            else assetKinds.erase(field.name);
 
             auto fieldValue = m_fieldValues.contains(field.name)
                                   ? m_fieldValues.at(field.name)
@@ -385,6 +402,26 @@ namespace PlutoGE::scene
             });
         }
 
+        const auto &context = core::Engine::GetInstance().GetAssetManager();
+        if (m_assetFieldMetadataDeclared && (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < 5))
+            throw std::runtime_error("Persisted typed managed asset fields require project format 5.");
+        const bool fieldSchemaKnown = m_assetFieldMetadataDeclared || m_scriptClass.empty() ||
+            core::Engine::GetInstance().GetScriptEngine().FindClass(m_scriptClass) != nullptr;
+        if (fieldSchemaKnown && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() >= 5)
+        {
+            properties.insert(properties.begin() + 1, Property{.name=std::string(assets::kManagedAssetFieldSchema),
+                .type=PropertyType::String, .value="1"});
+            for (const auto &[name, kind] : assetKinds)
+                properties.push_back(Property{.name=std::string(assets::kManagedAssetFieldPrefix) + name,
+                    .type=PropertyType::String, .value=std::string(assets::ManagedAssetFieldKindName(kind))});
+            std::vector<assets::ManagedAssetFieldRecord> records;
+            records.reserve(properties.size());
+            for (const auto &property : properties)
+                records.push_back({property.name, property.value, property.type == PropertyType::String});
+            assets::ManagedAssetFieldMetadata metadata;
+            std::string error;
+            if (!assets::ReadManagedAssetFieldMetadata(records, metadata, &error)) throw std::runtime_error(error);
+        }
         return properties;
     }
 
@@ -392,6 +429,13 @@ namespace PlutoGE::scene
     {
         std::unordered_map<std::string, scripting::ScriptFieldValue> fieldValues;
         std::string source = m_scriptClass;
+        std::vector<assets::ManagedAssetFieldRecord> records;
+        records.reserve(properties.size());
+        for (const auto &property : properties)
+            records.push_back({property.name, property.value, property.type == PropertyType::String});
+        assets::ManagedAssetFieldMetadata metadata;
+        std::string error;
+        if (!assets::ReadManagedAssetFieldMetadata(records, metadata, &error)) throw std::runtime_error(error);
 
         for (const auto &property : properties)
         {
@@ -401,6 +445,7 @@ namespace PlutoGE::scene
                 continue;
             }
 
+            if (assets::IsManagedAssetFieldMetadata(property.name)) continue;
             fieldValues[property.name] = DeserializeFieldValue(property.type, property.value);
         }
 
@@ -410,9 +455,13 @@ namespace PlutoGE::scene
         if (sourceChanged)
         {
             SetSource(source);
+            m_assetFieldKinds = std::move(metadata.fields);
+            m_assetFieldMetadataDeclared = metadata.declared;
             return;
         }
 
+        m_assetFieldKinds = std::move(metadata.fields);
+        m_assetFieldMetadataDeclared = metadata.declared;
         ApplySerializedFields();
     }
 
@@ -429,11 +478,14 @@ namespace PlutoGE::scene
         }
 
         m_scriptClass = scriptClass;
+        m_assetFieldKinds.clear();
+        m_assetFieldMetadataDeclared = false;
         Reload();
     }
 
     bool ScriptComponent::SetFieldValue(const std::string &fieldName, const scripting::ScriptFieldValue &value)
     {
+        if (assets::IsManagedAssetFieldMetadata(fieldName)) return false;
         auto &scriptEngine = core::Engine::GetInstance().GetScriptEngine();
         if (const auto *scriptClass = scriptEngine.FindClass(m_scriptClass))
         {

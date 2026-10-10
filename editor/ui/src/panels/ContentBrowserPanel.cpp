@@ -1351,8 +1351,7 @@ namespace PlutoGE::ui
             const auto previous = scene::CaptureModelAssetSnapshot(assetManager, status == assets::AssetMetadataStatus::Success ? sourceMetadata.id : std::string{});
             assetimport::ModelImportResult result;
             if (!assetimport::ModelImportService{}.Import(project, request, result, errorMessage)) return false;
-            EditorShell::GetInstance().PublishModelImportResult(sourceReference, result, previous);
-            return true;
+            return EditorShell::GetInstance().PublishModelImportResult(sourceReference, result, previous, errorMessage);
         }
 
         bool ImportExternalSourceModelIntoAssets(assets::Project &project, std::string *importedReference, std::string *errorMessage)
@@ -3329,7 +3328,10 @@ namespace PlutoGE::ui
                     m_importDependenciesInspector->Render(*project, asset.reference, model.sourceAssetId, importRunning);
                     if (!m_modelHierarchyInspector) m_modelHierarchyInspector = std::make_unique<ModelHierarchyInspector>();
                     m_modelHierarchyInspector->Render(*project, asset.reference, model,
-                        core::Engine::GetInstance().GetAssetManager().GetAssetCatalog(), importRunning);
+                        core::Engine::GetInstance().GetAssetManager().GetAssetCatalog(), importRunning || editorShell.GetEngine().IsRuntimeRunning(),
+                        editorShell.GetScene(), [&](const auto &proposal, std::string *error) {
+                            return editorShell.ApplyReviewedModelNodeRepair(proposal, error);
+                        });
                     if (!m_staticHierarchyDialog) m_staticHierarchyDialog = std::make_unique<StaticModelHierarchyDialog>();
                     m_staticHierarchyDialog->Render(asset.reference);
                 }

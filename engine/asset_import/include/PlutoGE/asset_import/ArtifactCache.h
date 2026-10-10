@@ -4,10 +4,13 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <utility>
+
+namespace PlutoGE::assets { class ArtifactGenerationLock; }
 
 namespace PlutoGE::assetimport
 {
@@ -38,6 +41,8 @@ namespace PlutoGE::assetimport
         content::ContentDigest key{};
         ArtifactRecipe recipe;
         std::vector<ArtifactOutput> outputs;
+        // Project Library lookups retain generation bytes while callers use them.
+        std::shared_ptr<const assets::ArtifactGenerationLock> generationLease{};
     };
 
     enum class ArtifactCacheStatus { Hit, Missing, Corrupt, IoError };
@@ -60,6 +65,12 @@ namespace PlutoGE::assetimport
         std::filesystem::path GetDirectory(const content::ContentDigest &key) const;
         ArtifactCacheStatus Find(const content::ContentDigest &key, ArtifactManifest &manifest,
                                  std::string *errorMessage = nullptr) const;
+        // Collection already owns the exclusive lease; acquiring a reader lease
+        // here would conflict with that same ownership. This validates the exact
+        // project/key/exclusive lock before hashing bytes under it.
+        ArtifactCacheStatus FindUnderCollectionLock(const content::ContentDigest &key,
+            const assets::ArtifactGenerationLock &lock, ArtifactManifest &manifest,
+            std::string *errorMessage = nullptr) const;
         // Enumerates validated generations deterministically. A caller-supplied
         // predicate applies importer-specific request matching; storage remains
         // independent of model settings and editor state. An index can replace
@@ -78,7 +89,7 @@ namespace PlutoGE::assetimport
                    std::string *errorMessage = nullptr) const;
     private:
         ArtifactCacheStatus ReadGeneration(const content::ContentDigest &key, ArtifactManifest &manifest,
-                                           bool verifyOutputs, std::string *errorMessage) const;
+                                           bool verifyOutputs, std::string *errorMessage, bool retainLease = true) const;
         std::filesystem::path m_root;
     };
 }

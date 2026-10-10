@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/ModelImportSettings.h"
+#include "PlutoGE/assets/ModelNodeAliases.h"
 
 #include <algorithm>
 #include <charconv>
@@ -31,7 +32,7 @@ namespace PlutoGE::assets
 
         bool Known(std::string_view key)
         {
-            return key == "MODEL_IMPORT" || key == "MODEL_OPTIONS" || key == "MODEL_OBJECT" || key == "MODEL_MATERIAL_REMAP";
+            return key == "MODEL_IMPORT" || key == "MODEL_OPTIONS" || key == "MODEL_OBJECT" || key == "MODEL_MATERIAL_REMAP" || key == "MODEL_NODE_ALIAS";
         }
 
         bool IsEngineMaterial(std::string_view value)
@@ -45,11 +46,47 @@ namespace PlutoGE::assets
         }
     }
 
+    bool ModelNodeAliasIndex::Build(const ModelImportSettings &settings, std::string *errorMessage)
+    {
+        const auto fail = [&](const char *message)
+        { if (errorMessage) *errorMessage = message; return false; };
+        if (settings.nodeAliases.size() > 4096) return fail("Model node alias inventory exceeds its limit.");
+        std::unordered_set<std::string_view> primary;
+        std::set<std::uint64_t> ids;
+        for (const auto &object : settings.objects)
+            if (!object.localId || !ValidKey(object.sourceKey) || !primary.insert(object.sourceKey).second ||
+                !ids.insert(object.localId).second) return fail("Invalid model object correspondence table.");
+        const auto nodeKey = [](std::string_view key)
+        {
+            if (key.starts_with("node/path/v1/")) key.remove_prefix(std::string_view("node/path/v1/").size());
+            else if (key.starts_with("node/source/v1/")) key.remove_prefix(std::string_view("node/source/v1/").size());
+            else return false;
+            return key.size() == 64 && std::all_of(key.begin(), key.end(),
+                [](char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); });
+        };
+        std::map<std::string, std::string, std::less<>> staged;
+        for (const auto &alias : settings.nodeAliases)
+            if (!nodeKey(alias.sourceKey) || !nodeKey(alias.canonicalSourceKey) ||
+                alias.sourceKey == alias.canonicalSourceKey || primary.contains(alias.sourceKey) ||
+                !primary.contains(alias.canonicalSourceKey) || !staged.emplace(alias.sourceKey, alias.canonicalSourceKey).second)
+                return fail("Node aliases must uniquely target primary node keys without owning another object ID.");
+        m_aliases = std::move(staged);
+        if (errorMessage) errorMessage->clear();
+        return true;
+    }
+
+    std::string_view ModelNodeAliasIndex::Resolve(std::string_view key) const
+    {
+        const auto found = m_aliases.find(key);
+        return found == m_aliases.end() ? key : std::string_view(found->second);
+    }
+
     ModelImportSettingsStatus ReadModelImportSettings(const AssetMetadata &metadata, ModelImportSettings &settings,
                                                       std::string *errorMessage)
     {
         ModelImportSettings parsed;
         bool header = false;
+        unsigned version = 0;
         bool options = false;
         bool any = false;
         std::unordered_set<std::string> keys;
@@ -68,11 +105,12 @@ namespace PlutoGE::assets
             if (fields[0] == "MODEL_IMPORT")
             {
                 if (header || fields.size() != 2) return invalid();
-                if (fields[1] != "1")
+                if (fields[1] != "1" && fields[1] != "2")
                 {
                     if (errorMessage) *errorMessage = "Unsupported model import settings version.";
                     return ModelImportSettingsStatus::UnsupportedVersion;
                 }
+                version = fields[1] == "2" ? 2 : 1;
                 header = true;
             }
             else if (fields[0] == "MODEL_OPTIONS")
@@ -95,6 +133,12 @@ namespace PlutoGE::assets
             }
             else
             {
+                if (fields[0] == "MODEL_NODE_ALIAS")
+                {
+                    if (fields.size() != 3) return invalid();
+                    parsed.nodeAliases.push_back({std::string(fields[1]), std::string(fields[2])});
+                    continue;
+                }
                 ModelMaterialRemap remap;
                 if (fields.size() != 3 || !Number(fields[1], remap.materialLocalId) || remap.materialLocalId == 0 ||
                     !remaps.insert(remap.materialLocalId).second) return invalid();
@@ -112,6 +156,9 @@ namespace PlutoGE::assets
         if (!header || !options) return invalid();
         for (const auto &remap : parsed.materialRemaps)
             if (!ids.contains(remap.materialLocalId)) return invalid();
+        if (version < 2 && !parsed.nodeAliases.empty()) return invalid();
+        ModelNodeAliasIndex aliases;
+        if (!aliases.Build(parsed, errorMessage)) return ModelImportSettingsStatus::Invalid;
         settings = std::move(parsed);
         if (errorMessage) errorMessage->clear();
         return ModelImportSettingsStatus::Success;
@@ -124,7 +171,7 @@ namespace PlutoGE::assets
         if (status != ModelImportSettingsStatus::Missing && status != ModelImportSettingsStatus::Success) return false;
         AssetMetadata updated = metadata;
         std::erase_if(updated.extensionRecords, [](const auto &line) { return Known(Fields(line)[0]); });
-        updated.extensionRecords.push_back("MODEL_IMPORT\t1");
+        updated.extensionRecords.push_back(settings.nodeAliases.empty() ? "MODEL_IMPORT\t1" : "MODEL_IMPORT\t2");
         updated.extensionRecords.push_back("MODEL_OPTIONS\t" + std::to_string(settings.meshOptions.ToFlags()));
         auto objects = settings.objects;
         std::sort(objects.begin(), objects.end(), [](const auto &a, const auto &b) { return a.sourceKey < b.sourceKey; });
@@ -155,6 +202,10 @@ namespace PlutoGE::assets
             else if (!SerializeAssetReference(remap.authoredMaterial, reference, errorMessage)) return false;
             updated.extensionRecords.push_back("MODEL_MATERIAL_REMAP\t" + std::to_string(remap.materialLocalId) + "\t" + reference);
         }
+        auto aliases = settings.nodeAliases;
+        std::sort(aliases.begin(), aliases.end(), [](const auto &a, const auto &b) { return a.sourceKey < b.sourceKey; });
+        for (const auto &alias : aliases)
+            updated.extensionRecords.push_back("MODEL_NODE_ALIAS\t" + alias.sourceKey + "\t" + alias.canonicalSourceKey);
         ModelImportSettings validated;
         if (ReadModelImportSettings(updated, validated, errorMessage) != ModelImportSettingsStatus::Success) return false;
         metadata = std::move(updated);
@@ -173,6 +224,16 @@ namespace PlutoGE::assets
         {
             if (errorMessage) *errorMessage = "Model object source key is required and must be a single field.";
             return 0;
+        }
+        if (const auto alias = std::find_if(settings.nodeAliases.begin(), settings.nodeAliases.end(),
+            [&](const auto &value) { return value.sourceKey == sourceKey; }); alias != settings.nodeAliases.end())
+        {
+            ModelNodeAliasIndex aliases;
+            if (!aliases.Build(settings, errorMessage)) return 0;
+            if (!ValidKey(alias->canonicalSourceKey) || std::none_of(settings.objects.begin(), settings.objects.end(),
+                [&](const auto &value) { return value.sourceKey == alias->canonicalSourceKey && value.localId; }))
+            { if (errorMessage) *errorMessage = "Node alias has no primary identity."; return 0; }
+            sourceKey = alias->canonicalSourceKey;
         }
         const auto found = std::find_if(settings.objects.begin(), settings.objects.end(),
                                         [&](const auto &object) { return object.sourceKey == sourceKey; });

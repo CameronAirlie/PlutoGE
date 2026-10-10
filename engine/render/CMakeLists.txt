@@ -61,6 +61,7 @@ add_library(PlutoGERender
     src/RenderTarget.cpp
     src/SpatialUpscaler.cpp
     src/GBuffer.cpp
+    src/Mesh.cpp
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp
     src/postprocess/AutoExposureEffect.cpp

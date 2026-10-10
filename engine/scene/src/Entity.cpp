@@ -138,6 +138,7 @@ namespace PlutoGE::scene
         Transform transform;
         glm::mat4 correction;
         if (!FactorLocalTransform(matrix, transform, correction)) return false;
+        RecordTransformEdit(TransformEditChannel::Affine);
         m_transform = transform;
         m_localTransformCorrection = correction;
         m_cachedLocalTransform = matrix;
@@ -150,6 +151,7 @@ namespace PlutoGE::scene
     {
         if (!IsLinearTransformCorrection(correction)) return false;
         if (m_localTransformCorrection == correction) return true;
+        RecordTransformEdit(TransformEditChannel::Affine);
         m_localTransformCorrection = correction;
         m_localTransformDirty = true;
         MarkTransformDirtyRecursive();
@@ -163,6 +165,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        RecordTransformEdit(TransformEditChannel::Position);
         m_transform.position = position;
         m_localTransformDirty = true;
         MarkTransformDirtyRecursive();
@@ -186,6 +189,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        RecordTransformEdit(TransformEditChannel::Rotation);
         m_transform.rotation = rotation;
         m_localTransformDirty = true;
         MarkTransformDirtyRecursive();
@@ -216,6 +220,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        RecordTransformEdit(TransformEditChannel::Scale);
         m_transform.scale = scale;
         m_localTransformDirty = true;
         MarkTransformDirtyRecursive();
@@ -681,6 +686,10 @@ namespace PlutoGE::scene
 
     void Entity::AddPrefabOverride(std::string propertyPath)
     {
+        if (propertyPath == "Transform.Position") RecordTransformEdit(TransformEditChannel::Position);
+        else if (propertyPath == "Transform.Rotation") RecordTransformEdit(TransformEditChannel::Rotation);
+        else if (propertyPath == "Transform.Scale") RecordTransformEdit(TransformEditChannel::Scale);
+        else if (propertyPath == "Transform.LinearCorrection") RecordTransformEdit(TransformEditChannel::Affine);
         if (m_prefabSource.empty() || propertyPath.empty())
         {
             return;

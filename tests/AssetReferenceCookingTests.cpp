@@ -5,6 +5,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/ShaderGraph.h"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -375,16 +376,41 @@ int main(int argc, char **argv)
             materialConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
             materialConfig.albedoTexture = nativeWriter.LoadTexture("project://Pixel.png");
             Require(materialConfig.albedoTexture && nativeWriter.SaveMaterialAsset("project://Base.plutomaterial", materialConfig, &error), error);
+            auto shaderChild = PlutoGE::render::CreateDefaultShaderGraph();
+            Require(nativeWriter.SaveShaderGraphAsset("project://Child.plutoshadergraph", shaderChild, &error), error);
+            Require(nativeWriter.SaveShaderGraphAsset("project://Pass.plutoshadergraph", shaderChild, &error), error);
+            Write(nativeAssets / "Unused.plutoshadergraph", "ShaderGraphVersion=1\n");
             AssetDatabase nativeDatabase;
             Require(nativeDatabase.Scan(nativeProject, &error), error);
             nativeWriter.SetAssetCatalog(nativeDatabase.GetCatalog());
             nativeWriter.SetLogicalReferenceTypes({ProjectAssetType::Mesh, ProjectAssetType::Material, ProjectAssetType::Texture,
-                ProjectAssetType::Animation, ProjectAssetType::AnimationClip, ProjectAssetType::AnimationGraph});
+                ProjectAssetType::Animation, ProjectAssetType::AnimationClip, ProjectAssetType::AnimationGraph, ProjectAssetType::ShaderGraph});
             Require(nativeWriter.SaveMaterialAsset("project://Base.plutomaterial", materialConfig, &error), error);
             const auto logicalClip = nativeWriter.PersistAssetPath("project://Walk.plutoclip");
             const auto logicalTexture = nativeWriter.PersistAssetPath("project://Pixel.png");
             const auto logicalMaterial = nativeWriter.PersistAssetPath("project://Base.plutomaterial");
             const auto logicalGraph = nativeWriter.PersistAssetPath("project://Base.plutoanimgraph");
+            const auto logicalShaderChild = nativeWriter.PersistAssetPath("project://Child.plutoshadergraph");
+            const auto logicalShaderPass = nativeWriter.PersistAssetPath("project://Pass.plutoshadergraph");
+            Require(logicalShaderChild.starts_with("asset://") && logicalShaderPass.starts_with("asset://"), "Shader graphs did not opt into logical writing");
+            auto shaderGraph = PlutoGE::render::CreateDefaultShaderGraph();
+            shaderGraph.passes.push_back("project://Pass.plutoshadergraph");
+            shaderGraph.textures.push_back({"NamedTexture", "project://Pixel.png", true, true});
+            PlutoGE::render::ShaderGraphNode childNode;
+            childNode.id = 1000;
+            childNode.kind = PlutoGE::render::ShaderGraphNodeKind::Subgraph;
+            childNode.name = "project://Child.plutoshadergraph"; // A display name, never a dependency.
+            childNode.parameter = "project://Child.plutoshadergraph";
+            shaderGraph.nodes.push_back(childNode);
+            Require(nativeWriter.SaveShaderGraphAsset("project://Output.plutoshadergraph", shaderGraph, &error), error);
+            PlutoGE::content::ContentDigest acceptedShaderBytes, afterRejectedShader;
+            Require(PlutoGE::content::HashFileContent(nativeAssets / "Output.plutoshadergraph", acceptedShaderBytes, &error), error);
+            auto futureShader = shaderGraph; futureShader.version = 99;
+            Require(!nativeWriter.SaveShaderGraphAsset("project://Output.plutoshadergraph", futureShader, &error) &&
+                PlutoGE::content::HashFileContent(nativeAssets / "Output.plutoshadergraph", afterRejectedShader) &&
+                afterRejectedShader == acceptedShaderBytes, "Unsupported graph version overwrote the destination");
+            Require(shaderGraph.passes.front() == "project://Pass.plutoshadergraph" && shaderGraph.textures.front().reference == "project://Pixel.png" &&
+                shaderGraph.nodes.back().parameter == childNode.parameter, "Shader writer mutated caller state");
             Require(logicalClip.starts_with("asset://") && logicalTexture.starts_with("asset://"), "New reference types did not persist identities");
             Require(nativeWriter.SaveAnimationAssetReferences("project://Output.plutoanim", {"project://Walk.plutoclip"}, &error), error);
             AnimationGraphAsset graph;
@@ -403,7 +429,7 @@ int main(int argc, char **argv)
             meshConfig.data.vertices.resize(3);
             meshConfig.data.indices = {0, 1, 2};
             Require(nativeWriter.SaveMeshAsset("project://Output.plutomesh", meshConfig, {"project://Base.plutomaterial"}, &error), error);
-            for (const auto &pair : {std::pair{"Walk.plutoclip", "Renamed.plutoclip"}, {"Pixel.png", "Renamed.png"}, {"Base.plutomaterial", "Renamed.plutomaterial"}})
+            for (const auto &pair : {std::pair{"Walk.plutoclip", "Renamed.plutoclip"}, {"Pixel.png", "Renamed.png"}, {"Base.plutomaterial", "Renamed.plutomaterial"}, {"Child.plutoshadergraph", "RenamedChild.plutoshadergraph"}, {"Pass.plutoshadergraph", "RenamedPass.plutoshadergraph"}})
             {
                 std::filesystem::rename(nativeAssets / pair.first, nativeAssets / pair.second);
                 std::filesystem::rename(GetAssetMetadataPath(nativeAssets / pair.first), GetAssetMetadataPath(nativeAssets / pair.second));
@@ -417,13 +443,17 @@ int main(int argc, char **argv)
                 savedGraph.layers.front().graphReference == logicalGraph, "Graph dependencies did not retain identities");
             CookOptions nativeCook;
             nativeCook.includeUnreferencedAssets = false;
-            nativeCook.alwaysInclude = {"project://Output.plutoanim", "project://Output.plutoanimgraph", "project://Output.plutomaterial", "project://Output.plutomesh"};
+            nativeCook.alwaysInclude = {"project://Output.plutoanim", "project://Output.plutoanimgraph", "project://Output.plutomaterial", "project://Output.plutomesh", "project://Output.plutoshadergraph"};
             const auto nativeCooked = native.root / "Cooked";
             Require(CookProjectContent(nativeProject, nativeCooked / "Assets", nativeCook, &error), error);
+            Require(!std::filesystem::exists(nativeCooked / "Assets/Unused.plutoshadergraph"), "Pruned shader cook included unused sentinel");
             const auto nativePack = native.root / "Native.plutopack";
             const auto nativeRuntime = native.root / "Runtime";
             Require(PlutoGE::content::WritePack(nativeCooked, nativePack, {}, &error) &&
                 PlutoGE::content::Mount(nativePack, nativeRuntime, &error), error);
+            // Runtime acceptance must have only the pack and catalog available.
+            std::filesystem::remove_all(nativeAssets);
+            std::filesystem::remove_all(nativeCooked);
             AssetManager nativeReader;
             nativeReader.SetProjectContext(nativeRuntime.string());
             Require(nativeReader.LoadAssetCatalog((nativeRuntime / "PlutoAssetCatalog.manifest").string(), &error), error);
@@ -437,6 +467,13 @@ int main(int argc, char **argv)
                 "Packed mesh lost renamed logical material");
             Require(nativeReader.LoadAnimationGraphAsset("project://Output.plutoanimgraph", &graphLoaded).states.front().clipReference == logicalClip && graphLoaded,
                 "Packed graph lost logical clip references");
+            bool shaderLoaded = false;
+            const auto packedShader = nativeReader.LoadShaderGraphAsset("project://Output.plutoshadergraph", &shaderLoaded);
+            Require(shaderLoaded && packedShader.passes.front() == logicalShaderPass && packedShader.textures.front().reference == logicalTexture &&
+                packedShader.textures.front().nearest && packedShader.textures.front().clamp && packedShader.nodes.back().parameter == logicalShaderChild &&
+                packedShader.nodes.back().name == childNode.name && packedShader.nodes.back().subgraph,
+                "Packed shader graph lost renamed dependencies or changed display fields");
+            Require(nativeReader.LoadTexture(packedShader.textures.front().reference.c_str()), "Packed shader texture missing");
             Require(!std::filesystem::exists(nativeRuntime), "Logical dependency loading materialized the pack");
         }
         std::cout << "Asset reference cooking tests passed\n";

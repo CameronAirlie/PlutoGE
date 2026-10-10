@@ -1,6 +1,7 @@
 #include "PlutoGE/assets/AssetPathPolicy.h"
 #include "ModelCacheRestore.h"
 #include "ModelGenerationPublication.h"
+#include "PlutoGE/assets/ModelActiveGeneration.h"
 #include "PlutoGE/assets/ModelArtifactStorage.h"
 #include "PlutoGE/assets/ModelNodeCorrespondence.h"
 #include "PlutoGE/assets/ModelHierarchyAsset.h"
@@ -59,6 +60,11 @@ namespace PlutoGE::assetimport
             if (project.GetManifest().assetPipelineVersion < 2 && status == assets::ModelImportSettingsStatus::Success)
             {
                 if (errorMessage) *errorMessage = "Persisted import settings require project format version 2.";
+                return false;
+            }
+            if (!settings.nodeAliases.empty() && project.GetManifest().assetPipelineVersion < 5)
+            {
+                if (errorMessage) *errorMessage = "Reviewed node repairs require project format version 5.";
                 return false;
             }
             if (status == assets::ModelImportSettingsStatus::Missing && previous &&
@@ -627,6 +633,9 @@ namespace PlutoGE::assetimport
                 content::ContentDigest key;
                 if (!ComputeArtifactKey(recipe, key, errorMessage) ||
                     !assets::WriteModelArtifactGeneration(sourceMetadata, key, errorMessage)) return false;
+                assets::ModelGeneratedFile packageArtifact{projectReference(manifestPath)};
+                if (!content::HashFileContent(transaction.GetOutputRoot() / manifestPath.lexically_relative(assetRoot), packageArtifact.digest, errorMessage) ||
+                    !assets::WriteActiveModelPackageArtifact(sourceMetadata, packageArtifact, errorMessage)) return false;
                 std::string bytes;
                 if (!assets::SerializeAssetMetadata(sourceMetadata, bytes, errorMessage)) return false;
                 std::ofstream output(transaction.GetOutputRoot() / metadataPath.lexically_relative(assetRoot), std::ios::binary | std::ios::trunc);
@@ -634,6 +643,10 @@ namespace PlutoGE::assetimport
                 output.close();
                 if (!output) throw std::runtime_error("Cannot finish active model generation metadata.");
             }
+            // All reads from the previous generation are complete and staged.
+            // Release this operation's snapshot before an exclusive corrupt-cache
+            // repair; external scene/catalog readers must continue to block it.
+            reader.ClearProjectContext();
             ArtifactCache cache(project.GetRootDirectory() / "Library" / "Artifacts");
             ArtifactManifest generation;
             if (!cache.Store(recipe, transaction.GetOutputRoot(), outputs, generation, errorMessage)) return false;
@@ -654,6 +667,8 @@ namespace PlutoGE::assetimport
             std::vector<std::string> changedAssets;
             for (const auto &relative : outputs) changedAssets.push_back(projectReference(assetRoot / relative));
             ModelImportResult candidate{database.GetCatalog(), UsesLibraryModelStorage(project) ? request.sourceReference : projectReference(manifestPath), false, std::move(changedAssets), sourceMetadata.id, database.GetStorageMap()};
+            candidate.artifactGenerationKey = generation.key;
+            if (!FindModelPackageArtifact(generation, candidate.packageArtifact, errorMessage)) return false;
             progress("Import complete");
             ImportState acceptedState;
             if (!CaptureImportState(sourceMetadata.id, request.sourceReference, generation, authoredInputs, acceptedState, errorMessage)) return false;

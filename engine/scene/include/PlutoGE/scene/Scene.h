@@ -4,6 +4,7 @@
 
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/scene/AssetReconciliation.h"
+#include "PlutoGE/scene/ModelInstance.h"
 #include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -126,6 +127,10 @@ namespace PlutoGE::scene
 
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
+        bool InstallStaticModelInstance(StaticModelSceneInstance instance, std::string *errorMessage = nullptr);
+        // Complete unpack only: every binding must already use ordinary authored resources.
+        bool DetachStaticModelInstance(EntityID rootEntityId, std::string *errorMessage = nullptr);
+        const std::unordered_map<EntityID, StaticModelSceneInstance> &GetStaticModelInstances() const { return m_staticModelInstances; }
         bool DestroyEntity(EntityID entityId);
         // Rebind imported geometry while retaining explicit instance overrides.
         AssetReconciliationReport ApplyModelAssetGeneration(const std::string &sourceAssetId,
@@ -299,6 +304,8 @@ namespace PlutoGE::scene
         };
 
         std::string m_name;
+        // Declared first so generation readers are destroyed after borrowing entities.
+        std::unordered_map<EntityID, StaticModelSceneInstance> m_staticModelInstances;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::unordered_map<EntityID, Entity *> m_entitiesById;
         std::vector<Entity *> m_rootEntities;

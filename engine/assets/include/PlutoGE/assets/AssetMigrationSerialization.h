@@ -9,4 +9,8 @@ namespace PlutoGE::assets
     // still requires backup, locked revalidation and a recovery journal.
     bool PrepareMaterialReferenceMigration(const MigrationReferenceFile &plan,
         std::string_view input, std::string &output, std::string *errorMessage = nullptr);
+    // Version 1 shader graphs: Pass, TextureParameter.reference and Subgraph
+    // node parameters only; names and expressions are never reference fields.
+    bool PrepareShaderGraphReferenceMigration(const MigrationReferenceFile &plan,
+        std::string_view input, std::string &output, std::string *errorMessage = nullptr);
 }

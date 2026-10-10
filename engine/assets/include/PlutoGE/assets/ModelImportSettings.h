@@ -23,11 +23,18 @@ namespace PlutoGE::assets
         std::string engineMaterial; // Alternative to a project-owned material identity.
     };
 
+    struct ModelNodeAlias
+    {
+        std::string sourceKey;
+        std::string canonicalSourceKey;
+    };
+
     struct ModelImportSettings
     {
         assetimport::MeshImportOptions meshOptions{true, true, true};
         std::vector<ModelObjectIdentity> objects;
         std::vector<ModelMaterialRemap> materialRemaps;
+        std::vector<ModelNodeAlias> nodeAliases;
     };
 
     enum class ModelImportSettingsStatus { Success, Missing, UnsupportedVersion, Invalid };
@@ -35,6 +42,7 @@ namespace PlutoGE::assets
     ModelImportSettingsStatus ReadModelImportSettings(const AssetMetadata &metadata, ModelImportSettings &settings,
                                                      std::string *errorMessage = nullptr);
     // Caller must require project format >= 2 before persisting these records.
+    // Node aliases additionally require project format >= 5 and settings codec 2.
     // Unknown records remain intact; failures leave metadata unchanged.
     bool WriteModelImportSettings(AssetMetadata &metadata, const ModelImportSettings &settings,
                                   std::string *errorMessage = nullptr);

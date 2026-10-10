@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "../MeshGeometryCopy.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -15,6 +16,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+#include <charconv>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -198,8 +200,16 @@ namespace PlutoGE::scene
 
         struct SerializedMaterialData
         {
+            bool hasInlineProperties = false;
+            bool hasExtendedVersion = false;
             std::optional<std::string> materialAsset;
             std::optional<std::string> albedoPath;
+            std::optional<std::string> normalPath, metallicPath, roughnessPath;
+            std::optional<render::TextureChannel> metallicChannel, roughnessChannel;
+            std::optional<std::string> shaderGraphPath;
+            std::optional<std::size_t> graphVariableCount, graphTextureCount;
+            std::map<std::size_t, render::ShaderGraphVariable> graphVariables;
+            std::map<std::size_t, render::ShaderGraphTextureParameter> graphTextures;
             std::optional<glm::vec4> color;
             std::optional<render::MaterialSurfaceType> surfaceType;
             std::optional<render::AlphaMode> alphaMode;
@@ -227,10 +237,39 @@ namespace PlutoGE::scene
             std::optional<glm::vec4> lightmapUvTransform;
         };
 
-        void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config)
+        void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config, bool extended)
         {
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
             properties.push_back({prefix + "AlbedoPath", PropertyType::String, config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{}});
+            if (extended)
+            {
+                properties.push_back({prefix + "InlineMaterialVersion", PropertyType::String, "2"});
+                properties.push_back({prefix + "NormalPath", PropertyType::String, config.normalTexture ? config.normalTexture->GetFilePath() : std::string{}});
+                properties.push_back({prefix + "MetallicPath", PropertyType::String, config.metallicTexture ? config.metallicTexture->GetFilePath() : std::string{}});
+                properties.push_back({prefix + "RoughnessPath", PropertyType::String, config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{}});
+                properties.push_back({prefix + "MetallicChannel", PropertyType::String, std::to_string(static_cast<int>(config.metallicTextureChannel))});
+                properties.push_back({prefix + "RoughnessChannel", PropertyType::String, std::to_string(static_cast<int>(config.roughnessTextureChannel))});
+                properties.push_back({prefix + "ShaderGraphPath", PropertyType::String, config.shaderGraphReference});
+                properties.push_back({prefix + "GraphVariableCount", PropertyType::String, std::to_string(config.shaderGraphVariables.size())});
+                properties.push_back({prefix + "GraphTextureCount", PropertyType::String, std::to_string(config.shaderGraphTextures.size())});
+                for (std::size_t i = 0; i < config.shaderGraphVariables.size(); ++i)
+                {
+                    const auto key = prefix + "GraphVariables." + std::to_string(i) + ".";
+                    const auto &variable = config.shaderGraphVariables[i];
+                    properties.push_back({key + "Name", PropertyType::String, variable.name});
+                    properties.push_back({key + "Type", PropertyType::String, std::to_string(static_cast<int>(variable.type))});
+                    properties.push_back({key + "Value", PropertyType::String, SerializeVec4(variable.value)});
+                }
+                for (std::size_t i = 0; i < config.shaderGraphTextures.size(); ++i)
+                {
+                    const auto key = prefix + "GraphTextures." + std::to_string(i) + ".";
+                    const auto &texture = config.shaderGraphTextures[i];
+                    properties.push_back({key + "Name", PropertyType::String, texture.name});
+                    properties.push_back({key + "Path", PropertyType::String, texture.reference});
+                    properties.push_back({key + "Nearest", PropertyType::Bool, texture.nearest ? "true" : "false"});
+                    properties.push_back({key + "Clamp", PropertyType::Bool, texture.clamp ? "true" : "false"});
+                }
+            }
             properties.push_back({prefix + "SurfaceType", PropertyType::String, ToString(config.surfaceType)});
             properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
@@ -258,15 +297,65 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "LightmapUvTransform", PropertyType::String, SerializeVec4(config.lightmapUvTransform)});
         }
 
+        std::size_t ParseMaterialIndex(std::string_view value, std::size_t maximum)
+        {
+            std::size_t parsed = 0;
+            const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+            if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed > maximum)
+                throw std::invalid_argument("Invalid inline material index or count.");
+            return parsed;
+        }
+
         void DeserializeInlineMaterialField(SerializedMaterialData &serializedMaterial, const std::string &fieldName, const std::string &value)
         {
+            if (fieldName != "MaterialAsset") serializedMaterial.hasInlineProperties = true;
             if (fieldName == "MaterialAsset")
             {
                 serializedMaterial.materialAsset = value;
             }
+            else if (fieldName == "InlineMaterialVersion")
+            {
+                if (value != "2" || serializedMaterial.hasExtendedVersion) throw std::invalid_argument("Unsupported or duplicate inline material version.");
+                serializedMaterial.hasExtendedVersion=true;
+            }
             else if (fieldName == "AlbedoPath")
             {
                 serializedMaterial.albedoPath = value;
+            }
+            else if (fieldName == "NormalPath") serializedMaterial.normalPath = value;
+            else if (fieldName == "MetallicPath") serializedMaterial.metallicPath = value;
+            else if (fieldName == "RoughnessPath") serializedMaterial.roughnessPath = value;
+            else if (fieldName == "MetallicChannel") serializedMaterial.metallicChannel = static_cast<render::TextureChannel>(ParseMaterialIndex(value, 3));
+            else if (fieldName == "RoughnessChannel") serializedMaterial.roughnessChannel = static_cast<render::TextureChannel>(ParseMaterialIndex(value, 3));
+            else if (fieldName == "ShaderGraphPath") serializedMaterial.shaderGraphPath = value;
+            else if (fieldName == "GraphVariableCount") serializedMaterial.graphVariableCount = ParseMaterialIndex(value, 4096);
+            else if (fieldName == "GraphTextureCount") serializedMaterial.graphTextureCount = ParseMaterialIndex(value, 4096);
+            else if (fieldName.starts_with("GraphVariables.") || fieldName.starts_with("GraphTextures."))
+            {
+                const bool variable = fieldName.starts_with("GraphVariables.");
+                const auto group = variable ? std::string_view("GraphVariables.") : std::string_view("GraphTextures.");
+                const auto remaining = std::string_view(fieldName).substr(group.size());
+                const auto separator = remaining.find('.');
+                if (separator == std::string_view::npos) throw std::invalid_argument("Malformed inline graph property.");
+                const auto index = ParseMaterialIndex(remaining.substr(0, separator), 4095);
+                const auto field = remaining.substr(separator + 1);
+                if (variable)
+                {
+                    auto &entry = serializedMaterial.graphVariables[index];
+                    if (field == "Name") entry.name = value;
+                    else if (field == "Type") entry.type = static_cast<render::ShaderGraphValueType>(ParseMaterialIndex(value, 3));
+                    else if (field == "Value") entry.value = ParseVec4(value);
+                    else throw std::invalid_argument("Unsupported inline graph variable field.");
+                }
+                else
+                {
+                    auto &entry = serializedMaterial.graphTextures[index];
+                    if (field == "Name") entry.name = value;
+                    else if (field == "Path") entry.reference = value;
+                    else if (field == "Nearest") entry.nearest = value == "true" || value == "1";
+                    else if (field == "Clamp") entry.clamp = value == "true" || value == "1";
+                    else throw std::invalid_argument("Unsupported inline graph texture field.");
+                }
             }
             else if (fieldName == "Color")
             {
@@ -366,15 +455,26 @@ namespace PlutoGE::scene
             }
         }
 
-        void ApplySerializedMaterialData(render::Material &material, const SerializedMaterialData &serializedMaterial)
+        void ApplySerializedMaterialData(render::Material &material, const SerializedMaterialData &serializedMaterial, assets::AssetManager &manager)
         {
             if (serializedMaterial.albedoPath.has_value())
             {
-                const auto resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.albedoPath);
+                const auto resolvedPath = manager.ResolveAssetPath(*serializedMaterial.albedoPath);
                 material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
                                               ? nullptr
-                                              : render::Texture::LoadFromFile(resolvedPath.c_str(), render::TextureColorSpace::SRGB));
+                                              : manager.LoadTexture(resolvedPath.c_str(), render::TextureColorSpace::SRGB));
             }
+            const auto texture = [&](const std::optional<std::string> &reference)
+            {
+                if (!reference || reference->empty()) return static_cast<render::Texture *>(nullptr);
+                const auto path = manager.ResolveAssetPath(*reference);
+                return manager.LoadTexture(path.c_str(), render::TextureColorSpace::Linear);
+            };
+            if (serializedMaterial.normalPath) material.SetNormalTexture(texture(serializedMaterial.normalPath));
+            if (serializedMaterial.metallicPath) material.SetMetallicTexture(texture(serializedMaterial.metallicPath));
+            if (serializedMaterial.roughnessPath) material.SetRoughnessTexture(texture(serializedMaterial.roughnessPath));
+            if (serializedMaterial.metallicChannel) material.SetMetallicTextureChannel(*serializedMaterial.metallicChannel);
+            if (serializedMaterial.roughnessChannel) material.SetRoughnessTextureChannel(*serializedMaterial.roughnessChannel);
             if (serializedMaterial.color.has_value())
             {
                 material.SetColor(*serializedMaterial.color);
@@ -415,8 +515,8 @@ namespace PlutoGE::scene
             for (int i=0;i<3;++i) if (serializedMaterial.emissionChannels[i].has_value()) material.GetConfig().emissionChannels[i] = *serializedMaterial.emissionChannels[i];
             if (serializedMaterial.emissionPath.has_value())
             {
-                const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.emissionPath);
-                material.SetEmissionTexture(serializedMaterial.emissionPath->empty() ? nullptr : render::Texture::LoadFromFile(path.c_str(), material.GetConfig().emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB));
+                const auto path = manager.ResolveAssetPath(*serializedMaterial.emissionPath);
+                material.SetEmissionTexture(serializedMaterial.emissionPath->empty() ? nullptr : manager.LoadTexture(path.c_str(), material.ReadConfig().emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB));
             }
             if (serializedMaterial.emissionTexCoord.has_value())
                 material.SetEmissionTexCoord(*serializedMaterial.emissionTexCoord);
@@ -468,7 +568,7 @@ namespace PlutoGE::scene
                 }
                 else
                 {
-                    const auto resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.lightmapPath);
+                    const auto resolvedPath = manager.ResolveAssetPath(*serializedMaterial.lightmapPath);
                     auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(resolvedPath.c_str());
                     material.SetLightmapTexture(lightmapTexture);
                 }
@@ -476,6 +576,31 @@ namespace PlutoGE::scene
             if (serializedMaterial.lightmapUvTransform.has_value())
             {
                 material.SetLightmapUvTransform(*serializedMaterial.lightmapUvTransform);
+            }
+            if (serializedMaterial.shaderGraphPath || serializedMaterial.graphVariableCount || serializedMaterial.graphTextureCount ||
+                !serializedMaterial.graphVariables.empty() || !serializedMaterial.graphTextures.empty())
+            {
+                auto config = material.ReadConfig();
+                if (serializedMaterial.shaderGraphPath) config.shaderGraphReference = *serializedMaterial.shaderGraphPath;
+                const auto replace = [](const auto &count, const auto &values, auto &destination)
+                {
+                    if (!count) { if (!values.empty()) throw std::invalid_argument("Inline graph parameters have no count."); return; }
+                    if (values.size() != *count) throw std::invalid_argument("Incomplete inline graph parameters.");
+                    destination.clear(); destination.reserve(*count);
+                    std::unordered_set<std::string> names;
+                    for (std::size_t i = 0; i < *count; ++i)
+                    {
+                        const auto found = values.find(i);
+                        if (found == values.end() || found->second.name.empty() || !names.insert(found->second.name).second)
+                            throw std::invalid_argument("Invalid or duplicate inline graph parameter.");
+                        destination.push_back(found->second);
+                    }
+                };
+                replace(serializedMaterial.graphVariableCount, serializedMaterial.graphVariables, config.shaderGraphVariables);
+                replace(serializedMaterial.graphTextureCount, serializedMaterial.graphTextures, config.shaderGraphTextures);
+                std::string error;
+                if (!manager.ResolveMaterialShaderGraph(config, &error)) throw std::invalid_argument(error);
+                material.SetConfig(std::move(config));
             }
         }
     }
@@ -542,10 +667,24 @@ namespace PlutoGE::scene
         }
     }
 
+    render::Material *MeshComponent::CloneInstanceMaterial(render::Material *source)
+    {
+        if (!m_privateResources) return source ? new render::Material(source->ReadConfig()) : new render::Material();
+        // A replaced inline clone can still be borrowed by retained commands.
+        // Keep the exact reader supplying its textures/shaders until it dies.
+        auto material = std::shared_ptr<render::Material>(
+            source ? new render::Material(source->ReadConfig()) : new render::Material(),
+            [resources = m_privateResources](render::Material *value) mutable { delete value; resources.reset(); });
+        auto *result = material.get();
+        m_privateResources->RegisterInstanceMaterial(material);
+        m_privateMaterials.push_back(std::move(material));
+        return result;
+    }
+
     render::Material *MeshComponent::CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex)
     {
         auto *sourceMaterial = GetMaterialForMaterialSlot(materialSlotIndex);
-        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
+        auto *uniqueMaterial = CloneInstanceMaterial(sourceMaterial);
         SetMaterialForMaterialSlot(materialSlotIndex, uniqueMaterial);
         SetMaterialAssetForMaterialSlot(materialSlotIndex, {});
         return uniqueMaterial;
@@ -553,6 +692,8 @@ namespace PlutoGE::scene
 
     const std::string &MeshComponent::GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const
     {
+        if (m_privateResources && materialSlotIndex < m_materialAssetReferences.size())
+            return m_materialAssetReferences[materialSlotIndex];
         if (materialSlotIndex < m_materialAssetReferences.size() &&
             !m_materialAssetReferences[materialSlotIndex].empty())
         {
@@ -561,7 +702,7 @@ namespace PlutoGE::scene
 
         if (m_submeshIndex >= 0 && !m_sourceMeshPath.empty())
         {
-            const auto &defaults = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
+            const auto &defaults = ResourceManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
             if (materialSlotIndex < defaults.size())
             {
                 return defaults[materialSlotIndex];
@@ -575,7 +716,7 @@ namespace PlutoGE::scene
     render::Material *MeshComponent::CreateUniqueMaterialForSubmesh(size_t submeshIndex)
     {
         auto *sourceMaterial = GetMaterialForSubmesh(submeshIndex);
-        auto *uniqueMaterial = sourceMaterial ? new render::Material(sourceMaterial->ReadConfig()) : new render::Material();
+        auto *uniqueMaterial = CloneInstanceMaterial(sourceMaterial);
         SetMaterialForSubmesh(submeshIndex, uniqueMaterial);
         SetMaterialAssetForSubmesh(submeshIndex, {});
         return uniqueMaterial;
@@ -817,11 +958,11 @@ namespace PlutoGE::scene
 
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
-                                                  : &core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
+                                                  : &ResourceManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
         // An isolated submesh entity inherits the model asset's material table.
         // Its editable per-part material belongs in SubmeshOverrides, not in a
         // private copy of every model material slot.
-        const size_t materialSlotCountToSerialize = m_submeshIndex >= 0 ? 0 : m_materials.size();
+        const size_t materialSlotCountToSerialize = m_submeshIndex >= 0 && !m_privateResources ? 0 : m_materials.size();
         for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCountToSerialize; ++materialSlotIndex)
         {
             auto *material = GetMaterialForMaterialSlot(materialSlotIndex);
@@ -833,7 +974,7 @@ namespace PlutoGE::scene
             const auto &config = material->ReadConfig();
             const std::string prefix = std::string(kMaterialSlotPrefix) + std::to_string(materialSlotIndex) + ".";
             const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
-            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            auto &assetManager = ResourceManager();
             if (!materialAssetReference.empty() && assetManager.FindLoadedMaterialAsset(materialAssetReference) == material)
             {
                 // Mesh assets already own their default material table. Repeating that
@@ -849,7 +990,7 @@ namespace PlutoGE::scene
                 properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
                 continue;
             }
-            SerializeInlineMaterialProperties(properties, prefix, config);
+            SerializeInlineMaterialProperties(properties, prefix, config, ResourceManager().GetAssetPipelineVersion() >= 5);
         }
 
         for (size_t submeshIndex = 0; submeshIndex < m_submeshMaterials.size(); ++submeshIndex)
@@ -868,7 +1009,7 @@ namespace PlutoGE::scene
                 properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
                 continue;
             }
-            SerializeInlineMaterialProperties(properties, prefix, config);
+            SerializeInlineMaterialProperties(properties, prefix, config, ResourceManager().GetAssetPipelineVersion() >= 5);
         }
 
         const size_t submeshTransformCount = std::max(m_submeshPositionOffsets.size(), m_submeshRotationOffsets.size());
@@ -890,6 +1031,19 @@ namespace PlutoGE::scene
     }
 
     void MeshComponent::Deserialize(const std::vector<Property> &properties)
+    { m_privateResources.reset(); DeserializeUsingAssets(properties, core::Engine::GetInstance().GetAssetManager(), true); }
+
+    void MeshComponent::DeserializeWithAssetManager(const std::vector<Property> &properties, std::shared_ptr<assets::AssetManager> manager)
+    {
+        if (!manager) throw std::invalid_argument("Linked mesh requires a private asset reader.");
+        m_privateResources = std::move(manager);
+        DeserializeUsingAssets(properties, *m_privateResources, false);
+    }
+
+    assets::AssetManager &MeshComponent::ResourceManager() const
+    { return m_privateResources ? *m_privateResources : core::Engine::GetInstance().GetAssetManager(); }
+
+    void MeshComponent::DeserializeUsingAssets(const std::vector<Property> &properties, assets::AssetManager &manager, bool allowSourceImport)
     {
         std::map<size_t, SerializedMaterialData> serializedMaterials;
         std::map<size_t, SerializedMaterialData> serializedSubmeshMaterials;
@@ -932,7 +1086,7 @@ namespace PlutoGE::scene
                 sourceMeshPath = property.value;
                 serializedAssetMaterialReferences = sourceMeshPath.empty()
                                                         ? nullptr
-                                                        : &core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(sourceMeshPath);
+                                                        : &manager.GetMeshAssetMaterialReferences(sourceMeshPath);
             }
             else if (property.name == "UseGeneratedLods")
             {
@@ -991,7 +1145,7 @@ namespace PlutoGE::scene
             }
             else if (property.name.rfind(kMaterialSlotPrefix, 0) == 0)
             {
-                if (m_submeshIndex >= 0)
+                if (allowSourceImport && m_submeshIndex >= 0)
                 {
                     // Legacy imported hierarchies duplicated the full model table
                     // into every isolated child. The asset reload below restores
@@ -1038,10 +1192,9 @@ namespace PlutoGE::scene
 
         if (!modelAssetId.empty())
         {
-            auto &engine = core::Engine::GetInstance();
             const std::string resolvedModelObject = assets::Project::IsEngineAssetReference(modelAssetId)
                                                         ? modelAssetId
-                                                        : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+                                                        : manager.ResolveModelObject(modelAssetId, modelObjectId);
             if (!resolvedModelObject.empty())
             {
                 sourceMeshPath = resolvedModelObject;
@@ -1051,21 +1204,31 @@ namespace PlutoGE::scene
         // Built-in primitives and direct mesh assets have a mesh reference but
         // no imported model identity. Resolve that identity when present, then
         // load the effective reference independently of where it came from.
+        const auto validateVersion = [&](const SerializedMaterialData &material)
+        {
+            if (manager.GetAssetPipelineVersion() < 5 && (material.hasExtendedVersion || material.normalPath || material.metallicPath ||
+                material.roughnessPath || material.metallicChannel || material.roughnessChannel || material.shaderGraphPath ||
+                material.graphVariableCount || material.graphTextureCount || !material.graphVariables.empty() || !material.graphTextures.empty()))
+                throw std::invalid_argument("Complete inline material persistence requires project version 5.");
+        };
+        for (const auto &[index, material] : serializedMaterials) validateVersion(material);
+        for (const auto &[index, material] : serializedSubmeshMaterials) validateVersion(material);
+
         if (!sourceMeshPath.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
+            if (auto *builtinMesh = manager.LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);
-                const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(sourceMeshPath);
+                const auto &materialReferences = manager.GetMeshAssetMaterialReferences(sourceMeshPath);
                 assetMaterialReferences = materialReferences;
                 std::vector<render::Material *> loadedMaterials;
-                if (m_submeshIndex >= 0 && static_cast<std::size_t>(m_submeshIndex) < builtinMesh->GetSubmeshCount())
+                if (allowSourceImport && m_submeshIndex >= 0 && static_cast<std::size_t>(m_submeshIndex) < builtinMesh->GetSubmeshCount())
                 {
                     const std::size_t materialSlot = builtinMesh->GetSubmesh(static_cast<std::size_t>(m_submeshIndex)).materialIndex;
                     if (materialSlot < materialReferences.size())
                     {
-                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReferences[materialSlot]));
+                        loadedMaterials.push_back(manager.LoadMaterialAsset(materialReferences[materialSlot]));
                     }
                 }
                 else
@@ -1073,13 +1236,13 @@ namespace PlutoGE::scene
                     loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
                     for (const auto &materialReference : materialReferences)
                     {
-                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+                        loadedMaterials.push_back(manager.LoadMaterialAsset(materialReference));
                     }
                 }
                 if (loadedMaterials.empty())
-                    loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+                    loadedMaterials.push_back(manager.LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
                 SetMaterials(loadedMaterials);
-                if (m_submeshIndex < 0)
+                if (m_submeshIndex < 0 || !allowSourceImport)
                 {
                     for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
                     {
@@ -1093,7 +1256,8 @@ namespace PlutoGE::scene
             }
             else
             {
-                const std::string resolvedMeshPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(sourceMeshPath);
+                if (!allowSourceImport) throw std::runtime_error("Accepted linked model mesh cannot be loaded from its private generation.");
+                const std::string resolvedMeshPath = manager.ResolveMeshAssetSourcePath(sourceMeshPath);
                 auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
                 if (importedMeshAsset.mesh)
                 {
@@ -1123,43 +1287,39 @@ namespace PlutoGE::scene
             // Older scene files stored the complete asset material table on every
             // MeshComponent. Treat matching entries as inherited defaults so the
             // first subsequent save automatically migrates them to the compact form.
-            if (serializedMaterial.materialAsset.has_value() &&
+            if (serializedMaterial.materialAsset.has_value() && !serializedMaterial.hasInlineProperties &&
                 materialSlotIndex < assetMaterialReferences.size() &&
                 *serializedMaterial.materialAsset == assetMaterialReferences[materialSlotIndex])
             {
                 continue;
             }
 
-            auto *material = CreateUniqueMaterialForMaterialSlot(materialSlotIndex);
-            if (!material)
-            {
-                continue;
-            }
+            render::Material *material = nullptr;
 
             if (serializedMaterial.materialAsset.has_value())
             {
-                if (auto *materialAsset = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(*serializedMaterial.materialAsset))
+                if (auto *materialAsset = manager.LoadMaterialAsset(*serializedMaterial.materialAsset))
                 {
                     SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
                     SetMaterialAssetForMaterialSlot(materialSlotIndex, *serializedMaterial.materialAsset);
                     material = materialAsset;
+
                 }
             }
 
-            ApplySerializedMaterialData(*material, serializedMaterial);
+            if (!material || (!allowSourceImport && serializedMaterial.hasInlineProperties))
+                material = CreateUniqueMaterialForMaterialSlot(materialSlotIndex);
+            if (!material) continue;
+            ApplySerializedMaterialData(*material, serializedMaterial, manager);
         }
 
         for (const auto &[submeshIndex, serializedMaterial] : serializedSubmeshMaterials)
         {
-            auto *material = CreateUniqueMaterialForSubmesh(submeshIndex);
-            if (!material)
-            {
-                continue;
-            }
+            render::Material *material = nullptr;
 
             if (serializedMaterial.materialAsset.has_value())
             {
-                if (auto *materialAsset = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(*serializedMaterial.materialAsset))
+                if (auto *materialAsset = manager.LoadMaterialAsset(*serializedMaterial.materialAsset))
                 {
                     SetMaterialForSubmesh(submeshIndex, materialAsset);
                     SetMaterialAssetForSubmesh(submeshIndex, *serializedMaterial.materialAsset);
@@ -1167,7 +1327,10 @@ namespace PlutoGE::scene
                 }
             }
 
-            ApplySerializedMaterialData(*material, serializedMaterial);
+            if (!material || (!allowSourceImport && serializedMaterial.hasInlineProperties))
+                material = CreateUniqueMaterialForSubmesh(submeshIndex);
+            if (!material) continue;
+            ApplySerializedMaterialData(*material, serializedMaterial, manager);
         }
 
         GenerateLightmapUvAtlasForSubmeshes(generatedLightmapUvSubmeshes);
@@ -1175,30 +1338,27 @@ namespace PlutoGE::scene
 
     bool MeshComponent::GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices)
     {
-        if (!m_mesh || submeshIndices.empty())
+        if (!m_mesh || submeshIndices.empty()) return false;
+        auto requested=m_generatedLightmapUvSubmeshes;
+        for (const auto index : submeshIndices)
+            if (index < m_mesh->GetSubmeshCount() && std::find(requested.begin(), requested.end(), index) == requested.end()) requested.push_back(index);
+        std::sort(requested.begin(), requested.end());
+        if (requested == m_generatedLightmapUvSubmeshes) return false;
+        const bool replace=!m_lightmapGeometry || m_mesh != m_lightmapGeometry.get();
+        auto staged=replace ? detail::CopyMeshGeometry(*m_mesh) : nullptr;
+        auto *edited=replace ? staged.get() : m_lightmapGeometry.get();
+        if (!edited->GenerateLightmapUvAtlasForSubmeshes(requested)) return false;
+        if (replace)
         {
-            return false;
+            m_lightmapGeometrySource=m_mesh;
+            if (m_lightmapGeometry) m_retiredLightmapGeometry.push_back(std::move(m_lightmapGeometry));
+            m_lightmapGeometry=std::move(staged);
+            m_mesh=m_lightmapGeometry.get();
+            RefreshMeshDerivedState();
         }
-
-        for (const size_t submeshIndex : submeshIndices)
-        {
-            if (submeshIndex >= m_mesh->GetSubmeshCount() ||
-                std::find(m_generatedLightmapUvSubmeshes.begin(),
-                          m_generatedLightmapUvSubmeshes.end(),
-                          submeshIndex) != m_generatedLightmapUvSubmeshes.end())
-            {
-                continue;
-            }
-            m_generatedLightmapUvSubmeshes.push_back(submeshIndex);
-        }
-        std::sort(m_generatedLightmapUvSubmeshes.begin(), m_generatedLightmapUvSubmeshes.end());
-
-        const bool changed = m_mesh->GenerateLightmapUvAtlasForSubmeshes(m_generatedLightmapUvSubmeshes);
-        if (changed)
-        {
-            MarkRenderCommandsDirty();
-        }
-        return changed;
+        m_generatedLightmapUvSubmeshes=std::move(requested);
+        MarkRenderCommandsDirty();
+        return true;
     }
 
     void MeshComponent::Update(float deltaTime)

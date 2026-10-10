@@ -38,6 +38,7 @@ namespace PlutoGE::render
         }
         for(auto &submesh:config.submeshes){submesh.indexOffset*=4;submesh.indexCount*=4;for(auto &lod:submesh.lods){lod.indexOffset*=4;lod.indexCount*=4;}}
         m_tessellated[level-1].reset(Mesh::FromConfig(std::move(config)));
+        if (m_geometryImmutable) m_tessellated[level-1]->FreezeGeometry();
         return m_tessellated[level-1].get();
     }
 }

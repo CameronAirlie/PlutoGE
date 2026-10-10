@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -21,6 +22,7 @@
 namespace PlutoGE::render
 {
     class Texture;
+    enum class TextureColorSpace : std::uint8_t;
     class Mesh;
     class Material;
     class Shader;
@@ -44,8 +46,16 @@ namespace PlutoGE::assets
     class AssetManager
     {
     public:
-        AssetManager() = default;
-        ~AssetManager() = default;
+        // Scoped readers own resources loaded into their caches; application readers preserve
+        // the legacy borrowed-resource lifetime across cache invalidation.
+        enum class ResourceLifetime { Application, Scoped };
+        // sharedAssets must outlive a scoped reader. Only retainedSourceAssetId
+        // stays private; external authored assets use the shared application reader.
+        explicit AssetManager(ResourceLifetime lifetime = ResourceLifetime::Application,
+            AssetManager *sharedAssets = nullptr, std::string retainedSourceAssetId = {});
+        ~AssetManager();
+        AssetManager(const AssetManager &) = delete;
+        AssetManager &operator=(const AssetManager &) = delete;
 
         std::string GetAssetPath(const std::string &relativePath) const;
         std::string ResolveAssetPath(const std::string &assetPath) const;
@@ -61,6 +71,7 @@ namespace PlutoGE::assets
             std::shared_ptr<const AssetStorageMap> storage);
         void SetAssetCatalog(std::shared_ptr<const AssetCatalog> catalog);
         std::shared_ptr<const AssetCatalog> GetAssetCatalog() const { return m_catalog; }
+        std::shared_ptr<const AssetStorageMap> GetAssetStorageMap() const { return m_storage; }
         // Install a database-validated snapshot alongside its catalog on the owning thread.
         // Project owner calls this only after explicitly saving a format conversion.
         void SetProjectAssetPipelineVersion(std::uint32_t version) { m_assetPipelineVersion = version; }
@@ -74,6 +85,7 @@ namespace PlutoGE::assets
         std::string ResolveAssetReference(const AssetReference &reference) const;
 
         render::Texture *LoadTexture(const char *filePath);
+        render::Texture *LoadTexture(const char *filePath, render::TextureColorSpace colorSpace);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
         const std::vector<std::string> &GetMeshAssetMaterialReferences(const std::string &assetReference);
         bool ReplaceMeshAssetMaterialReference(const std::string &meshAssetReference,
@@ -121,6 +133,9 @@ namespace PlutoGE::assets
         PostProcessPresetAsset LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage = nullptr);
         bool ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage = nullptr);
+        // Scoped scene-owned overrides borrow graph resources from this reader.
+        // Weak registration refreshes external graph dependencies without ownership cycles.
+        void RegisterInstanceMaterial(const std::shared_ptr<render::Material> &material);
         render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
         render::Material *CreateDefaultMaterial();
         render::Material *CreateDefaultShadedMaterial();
@@ -135,6 +150,17 @@ namespace PlutoGE::assets
 
     private:
         render::Material *LoadMaterialAsset(const std::string &assetReference, bool reload);
+        struct OwnedResources;
+        std::unique_ptr<OwnedResources> m_ownedResources;
+        // Resource-owning thread only. Scoped readers unregister before teardown.
+        std::unordered_set<AssetManager *> m_scopedReaders;
+        render::Texture *LoadTextureResource(const char *path);
+        render::Texture *LoadTextureResource(const char *path, render::TextureColorSpace colorSpace);
+        bool UsesSharedAssets(const std::string &reference) const;
+        void RebuildRetainedAliases();
+        const std::string *FindRetainedAlias(const std::string &reference) const;
+        bool IsUnresolvedRetainedReference(const std::string &reference) const;
+        void RefreshInstanceMaterialShaders();
         struct ModelResolutionCache
         {
             std::filesystem::file_time_type modified;
@@ -154,6 +180,8 @@ namespace PlutoGE::assets
         std::string m_projectAssetDirectory = "Assets";
         std::unordered_map<std::string, render::Texture *> m_textureCache;   // Cache for loaded textures
         std::unordered_map<std::string, render::Mesh *> m_meshCache;
+        // Old mesh borrowers survive cache invalidation; so must their generation.
+        std::unordered_map<render::Mesh *, std::shared_ptr<const ArtifactGenerationLock>> m_meshGenerationLeases;
         std::unordered_map<std::string, std::vector<std::string>> m_meshMaterialReferenceCache;
         std::unordered_map<std::string, MeshAssetMetadata> m_meshMetadataCache;
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials

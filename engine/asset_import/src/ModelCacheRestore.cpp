@@ -123,6 +123,8 @@ namespace PlutoGE::assetimport
         std::vector<std::string> changedAssets;
         for (const auto &output : generation.outputs) changedAssets.push_back(reference(output.relativePath));
         ModelImportResult candidate{database.GetCatalog(), UsesLibraryModelStorage(project) ? context.request.sourceReference : manifestReference, true, std::move(changedAssets), context.metadata.id, database.GetStorageMap()};
+        candidate.artifactGenerationKey = generation.key;
+        if (!FindModelPackageArtifact(generation, candidate.packageArtifact, errorMessage)) return ModelCacheRestoreStatus::Failed;
         context.progress("Import complete");
         ImportState acceptedState;
         if (!CaptureImportState(context.metadata.id, context.request.sourceReference, generation, context.authoredInputs, acceptedState, errorMessage)) return ModelCacheRestoreStatus::Failed;

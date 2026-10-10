@@ -56,8 +56,12 @@ namespace PlutoGE::assets
                         auto scan = ScanAssetReferences(path, stop, project.GetAssetDirectoryPath());
                         if (scan.cancelled) return fail("Migration planning cancelled.");
                         file.diagnostics = std::move(scan.errors);
-                        file.imported = file.imported || std::any_of(scan.occurrences.begin(), scan.occurrences.end(),
-                            [](const auto &occurrence) { return occurrence.role == AssetReferenceRole::ImportSource; });
+                        // A linked authored scene names its source without becoming an
+                        // imported product. ImportSource marks native mesh provenance
+                        // only when no linked instance payload owns that reference.
+                        file.imported = file.imported || (scan.modelInstances.empty() &&
+                            std::any_of(scan.occurrences.begin(), scan.occurrences.end(),
+                                [](const auto &occurrence) { return occurrence.role == AssetReferenceRole::ImportSource; }));
                         for (const auto &occurrence : scan.occurrences)
                         {
                             if (occurrence.role != AssetReferenceRole::Runtime || Project::IsEngineAssetReference(occurrence.reference)) continue;

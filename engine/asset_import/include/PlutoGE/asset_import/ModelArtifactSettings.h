@@ -11,7 +11,7 @@ namespace PlutoGE::assetimport
     // Bump the recipe version when serialization/import algorithms or pinned
     // importer dependencies can change output for otherwise identical inputs.
     inline constexpr std::string_view kModelArtifactImporter = "PlutoGE/model-legacy-layout";
-    inline constexpr std::uint32_t kModelArtifactVersion = 9;
+    inline constexpr std::uint32_t kModelArtifactVersion = 10;
     inline constexpr std::string_view kModelArtifactTarget = "portable-native-v1";
 
     // These files can be rewritten by publication. Their effective semantics

@@ -115,7 +115,10 @@ int main()
         Require(cache.Find(key, hit, &error) == assetimport::ArtifactCacheStatus::Corrupt, "Corrupt artifact accepted");
         Require(cache.FindMatching([](const auto &) { return true; }, hit) == assetimport::ArtifactCacheStatus::Missing,
                 "Generation search returned corrupt artifact payload");
-        Require(cache.Store(recipe, sourceRoot, {"nested/model.plutomesh", "material.plutomaterial"}, manifest, &error), "Corrupt generation did not rebuild");
+        Require(!cache.Store(recipe, sourceRoot, {"nested/model.plutomesh", "material.plutomaterial"}, manifest, &error), "Leased corrupt generation was displaced");
+        manifest.generationLease.reset();
+        hit.generationLease.reset();
+        Require(cache.Store(recipe, sourceRoot, {"nested/model.plutomesh", "material.plutomaterial"}, manifest, &error), "Unleased corrupt generation did not rebuild");
         Require(cache.Find(key, hit) == assetimport::ArtifactCacheStatus::Hit, "Rebuilt generation invalid");
         auto unrelatedRecipe = recipe;
         unrelatedRecipe.importer = "unrelated-importer";

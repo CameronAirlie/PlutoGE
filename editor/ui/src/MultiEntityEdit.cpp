@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
+#include "PlutoGE/ui/EntityTransformEditing.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include <algorithm>
 #include <cmath>
@@ -33,41 +34,20 @@ namespace PlutoGE::ui
                 identity &= std::abs(worldDelta[c][r] - (c == r ? 1.0f : 0.0f)) < 0.0000001f;
             }
         if (identity) { error.clear(); return true; }
-        struct Edit { scene::Entity *entity; glm::vec3 position, rotation, scale; };
-        std::vector<Edit> edits;
+        bool translationOnly = true;
+        for (int column = 0; column < 3; ++column)
+            for (int row = 0; row < 3; ++row)
+                translationOnly &= std::abs(worldDelta[column][row] - (column == row ? 1.0f : 0.0f)) < .000001f;
+        std::vector<PreparedEntityTransformEdit> edits;
         for (auto *entity : SelectionRoots(selection))
         {
-            glm::mat4 local = worldDelta * entity->GetWorldTransform();
-            if (auto *parent = entity->GetParent()) local = glm::inverse(parent->GetWorldTransform()) * local;
-            for (int c = 0; c < 4; ++c)
-                for (int r = 0; r < 4; ++r)
-                    if (!std::isfinite(local[c][r])) { error = "Selection contains a singular parent transform."; return false; }
-            glm::vec3 scale(glm::length(glm::vec3(local[0])), glm::length(glm::vec3(local[1])), glm::length(glm::vec3(local[2])));
-            if (glm::any(glm::lessThan(scale, glm::vec3(0.000001f))))
-            { error = "Selection transform would produce a zero scale."; return false; }
-            if (glm::determinant(glm::mat3(local)) < 0) scale.x = -scale.x;
-            glm::mat4 rotation(1);
-            for (int c = 0; c < 3; ++c) rotation[c] = glm::vec4(glm::vec3(local[c]) / scale[c], 0);
-            if (std::abs(glm::dot(rotation[0], rotation[1])) > 0.0001f ||
-                std::abs(glm::dot(rotation[0], rotation[2])) > 0.0001f ||
-                std::abs(glm::dot(rotation[1], rotation[2])) > 0.0001f)
-            { error = "This group transform would introduce shear. Use world movement or edit local values."; return false; }
-            glm::vec3 angles;
-            glm::extractEulerAngleXYZ(rotation, angles.x, angles.y, angles.z);
-            // Translation should preserve existing signed scale and Euler representation.
-            bool translationOnly = true;
-            for (int c = 0; c < 3; ++c)
-                for (int r = 0; r < 3; ++r)
-                    translationOnly &= std::abs(worldDelta[c][r] - (c == r ? 1.0f : 0.0f)) < 0.000001f;
-            edits.push_back({entity, glm::vec3(local[3]), translationOnly ? entity->GetRotation() : glm::degrees(angles),
-                             translationOnly ? entity->GetScale() : scale});
+            PreparedEntityTransformEdit prepared;
+            if (!PrepareWorldTransformEdit(*entity, worldDelta * entity->GetWorldTransform(), translationOnly, prepared, error))
+                return false;
+            edits.push_back(prepared);
         }
         for (const auto &edit : edits)
-        {
-            if (edit.entity->GetPosition() != edit.position) { edit.entity->SetPosition(edit.position); edit.entity->AddPrefabOverride("Transform.Position"); }
-            if (edit.entity->GetRotation() != edit.rotation) { edit.entity->SetRotation(edit.rotation); edit.entity->AddPrefabOverride("Transform.Rotation"); }
-            if (edit.entity->GetScale() != edit.scale) { edit.entity->SetScale(edit.scale); edit.entity->AddPrefabOverride("Transform.Scale"); }
-        }
+            if (!ApplyPreparedTransformEdit(edit)) { error = "Prepared selection transform could not be applied."; return false; }
         error.clear();
         return true;
     }

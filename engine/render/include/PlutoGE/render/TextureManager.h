@@ -17,12 +17,18 @@ namespace PlutoGE::render
     class TextureManager
     {
     public:
-        TextureManager() = default;
-        ~TextureManager() = default;
+        explicit TextureManager(bool ownResources = false) : m_ownResources(ownResources) {}
+        ~TextureManager();
+        TextureManager(const TextureManager &) = delete;
+        TextureManager &operator=(const TextureManager &) = delete;
 
         void SetWindow(platform::Window *window) { m_window = window; }
 
         Texture *FindTexture(const std::string &cacheKey) const;
+        // Owner-thread refresh of cached ordinary image files. Preserve object
+        // identity/borrowers; publish both colour spaces only after stable input
+        // verification. Failure retains previous pixels and GPU allocations.
+        bool ReloadFileTexture(const std::string &filePath, std::string *errorMessage = nullptr);
         Texture *LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
         Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels, TextureColorSpace colorSpace = TextureColorSpace::Linear);
         Texture *LoadEnvironmentTextureFromFile(const char *filePath);
@@ -46,5 +52,6 @@ namespace PlutoGE::render
         // to evolve, this preserves their offsets when an incremental MSVC build contains an older
         // object file compiled before window-aware texture uploads were introduced.
         platform::Window *m_window = nullptr;
+        bool m_ownResources = false;
     };
 }

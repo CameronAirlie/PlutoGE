@@ -1,5 +1,7 @@
 #include "PlutoGE/assets/ModelNodeCorrespondence.h"
+#include "PlutoGE/assets/ModelNodeAliases.h"
 #include "PlutoGE/platform/ContentDigest.h"
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -23,12 +25,54 @@ namespace PlutoGE::assets
         }
     }
 
+    bool PrepareModelNodeIdentityRepair(const assetimport::ImportedModelHierarchy &hierarchy,
+        const ModelImportSettings &settings, std::size_t selectedNode,
+        std::uint64_t retiredNodeId, ModelImportSettings &prepared,
+        std::vector<ModelNodeIdentity> &identities, std::string *errorMessage,
+        std::span<const std::string> sourceIdentifiers)
+    {
+        auto fail = [&](const char *message) { if (errorMessage) *errorMessage = message; return false; };
+        if (selectedNode >= hierarchy.nodes.size() || !retiredNodeId)
+            return fail("A current source node and retired node identity are required.");
+        auto candidate = settings;
+        std::vector<ModelNodeIdentity> current;
+        if (!ReconcileModelNodeIdentities(hierarchy, candidate, current, errorMessage, sourceIdentifiers)) return false;
+        const auto &selected = current[selectedNode];
+        if (!selected.localId || selected.status != ModelNodeIdentityStatus::Matched)
+            return fail("Ambiguous or anonymous source nodes cannot be repaired without a persistent producer identity.");
+        auto target = std::find_if(candidate.objects.begin(), candidate.objects.end(),
+            [&](const auto &object) { return object.localId == retiredNodeId; });
+        if (target == candidate.objects.end() || !target->retired ||
+            !(target->sourceKey.starts_with("node/path/v1/") || target->sourceKey.starts_with("node/source/v1/")))
+            return fail("The reviewed target must be a retired primary node identity.");
+        const auto canonicalKey = target->sourceKey;
+        auto displaced = std::find_if(candidate.objects.begin(), candidate.objects.end(),
+            [&](const auto &object) { return object.localId == selected.localId; });
+        if (displaced == candidate.objects.end() || std::any_of(candidate.nodeAliases.begin(), candidate.nodeAliases.end(),
+            [&](const auto &alias) { return alias.canonicalSourceKey == displaced->sourceKey; }))
+            return fail("An identity already used by a repair cannot be displaced.");
+        const auto sourceKey = displaced->sourceKey;
+        displaced->sourceKey = "node/tombstone/v1/" + std::to_string(displaced->localId);
+        displaced->retired = true;
+        candidate.nodeAliases.push_back({sourceKey, canonicalKey});
+        std::vector<ModelNodeIdentity> repaired;
+        if (!ReconcileModelNodeIdentities(hierarchy, candidate, repaired, errorMessage, sourceIdentifiers)) return false;
+        if (repaired[selectedNode].localId != retiredNodeId)
+            return fail("The selected source node did not resolve to its reviewed target.");
+        prepared = std::move(candidate);
+        identities = std::move(repaired);
+        if (errorMessage) errorMessage->clear();
+        return true;
+    }
+
     bool ReconcileModelNodeIdentities(const assetimport::ImportedModelHierarchy &hierarchy,
         ModelImportSettings &settings, std::vector<ModelNodeIdentity> &identities,
         std::string *errorMessage, std::span<const std::string> sourceIdentifiers)
     {
         try
         {
+            ModelNodeAliasIndex aliases;
+            if (!aliases.Build(settings, errorMessage)) return false;
             const auto &nodes = hierarchy.nodes;
             if (nodes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
                 (!sourceIdentifiers.empty() && sourceIdentifiers.size() != nodes.size()))
@@ -77,7 +121,12 @@ namespace PlutoGE::assets
                         identity.status = ModelNodeIdentityStatus::DuplicateSiblingName;
                     else identity.sourceKey = Key("path", node.parentNodeIndex < 0 ? std::string_view{} :
                         std::string_view(candidate[node.parentNodeIndex].sourceKey), node.name);
-                    if (!identity.sourceKey.empty()) identity.status = ModelNodeIdentityStatus::Matched;
+                    if (!identity.sourceKey.empty())
+                    {
+                        const auto canonical = aliases.Resolve(identity.sourceKey);
+                        if (canonical != identity.sourceKey) identity.sourceKey = canonical;
+                        identity.status = ModelNodeIdentityStatus::Matched;
+                    }
                     state[index] = 2;
                 }
             }
@@ -90,11 +139,14 @@ namespace PlutoGE::assets
                     throw std::runtime_error("Invalid existing model node/object correspondence.");
                 if (object.sourceKey.starts_with(kNodePrefix)) object.retired = true;
             }
+            std::unordered_set<std::uint64_t> activeNodes;
             for (auto &identity : candidate)
                 if (!identity.sourceKey.empty())
                 {
                     identity.localId = ResolveModelObjectId(updated, identity.sourceKey, 0, errorMessage);
                     if (!identity.localId) return false;
+                    if (!activeNodes.insert(identity.localId).second)
+                        throw std::runtime_error("Two active source nodes claim the same repaired identity.");
                 }
             settings = std::move(updated);
             identities = std::move(candidate);

@@ -5,6 +5,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/ProjectAssetLock.h"
 #include "PlutoGE/assets/AssetMetadata.h"
+#include "PlutoGE/asset_import/ModelImportPublication.h"
 #include <algorithm>
 #include <chrono>
 #include <exception>
@@ -52,6 +53,30 @@ namespace PlutoGE::ui
         return true;
     }
 
+    bool EditorShell::ApplyReviewedModelNodeRepair(const assetimport::ModelNodeRepairProposal &proposal,
+        std::string *errorMessage)
+    {
+        if (!m_project || m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask || IsModelImportRunning())
+        {
+            if (errorMessage) *errorMessage = "Finish the active edit/import or stop Play before repairing model correspondence.";
+            return false;
+        }
+        if (!assetimport::ModelNodeRepairService{}.Apply(*m_project, proposal, errorMessage)) return false;
+        // Settings are authored project state; scene history must not undo the
+        // import or discard a previously accepted generation. Queue work only
+        // after the source metadata transaction has released its writer lock.
+        std::string importError;
+        if (!BeginModelImport(proposal.sourceReference, std::nullopt, &importError))
+        {
+            if (std::find(m_pendingModelImports.begin(), m_pendingModelImports.end(), proposal.sourceReference) == m_pendingModelImports.end())
+                m_pendingModelImports.push_back(proposal.sourceReference);
+            Log(ConsoleSeverity::Warning, "Reviewed node repair saved; reimport queued: " + importError);
+        }
+        else Log(ConsoleSeverity::Info, "Reviewed node repair saved; reimport started.");
+        if (errorMessage) errorMessage->clear();
+        return true;
+    }
+
     bool EditorShell::IsModelImportRunning() const
     {
         return m_importWatchFuture.valid() || m_assetReconciliation.valid() || m_assetReconciliationRequested || !m_pendingModelImports.empty() ||
@@ -83,11 +108,28 @@ namespace PlutoGE::ui
         m_assetRefreshPending = false;
     }
 
-    void EditorShell::PublishModelImportResult(const std::string &sourceReference, const assetimport::ModelImportResult &result,
-                                               const scene::ModelAssetSnapshot &previous)
+    bool EditorShell::PublishModelImportResult(const std::string &sourceReference, const assetimport::ModelImportResult &result,
+                                               const scene::ModelAssetSnapshot &previous, std::string *errorMessage)
     {
+        auto catalog = result.catalog;
+        auto storage = result.storage;
+        assetimport::PreparedModelImportPublication publication;
+        if (m_project && m_project->GetManifest().assetPipelineVersion >= 5)
+        {
+            std::string error;
+            if (!assetimport::PrepareModelImportPublication(*m_project, sourceReference, result, publication, &error))
+            {
+                if (errorMessage) *errorMessage = error;
+                Log(ConsoleSeverity::Warning, "Deferred model publication: " + error);
+                m_assetRefreshPending = true;
+                return false;
+            }
+            catalog = publication.catalog;
+            storage = publication.storage;
+        }
         auto &manager = m_engine.GetAssetManager();
-        manager.SetAssetSnapshot(result.catalog, result.storage);
+        manager.SetAssetSnapshot(catalog, storage);
+        m_modelInstancesNeedRefresh = true;
         manager.RefreshImportedAssets(result.changedAssets);
         if (auto *activeScene = m_engine.GetScene())
         {
@@ -97,10 +139,13 @@ namespace PlutoGE::ui
         if (m_project) m_project->RefreshAssetRegistry();
         ClearCachedMaterialPreviews();
         MarkProjectDirty();
+        if (errorMessage) errorMessage->clear();
+        return true;
     }
 
     void EditorShell::PollModelImport()
     {
+        if (m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask) return;
         if (m_modelImportTask)
         {
             auto completion = m_modelImportTask->TakeCompletion();
@@ -113,8 +158,9 @@ namespace PlutoGE::ui
                     Log(ConsoleSeverity::Error, "Model import failed: " + completion->sourceReference + ": " + completion->error);
                 else
                 {
-                    PublishModelImportResult(completion->sourceReference, completion->result, m_activeModelAssetSnapshot);
-                    Log(ConsoleSeverity::Info, "Imported model: " + completion->sourceReference);
+                    if (PublishModelImportResult(completion->sourceReference, completion->result, m_activeModelAssetSnapshot, &m_lastModelImportError))
+                        Log(ConsoleSeverity::Info, "Imported model: " + completion->sourceReference);
+                    else m_modelImportErrors[completion->sourceReference] = m_lastModelImportError;
                 }
             }
             if (m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready) return;
@@ -187,6 +233,7 @@ namespace PlutoGE::ui
             catch (const std::exception &error) { Log(ConsoleSeverity::Error, "Cannot start asset reconciliation: " + std::string(error.what())); }
             return;
         }
+        PollModelInstances();
         if (!m_pendingModelImports.empty())
         {
             auto source = std::move(m_pendingModelImports.front());

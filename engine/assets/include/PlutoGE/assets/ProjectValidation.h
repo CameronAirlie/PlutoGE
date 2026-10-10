@@ -11,6 +11,7 @@
 namespace PlutoGE::assets
 {
     class AssetCatalog;
+    struct StaticModelInstanceState;
     enum class ValidationSeverity { Warning, Error };
     struct ValidationDiagnostic
     {
@@ -24,6 +25,8 @@ namespace PlutoGE::assets
     struct ProjectValidationInput
     {
         std::filesystem::path assetRoot;
+        // Enables the shared infrastructure policy for root-based asset directories.
+        std::filesystem::path projectRoot;
         std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
         std::filesystem::path scriptAssembly;
@@ -33,6 +36,9 @@ namespace PlutoGE::assets
         std::function<std::filesystem::path(const std::string &)> resolveEngineReference;
         std::optional<std::string> currentScene;
         std::shared_ptr<const AssetCatalog> assetCatalog;
+        // Read-only accepted-byte verification supplied by the host. Missing
+        // verification rejects linked records rather than trusting current IDs.
+        std::function<std::shared_ptr<const AssetCatalog>(const StaticModelInstanceState &, std::string *)> prepareModelInstance;
         std::string currentSceneOwner = "Current unsaved scene";
     };
     struct ProjectValidationResult

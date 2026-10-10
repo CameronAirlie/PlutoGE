@@ -3431,6 +3431,22 @@ internal static unsafe partial class ScriptBridge
         };
     }
 
+    // The existing native text reader resolves the runtime catalog and mounted
+    // content packs. Keep this managed helper ABI-neutral; direct File reads
+    // cannot resolve logical identities or assets that exist only in a pack.
+    internal static bool TryReadTextAsset(string assetReference, out string text)
+    {
+        text = string.Empty;
+        if (_loadScriptableObjectAsset == null || string.IsNullOrWhiteSpace(assetReference))
+            return false;
+        if (assetReference.Contains('\0'))
+            throw new ArgumentException("Asset references cannot contain a null character.", nameof(assetReference));
+        var bytes = Encoding.UTF8.GetBytes(assetReference + '\0');
+        fixed (byte* reference = bytes)
+            text = Marshal.PtrToStringUTF8(_loadScriptableObjectAsset(reference)) ?? string.Empty;
+        return text.Length != 0;
+    }
+
     private static ScriptableObject? LoadScriptableObject(string assetReference, Type expectedType)
     {
         if (string.IsNullOrWhiteSpace(assetReference) || _loadScriptableObjectAsset == null)

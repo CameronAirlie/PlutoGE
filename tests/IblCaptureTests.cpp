@@ -43,6 +43,14 @@ int main(int argc, char **argv) try
     if (scene::SceneBaker::CalculateProbeGridResolution({8,4,2},1,4096)!=glm::ivec3(8,4,2) ||
         scene::SceneBaker::CalculateProbeGridResolution({100,1,100},.05f,8)!=glm::ivec3(2))
         throw std::runtime_error("Probe resolution ignores requested spacing or minimum budget");
+    scene::BakedProbeVolume corridor;
+    corridor.origin={-10,-1,-2}; corridor.size={20,2,4}; corridor.resolution={1,1,1};
+    corridor.irradiance={{0,0,0}}; corridor.positions={{0,0,0,1}};
+    corridor.sphericalHarmonics.resize(1); corridor.visibility.resize(1);
+    corridor.visibility[0].fill(100);
+    const auto corridorCaptures=scene::SceneBaker::GenerateReflectionProbeLayout(corridor,1);
+    if (corridorCaptures.size()!=1 || glm::length(corridorCaptures[0].size-corridor.size)>.0001f)
+        throw std::runtime_error("Reflection bounds collapse a long room into a small cube");
     const auto api = argc > 1 && std::string_view(argv[1]) == "--opengl"
         ? rhi::GraphicsApi::OpenGL : rhi::GraphicsApi::Vulkan;
     auto &engine = core::Engine::GetInstance();
@@ -237,6 +245,59 @@ int main(int argc, char **argv) try
         throw std::runtime_error("Probe placement failed to reject the solid centre or capture emissive room lighting");
     const auto layout = scene::SceneBaker::GenerateReflectionProbeLayout(grid);
     if (layout.size() != 4) throw std::runtime_error("Sparse reflection layout was not generated from valid grid cells");
+    // Sunlight must contribute through openings, but never through a sealed
+    // room, even when real-time shadows are disabled on that light.
+    scene::Scene sealed;
+    Material roomMaterial; roomMaterial.SetCastsShadow(false);
+    for (const auto &mesh : meshes) {
+        auto wall = std::make_unique<scene::Entity>();
+        auto *component = wall->AddComponent(new scene::MeshComponent({mesh.get(), &roomMaterial}));
+        component->SetStatic(true); sealed.AddEntity(std::move(wall));
+    }
+    auto sunEntity = std::make_unique<scene::Entity>();
+    auto *sun = sunEntity->CreateComponent<scene::LightComponent>();
+    sun->GetLight().type = scene::LightType::Directional;
+    sun->GetLight().intensity = 5;
+    sun->GetLight().castsShadows = false;
+    sun->GetLight().isStatic = false;
+    sunEntity->SetRotation({-90,0,0});
+    sealed.AddEntity(std::move(sunEntity));
+    auto roomVolume = std::make_unique<scene::Entity>();
+    auto *roomAmbient = roomVolume->CreateComponent<scene::AmbientLightVolumeComponent>();
+    roomAmbient->SetSize({3,3,3}); roomAmbient->Configure(1,.02f,64,128);
+    sealed.AddEntity(std::move(roomVolume));
+    auto sky = std::make_unique<scene::Entity>(); sky->CreateComponent<scene::PhysicalSkyComponent>();
+    sealed.AddEntity(std::move(sky));
+    if (!scene::SceneBaker().Bake(sealed,settings).succeeded)
+        throw std::runtime_error("Sealed room ambient bake failed");
+    int sealedValid = 0;
+    for (std::size_t i=0; i<roomAmbient->GetBakedVolume().positions.size(); ++i) {
+        if (roomAmbient->GetBakedVolume().positions[i].w < .5f) continue;
+        ++sealedValid;
+        for (const auto &coefficient : roomAmbient->GetBakedVolume().sphericalHarmonics[i])
+            if (glm::length(coefficient) > .00001f)
+                throw std::runtime_error("Sun or sky leaks into a sealed unlit room");
+    }
+    if (!sealedValid) throw std::runtime_error("Sealed room has no valid probes");
+    // Remove the ceiling: the same dynamic sun now reaches the floor and
+    // contributes bounced ambient without any physical sky or emissive source.
+    scene::Scene sunlit;
+    auto ground = std::make_unique<scene::Entity>();
+    auto *groundMesh = ground->AddComponent(new scene::MeshComponent({meshes[6].get(), &solidMaterial}));
+    groundMesh->SetStatic(true); sunlit.AddEntity(std::move(ground));
+    auto daylight = std::make_unique<scene::Entity>();
+    auto *daylightComponent = daylight->CreateComponent<scene::LightComponent>();
+    daylightComponent->GetLight().type = scene::LightType::Directional;
+    daylightComponent->GetLight().intensity = 5;
+    daylightComponent->GetLight().castsShadows = false;
+    daylightComponent->GetLight().isStatic = false;
+    daylight->SetRotation({-90,0,0});
+    sunlit.AddEntity(std::move(daylight));
+    if (!scene::SceneBaker().Bake(sunlit,settings).succeeded)
+        throw std::runtime_error("Directional bounce bake failed");
+    float sunBounce = 0;
+    for (const auto &sh : sunlit.GetBakedProbeVolume().sphericalHarmonics) sunBounce += glm::length(sh[0]);
+    if (sunBounce <= 0) throw std::runtime_error("Ambient probes discard directional light bounce");
     // Bake a component tightly around a 1cm gap. Clearance used to relocate
     // these probes through the opposing surface and invalidate the whole slot.
     MeshConfig slotConfig;
@@ -291,6 +352,13 @@ int main(int argc, char **argv) try
         if (glm::length(glm::vec3(rotatedGrid.positions[i])-expectedLayout.GridToWorld(uvw))>.0002f)
             throw std::runtime_error("Baked probes ignore the oriented volume transform");
     }
+    for (const auto &capture : scene::SceneBaker::GenerateReflectionProbeLayout(rotatedGrid))
+        for (int corner=0; corner<8; ++corner) {
+            const glm::vec3 sign(corner&1 ? 1.0f : -1.0f,corner&2 ? 1.0f : -1.0f,corner&4 ? 1.0f : -1.0f);
+            const auto uvw=rotatedGrid.WorldToGrid(capture.position+capture.size*.5f*sign);
+            if (glm::any(glm::lessThan(uvw,glm::vec3(-.0001f))) || glm::any(glm::greaterThan(uvw,glm::vec3(1.0001f))))
+                throw std::runtime_error("Reflection box escapes a rotated or sheared ambient volume");
+        }
     scene::AmbientLightVolumeComponent restored; restored.Deserialize(rotatedVolume->Serialize());
     if (glm::length(restored.GetBakedVolume().GridToWorld({.2f,.4f,.7f})-expectedLayout.GridToWorld({.2f,.4f,.7f}))>.0002f)
         throw std::runtime_error("Ambient volume persistence discards grid orientation");

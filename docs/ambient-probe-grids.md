@@ -63,7 +63,10 @@ RGB volume sampling path.
 
 The ambient-only bake snapshots current lights (including lights marked dynamic),
 emissive surfaces and the physical sky. Ordinary full-scene baking retains its
-static-light selection. Sky misses include broad atmospheric radiance; direct
+static-light selection. Probe surface lighting always traces occlusion, even when
+a light disables real-time shadows. Directional light contributes bounced ambient
+from visible lit surfaces; sealed rooms without emissive or local light sources
+remain dark. Sky misses include broad atmospheric radiance; direct
 lighting owns the solar disk. Retained HDR cubemap pixels are also supported as an
 environment source. Geometry and lighting changes require another bake; this is
 baked lighting, not continuously updated GI. The grid currently captures one diffuse
@@ -71,7 +74,10 @@ bounce, independently of the lightmap bounce-count setting.
 
 With **Automatic Reflection Captures** enabled, baking also places sparse 128px HDR
 captures at valid grid cells. Placement spreads the captures across the grid and
-limits their symmetric box bounds using visibility distances. The
+prioritizes uncovered box volume instead of corner distance. Bounds retain each
+axis independently and use visibility hit planes to fit room dimensions, so long
+rooms no longer collapse to small cubes. Bounds are approximate; use manual
+captures for complex or adjoining rooms. The
 **Reflection Capture Budget** is capped at four total local captures, shared with
 manual capture components. Manual captures are preserved. Generated components
 carry a serialized ownership flag; subsequent ambient bakes reuse those components

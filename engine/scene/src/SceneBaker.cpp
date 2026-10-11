@@ -1948,7 +1948,8 @@ namespace PlutoGE::scene
                                                 const std::vector<BakeTriangle> &triangles,
                                                 const BakeAccelerationStructure &acceleration,
                                                 const std::unordered_map<render::Texture *, CpuTextureData> &textureCache,
-                                                int directShadowSampleCount)
+                                                int directShadowSampleCount,
+                                                bool forceOcclusion = false)
         {
             glm::vec3 irradiance{0.0f};
             const glm::vec3 rayOrigin = position + geometricNormal * rayEpsilon;
@@ -1995,7 +1996,9 @@ namespace PlutoGE::scene
                 }
 
                 float visibility = 1.0f;
-                if (light.castsShadows)
+                // Probe transport uses geometric occlusion independently of
+                // real-time light and mesh shadow optimizations.
+                if (light.castsShadows || forceOcclusion)
                 {
                     const int shadowRayCount =
                         light.type == LightType::Directional && light.shadowSoftness > 0.001f
@@ -2003,7 +2006,7 @@ namespace PlutoGE::scene
                             : 1;
                     if (shadowRayCount == 1)
                     {
-                        visibility = TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value()
+                        visibility = TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, !forceOcclusion).has_value()
                                          ? 0.0f
                                          : 1.0f;
                     }
@@ -2023,7 +2026,7 @@ namespace PlutoGE::scene
                                 lightDirection +
                                 (tangent * std::cos(angle) + bitangent * std::sin(angle)) *
                                     (angularRadius * unitRadius));
-                            if (!TraceScene(rayOrigin, shadowDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value())
+                            if (!TraceScene(rayOrigin, shadowDirection, maxDistance, triangles, acceleration, &textureCache, !forceOcclusion).has_value())
                             {
                                 ++visibleRayCount;
                             }
@@ -3475,7 +3478,7 @@ namespace PlutoGE::scene
                     }
 
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
+                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1, true);
                     const auto albedo = SampleTriangleAlbedo(triangle, hit->barycentric, textureCache);
                     glm::vec3 radiance = directIrradiance * albedo + triangle.graphMaterial->emission * albedo * 3.14159265f;
                     if (triangle.graphMaterial->shaderGraphProgram)
@@ -4301,41 +4304,75 @@ namespace PlutoGE::scene
         std::vector<ReflectionProbePlacement> result;
         if (!volume.HasDirectionalData()) return result;
         count = std::clamp(count, 0, kMaxIblCaptureVolumes);
-        std::vector<std::size_t> selected;
-        for (int capture = 0; capture < count; ++capture) {
-            float best = -1;
-            std::size_t candidate = volume.positions.size();
-            for (std::size_t i = 0; i < volume.positions.size(); ++i) {
-                if (volume.positions[i].w < 0.5f || std::find(selected.begin(), selected.end(), i) != selected.end()) continue;
-                const glm::vec3 p(volume.positions[i]);
-                float score;
-                if (selected.empty()) score = 1.0f / (1.0f + glm::length(volume.WorldToGrid(p)-glm::vec3(.5f)));
-                else {
-                    score = std::numeric_limits<float>::max();
-                    for (auto j : selected) score = std::min(score, glm::length(volume.WorldToGrid(p)-volume.WorldToGrid(glm::vec3(volume.positions[j]))));
+        std::vector<ReflectionProbePlacement> candidates;
+        const auto inverseBasis = glm::inverse(volume.gridBasis);
+        for (std::size_t i = 0; i < volume.positions.size(); ++i) {
+            if (volume.positions[i].w < 0.5f) continue;
+            const glm::vec3 position(volume.positions[i]);
+            const auto uvw = volume.WorldToGrid(position);
+            glm::vec3 radius(std::numeric_limits<float>::max());
+            // Bound each world axis independently against the oriented grid faces.
+            for (int axis = 0; axis < 3; ++axis) {
+                const float margin = std::max(0.0f, std::min(uvw[axis], 1-uvw[axis])) * volume.size[axis];
+                for (int worldAxis = 0; worldAxis < 3; ++worldAxis)
+                    if (std::abs(inverseBasis[worldAxis][axis]) > .00001f)
+                        radius[worldAxis] = std::min(radius[worldAxis], margin / std::abs(inverseBasis[worldAxis][axis]));
+            }
+            // A sheared/rotated grid needs a joint face constraint as well.
+            for (int axis = 0; axis < 3; ++axis) {
+                const glm::vec3 row(inverseBasis[0][axis], inverseBasis[1][axis], inverseBasis[2][axis]);
+                const float extent = glm::dot(glm::abs(row), radius);
+                const float margin = std::max(0.0f, std::min(uvw[axis], 1-uvw[axis])) * volume.size[axis];
+                if (extent > margin && extent > 0) radius *= margin / extent;
+            }
+            // Reproject sampled hit planes instead of treating oblique ray
+            // lengths as axis distances. Only nearby axis directions constrain
+            // each extent; diagonal geometry must not shrink all axes to cubes.
+            for (int axis = 0; axis < 3; ++axis) for (int sign : {-1, 1}) {
+                glm::vec3 ray(0); ray[axis] = float(sign);
+                float best = -1; int sample = 0; glm::vec3 direction(0);
+                for (int v = 0; v < 8; ++v) for (int u = 0; u < 8; ++u) {
+                    const glm::vec2 oct((u+.5f)/4-1, (v+.5f)/4-1);
+                    glm::vec3 d(oct, 1-std::abs(oct.x)-std::abs(oct.y));
+                    if (d.z < 0) { d.x=(1-std::abs(oct.y))*(oct.x>=0?1:-1); d.y=(1-std::abs(oct.x))*(oct.y>=0?1:-1); }
+                    d=glm::normalize(d);
+                    if (glm::dot(d,ray)>best) { best=glm::dot(d,ray); sample=u+v*8; direction=d; }
                 }
-                if (score > best) { best = score; candidate = i; }
+                float distance = volume.visibility[i][sample] * best;
+                if (volume.visibilityNormals.size() == volume.positions.size()) {
+                    const auto normal = volume.visibilityNormals[i][sample];
+                    const float denominator = glm::dot(normal,ray);
+                    if (std::abs(denominator) > .0001f)
+                        distance = volume.visibility[i][sample] * glm::dot(normal,direction) / denominator;
+                }
+                if (distance > 0) radius[axis] = std::min(radius[axis],distance);
             }
-            if (candidate == volume.positions.size()) break;
-            selected.push_back(candidate);
-            const glm::vec3 position(volume.positions[candidate]);
-            // Conservative symmetric boxes keep captures on their side of room walls.
-            const auto &depth = volume.visibility[candidate];
-            const glm::vec3 radius(std::min(depth[4*8+7], depth[4*8]),
-                                   std::min(depth[7*8+4], depth[4]),
-                                   std::min(depth[4*8+4], depth[0]));
-            const auto uvw=volume.WorldToGrid(position);
-            const auto inverseBasis=glm::inverse(volume.gridBasis);
-            glm::vec3 edge(std::numeric_limits<float>::max());
-            // World-aligned reflection boxes must remain inside every oriented face.
-            for (int axis=0;axis<3;++axis) {
-                const glm::vec3 row(inverseBasis[0][axis],inverseBasis[1][axis],inverseBasis[2][axis]);
-                const float radius=std::min(uvw[axis],1-uvw[axis])*volume.size[axis]/
-                    std::max(glm::dot(glm::abs(row),glm::vec3(1)),.0001f);
-                edge=glm::min(edge,glm::vec3(radius));
+            candidates.push_back({position, glm::max(glm::vec3(.001f),radius*2.0f)});
+        }
+        // Spend the small capture budget on useful room coverage, rather than
+        // farthest corner cells whose symmetric boxes barely cover anything.
+        for (int capture = 0; capture < count && !candidates.empty(); ++capture) {
+            float best = -1; std::size_t selected = 0;
+            for (std::size_t i = 0; i < candidates.size(); ++i) {
+                const auto &candidate = candidates[i];
+                float score = candidate.size.x*candidate.size.y*candidate.size.z;
+                // Inclusion/exclusion avoids counting overlapping captures twice.
+                for (unsigned mask = 1; mask < (1u << result.size()); ++mask) {
+                    auto low = candidate.position-candidate.size*.5f;
+                    auto high = candidate.position+candidate.size*.5f;
+                    int intersections = 0;
+                    for (std::size_t j = 0; j < result.size(); ++j) if (mask & (1u << j)) {
+                        low = glm::max(low,result[j].position-result[j].size*.5f);
+                        high = glm::min(high,result[j].position+result[j].size*.5f);
+                        ++intersections;
+                    }
+                    const auto overlap = glm::max(glm::vec3(0),high-low);
+                    score += (intersections % 2 ? -1.0f : 1.0f)*overlap.x*overlap.y*overlap.z;
+                }
+                if (score > best) { best=score; selected=i; }
             }
-            const glm::vec3 size = glm::max(glm::vec3(0.1f), glm::min(edge, radius*0.75f)*2.0f);
-            result.push_back({position, size});
+            result.push_back(candidates[selected]);
+            candidates.erase(candidates.begin()+selected);
         }
         return result;
     }

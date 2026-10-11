@@ -108,6 +108,63 @@ namespace PlutoGE::ui
         return true;
     }
 
+    void EditorShell::GenerateAmbientReflectionCaptures()
+    {
+        if (!m_scene) return;
+        std::vector<scene::Entity *> generated;
+        int manualCount = 0;
+        std::function<void(scene::Entity *)> visit = [&](scene::Entity *entity) {
+            if (!entity) return;
+            if (entity->GetComponent<scene::IblCaptureComponent>()) {
+                if (entity->GetComponent<scene::IblCaptureComponent>()->IsAutomaticallyPlaced()) generated.push_back(entity);
+                else ++manualCount;
+            }
+            for (auto *child : entity->GetChildren()) visit(child);
+        };
+        for (auto *root : m_scene->GetRootEntities()) visit(root);
+        std::vector<scene::ReflectionProbePlacement> layout;
+        const int budget=(std::min)(m_ambientReflectionCount,(std::max)(0,scene::kMaxIblCaptureVolumes-manualCount));
+        const auto grids=m_scene->GetBakedProbeVolumes();
+        float farPlane=1;
+        for (auto *grid:grids) farPlane=(std::max)(farPlane,glm::length(grid->size));
+        // Give each volume a capture before distributing the remaining budget.
+        for (int round=0;round<budget && int(layout.size())<budget;++round)
+            for (auto *grid:grids) {
+                const auto candidates=scene::SceneBaker::GenerateReflectionProbeLayout(*grid,budget);
+                if (round<int(candidates.size()) && int(layout.size())<budget) layout.push_back(candidates[round]);
+            }
+        // Reuse generated entities and their previous results until recapture succeeds.
+        for (std::size_t i = 0; i < layout.size(); ++i) {
+            scene::Entity *entity;
+            if (i < generated.size()) entity = generated[i];
+            else {
+                auto created = std::make_unique<scene::Entity>();
+                created->SetName("Auto Ambient Reflection " + std::to_string(i+1));
+                created->AddComponent(new scene::IblCaptureComponent())->SetAutomaticallyPlaced(true);
+                entity = m_scene->AddEntity(std::move(created));
+            }
+            glm::mat4 world(1.0f);
+            world[3] = glm::vec4(layout[i].position, 1.0f);
+            entity->SetLocalTransformMatrix(entity->GetParent()
+                ? glm::inverse(entity->GetParent()->GetWorldTransform()) * world : world);
+            auto *component = entity->GetComponent<scene::IblCaptureComponent>();
+            component->SetSize(layout[i].size);
+            component->SetBlendDistance((std::min)({layout[i].size.x, layout[i].size.y, layout[i].size.z}) * 0.1f);
+            if (!component->GetCaptureTexture()) component->SetResolution(128);
+            component->SetFarPlane(farPlane);
+            RequestIblCapture(component);
+        }
+        for (std::size_t i = generated.size(); i > layout.size(); --i) {
+            auto *entity = generated[i-1];
+            std::size_t componentCount = 0;
+            for (const auto &bucket : entity->GetComponentBuckets()) componentCount += bucket.size();
+            if (entity->GetChildren().empty() && componentCount == 1) m_scene->RemoveEntity(entity);
+            else entity->RemoveComponent<scene::IblCaptureComponent>();
+        }
+        (void)GetSelectedEntity();
+        m_saveAfterAmbientCaptures = !layout.empty();
+    }
+
     void EditorShell::RequestIblCapture(scene::IblCaptureComponent *captureComponent)
     {
         auto *owner = captureComponent ? captureComponent->GetOwner() : nullptr;
@@ -1561,7 +1618,11 @@ namespace PlutoGE::ui
     {
         if (IsModelImportRunning())
         {
-            m_statusMessage = "Wait for asset processing to finish before starting Play.";
+            // Drain the read-only watcher before runtime captures generation leases.
+            // Keep the user's Play request until validation/import publication finishes.
+            m_importWatchStop.request_stop();
+            m_pendingRuntimeStart = true;
+            m_statusMessage = "Play queued until asset processing finishes.";
             return false;
         }
         if (m_engine.IsRuntimeRunning())
@@ -2180,6 +2241,8 @@ namespace PlutoGE::ui
         }
 
         m_pendingIblCaptureEntities.clear();
+        m_generateAmbientReflections = false;
+        m_saveAfterAmbientCaptures = false;
         m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
 
         // Keep the previous scene alive until Engine::SetScene has stopped its
@@ -3268,6 +3331,7 @@ namespace PlutoGE::ui
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
             if (m_editorSceneRenderService)
             {
+                m_editorSceneRenderService->SetAmbientProbeDebugEnabled(true);
                 m_editorSceneRenderService->SetGeometryDiagnosticMode(m_profiler.geometryDiagnosticMode);
                 m_editorSceneRenderService->SetOcclusionMode(m_profiler.occlusionMode);
             }
@@ -3402,6 +3466,8 @@ namespace PlutoGE::ui
             if (bakeTaskFinished && m_scene)
             {
                 const auto bakeResult = m_activeBakeTask->Finalize(*m_scene);
+                if (bakeResult.succeeded && m_generateAmbientReflections) GenerateAmbientReflectionCaptures();
+                m_generateAmbientReflections = false;
                 m_statusMessage = bakeResult.message;
                 std::cout << bakeResult.message << std::endl;
 
@@ -3524,8 +3590,9 @@ namespace PlutoGE::ui
 
             if (!isBakeRunning && m_scene && !m_pendingIblCaptureEntities.empty())
             {
-                auto pendingCaptures = std::move(m_pendingIblCaptureEntities);
-                m_pendingIblCaptureEntities.clear();
+                // One six-face capture per frame keeps large batches responsive.
+                const std::array pendingCaptures{m_pendingIblCaptureEntities.front()};
+                m_pendingIblCaptureEntities.erase(m_pendingIblCaptureEntities.begin());
                 for (const auto entityId : pendingCaptures)
                 {
                     auto *entity = m_scene->FindEntityByID(entityId);
@@ -3576,6 +3643,13 @@ namespace PlutoGE::ui
                 }
             }
 
+            if (m_saveAfterAmbientCaptures && m_pendingIblCaptureEntities.empty() && m_scene) {
+                m_saveAfterAmbientCaptures = false;
+                if (!m_scene->GetFilePath().empty()) {
+                    std::string error;
+                    if (!scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &error)) m_statusMessage += " " + error;
+                }
+            }
             std::unique_ptr<scene::ScopedTimelinePose> timelinePose;
             if (m_scene && !isBakeRunning && !m_engine.IsRuntimeRunning())
             {
@@ -3723,7 +3797,10 @@ namespace PlutoGE::ui
                 settings.indirectBounceSampleCount = (std::max)(settings.indirectBounceSampleCount, 0);
                 settings.indirectBounceCount = std::clamp(settings.indirectBounceCount, 1, 8);
                 settings.indirectDenoisePassCount = std::clamp(settings.indirectDenoisePassCount, 0, 4);
-                settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 0);
+                settings.probeDirectionCount = std::clamp(settings.probeDirectionCount, 0, 4096);
+                settings.probeSpacing = std::clamp(settings.probeSpacing, 0.05f, 100.0f);
+                settings.probeSurfaceClearance = std::clamp(settings.probeSurfaceClearance, 0.001f, .1f);
+                settings.maxProbeCount = std::clamp(settings.maxProbeCount, 8, 16384);
                 settings.lightmapBounceStrength = (std::max)(settings.lightmapBounceStrength, 0.0f);
                 settings.probeBounceStrength = (std::max)(settings.probeBounceStrength, 0.0f);
             };
@@ -3737,12 +3814,14 @@ namespace PlutoGE::ui
 
                 scene::SceneBakeSettings bakeSettings = requestedSettings;
                 sanitizeBakeSettings(bakeSettings);
+                m_generateAmbientReflections = bakeSettings.bakeProbeVolume && m_autoAmbientReflections;
 
                 scene::SceneBaker baker;
                 scene::SceneBakeResult immediateResult;
                 auto bakeTask = baker.BeginBake(*m_scene, bakeSettings, &immediateResult);
                 if (!bakeTask)
                 {
+                    m_generateAmbientReflections = false;
                     m_statusMessage = immediateResult.message;
                     std::cout << immediateResult.message << std::endl;
                     return;
@@ -3752,6 +3831,15 @@ namespace PlutoGE::ui
                 m_statusMessage = m_activeBakeTask->GetStatusMessage();
                 std::cout << m_statusMessage << std::endl;
             };
+
+            if (m_pendingAmbientBake && !m_activeBakeTask) {
+                auto settings=m_customBakeSettings;
+                settings.probesOnly=true; settings.bakeProbeVolume=true;
+                settings.ambientVolumeEntity=m_pendingAmbientBake;
+                settings.probeBounceStrength=(std::max)(settings.probeBounceStrength,1.0f);
+                m_pendingAmbientBake=0;
+                runBake(settings);
+            }
 
             // Toolbar menu
             if (ImGui::BeginMainMenuBar())
@@ -4031,6 +4119,10 @@ namespace PlutoGE::ui
                     {
                         runBake(scene::SceneBakeSettings::Ultra());
                     }
+                    if (ImGui::MenuItem("Bake Ambient Grid..."))
+                    {
+                        shouldOpenBakeSceneCustomPopup = true;
+                    }
                     if (ImGui::MenuItem("Bake Scene Custom..."))
                     {
                         shouldOpenBakeSceneCustomPopup = true;
@@ -4062,6 +4154,7 @@ namespace PlutoGE::ui
                         m_showSceneRecovery = true;
                     if (ImGui::MenuItem("Project Validation...", nullptr, false, m_project != nullptr))
                         m_showProjectValidation = true;
+                    if (ImGui::MenuItem("Ambient & Reflection Debug...")) OpenDebugDrawControls();
                     if (ImGui::MenuItem("Gameplay Debug Drawing...")) OpenDebugDrawControls();
                     if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
                                         GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
@@ -4217,6 +4310,27 @@ namespace PlutoGE::ui
                     ImGui::TextUnformatted(m_statusMessage.c_str());
                 }
                 ImGui::EndMainMenuBar();
+            }
+            if (!m_engine.IsRuntimeRunning() && (m_assetReconciliation.valid() || m_assetReconciliationRequested || !m_pendingModelImports.empty() ||
+                (m_modelImportTask && m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready)))
+            {
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + 20, ImGui::GetMainViewport()->WorkPos.y + 40), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_FirstUseEver);
+                if (ImGui::Begin("Asset processing", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+                {
+                    ImGui::TextWrapped("%s", GetModelImportProgress().c_str());
+                    if (m_assetAuditProgress && m_assetReconciliation.valid())
+                    {
+                        std::lock_guard lock(m_assetAuditProgress->mutex);
+                        const auto &p = *m_assetAuditProgress;
+                        ImGui::ProgressBar(p.total ? float(p.completed) / float(p.total) : 0.0f, ImVec2(500, 0));
+                    }
+                    ImGui::Text("Queued imports: %zu", m_pendingModelImports.size());
+                    if (m_pendingRuntimeStart) ImGui::TextUnformatted("Play will start automatically when processing finishes.");
+                    ImGui::TextDisabled("Large models can take longer; remaining time is not yet known.");
+                    if (ImGui::Button("Cancel processing")) { m_pendingRuntimeStart = false; CancelModelImport(); }
+                }
+                ImGui::End();
             }
             RenderScriptBuildDiagnostics();
 
@@ -4498,11 +4612,30 @@ namespace PlutoGE::ui
                 }
                 ImGui::Checkbox("Bake Probe Volume", &m_customBakeSettings.bakeProbeVolume);
                 ImGui::InputInt("Probe Directions", &m_customBakeSettings.probeDirectionCount);
+                ImGui::DragFloat("Probe Spacing", &m_customBakeSettings.probeSpacing, 0.05f, 0.05f, 100.0f);
+                ImGui::DragFloat("Surface Clearance", &m_customBakeSettings.probeSurfaceClearance, 0.01f, 0.01f, 2.0f);
+                ImGui::InputInt("Probe Budget", &m_customBakeSettings.maxProbeCount);
+                ImGui::Checkbox("Automatic Reflection Captures", &m_autoAmbientReflections);
+                ImGui::SliderInt("Reflection Capture Budget", &m_ambientReflectionCount, 0, scene::kMaxIblCaptureVolumes);
+                ImGui::TextWrapped("Grid bounds follow static geometry. Solid cells are rejected; visibility limits interpolation through walls. Reflection captures share the four-volume budget with manual captures.");
                 ImGui::SliderFloat("Probe Bounce Strength", &m_customBakeSettings.probeBounceStrength, 0.0f, 4.0f, "%.2f");
 
                 sanitizeBakeSettings(m_customBakeSettings);
 
                 ImGui::BeginDisabled(isBakeRunning);
+                if (ImGui::Button("Bake Ambient Grid")) {
+                    auto settings = m_customBakeSettings;
+                    settings.probesOnly = true;
+                    settings.bakeProbeVolume = true;
+                    settings.bakeIndirectBounce = false;
+                    settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 64);
+                    if (settings.probeBounceStrength <= 0) settings.probeBounceStrength = 1.0f;
+                    m_generateAmbientReflections = m_autoAmbientReflections;
+                    runBake(settings);
+                    if (!m_activeBakeTask) m_generateAmbientReflections = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
                 if (ImGui::Button("Bake"))
                 {
                     runBake(m_customBakeSettings);

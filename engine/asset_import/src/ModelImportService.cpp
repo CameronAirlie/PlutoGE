@@ -663,7 +663,7 @@ namespace PlutoGE::assetimport
             // Publication needs identities, ownership and verified storage.
             // Dependency inventories and legacy content hashes are computed by
             // reconciliation/cooking, not repeatedly for unrelated assets here.
-            if (!database.Scan(project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false}, errorMessage)) return false;
+            if (!database.Scan(project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false, .allowUnavailableImportedStorage=true}, errorMessage)) return false;
             std::vector<std::string> changedAssets;
             for (const auto &relative : outputs) changedAssets.push_back(projectReference(assetRoot / relative));
             ModelImportResult candidate{database.GetCatalog(), UsesLibraryModelStorage(project) ? request.sourceReference : projectReference(manifestPath), false, std::move(changedAssets), sourceMetadata.id, database.GetStorageMap()};

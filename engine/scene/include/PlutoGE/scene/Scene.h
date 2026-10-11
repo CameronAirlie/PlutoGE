@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include "PlutoGE/scene/BakedProbeVolume.h"
+#include <array>
 
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/scene/AssetReconciliation.h"
@@ -25,6 +27,7 @@ namespace PlutoGE::scene
 {
     class UISystem;
     class Component;
+    class AmbientLightVolumeComponent;
     class RuntimeComponentIndex;
     class SceneStreaming;
     class NavigationSystem;
@@ -43,20 +46,6 @@ namespace PlutoGE::scene
 
     using EntityID = uint32_t;
     constexpr int kMaxIblCaptureVolumes = 4;
-
-    struct BakedProbeVolume
-    {
-        glm::vec3 origin{0.0f};
-        glm::vec3 size{1.0f};
-        glm::ivec3 resolution{0};
-        std::vector<glm::vec3> irradiance;
-
-        [[nodiscard]] bool IsValid() const
-        {
-            return resolution.x > 0 && resolution.y > 0 && resolution.z > 0 &&
-                   irradiance.size() == static_cast<std::size_t>(resolution.x * resolution.y * resolution.z);
-        }
-    };
 
     struct IblCaptureVolume
     {
@@ -224,9 +213,12 @@ namespace PlutoGE::scene
         void SetEnvironmentMap(render::Texture *texture, const std::string &filePath);
         void ClearEnvironmentMap();
         void SetEnvironmentIntensity(float intensity);
-        const BakedProbeVolume &GetBakedProbeVolume() const { return m_bakedProbeVolume; }
-        bool HasBakedProbeVolume() const { return m_bakedProbeVolume.IsValid() && m_bakedProbeTexture != nullptr; }
-        render::Texture *GetBakedProbeTexture() const { return m_bakedProbeTexture.get(); }
+        const BakedProbeVolume &GetBakedProbeVolume() const;
+        std::vector<AmbientLightVolumeComponent *> GetAmbientLightVolumes() const;
+        std::vector<const BakedProbeVolume *> GetBakedProbeVolumes() const;
+        bool HasBakedProbeVolume() const { return !GetBakedProbeVolumes().empty(); }
+        render::Texture *GetBakedProbeTexture() const;
+        std::uint64_t GetBakedProbeRevision() const;
         void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
         void ClearBakedProbeVolume();
         // Clears every baked-lighting reference owned by the scene, including
@@ -331,8 +323,8 @@ namespace PlutoGE::scene
         float m_shaderTime = 0.0f;
         float m_physicsTimeAccumulator = 0.0f;
         SceneUpdateTimingStats m_updateTimingStats;
-        BakedProbeVolume m_bakedProbeVolume;
-        std::unique_ptr<render::Texture> m_bakedProbeTexture;
+        mutable std::uint64_t m_bakedProbeRevision = 0;
+        mutable std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         std::unordered_set<uint64_t> m_activeCollisionPairs;
         std::vector<EntityID> m_pendingDestroyEntities;

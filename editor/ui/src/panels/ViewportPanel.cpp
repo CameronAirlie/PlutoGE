@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
@@ -942,6 +943,11 @@ namespace PlutoGE::ui
                             { marker(hint->GetWorldPosition(),IM_COL32(210,100,255,255)); line(middle,hint->GetWorldPosition(),IM_COL32(210,100,255,190)); }
                         }
                     }
+                }
+
+                if (auto *volume=entity->GetComponent<scene::AmbientLightVolumeComponent>(); volume && volume->IsEnabled()) {
+                    DrawWireBox(drawList,volume->GetVolumeTransform(),cameraData,viewportMin,viewportSize,
+                        volume->HasUsableBake() ? IM_COL32(100,190,255,230) : IM_COL32(255,175,75,230),1.75f);
                 }
 
                 if (auto *iblCaptureComponent = entity->GetComponent<scene::IblCaptureComponent>())

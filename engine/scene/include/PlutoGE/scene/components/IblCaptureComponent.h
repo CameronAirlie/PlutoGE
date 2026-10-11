@@ -31,6 +31,8 @@ namespace PlutoGE::scene
         void SetBlendDistance(float blendDistance);
         void SetResolution(int resolution);
         void SetFarPlane(float farPlane);
+        bool IsAutomaticallyPlaced() const { return m_automaticallyPlaced; }
+        void SetAutomaticallyPlaced(bool value) { m_automaticallyPlaced = value; }
         void MarkDirty() { m_dirty = true; }
         void ClearDirty() { m_dirty = false; }
 
@@ -55,6 +57,7 @@ namespace PlutoGE::scene
         int m_resolution = 256;
         float m_farPlane = 100.0f;
         bool m_dirty = true;
+        bool m_automaticallyPlaced = false;
         std::unique_ptr<render::Texture> m_captureTexture;
         std::vector<float> m_capturePixels;
 

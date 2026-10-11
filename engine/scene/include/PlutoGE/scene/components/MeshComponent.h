@@ -100,6 +100,7 @@ namespace PlutoGE::scene
             }
 
             m_submeshIndex = submeshIndex;
+            RestoreSourceGeometryForRange();
             MarkRenderCommandsDirty();
         }
         int GetSubmeshIndex() const { return m_submeshIndex; }
@@ -113,6 +114,7 @@ namespace PlutoGE::scene
 
             m_submeshIndex = submeshIndex;
             m_submeshCount = normalizedCount;
+            RestoreSourceGeometryForRange();
             MarkRenderCommandsDirty();
         }
         int GetSubmeshRangeCount() const { return m_submeshCount; }
@@ -257,6 +259,7 @@ namespace PlutoGE::scene
         std::size_t CompactSkeletonAttachmentEntities();
 
     private:
+        void RestoreSourceGeometryForRange();
         void DeserializeUsingAssets(const std::vector<Property> &properties, assets::AssetManager &assets, bool allowSourceImport);
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();

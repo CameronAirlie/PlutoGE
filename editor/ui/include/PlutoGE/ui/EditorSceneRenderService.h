@@ -15,6 +15,7 @@
 namespace PlutoGE::render
 {
     class Mesh;
+    class Material;
     class Texture;
     struct RenderCommand;
     class IPostProcessEffect;
@@ -51,6 +52,7 @@ namespace PlutoGE::ui
         [[nodiscard]] const render::GraphicsQuality &GetGraphicsQuality() const noexcept
         { return m_runtimeGraphicsQuality ? *m_runtimeGraphicsQuality : m_graphicsQuality; }
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
+        void SetAmbientProbeDebugEnabled(bool enabled) { m_ambientProbeDebugEnabled = enabled; }
         void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
         // Renders cameras into their render textures; call once per frame
@@ -101,6 +103,9 @@ namespace PlutoGE::ui
         std::string m_lastRenderTextureError;
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;
+        bool m_ambientProbeDebugEnabled = false;
+        std::unique_ptr<render::Mesh> m_probeDebugSphere;
+        std::unique_ptr<render::Material> m_probeDebugMaterial;
         bool m_vulkanAvailable = false;
         std::uint64_t m_frameSequence = 0;
         render::rhi::TemporalUpscalerOptions m_upscalerOptions;

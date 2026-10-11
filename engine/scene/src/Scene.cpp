@@ -1,5 +1,7 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "RuntimeComponentIndex.h"
+#include <atomic>
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
@@ -2303,24 +2305,25 @@ namespace PlutoGE::scene
 
     void Scene::RebuildBakedProbeTexture()
     {
+        const auto &volume = GetBakedProbeVolume();
         m_bakedProbeTexture.reset();
-        if (!m_bakedProbeVolume.IsValid())
+        if (!volume.IsValid())
         {
             return;
         }
 
         m_bakedProbeTexture = std::unique_ptr<render::Texture>(render::Texture::ColorVolume(
-            m_bakedProbeVolume.resolution.x,
-            m_bakedProbeVolume.resolution.y,
-            m_bakedProbeVolume.resolution.z));
+            volume.resolution.x,
+            volume.resolution.y,
+            volume.resolution.z));
         if (!m_bakedProbeTexture)
         {
             return;
         }
 
         std::vector<float> volumePixels;
-        volumePixels.reserve(m_bakedProbeVolume.irradiance.size() * 3);
-        for (const auto &sample : m_bakedProbeVolume.irradiance)
+        volumePixels.reserve(volume.irradiance.size() * 3);
+        for (const auto &sample : volume.irradiance)
         {
             volumePixels.push_back(sample.r);
             volumePixels.push_back(sample.g);
@@ -2330,15 +2333,73 @@ namespace PlutoGE::scene
         m_bakedProbeTexture->Upload3D(GL_RGB, GL_FLOAT, volumePixels.data());
     }
 
-    void Scene::SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume)
+    std::vector<AmbientLightVolumeComponent *> Scene::GetAmbientLightVolumes() const
     {
-        m_bakedProbeVolume = std::move(bakedProbeVolume);
-        RebuildBakedProbeTexture();
+        std::vector<AmbientLightVolumeComponent *> volumes;
+        const auto visit = [&](auto &&self, Entity *entity) -> void {
+            if (!entity) return;
+            if (auto *volume=entity->GetComponent<AmbientLightVolumeComponent>()) volumes.push_back(volume);
+            for (auto *child:entity->GetChildren()) self(self,child);
+        };
+        for (auto *root:m_rootEntities) visit(visit,root);
+        return volumes;
     }
-
+    std::vector<const BakedProbeVolume *> Scene::GetBakedProbeVolumes() const
+    {
+        std::vector<const BakedProbeVolume *> volumes;
+        for (auto *component:GetAmbientLightVolumes())
+            if (component->HasUsableBake()) volumes.push_back(&component->GetBakedVolume());
+        return volumes;
+    }
+    const BakedProbeVolume &Scene::GetBakedProbeVolume() const
+    {
+        for (auto *component:GetAmbientLightVolumes())
+            if (component->HasUsableBake()) return component->GetBakedVolume();
+        static const BakedProbeVolume empty;
+        return empty;
+    }
+    std::uint64_t Scene::GetBakedProbeRevision() const
+    {
+        std::uint64_t hash=1469598103934665603ull;
+        for (auto *component:GetAmbientLightVolumes()) {
+            if (!component->HasUsableBake()) continue;
+            hash=(hash ^ component->GetRevision())*1099511628211ull;
+            hash=(hash ^ component->GetOwner()->GetID())*1099511628211ull;
+        }
+        return hash;
+    }
+    void Scene::SetBakedProbeVolume(BakedProbeVolume volume)
+    {
+        auto components=GetAmbientLightVolumes();
+        auto *component=components.empty() ? nullptr : components.front();
+        if (!component) {
+            auto entity=std::make_unique<Entity>(); entity->SetName("Ambient Light Volume");
+            component=entity->CreateComponent<AmbientLightVolumeComponent>();
+            AddEntity(std::move(entity));
+        }
+        if (volume.IsValid()) {
+            auto *owner=component->GetOwner();
+            glm::mat4 transform(volume.gridBasis);
+            transform[3]=glm::vec4(volume.GridToWorld(glm::vec3(.5f)),1);
+            if (owner->GetParent()) transform=glm::inverse(owner->GetParent()->GetWorldTransform())*transform;
+            owner->SetLocalTransformMatrix(transform);
+            component->SetSize(volume.size);
+        }
+        component->SetBakedVolume(std::move(volume));
+        m_bakedProbeTexture.reset();
+    }
+    render::Texture *Scene::GetBakedProbeTexture() const
+    {
+        const auto revision=GetBakedProbeRevision();
+        if (m_bakedProbeRevision!=revision) {
+            m_bakedProbeTexture.reset(); m_bakedProbeRevision=revision;
+        }
+        if (!m_bakedProbeTexture && HasBakedProbeVolume()) const_cast<Scene *>(this)->RebuildBakedProbeTexture();
+        return m_bakedProbeTexture.get();
+    }
     void Scene::ClearBakedProbeVolume()
     {
-        m_bakedProbeVolume = {};
+        for (auto *component:GetAmbientLightVolumes()) component->ClearBake();
         m_bakedProbeTexture.reset();
     }
 

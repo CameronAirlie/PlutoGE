@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 
 // Editor selection access is validated by EditorShell before panel use.
@@ -461,6 +462,7 @@ namespace PlutoGE::ui
         {
             CreatePresetEntity(EntityPreset::ParticleSystem, parent);
         }
+        if (ImGui::MenuItem("Ambient Light Volume")) CreatePresetEntity(EntityPreset::AmbientLightVolume,parent);
         if (ImGui::MenuItem("IBL Capture"))
         {
             CreatePresetEntity(EntityPreset::IblCapture, parent);
@@ -513,6 +515,9 @@ namespace PlutoGE::ui
             break;
         case EntityPreset::ParticleSystem:
             editLabel = "Create Particle System";
+            break;
+        case EntityPreset::AmbientLightVolume:
+            editLabel="Create Ambient Light Volume";
             break;
         case EntityPreset::IblCapture:
             editLabel = "Create IBL Capture";
@@ -680,6 +685,11 @@ namespace PlutoGE::ui
                                                             {
                                                                 entity->CreateComponent<scene::ParticleSystemComponent>();
                                                             }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::AmbientLightVolume:
+                                                        {
+                                                            if (auto *entity=addEntity("Ambient Light Volume")) entity->CreateComponent<scene::AmbientLightVolumeComponent>();
                                                             break;
                                                         }
                                                         case EntityPreset::IblCapture:

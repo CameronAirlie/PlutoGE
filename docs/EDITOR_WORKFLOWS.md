@@ -1,5 +1,18 @@
 # Editor iteration tools
 
+## Asset processing before Play
+
+Opening a source project validates model inputs and cached generations. Current
+models are reused; changed inputs or missing disposable Library state queue an
+import. The **Asset processing** window shows the current model and phase,
+validation counts, elapsed time and queued imports. Remaining time is unknown
+because model sizes and import costs vary. Cancel stops pending processing.
+
+Clicking Play during processing queues the request and starts automatically once
+validation and imports finish. Routine file watching yields to Play. The Console
+records validation results and import failures. After cache loss, each model can
+recover independently even while other model generations are unavailable.
+
 ## Keep selected play-mode changes
 
 1. Enter play mode and tune entity transforms or serialized component properties.

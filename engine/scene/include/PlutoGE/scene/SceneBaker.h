@@ -1,22 +1,36 @@
 #pragma once
 
 #include <memory>
+#include <optional>
+#include <cstdint>
 #include <string>
+#include <vector>
+#include <glm/glm.hpp>
 
 namespace PlutoGE::scene
 {
     class Scene;
+    struct BakedProbeVolume;
+    struct ReflectionProbePlacement { glm::vec3 position{0}, size{1}; };
 
     struct SceneBakeSettings
     {
         int lightmapResolution = 64;
         int lightmapTileSize = 16;
         int directShadowSampleCount = 8;
-        int probeDirectionCount = 8;
+        int probeDirectionCount = 64;
+        float probeSpacing = 2.0f;
+        float probeSurfaceClearance = 0.02f;
+        std::uint32_t ambientVolumeEntity = 0; // Zero bakes all enabled ambient volume components.
+        std::optional<glm::vec3> probeVolumeOrigin, probeVolumeSize; // Snapshot of component bounds.
+        std::optional<glm::mat3> probeGridBasis;
+        int maxProbeCount = 4096;
         int indirectBounceSampleCount = 6;
         int indirectBounceCount = 2;
         int indirectDenoisePassCount = 2;
         bool bakeProbeVolume = true;
+        bool probesOnly = false;
+        bool logProbeDiagnostics = false; // Read-only source attribution for bake troubleshooting.
         bool bakeIndirectBounce = true;
         bool useGpu = false;
         float probeBounceStrength = 0.65f;
@@ -65,6 +79,8 @@ namespace PlutoGE::scene
     class SceneBaker
     {
     public:
+        static glm::ivec3 CalculateProbeGridResolution(glm::vec3 size, float spacing, int budget);
+        static std::vector<ReflectionProbePlacement> GenerateReflectionProbeLayout(const BakedProbeVolume &volume, int count = 4);
         SceneBakeResult Bake(Scene &scene, const SceneBakeSettings &settings) const;
         SceneBakeResult Bake(Scene &scene) const;
         std::unique_ptr<SceneBakeTask> BeginBake(Scene &scene, const SceneBakeSettings &settings, SceneBakeResult *outImmediateResult = nullptr) const;

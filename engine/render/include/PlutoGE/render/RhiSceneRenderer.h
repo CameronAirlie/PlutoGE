@@ -299,6 +299,9 @@ namespace PlutoGE::render
           std::array<glm::vec4, 9> irradiance{};
       };
       std::unordered_map<const Texture *, CachedIblCapture> m_iblCaptures;
+      rhi::Texture m_diffuseProbeAtlas;
+      const scene::Scene *m_diffuseProbeScene = nullptr;
+      std::uint64_t m_diffuseProbeRevision = 0;
       // One CPU-only job bounds worker count and temporary image memory.
       std::future<std::vector<std::byte>> m_normalMipJob;
       const Texture *m_pendingNormalSource = nullptr;

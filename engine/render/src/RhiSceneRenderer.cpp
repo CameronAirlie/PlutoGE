@@ -219,6 +219,8 @@ namespace PlutoGE::render
         if (m_drawPreparation)
             m_drawPreparation->Reset();
         m_iblCaptures.clear();
+        m_diffuseProbeAtlas = {};
+        m_diffuseProbeScene = nullptr;
         m_meshes.clear();
         m_skinningCache = std::make_shared<SkinningCache>();
         m_reusedSkinningFrame.reset();
@@ -234,6 +236,8 @@ namespace PlutoGE::render
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
         m_iblCaptures.clear();
+        m_diffuseProbeAtlas = {};
+        m_diffuseProbeScene = nullptr;
         m_meshes.clear();
         m_skinningCache = std::make_shared<SkinningCache>();
         m_reusedSkinningFrame.reset();
@@ -845,6 +849,8 @@ namespace PlutoGE::render
                 BasicDraw draw = command.material ? prepareMaterial(command.material).draw : BasicDraw{};
                 draw.mesh = renderMesh;
                 draw.model = command.model;
+                draw.probeDebug = command.probeDebug;
+                if (command.probeDebug.x > 0) draw.contributesToGi = false;
                 draw.castsShadow = draw.castsShadow && command.castsShadow;
                 draw.shadowBoundsCenter = command.worldBounds.center;
                 draw.shadowBoundsRadius = command.worldBounds.radius;
@@ -991,6 +997,46 @@ namespace PlutoGE::render
             }
         }
         if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.iblCaptures = {};
+        if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.diffuseProbeAtlas = {};
+        if (scene && effectiveLighting.localIblEnabled && scene->HasBakedProbeVolume()) {
+            auto volumes=scene->GetBakedProbeVolumes();
+            if (volumes.size()>8) volumes.resize(8);
+            std::size_t count=volumes.size();
+            for (auto *volume:volumes) count+=volume->irradiance.size();
+            const unsigned width=static_cast<unsigned>(std::min<std::size_t>(count,1024));
+            if (!m_diffuseProbeAtlas || m_diffuseProbeScene != scene || m_diffuseProbeRevision != scene->GetBakedProbeRevision()) {
+                const unsigned pages=static_cast<unsigned>((count+width-1)/width);
+                std::vector<glm::vec4> pixels(static_cast<std::size_t>(width)*pages*74);
+                const auto at=[&](std::size_t index,int row)->glm::vec4 & { return pixels[(index/width*74+row)*width+index%width]; };
+                std::size_t base=volumes.size();
+                for (std::size_t v=0;v<volumes.size();++v) {
+                    const auto &volume=*volumes[v];
+                    at(v,0)=glm::vec4(volume.origin,0); at(v,1)=glm::vec4(volume.size,0);
+                    at(v,2)=glm::vec4(glm::vec3(volume.resolution),static_cast<float>(base));
+                    const auto inverseBasis=glm::inverse(volume.gridBasis);
+                    for (int axis=0;axis<3;++axis) at(v,3+axis)=glm::vec4(inverseBasis[0][axis],inverseBasis[1][axis],inverseBasis[2][axis],0);
+                    const bool directional=volume.HasDirectionalData();
+                    const bool normals=directional && volume.visibilityNormals.size()==volume.irradiance.size();
+                    for (std::size_t i=0;i<volume.irradiance.size();++i) {
+                        const int x=static_cast<int>(i%volume.resolution.x), y=static_cast<int>(i/volume.resolution.x%volume.resolution.y), z=static_cast<int>(i/(volume.resolution.x*volume.resolution.y));
+                        at(base+i,0)=directional ? volume.positions[i] : glm::vec4(volume.GridToWorld((glm::vec3(x,y,z)+.5f)/glm::vec3(volume.resolution)),1);
+                        for (int c=0;c<9;++c) at(base+i,1+c)=glm::vec4(directional ? volume.sphericalHarmonics[i][c] : c==0 ? volume.irradiance[i]/.282095f : glm::vec3(0),0);
+                        at(base+i,1).w=normals ? 1.0f : 0.0f;
+                        for (int t=0;t<64;++t) at(base+i,10+t)=glm::vec4(directional ? volume.visibility[i][t] : glm::length(volume.size), normals ? volume.visibilityNormals[i][t] : glm::vec3(0));
+                    }
+                    base+=volume.irradiance.size();
+                }
+                rhi::TextureDescriptor descriptor;
+                descriptor.width=width; descriptor.height=pages*74;
+                descriptor.format=rhi::Format::R32G32B32A32Float;
+                descriptor.debugName="Ambient light volumes: metadata, SH and surface visibility";
+                m_diffuseProbeAtlas=rhi::Texture(*m_device,m_device->CreateTexture(descriptor,std::as_bytes(std::span(pixels))));
+                m_diffuseProbeScene=scene; m_diffuseProbeRevision=scene->GetBakedProbeRevision();
+            }
+            effectiveLighting.diffuseProbeAtlas=m_diffuseProbeAtlas.Get();
+            effectiveLighting.diffuseProbeVolumeCount=static_cast<int>(volumes.size());
+            effectiveLighting.diffuseProbeAtlasWidth=static_cast<int>(width);
+        }
         // Retained HDR faces work independently of the original OpenGL texture.
         std::erase_if(m_iblCaptures, [](const auto &entry) { return entry.second.version.lifetime.expired(); });
         if (scene && effectiveLighting.localIblEnabled)

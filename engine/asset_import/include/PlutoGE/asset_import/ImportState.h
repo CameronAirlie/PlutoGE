@@ -8,6 +8,7 @@
 #include <vector>
 #include <utility>
 #include <stop_token>
+#include <functional>
 
 namespace PlutoGE::assetimport
 {
@@ -55,13 +56,15 @@ namespace PlutoGE::assetimport
         bool automaticImportSafe = false;
     };
 
+    using ImportAuditProgress = std::function<void(std::size_t completed, std::size_t total, const std::string &source)>;
+
     // Read-only authoritative content checks; no parser, sidecar creation, or
     // catalog publication. File watching can schedule this after debouncing.
     bool ReconcileModelImports(const assets::Project &project, std::vector<ImportAssessment> &assessments,
-                               std::string *errorMessage = nullptr, std::stop_token stop = {});
+                               std::string *errorMessage = nullptr, std::stop_token stop = {}, ImportAuditProgress progress = {});
     // Restrict expensive checks to known input owners. Any unindexed event
     // (including generated outputs/cache deletion) falls back to a full audit.
     bool ReconcileChangedModelImports(const assets::Project &project, const std::vector<std::filesystem::path> &changedPaths,
                                       std::vector<ImportAssessment> &assessments, std::string *errorMessage = nullptr,
-                                      std::stop_token stop = {});
+                                      std::stop_token stop = {}, ImportAuditProgress progress = {});
 }

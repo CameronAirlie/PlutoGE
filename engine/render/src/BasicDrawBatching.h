@@ -17,7 +17,7 @@ namespace PlutoGE::render
     // lists retain their original bounds and identities for cache validation.
     inline bool SameBasicDrawSurface(const BasicDraw &a, const BasicDraw &b)
     {
-        return a.normalizedLod == b.normalizedLod
+        return a.normalizedLod == b.normalizedLod && a.probeDebug == b.probeDebug
             && a.baseColor == b.baseColor
             && a.uvScale == b.uvScale
             && a.baseColorTexture == b.baseColorTexture

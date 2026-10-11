@@ -4,7 +4,11 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
+#include "PlutoGE/scene/Entity.h"
 #include <cmath>
 #include <stdexcept>
 
@@ -23,10 +27,12 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
         return pixels;
     };
     scene::IblCaptureComponent component;
+    component.SetAutomaticallyPlaced(true);
     component.SetResolution(resolution);
     require(component.SetCapturePixels(faces({2,0,0})), "Cannot retain HDR capture");
     scene::IblCaptureComponent restored;
     restored.Deserialize(component.Serialize());
+    require(restored.IsAutomaticallyPlaced(), "Generated reflection ownership is not persisted");
     require(restored.GetCaptureTexture() && restored.GetCaptureTexture()->GetTextureID() == 0 &&
         restored.GetCaptureTexture()->GetCubemapPixels()[0] == 2, "Saved HDR capture requires OpenGL or clips highlights");
     require(!restored.SetCapturePixels({}), "Invalid capture replaced the previous result");
@@ -91,6 +97,15 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     const auto reflection = frame();
     if (!(reflection.b > 1.8f && reflection.r < .01f))
         throw std::runtime_error("Specular IBL samples the wrong cubemap face: " + std::to_string(reflection.r) + "," + std::to_string(reflection.g) + "," + std::to_string(reflection.b));
+    command.probeDebug = {2,0};
+    lighting.directionalIntensity = 100;
+    const auto preview = frame();
+    require(preview.b > 1.95f && preview.r < .01f, "Reflection preview adds scene lights or ignores its capture index");
+    command.probeDebug = {3,0};
+    const auto rejected = frame();
+    require(rejected.r > .95f && rejected.g < .04f, "Rejected probe preview is not red or its cached mode is stale");
+    command.probeDebug = {0,0};
+    lighting.directionalIntensity = 0;
     material.SetRoughness(1);
     require(frame().r < .01f, "Rough IBL mips leak neighbouring atlas faces");
     material.SetAlphaMode(AlphaMode::Blend);
@@ -105,5 +120,181 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     require(frame().b > 1.0f, "Non-power-of-two IBL upload failed");
     lighting.localIblEnabled = false;
     require(glm::length(frame()) < .01f, "Capture pass includes local IBL feedback");
+    lighting.localIblEnabled = true;
+    scene.ClearIblCaptureVolumes();
+    material.SetMetallic(0);
+    material.SetRoughness(1);
+    scene::BakedProbeVolume grid;
+    grid.origin = {-2,-2,-2}; grid.size = {4,4,4}; grid.resolution = {2,2,2};
+    grid.irradiance.assign(8, glm::vec3(0,3,0));
+    grid.positions.resize(8);
+    grid.sphericalHarmonics.resize(8);
+    grid.visibility.resize(8);
+    for (int i = 0; i < 8; ++i) {
+        grid.positions[i] = glm::vec4(-1+2*(i%2),-1+2*(i/2%2),-1+2*(i/4),1);
+        grid.sphericalHarmonics[i][0] = glm::vec3(0,3,0)/0.282095f;
+        grid.visibility[i].fill(10);
+    }
+    scene.SetBakedProbeVolume(grid);
+    const auto green = frame();
+    require(green.g > .8f && green.r < .01f && green.b < .01f, "RHI does not sample the diffuse probe grid");
+    // The receiver lies inside a long rotated grid, then outside its narrow
+    // axis while still inside its world AABB. Lookup must use grid coordinates.
+    auto *rotatedComponent=scene.GetAmbientLightVolumes().front();
+    auto *rotatedOwner=rotatedComponent->GetOwner();
+    rotatedOwner->SetRotation({0,0,45}); rotatedComponent->SetSize({4,.5f,4});
+    auto oriented=grid;
+    const auto orientedLayout=rotatedComponent->GetGridLayout();
+    oriented.origin=orientedLayout.origin; oriented.size=orientedLayout.size; oriented.gridBasis=orientedLayout.gridBasis;
+    for (int i=0;i<8;++i) oriented.positions[i]=glm::vec4(oriented.GridToWorld((glm::vec3(i%2,i/2%2,i/4)+.5f)/2.0f),1);
+    scene.SetBakedProbeVolume(oriented);
+    require(frame().g>.8f,"Rotated diffuse volume does not light its interior");
+    rotatedOwner->SetPosition({.9f,-.9f,0});
+    const auto shiftedLayout=rotatedComponent->GetGridLayout();
+    oriented.origin=shiftedLayout.origin;
+    for (auto &position:oriented.positions) position+=glm::vec4(.9f,-.9f,0,0);
+    rotatedComponent->SetBakedVolume(oriented);
+    require(glm::length(frame())<.01f,"Rotated diffuse volume lights points outside its oriented box");
+    rotatedOwner->SetRotation({0,0,0}); rotatedOwner->SetPosition({0,0,0});
+    scene.SetBakedProbeVolume(grid);
+    command.probeDebug = {1,0};
+    const auto diffusePreview = frame();
+    require(std::abs(diffusePreview.g - 3.0f/3.14159265f) < .02f, "Diffuse preview does not evaluate the selected probe's stored SH");
+    command.probeDebug = {0,0};
+    // A planar receiver must stay lit between the coarse octahedral rays.
+    // The old minimum-of-four depths carved repeating dark lobes into this plane.
+    const auto constantGrid = grid;
+    grid.visibilityNormals.resize(8);
+    for (auto &position : grid.positions) position.w = 0;
+    grid.positions[7] = glm::vec4(0,0,1,1);
+    const auto planeDepths = [&](float planeZ) {
+        for (int y = 0; y < 8; ++y) for (int x = 0; x < 8; ++x) {
+            const glm::vec2 oct = (glm::vec2(x,y) + .5f) / 4.0f - 1.0f;
+            glm::vec3 direction(oct, 1 - std::abs(oct.x) - std::abs(oct.y));
+            if (direction.z < 0) {
+                direction.x = (1 - std::abs(oct.y)) * (oct.x >= 0 ? 1 : -1);
+                direction.y = (1 - std::abs(oct.x)) * (oct.y >= 0 ? 1 : -1);
+            }
+            direction = glm::normalize(direction);
+            grid.visibility[7][x+y*8] = direction.z < 0 ? (planeZ-1)/direction.z : 100;
+            grid.visibilityNormals[7][x+y*8] = direction.z < 0 ? glm::vec3(0,0,1) : glm::vec3(0);
+        }
+        scene.SetBakedProbeVolume(grid);
+    };
+    for (const auto offset : {glm::vec2(0), glm::vec2(.7f,-.7f), glm::vec2(-.7f,.7f)}) {
+        grid.positions[7] = glm::vec4(offset,1,1);
+        planeDepths(.5f);
+        frame();
+        const auto planeImage = device.ReadTextureRgbaFloat(renderer.GetColorTexture());
+        for (int y = 1; y < 31; ++y) for (int x = 1; x < 31; ++x)
+            if (std::abs(planeImage[(y*32+x)*4+1] - green.g) >= .02f)
+                throw std::runtime_error("Coarse probe visibility imprints a pattern on an unobstructed plane: " +
+                    std::to_string(x) + "," + std::to_string(y) + " offset " + std::to_string(offset.x) + "," +
+                    std::to_string(offset.y) + " green " + std::to_string(planeImage[(y*32+x)*4+1]) +
+                    " expected " + std::to_string(green.g));
+    }
+    grid.positions[7] = glm::vec4(0,0,1,1);
+    planeDepths(.8f);
+    require(glm::length(frame()) < .01f, "Reconstructed probe visibility leaks through a planar wall");
+    // A centimetre-wide slot must not be crossed by a bias derived from a 2m cell.
+    grid.positions[7] = glm::vec4(0,0,.505f,1);
+    for (int y=0;y<8;++y) for (int x=0;x<8;++x) {
+        const glm::vec2 oct=(glm::vec2(x,y)+.5f)/4.0f-1.0f;
+        glm::vec3 direction(oct,1-std::abs(oct.x)-std::abs(oct.y));
+        if (direction.z<0) {
+            direction.x=(1-std::abs(oct.y))*(oct.x>=0 ? 1 : -1);
+            direction.y=(1-std::abs(oct.x))*(oct.y>=0 ? 1 : -1);
+        }
+        direction=glm::normalize(direction);
+        grid.visibility[7][x+y*8]=std::abs(direction.z)>1e-6f ? .005f/std::abs(direction.z) : 100;
+        grid.visibilityNormals[7][x+y*8]=std::abs(direction.z)>1e-6f ? glm::vec3(0,0,direction.z<0 ? 1 : -1) : glm::vec3(0);
+    }
+    scene.SetBakedProbeVolume(grid);
+    require(frame().g>.8f,"Ambient probe bias or extended hit planes black out a narrow slot");
+    // Samples on the other side of a thin receiver wall used to contribute
+    // their minimum normal weight even though they cannot light its front.
+    grid=constantGrid;
+    for (auto &position:grid.positions) position.z=.49f;
+    scene.SetBakedProbeVolume(grid);
+    require(glm::length(frame())<.01f,"Ambient probes behind a receiver illuminate through its back face");
+    grid = constantGrid;
+    // Revision updates must replace already resident SH/visibility, not reuse stale data.
+    for (auto &depth : grid.visibility) depth.fill(.01f);
+    scene.SetBakedProbeVolume(grid);
+    require(glm::length(frame()) < .01f, "Diffuse probes leak through their visibility walls");
+    for (auto &depth : grid.visibility) depth.fill(10);
+    for (auto &position : grid.positions) position.w = 0;
+    scene.SetBakedProbeVolume(grid);
+    require(glm::length(frame()) < .01f, "Invalid solid-cell probes contribute light");
+    require(scene::SceneBaker::GenerateReflectionProbeLayout(grid).empty(), "Automatic reflections use solid cells");
+    for (auto &position : grid.positions) position.w = 1;
+    for (auto &sh : grid.sphericalHarmonics) {
+        sh[0] = glm::vec3(0,1,0)/0.282095f;
+        sh[2] = glm::vec3(0,1,0)/0.488603f;
+    }
+    scene.SetBakedProbeVolume(grid);
+    require(frame().g < green.g*.85f && frame().g > green.g*.5f, "Probe SH ignores the surface normal");
+    const auto layout = scene::SceneBaker::GenerateReflectionProbeLayout(grid,100);
+    require(layout.size() == 4, "Automatic reflection placement exceeds the RHI capture budget");
+    for (const auto &capture : layout)
+        require(glm::all(glm::greaterThan(capture.size,glm::vec3(0))) &&
+            glm::all(glm::greaterThanEqual(capture.position-capture.size*.5f,grid.origin)) &&
+            glm::all(glm::lessThanEqual(capture.position+capture.size*.5f,grid.origin+grid.size)), "Generated reflection leaves the grid bounds");
+    std::string serialized, error;
+    grid.visibilityNormals.resize(8);
+    grid.visibilityNormals[0][63] = glm::vec3(0,0,1);
+    scene.SetBakedProbeVolume(grid);
+    require(scene::SceneSerializer::SaveToString(scene, serialized, &error), "Cannot serialize directional probes");
+    auto loaded = scene::SceneSerializer::LoadFromString(serialized,&error);
+    require(loaded && loaded->GetBakedProbeVolume().HasDirectionalData() &&
+        glm::length(loaded->GetBakedProbeVolume().sphericalHarmonics[0][2]-grid.sphericalHarmonics[0][2]) < .001f &&
+        loaded->GetBakedProbeVolume().visibility[0][63] == 10 &&
+        loaded->GetBakedProbeVolume().visibilityNormals.size() == 8 &&
+        loaded->GetBakedProbeVolume().visibilityNormals[0][63] == glm::vec3(0,0,1), "Directional probe persistence loses SH or visibility");
+    require(loaded->GetAmbientLightVolumes().size()==1 && serialized.find("PROBE_DIRECTIONAL\t")==std::string::npos,
+        "Baked lighting is not owned exclusively by an entity component");
+    scene::Scene emptyScene;
+    std::string legacy;
+    require(scene::SceneSerializer::SaveToString(emptyScene,legacy,&error),"Cannot prepare legacy scene");
+    legacy+="\nPROBE\t-1,-1,-1\t2,2,2\t1,1,1\nPROBE_SAMPLE\t0,3,0\n";
+    auto migrated=scene::SceneSerializer::LoadFromString(legacy,&error);
+    require(migrated && migrated->GetAmbientLightVolumes().size()==1 && migrated->HasBakedProbeVolume(),
+        "Legacy scene-level lighting was not migrated to an ambient component");
+    auto *componentVolume=scene.GetAmbientLightVolumes().front();
+    const auto revision=scene.GetBakedProbeRevision();
+    componentVolume->SetEnabled(false);
+    require(!scene.HasBakedProbeVolume() && glm::length(frame())<.01f && scene.GetBakedProbeRevision()!=revision,
+        "Disabling the ambient component leaves its baked lighting resident");
+    componentVolume->SetEnabled(true);
+    componentVolume->GetOwner()->SetPosition({10,0,0});
+    require(!scene.HasBakedProbeVolume() && glm::length(frame())<.01f,"Moving a baked volume silently reuses stale geometry lighting");
+    componentVolume->GetOwner()->SetPosition(grid.origin+grid.size*.5f);
+    // A detailed volume wins in overlapping space and removal restores the coarse volume.
+    auto detailEntity=std::make_unique<scene::Entity>();
+    auto *detail=detailEntity->CreateComponent<scene::AmbientLightVolumeComponent>();
+    auto detailGrid=constantGrid; detailGrid.origin={-1,-1,-1}; detailGrid.size={2,2,2};
+    for (int i=0;i<8;++i) {
+        detailGrid.positions[i]=glm::vec4(-.5f+(i%2),-.5f+(i/2%2),-.5f+(i/4),1);
+        detailGrid.sphericalHarmonics[i][0]=glm::vec3(3,0,0)/.282095f;
+    }
+    detail->SetSize(detailGrid.size); detail->SetBakedVolume(detailGrid);
+    auto *detailOwner=scene.AddEntity(std::move(detailEntity));
+    const auto detailLight=frame();
+    require(detailLight.r>.8f && detailLight.g<.01f,"Overlapping ambient volumes ignore the denser component");
+    command.probeDebug={1,8};
+    const auto detailPreview=frame();
+    require(std::abs(detailPreview.r-3.0f/3.14159265f)<.02f && detailPreview.g<.01f,
+        "Debug spheres use the wrong volume's atlas indices");
+    command.probeDebug={0,0};
+    require(scene::SceneSerializer::SaveToString(scene,serialized,&error),"Cannot save multiple ambient components");
+    loaded=scene::SceneSerializer::LoadFromString(serialized,&error);
+    require(loaded && loaded->GetBakedProbeVolumes().size()==2,"Multiple ambient component bakes do not survive loading");
+    scene.RemoveEntity(detailOwner);
+    require(frame().g>.1f && frame().r<.01f,"Removing an ambient component leaves stale atlas indices");
+    lighting.localIblEnabled = false;
+    require(glm::length(frame()) < .01f, "Capture pass includes diffuse grid feedback");
+    lighting.localIblEnabled = true;
+    scene.ClearBakedProbeVolume();
+    require(glm::length(frame()) < .01f, "Cleared grid remains resident in RHI lighting");
     renderer.Shutdown();
 }

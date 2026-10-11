@@ -297,6 +297,7 @@ namespace PlutoGE::scene
     std::vector<Property> IblCaptureComponent::Serialize() const
     {
         auto properties = SerializeEditableProperties();
+        properties.push_back({"Automatically Placed", PropertyType::Bool, m_automaticallyPlaced ? "true" : "false"});
         properties.push_back({"Capture Pixels", PropertyType::String, m_capturePixels.empty()
                                                                ? std::string{}
                                                                : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()),
@@ -320,7 +321,8 @@ namespace PlutoGE::scene
     {
         for (const auto &property : properties)
         {
-            if (property.name == "Size")
+            if (property.name == "Automatically Placed") m_automaticallyPlaced = property.value == "true";
+            else if (property.name == "Size")
             {
                 SetSize(ParseVec3(property.value, m_size));
             }

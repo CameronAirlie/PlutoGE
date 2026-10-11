@@ -36,7 +36,7 @@ namespace PlutoGE::render
                 const bool common = valid && !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels &&
                        materialRevision == revision && input.mesh == command.mesh &&
                        input.material == command.material && input.submeshIndex == command.submeshIndex &&
-                       input.lodIndex == command.lodIndex && input.castsShadow == command.castsShadow;
+                       input.lodIndex == command.lodIndex && input.castsShadow == command.castsShadow && input.probeDebug == command.probeDebug;
                 if (!common) return false;
                 if (command.sourceObject && command.sourceRevision)
                     return input.sourceObject == command.sourceObject && input.sourceRevision == command.sourceRevision;

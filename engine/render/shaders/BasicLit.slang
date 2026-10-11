@@ -20,6 +20,8 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(29, 0)]] Sampler2D iblAtlas2 : register(t29, space0);
 [[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
 
+[[vk::binding(31, 0)]] Sampler2D diffuseProbeAtlas : register(t31, space0);
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -42,6 +44,7 @@ struct VertexOutput
     float objectDebug : TEXCOORD5;
     float outlineWidth : TEXCOORD6;
     float2 uv2 : TEXCOORD7;
+    nointerpolation float2 probeDebug : TEXCOORD8;
 };
 
 struct FragmentOutput
@@ -88,7 +91,159 @@ cbuffer CameraParameters : register(b0, space0)
     float4 iblSizeBlend[4];
     float4 iblSettings[4];
     float4 iblIrradiance[36];
+    float4 probeOrigin, probeSize, probeResolution;
 };
+
+float4 probeTexel(int index, int row)
+{
+    const int width = int(probeResolution.w);
+    return diffuseProbeAtlas.Load(int3(index % width, (index / width) * 74 + row, 0));
+}
+
+int2 probeVisibilityTexel(int2 texel)
+{
+    // Octahedral edges join the opposite half of the same edge.
+    if (texel.x < 0 || texel.x >= 8) {
+        texel.x = texel.x < 0 ? -texel.x-1 : 15-texel.x;
+        texel.y = 7-texel.y;
+    }
+    if (texel.y < 0 || texel.y >= 8) {
+        texel.y = texel.y < 0 ? -texel.y-1 : 15-texel.y;
+        texel.x = 7-texel.x;
+    }
+    return texel;
+}
+
+float3 probeVisibilityPoint(int index, int2 texel)
+{
+    texel = probeVisibilityTexel(texel);
+    const float2 oct = (float2(texel) + 0.5) / 4.0 - 1.0;
+    float3 direction = float3(oct, 1.0 - abs(oct.x) - abs(oct.y));
+    if (direction.z < 0)
+        direction.xy = (1.0 - abs(oct.yx)) * float2(oct.x >= 0 ? 1 : -1, oct.y >= 0 ? 1 : -1);
+    return normalize(direction) * probeTexel(index, 10 + texel.x + texel.y * 8).x;
+}
+
+float probeVisibility(int index, float3 direction, float receiverDistance, float bias)
+{
+    float2 oct = direction.xy / max(abs(direction.x) + abs(direction.y) + abs(direction.z), 0.0001);
+    if (direction.z < 0)
+        oct = (1 - abs(oct.yx)) * float2(oct.x >= 0 ? 1 : -1, oct.y >= 0 ? 1 : -1);
+    const float2 coordinate = (oct * 0.5 + 0.5) * 8 - 0.5;
+    if (probeTexel(index, 1).w > 0.5) {
+        const int2 cell = int2(floor(coordinate));
+        const float2 fraction = frac(coordinate);
+        float visibility = 0;
+        for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
+            const int2 texel = probeVisibilityTexel(cell + int2(x,y));
+            const float4 surface = probeTexel(index, 10 + texel.x + texel.y * 8);
+            const float3 hitPoint = probeVisibilityPoint(index, texel);
+            const float denominator = dot(surface.yzw, direction);
+            float depth = surface.x;
+            if (dot(surface.yzw, surface.yzw) > 0.5 && abs(denominator) > 0.00001) {
+                const float planeDepth = dot(surface.yzw, hitPoint) / denominator;
+                // A visibility texel describes a finite angular footprint, not an
+                // infinite plane. At silhouettes (stair risers, wall ends), distant
+                // plane extensions must not occlude an unrelated narrow passage.
+                const float footprint = max(surface.x * 0.5, bias);
+                if (planeDepth > 0 && length(direction * planeDepth - hitPoint) <= footprint)
+                    depth = planeDepth;
+                else {
+                    // If the receiver lies on this plane it is unoccluded even
+                    // at grazing angles, where projection spans multiple texels.
+                    const float planeSeparation = dot(surface.yzw, direction * receiverDistance - hitPoint);
+                    if (abs(planeSeparation) <= bias * 2) depth = receiverDistance + bias;
+                }
+            }
+            const float2 w = lerp(1-fraction, fraction, float2(x,y));
+            const float visible = 1-smoothstep(depth + bias, depth + bias*2, receiverDistance);
+            visibility += visible * w.x * w.y;
+        }
+        return visibility;
+    }
+    // Keep a full triangle at the map edges. Extrapolating its plane also
+    // preserves planar receivers across the octahedral map's seams.
+    const int2 cell = clamp(int2(floor(coordinate)), int2(0), int2(6));
+    const float2 fraction = coordinate - float2(cell);
+    const float3 a = probeVisibilityPoint(index, cell);
+    const float3 b = probeVisibilityPoint(index, cell + int2(1, 0));
+    const float3 c = probeVisibilityPoint(index, cell + int2(0, 1));
+    const float3 d = probeVisibilityPoint(index, cell + int2(1, 1));
+    const float3 planeNormal = fraction.x + fraction.y <= 1 ? cross(b-a, c-a) : cross(c-d, b-d);
+    const float3 planePoint = fraction.x + fraction.y <= 1 ? a : d;
+    const float denominator = dot(planeNormal, direction);
+    const float distance = abs(denominator) > 1e-8 ? dot(planeNormal, planePoint) / denominator : -1;
+    // Degenerate/discontinuous samples must not produce infinite or negative depths.
+    const float visibleDistance = distance > 0 ? distance : min(min(length(a), length(b)), min(length(c), length(d)));
+    return receiverDistance <= visibleDistance + bias ? 1 : 0;
+}
+
+// Eight cell neighbours, visibility rejection, normal weighting and normalized
+// interpolation. Invalid/occluded probes never contribute light across walls.
+float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base)
+{
+    if (any(uvw < 0) || any(uvw > 1)) return float4(0);
+    const int3 resolution = int3(res);
+    const float3 grid = uvw * res - 0.5;
+    const int3 cell = int3(floor(grid));
+    const float3 fraction = frac(grid);
+    const float basis[9] = {0.282095, 0.488603*normal.y, 0.488603*normal.z, 0.488603*normal.x,
+        1.092548*normal.x*normal.y, 1.092548*normal.y*normal.z, 0.315392*(3*normal.z*normal.z-1),
+        1.092548*normal.x*normal.z, 0.546274*(normal.x*normal.x-normal.y*normal.y)};
+    float3 irradiance = float3(0);
+    float sum = 0;
+    const float bias = min(0.002, min(size.x/res.x, min(size.y/res.y, size.z/res.z)) * 0.01);
+    for (int z = 0; z < 2; ++z) for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
+        const int3 c = clamp(cell + int3(x,y,z), int3(0), resolution - 1);
+        const int index = base + c.x + resolution.x * (c.y + resolution.y * c.z);
+        const float4 probe = probeTexel(index, 0);
+        if (probe.w < 0.5) continue;
+        // A probe on the back side of the receiver cannot illuminate its
+        // front face. In particular, a visibility hit on the wall itself is
+        // not permission to transfer lighting through that wall.
+        if (dot(receiverNormal, probe.xyz-position) < -bias) continue;
+        const float3 delta = position + receiverNormal * bias - probe.xyz;
+        const float distance = length(delta);
+        const float3 direction = delta / max(distance, 0.0001);
+        const float visibility = probeVisibility(index, direction, distance, bias);
+        if (visibility <= 0) continue;
+        const float3 w = lerp(1-fraction, fraction, float3(x,y,z));
+        const float weight = w.x*w.y*w.z * max(0.05, dot(receiverNormal, -direction)) * visibility;
+        float3 light = float3(0);
+        for (int k = 0; k < 9; ++k) light += probeTexel(index,1+k).rgb * basis[k];
+        irradiance += max(light,0.0) * weight;
+        sum += weight;
+    }
+    // Within the baked volume, missing visibility means darkness, not fallback
+    // sky lighting, which would otherwise reintroduce leaks through solid walls.
+    return float4(irradiance / max(sum,0.00001), 1);
+}
+
+float3 diffuseVolumeCoordinates(int index, float3 position)
+{
+    const float3 delta=position-probeTexel(index,0).xyz;
+    const float3 x=probeTexel(index,3).xyz, y=probeTexel(index,4).xyz, z=probeTexel(index,5).xyz;
+    // Old/manual atlas headers with no basis describe world-aligned grids.
+    const float3 local=dot(x,x)>0 ? float3(dot(x,delta),dot(y,delta),dot(z,delta)) : delta;
+    return local/probeTexel(index,1).xyz;
+}
+
+float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
+{
+    int selected = -1;
+    float finest = 1e30;
+    for (int i=0; i<int(probeOrigin.w); ++i) {
+        const float3 origin=probeTexel(i,0).xyz, size=probeTexel(i,1).xyz;
+        const float3 uvw=diffuseVolumeCoordinates(i,position);
+        if (any(uvw<0) || any(uvw>1)) continue;
+        const float3 cellSize=size/probeTexel(i,2).xyz;
+        const float spacing=max(cellSize.x,max(cellSize.y,cellSize.z));
+        if (spacing<finest) { finest=spacing; selected=i; }
+    }
+    if (selected<0) return float4(0);
+    const float4 resolution=probeTexel(selected,2);
+    return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(selected,position),probeTexel(selected,1).xyz,resolution.xyz,int(resolution.w));
+}
 
 float iblWeight(int index, float3 position)
 {
@@ -755,6 +910,7 @@ VertexOutput vertexMain(VertexInput input)
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
     output.previousClip = mul(previousViewProjection, graphWorldPosition(previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,objectDebugParameters.y));
     output.objectDebug = objectDebugParameters.x;
+    output.probeDebug = objectDebugParameters.zw;
     output.outlineWidth = objectDebugParameters.y;
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
@@ -784,6 +940,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
     output.previousClip = mul(previousViewProjection, graphWorldPosition(instance.previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,instance.debugParameters.y));
     output.objectDebug = instance.debugParameters.x;
+    output.probeDebug = instance.debugParameters.zw;
     output.outlineWidth = instance.debugParameters.y;
     output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
     output.uv = input.uv;
@@ -1057,6 +1214,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                            (1.0 - materialRoughness * 0.45);
         ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
     }
+    // Use the actual receiver plane for hemisphere rejection and ray offsets;
+    // normal maps affect SH evaluation, not which side of a wall a probe is on.
+    float3 ambientReceiverNormal=pointReceiverNormal;
+    if (dot(ambientReceiverNormal,input.worldNormal)<0) ambientReceiverNormal=-ambientReceiverNormal;
+    if ((transparentPass || alphaMode==2) && dot(ambientReceiverNormal,normal)<0) ambientReceiverNormal=-ambientReceiverNormal;
+    const float4 gridIrradiance = sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal);
+    if (gridIrradiance.w > 0) {
+        const float3 fresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
+        ambient = gridIrradiance.rgb * sampledColor.rgb * (1.0-fresnel) * (1.0-materialMetallic) / PI;
+    }
     {
         float3 capturedAmbient = float3(0);
         float weightSum = 0;
@@ -1066,7 +1233,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             const float weight = iblWeight(i, input.worldPosition);
             if (weight > 0)
             {
-                const float3 diffuse = iblDiffuse(i, normal) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
+                const float3 diffuse = (gridIrradiance.w > 0 ? gridIrradiance.rgb : iblDiffuse(i, normal)) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
                 const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * fresnel * (1.0 - materialRoughness * 0.45);
                 capturedAmbient += (diffuse + specular) * weight;
             }
@@ -1157,6 +1324,31 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 // rather than each other: Slang cannot link an entry point that calls another.
 FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
 {
+    if (input.probeDebug.x > 0.5) {
+        const float3 n = normalize(input.worldNormal);
+        const int index = int(input.probeDebug.y);
+        float3 color = float3(1,0.025,0.025);
+        if (input.probeDebug.x < 1.5 && probeOrigin.w > 0.5) {
+            const float basis[9] = {0.282095,0.488603*n.y,0.488603*n.z,0.488603*n.x,
+                1.092548*n.x*n.y,1.092548*n.y*n.z,0.315392*(3*n.z*n.z-1),
+                1.092548*n.x*n.z,0.546274*(n.x*n.x-n.y*n.y)};
+            color = float3(0);
+            for (int c = 0; c < 9; ++c) color += probeTexel(index+int(probeOrigin.w),1+c).rgb*basis[c];
+            color = max(color,0.0)/PI;
+        }
+        else if (input.probeDebug.x > 1.5 && input.probeDebug.x < 2.5 && iblSettings[index].x > 0.5) {
+            const float3 centre = iblOriginIntensity[index].xyz+iblSizeBlend[index].xyz*0.5;
+            color = iblRadiance(index,centre,reflect(-normalize(cameraPositionAmbient.xyz-input.worldPosition),n),roughness);
+        }
+        FragmentOutput output;
+        output.color = float4(color,1);
+        output.normal = float4(n*0.5+0.5,1);
+        output.material = float4(0,1,0,1);
+        output.motion = float4((input.currentClip.xy/max(abs(input.currentClip.w),0.00001)-input.previousClip.xy/max(abs(input.previousClip.w),0.00001))*0.5,0,1);
+        output.albedo = float4(0,0,0,1);
+        output.debug = float4(0,0,1,1);
+        return output;
+    }
     // The shared opaque pipeline has culling disabled. Preserve the culling
     // used by the transparent pipeline when rendering its solid coverage.
     if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;

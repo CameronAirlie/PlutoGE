@@ -1,18 +1,48 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
+#include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
+#include "PlutoGE/ui/DebugDrawUI.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <array>
 #include <cmath>
+#include <thread>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <filesystem>
+#include <fstream>
 
 int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
     using namespace render;
+    // Budget pressure must preserve world-space density in elongated volumes,
+    // regardless of whether their short axis is vertical or horizontal.
+    for (const auto size : {glm::vec3(100,10,100),glm::vec3(10,100,100),glm::vec3(100,100,10)}) {
+        const auto resolution=scene::SceneBaker::CalculateProbeGridResolution(size,1,4096);
+        const auto cell=size/glm::vec3(resolution);
+        const float largest=std::max({cell.x,cell.y,cell.z}), smallest=std::min({cell.x,cell.y,cell.z});
+        if (resolution.x*resolution.y*resolution.z>4096 || largest/smallest>1.25f)
+            throw std::runtime_error("Probe budget creates anisotropic world-space spacing");
+    }
+    if (scene::SceneBaker::CalculateProbeGridResolution({8,4,2},1,4096)!=glm::ivec3(8,4,2) ||
+        scene::SceneBaker::CalculateProbeGridResolution({100,1,100},.05f,8)!=glm::ivec3(2))
+        throw std::runtime_error("Probe resolution ignores requested spacing or minimum budget");
     const auto api = argc > 1 && std::string_view(argv[1]) == "--opengl"
         ? rhi::GraphicsApi::OpenGL : rhi::GraphicsApi::Vulkan;
     auto &engine = core::Engine::GetInstance();
@@ -20,6 +50,98 @@ int main(int argc, char **argv) try
     config.windowConfig.visible = false; config.windowConfig.width = config.windowConfig.height = 64;
     if (!engine.Initialize(config)) throw std::runtime_error("Cannot initialize capture engine");
     struct Cleanup { core::Engine &engine; ~Cleanup() { engine.Shutdown(); } } cleanup{engine};
+    // Authored-scene troubleshooting keeps all asset/bake writes disabled.
+    if (argc>3 && std::string_view(argv[1])=="--scene-bake") {
+        engine.GetAssetManager().SetProjectContext(argv[2],"Assets",1);
+        std::string error;
+        auto authored=scene::SceneSerializer::Load(argv[3],&error);
+        if (!authored) throw std::runtime_error("Cannot load authored scene: "+error);
+        std::cout << "Authored ambient volumes=" << authored->GetAmbientLightVolumes().size() << std::endl;
+        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        options.probeBounceStrength=1; options.logProbeDiagnostics=true;
+        const auto result=scene::SceneBaker().Bake(*authored,options);
+        if (!result.succeeded) throw std::runtime_error(result.message);
+        std::cout << "Authored scene diagnostic bake completed without saving: " << result.message << std::endl;
+        return 0;
+    }
+    // Reproduce split-model imports: each object renders a selected section
+    // of a shared mesh. Unselected distant geometry must not enter the bake.
+    {
+        MeshConfig split;
+        for (float x : {0.0f,1000.0f,2000.0f}) {
+            const auto base=static_cast<uint32_t>(split.data.vertices.size());
+            for (auto p : {glm::vec3(x,0,0),glm::vec3(x+1,0,0),glm::vec3(x,1,0)})
+                split.data.vertices.push_back({{p.x,p.y,p.z},{0,0,1},{0,0},{1,0,0,1}});
+            Submesh section; section.indexOffset=static_cast<uint32_t>(split.data.indices.size()); section.indexCount=3;
+            split.submeshes.push_back(section);
+            for (auto i : {0u,1u,2u}) split.data.indices.push_back(base+i);
+        }
+        Mesh shared(split); Material material;
+        for (int count : {1,2}) {
+            scene::Scene selected;
+            auto object=std::make_unique<scene::Entity>();
+            auto *component=object->AddComponent(new scene::MeshComponent({}));
+            component->SetMesh(&shared); component->SetMaterial(&material); component->SetStatic(true);
+            component->SetSubmeshRange(0,count); component->SetSubmeshPositionOffset(0,{10,0,0});
+            selected.AddEntity(std::move(object));
+            scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+            options.maxProbeCount=8; options.probeDirectionCount=8;
+            const auto baked=scene::SceneBaker().Bake(selected,options);
+            const auto &volume=selected.GetBakedProbeVolume();
+            const float expectedExtent=count==1 ? 1.0f : 991.0f;
+            if (!baked.succeeded || std::abs(volume.origin.x-(10-expectedExtent*.05f))>.01f ||
+                std::abs(volume.size.x-expectedExtent*1.1f)>.01f)
+                throw std::runtime_error("Bake includes unselected shared mesh sections or ignores section offsets");
+            if (!component->GenerateLightmapUvAtlasForSubmeshes({0}) ||
+                component->GetMesh()->GetMeshData().indices.size()!=static_cast<std::size_t>(count*3) ||
+                shared.GetMeshData().indices.size()!=9)
+                throw std::runtime_error("Fallback UVs clone unselected geometry or mutate shared source");
+            if (count==1 && api==rhi::GraphicsApi::OpenGL) {
+                auto lamp=std::make_unique<scene::Entity>();
+                auto *light=lamp->AddComponent(new scene::LightComponent());
+                light->GetLight().type=scene::LightType::Directional;
+                light->GetLight().direction={0,0,-1}; light->SetStatic(true);
+                selected.AddEntity(std::move(lamp));
+                selected.SetFilePath("shared_section_bake_regression.plutoscene");
+                options.probesOnly=false; options.bakeProbeVolume=false;
+                options.lightmapResolution=8; options.directShadowSampleCount=1;
+                auto task=scene::SceneBaker().BeginBake(selected,options);
+                if (!task) throw std::runtime_error("Cannot start lightmap regression bake");
+                while (!task->IsFinished()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                const auto result=task->Finalize(selected);
+                if (!result.succeeded || result.bakedLightmapCount!=1 ||
+                    !component->GetMaterialForSubmesh(0)->GetConfig().lightmapTexture ||
+                    task->Finalize(selected).bakedLightmapCount!=1)
+                    throw std::runtime_error("Disk-backed lightmap upload or repeated finalization failed: "+result.message);
+            }
+            component->SetSubmeshIndex(2);
+            if (component->GetMesh()!=&shared || component->GetMesh()->GetSubmesh(2).indexCount!=3)
+                throw std::runtime_error("Changing selection loses geometry after a compact fallback unwrap");
+        }
+    }
+    // Optional read-only stress check with the real Bistro geometry. No project
+    // files or bake outputs are written by an ambient-only bake.
+    if (argc>2 && std::string(argv[1])=="--bistro") {
+        assets::AssetManager reader;
+        reader.SetProjectContext(argv[2],"Assets",1);
+        MeshConfig imported; std::vector<std::string> references; assets::MeshAssetMetadata metadata; std::string error;
+        if (!reader.LoadMeshAssetData("project://Imported/Bistro_Godot/Bistro_Godot.plutomesh",imported,references,metadata,&error))
+            throw std::runtime_error(error);
+        Mesh shared(imported); imported=MeshConfig{}; Material material;
+        scene::Scene bistro;
+        for (std::size_t index=0; index<shared.GetSubmeshCount(); ++index) {
+            auto object=std::make_unique<scene::Entity>();
+            auto *component=object->AddComponent(new scene::MeshComponent({}));
+            component->SetMesh(&shared); component->SetMaterial(&material); component->SetStatic(true);
+            component->SetSubmeshIndex(static_cast<int>(index)); bistro.AddEntity(std::move(object));
+        }
+        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        options.maxProbeCount=4096; options.probeDirectionCount=128; options.probeSpacing=.05f;
+        const auto baked=scene::SceneBaker().Bake(bistro,options);
+        if (!baked.succeeded) throw std::runtime_error("Bistro bake failed: "+baked.message);
+        std::cout << "Bistro shared-section stress bake completed: " << baked.message << std::endl;
+        return 0;
+    }
     scene::Scene scene;
     ui::EditorSceneRenderService service;
     if (!service.Initialize(api, engine.GetRenderDevice())) throw std::runtime_error("Cannot initialize capture service");
@@ -68,6 +190,199 @@ int main(int argc, char **argv) try
         }
     }
     if (!service.CaptureIbl({0,0,0},0,10,commands,scene).empty()) throw std::runtime_error("Invalid capture size accepted");
+    // Exercise the real asynchronous baker with an emissive room and a closed
+    // solid at the central grid cell. No lightmaps or static lights are required.
+    for (unsigned i = 0; i < meshes.size(); ++i) {
+        auto entity = std::make_unique<scene::Entity>();
+        auto *component = entity->AddComponent(new scene::MeshComponent({}));
+        materials[i]->SetCastsShadow(true);
+        component->SetMesh(meshes[i].get()); component->SetMaterial(materials[i].get()); component->SetStatic(true);
+        scene.AddEntity(std::move(entity));
+    }
+    MeshConfig solid;
+    for (unsigned face = 0; face < 6; ++face) {
+        const auto right = glm::cross(directions[face],ups[face]);
+        const auto base = static_cast<unsigned>(solid.data.vertices.size());
+        for (glm::vec2 c : {glm::vec2(-1,-1),glm::vec2(1,-1),glm::vec2(1,1),glm::vec2(-1,1)}) {
+            const auto p = (directions[face]+right*c.x+ups[face]*c.y)*.35f;
+            const auto n = directions[face];
+            solid.data.vertices.push_back({{p.x,p.y,p.z},{n.x,n.y,n.z},{0,0},{1,0,0,1}});
+        }
+        for (unsigned index : {0u,2u,1u,0u,3u,2u}) solid.data.indices.push_back(base+index);
+    }
+    Mesh solidMesh(solid);
+    Material solidMaterial;
+    auto solidEntity = std::make_unique<scene::Entity>();
+    auto *solidComponent = solidEntity->AddComponent(new scene::MeshComponent({}));
+    solidComponent->SetMesh(&solidMesh); solidComponent->SetMaterial(&solidMaterial); solidComponent->SetStatic(true);
+    scene.AddEntity(std::move(solidEntity));
+    scene::SceneBakeSettings settings;
+    settings.probesOnly = true; settings.bakeIndirectBounce = false;
+    settings.probeSpacing = 1; settings.maxProbeCount = 125; settings.probeDirectionCount = 128;
+    const auto result = scene::SceneBaker().Bake(scene,settings);
+    const auto &grid = scene.GetBakedProbeVolume();
+    if (!result.succeeded || !grid.HasDirectionalData() || result.bakedLightmapCount != 0 || grid.positions.size() > 125 ||
+        grid.visibilityNormals.size() != grid.positions.size())
+        throw std::runtime_error("Ambient-only bake failed, exceeded budget or baked unwanted lightmaps: "+result.message);
+    std::size_t closest = 0;
+    int valid = 0; float light = 0;
+    bool hasVisibilitySurface = false;
+    for (std::size_t i = 0; i < grid.positions.size(); ++i) {
+        if (glm::length(glm::vec3(grid.positions[i])) < glm::length(glm::vec3(grid.positions[closest]))) closest = i;
+        if (grid.positions[i].w > .5f) { ++valid; light += glm::length(grid.sphericalHarmonics[i][0]); }
+        for (const auto &normal : grid.visibilityNormals[i])
+            hasVisibilitySurface = hasVisibilitySurface || glm::dot(normal,normal) > .9f;
+    }
+    if (grid.positions[closest].w != 0 || valid == 0 || light <= 0 || !hasVisibilitySurface)
+        throw std::runtime_error("Probe placement failed to reject the solid centre or capture emissive room lighting");
+    const auto layout = scene::SceneBaker::GenerateReflectionProbeLayout(grid);
+    if (layout.size() != 4) throw std::runtime_error("Sparse reflection layout was not generated from valid grid cells");
+    // Bake a component tightly around a 1cm gap. Clearance used to relocate
+    // these probes through the opposing surface and invalidate the whole slot.
+    MeshConfig slotConfig;
+    for (int side=0;side<2;++side) {
+        const float z=.5f+side*.01f;
+        const unsigned base=static_cast<unsigned>(slotConfig.data.vertices.size());
+        const glm::vec3 normal(0,0,side ? -1 : 1);
+        for (auto p:{glm::vec3(-.2f,-.2f,z),glm::vec3(.2f,-.2f,z),glm::vec3(.2f,.2f,z),glm::vec3(-.2f,.2f,z)})
+            slotConfig.data.vertices.push_back({{p.x,p.y,p.z},{normal.x,normal.y,normal.z},{0,0},{1,0,0,1}});
+        if (side) slotConfig.data.indices.insert(slotConfig.data.indices.end(),{base,base+2,base+1,base,base+3,base+2});
+        else slotConfig.data.indices.insert(slotConfig.data.indices.end(),{base,base+1,base+2,base,base+2,base+3});
+    }
+    Mesh slotMesh(slotConfig);
+    auto slotGeometry=std::make_unique<scene::Entity>();
+    auto *slotComponent=slotGeometry->AddComponent(new scene::MeshComponent({&slotMesh,&solidMaterial}));
+    slotComponent->SetStatic(true); scene.AddEntity(std::move(slotGeometry));
+    const auto originalRevision=scene.GetAmbientLightVolumes().front()->GetRevision();
+    auto slotEntity=std::make_unique<scene::Entity>(); slotEntity->SetPosition({0,0,.505f});
+    auto *slot=slotEntity->CreateComponent<scene::AmbientLightVolumeComponent>();
+    slot->SetSize({.2f,.2f,.01f}); slot->Configure(.05f,.02f,64,64);
+    auto *slotOwner=scene.AddEntity(std::move(slotEntity));
+    settings.ambientVolumeEntity=slotOwner->GetID();
+    const auto slotResult=scene::SceneBaker().Bake(scene,settings);
+    if (!slotResult.succeeded || !slot->HasUsableBake() || scene.GetAmbientLightVolumes().front()->GetRevision()!=originalRevision)
+        throw std::runtime_error("Targeted component bake altered another volume or ignored its bounds");
+    for (const auto &position:slot->GetBakedVolume().positions)
+        if (position.w<.5f || position.z<=.5f || position.z>=.51f)
+            throw std::runtime_error("Probe relocation escaped a narrow gap or rejected free space");
+    // Grid axes, debug bounds and saved data must follow arbitrary rotations,
+    // including a rotated child under a non-uniformly scaled parent.
+    auto parent=std::make_unique<scene::Entity>(); parent->SetRotation({17,31,9}); parent->SetScale({2,1,3});
+    auto *parentOwner=scene.AddEntity(std::move(parent));
+    auto rotated=std::make_unique<scene::Entity>(); rotated->SetPosition({10,20,30}); rotated->SetRotation({23,47,61});
+    auto *rotatedVolume=rotated->CreateComponent<scene::AmbientLightVolumeComponent>();
+    rotatedVolume->SetSize({4,2,1}); rotatedVolume->Configure(1,.001f,64,64);
+    auto *rotatedOwner=scene.AddEntity(std::move(rotated)); rotatedOwner->SetParent(parentOwner);
+    const auto expectedLayout=rotatedVolume->GetGridLayout();
+    for (auto uvw:{glm::vec3(0),glm::vec3(1),glm::vec3(.2f,.4f,.7f)}) {
+        const auto expected=glm::vec3(rotatedVolume->GetVolumeTransform()*glm::vec4(uvw-glm::vec3(.5f),1));
+        if (glm::length(expectedLayout.GridToWorld(uvw)-expected)>.0001f ||
+            glm::length(expectedLayout.WorldToGrid(expected)-uvw)>.0001f)
+            throw std::runtime_error("Rotated/parented grid disagrees with the volume's displayed box");
+    }
+    settings.ambientVolumeEntity=rotatedOwner->GetID();
+    const auto rotatedResult=scene::SceneBaker().Bake(scene,settings);
+    if (!rotatedResult.succeeded || !rotatedVolume->HasUsableBake())
+        throw std::runtime_error("Rotated component bake is unusable");
+    const auto &rotatedGrid=rotatedVolume->GetBakedVolume();
+    for (std::size_t i=0;i<rotatedGrid.positions.size();++i) {
+        const auto r=rotatedGrid.resolution;
+        const auto uvw=(glm::vec3(i%r.x,i/r.x%r.y,i/(r.x*r.y))+.5f)/glm::vec3(r);
+        if (glm::length(glm::vec3(rotatedGrid.positions[i])-expectedLayout.GridToWorld(uvw))>.0002f)
+            throw std::runtime_error("Baked probes ignore the oriented volume transform");
+    }
+    scene::AmbientLightVolumeComponent restored; restored.Deserialize(rotatedVolume->Serialize());
+    if (glm::length(restored.GetBakedVolume().GridToWorld({.2f,.4f,.7f})-expectedLayout.GridToWorld({.2f,.4f,.7f}))>.0002f)
+        throw std::runtime_error("Ambient volume persistence discards grid orientation");
+    rotatedOwner->SetRotation({23,48,61});
+    if (rotatedVolume->HasUsableBake()) throw std::runtime_error("Rotation reuses stale baked lighting");
+    settings.ambientVolumeEntity=0;
+    scene::Scene outdoor;
+    auto floorEntity = std::make_unique<scene::Entity>();
+    // The lower room face supplies upward-facing static geometry with no emission.
+    auto *floor = floorEntity->AddComponent(new scene::MeshComponent({meshes[6].get(),&solidMaterial}));
+    floor->SetStatic(true);
+    outdoor.AddEntity(std::move(floorEntity));
+    auto skyEntity = std::make_unique<scene::Entity>();
+    skyEntity->AddComponent(new scene::PhysicalSkyComponent());
+    outdoor.AddEntity(std::move(skyEntity));
+    const auto skyResult = scene::SceneBaker().Bake(outdoor,settings);
+    float skyLight = 0;
+    for (const auto &sh : outdoor.GetBakedProbeVolume().sphericalHarmonics) skyLight += glm::length(sh[0]);
+    if (!skyResult.succeeded || skyLight <= 0) throw std::runtime_error("Unoccluded diffuse probes discard physical sky radiance");
+    // A per-volume direction override must sample exactly the same sky as
+    // the equivalent global setting, rather than reusing another quadrature.
+    auto *skyVolume=outdoor.GetAmbientLightVolumes().front();
+    skyVolume->Configure(1,.02f,64,128);
+    auto overridden=settings; overridden.probeDirectionCount=64;
+    if (!scene::SceneBaker().Bake(outdoor,overridden).succeeded)
+        throw std::runtime_error("Cannot bake per-volume sky quadrature");
+    const auto overrideSh=skyVolume->GetBakedVolume().sphericalHarmonics;
+    overridden.probeDirectionCount=128;
+    if (!scene::SceneBaker().Bake(outdoor,overridden).succeeded)
+        throw std::runtime_error("Cannot bake matching sky quadrature");
+    const auto &matchingSh=skyVolume->GetBakedVolume().sphericalHarmonics;
+    if (overrideSh.size()!=matchingSh.size()) throw std::runtime_error("Sky quadrature changes the grid");
+    for (std::size_t i=0;i<overrideSh.size();++i) for (int c=0;c<9;++c)
+        if (glm::length(overrideSh[i][c]-matchingSh[i][c])>.00001f)
+            throw std::runtime_error("Per-volume sky sampling uses radiance from incorrect directions");
+    scene::Scene previewScene;
+    scene::BakedProbeVolume previewGrid;
+    previewGrid.origin = {-1,-1,-1}; previewGrid.size = {2,2,2}; previewGrid.resolution = {1,1,1};
+    previewGrid.irradiance = {{0,3,0}}; previewGrid.positions = {{0,0,0,1}};
+    previewGrid.sphericalHarmonics.resize(1); previewGrid.sphericalHarmonics[0][0] = glm::vec3(0,3,0)/.282095f;
+    previewGrid.visibility.resize(1); previewGrid.visibility[0].fill(10);
+    previewScene.SetBakedProbeVolume(previewGrid);
+    auto &debug = ui::GetAmbientProbeDebugSettings();
+    debug.diffuse = true; debug.diffuseRadius = .5f;
+    service.SetAmbientProbeDebugEnabled(true);
+    CameraData previewCamera;
+    previewCamera.view = glm::lookAt(glm::vec3(0,0,5),glm::vec3(0),glm::vec3(0,1,0));
+    previewCamera.projection = api == rhi::GraphicsApi::Vulkan
+        ? glm::perspectiveRH_ZO(glm::radians(45.0f),1.0f,.1f,100.0f)
+        : glm::perspectiveRH_NO(glm::radians(45.0f),1.0f,.1f,100.0f);
+    previewCamera.renderRuntimeUI = false;
+    const auto sphereFrame = [&] {
+        if (!service.Render(64,64,previewCamera,{},{},{},&previewScene,PostProcessDebugView::None))
+            throw std::runtime_error(service.GetLastRenderError());
+        std::vector<std::byte> image;
+        if (api == rhi::GraphicsApi::Vulkan) {
+            image = static_cast<rhi::vulkan::VulkanDevice *>(engine.GetRenderDevice())->ReadTextureRgba8(service.GetViewportTexture());
+        } else {
+            image.resize(64*64*4);
+            const auto texture = static_cast<rhi::opengl::OpenGLDevice *>(engine.GetRenderDevice())->GetTextureNativeHandle(service.GetViewportTexture());
+            GLint previous = 0;
+            glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+            glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(texture));
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,image.data());
+            glBindTexture(GL_TEXTURE_2D,previous);
+        }
+        const auto at = (32*64+32)*4;
+        return glm::vec3(std::to_integer<unsigned>(image.at(at)),std::to_integer<unsigned>(image.at(at+1)),std::to_integer<unsigned>(image.at(at+2)))/255.0f;
+    };
+    service.SetAmbientProbeDebugEnabled(false);
+    const auto background = sphereFrame();
+    service.SetAmbientProbeDebugEnabled(true);
+    const auto sphere = sphereFrame();
+    if (sphere.g < .8f || sphere.r > .02f) throw std::runtime_error("Scene viewport did not generate the shaded diffuse sphere");
+    debug.diffuse = false;
+    if (glm::length(sphereFrame()-background) > .02f) throw std::runtime_error("Disabled probe spheres remain in the viewport");
+    scene::IblCaptureComponent previewCapture;
+    previewCapture.SetResolution(32);
+    std::vector<float> blueFaces(32*32*24,0);
+    for (std::size_t i=0; i<blueFaces.size(); i+=4) { blueFaces[i+2]=2; blueFaces[i+3]=1; }
+    if (!previewCapture.SetCapturePixels(blueFaces)) throw std::runtime_error("Cannot prepare reflection preview capture");
+    auto previewVolume = previewCapture.BuildCaptureVolume();
+    previewVolume.origin = {-1,-1,-1}; previewVolume.size = {2,2,2};
+    previewScene.AddIblCaptureVolume(previewVolume);
+    debug.reflections = true;
+    const auto chrome = sphereFrame();
+    if (chrome.b < .95f || chrome.r > .02f || chrome.g > .02f) throw std::runtime_error("Viewport chrome sphere does not show the capture's radiance");
+    debug.reflections = false;
+    debug.diffuse = true;
+    service.SetAmbientProbeDebugEnabled(false);
+    if (glm::length(sphereFrame()-background) > .02f) throw std::runtime_error("Probe overlays escaped into a viewport without debug enabled");
+    debug = {};
     std::cout << "PASS: six linear HDR IBL faces captured through RHI\n";
     return 0;
 }

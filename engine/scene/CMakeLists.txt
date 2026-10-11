@@ -38,6 +38,7 @@ add_library(PlutoGEScene
     src/components/DecalComponent.cpp
     src/components/FoliageComponent.cpp
     src/components/IblCaptureComponent.cpp
+    src/components/AmbientLightVolumeComponent.cpp
     src/components/LightComponent.cpp
     src/components/PhysicalSkyComponent.cpp
     src/components/ParticleSystemComponent.cpp

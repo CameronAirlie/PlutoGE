@@ -2,6 +2,10 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/DebugDrawUI.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/RenderCommand.h"
+#include <numeric>
 
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
@@ -160,6 +164,8 @@ namespace PlutoGE::ui
         if (m_sceneRenderer)
             m_sceneRenderer->Shutdown();
         m_sceneRenderer.reset();
+        m_probeDebugSphere.reset();
+        m_probeDebugMaterial.reset();
         m_device = nullptr;
         m_ownedDevice.reset();
         m_viewportTexture = {};
@@ -250,6 +256,63 @@ namespace PlutoGE::ui
 
 
         auto atmosphereEffects = render::BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
+        std::vector<render::RenderCommand> debugCommands;
+        std::vector<const render::RenderCommand *> debugViewCommands;
+        const auto &debug = GetAmbientProbeDebugSettings();
+        if (m_ambientProbeDebugEnabled && scene && (debug.diffuse || debug.reflections || debug.rejected)) {
+            if (!m_probeDebugSphere) m_probeDebugSphere.reset(render::Mesh::Sphere(12,20));
+            if (!m_probeDebugMaterial) {
+                render::MaterialConfig config; config.castsShadow = false;
+                m_probeDebugMaterial = std::make_unique<render::Material>(config);
+            }
+            m_probeDebugMaterial->SetRoughness(debug.reflectionRoughness);
+            const auto append = [&](glm::vec3 position, float radius, int mode, int index) {
+                render::RenderCommand command;
+                command.mesh = m_probeDebugSphere.get(); command.material = m_probeDebugMaterial.get();
+                command.model = glm::translate(glm::mat4(1),position)*glm::scale(glm::mat4(1),glm::vec3(radius*2));
+                command.previousModel = command.model;
+                command.worldBounds.center = position; command.worldBounds.radius = radius;
+                command.previousWorldBounds = command.worldBounds;
+                command.castsShadow = false; command.probeDebug = glm::vec2(mode,index);
+                debugCommands.push_back(command);
+            };
+            if (debug.diffuse || debug.rejected) {
+                struct Preview { glm::vec3 position; int index; bool valid; };
+                std::vector<Preview> probes;
+                auto volumes=scene->GetBakedProbeVolumes(); if(volumes.size()>8) volumes.resize(8);
+                int base=0;
+                for (auto *grid:volumes) {
+                    const auto &volume=*grid; const bool directional=volume.HasDirectionalData();
+                    const auto r=volume.resolution;
+                    for (std::size_t i=0;i<volume.irradiance.size();++i) {
+                        const bool valid=!directional || volume.positions[i].w>.5f;
+                        if ((valid && debug.diffuse) || (!valid && debug.rejected)) {
+                            const auto position=directional ? glm::vec3(volume.positions[i]) : volume.GridToWorld((glm::vec3(i%r.x,i/r.x%r.y,i/(r.x*r.y))+.5f)/glm::vec3(r));
+                            probes.push_back({position,base+static_cast<int>(i),valid});
+                        }
+                    }
+                    base+=static_cast<int>(volume.irradiance.size());
+                }
+                const auto camera=glm::vec3(glm::inverse(cameraData.view)[3]);
+                const auto limit=std::min(probes.size(),static_cast<std::size_t>(std::clamp(debug.maxDiffuseSpheres,16,2048)));
+                std::partial_sort(probes.begin(),probes.begin()+limit,probes.end(),[&](const auto &a,const auto &b) {
+                    return glm::dot(a.position-camera,a.position-camera)<glm::dot(b.position-camera,b.position-camera);
+                });
+                for (std::size_t i=0;i<limit;++i) append(probes[i].position,std::clamp(debug.diffuseRadius,.03f,1.0f),probes[i].valid ? 1 : 3,probes[i].index);
+            }
+            if (debug.reflections) {
+                int index=0;
+                for (const auto &capture : scene->GetIblCaptureVolumes()) {
+                    if (!capture.IsValid() || capture.environmentMapTexture->GetCubemapPixels().empty()) continue;
+                    append(capture.origin+capture.size*0.5f,std::clamp(debug.reflectionRadius,0.1f,3.0f),2,index++);
+                    if (index==scene::kMaxIblCaptureVolumes) break;
+                }
+            }
+            debugViewCommands.reserve(commands.size()+debugCommands.size());
+            for (const auto &command : commands) debugViewCommands.push_back(&command);
+            for (const auto &command : debugCommands) debugViewCommands.push_back(&command);
+            commands = render::RenderCommandView(debugViewCommands);
+        }
 
         preparationScope.End();
         try

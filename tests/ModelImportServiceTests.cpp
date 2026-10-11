@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <tuple>
 #include <iterator>
 #include <map>
 #include <cstring>
@@ -469,6 +470,13 @@ Connections: {
                 assessments.front().sourceReference == "sentinel", "Cancelled reconciliation changed caller output");
         assessments.clear();
         const auto beforeReconcile = Snapshot(scratch.root);
+        std::vector<std::tuple<std::size_t, std::size_t, std::string>> auditProgress;
+        Require(assetimport::ReconcileModelImports(project, assessments, &error, {},
+            [&](std::size_t completed, std::size_t total, const std::string &source) { auditProgress.emplace_back(completed, total, source); }), error);
+        Require(auditProgress.size() >= 3 && std::get<0>(auditProgress.front()) == 0 &&
+                std::get<0>(auditProgress.back()) == 1 && std::get<1>(auditProgress.back()) == 1 &&
+                std::get<2>(auditProgress.back()).empty() && !std::get<2>(auditProgress[1]).empty(),
+                "Asset audit progress omitted source or completion counts");
         Require(assetimport::ReconcileModelImports(project, assessments, &error) && assessments.size() == 1 &&
                 assessments.front().status == assetimport::ImportReconciliationStatus::Current,
                 "Accepted import did not reconcile as current: " + error);
@@ -1680,6 +1688,28 @@ Connections: {
             std::string authored3;
             Require(assets::SerializeAssetReference(extracted3.identity, authored3) &&
                 std::find(remapped3.begin(), remapped3.end(), authored3) != remapped3.end(), "Library rebuild lost authored remap");
+        }
+        // Recover sources independently after losing a multi-model Library.
+        {
+            Scratch recovery;
+            const auto recoveryAssets = recovery.root / "Assets";
+            std::filesystem::create_directories(recoveryAssets);
+            Write(recoveryAssets / "First.fbx", fixture);
+            Write(recoveryAssets / "Second.fbx", fixture);
+            assets::ProjectManifest manifest;
+            manifest.name = "Multi-source recovery"; manifest.assetDirectory = "Assets"; manifest.assetPipelineVersion = 3;
+            assets::Project recoveryProject(recovery.root / "Recovery.plutoproject", manifest);
+            assetimport::ModelImportResult first, second;
+            Require(service.Import(recoveryProject, {.sourceReference="project://First.fbx"}, first, &error), error);
+            Require(service.Import(recoveryProject, {.sourceReference="project://Second.fbx"}, second, &error), error);
+            first.storage.reset(); second.storage.reset();
+            std::filesystem::remove_all(recovery.root / "Library");
+            Require(service.Import(recoveryProject, {.sourceReference="project://First.fbx"}, first, &error), "First model recovery blocked by second missing cache: " + error);
+            Require(service.Import(recoveryProject, {.sourceReference="project://Second.fbx"}, second, &error), "Second model recovery failed: " + error);
+            std::vector<assetimport::ImportAssessment> recovered;
+            Require(assetimport::ReconcileModelImports(recoveryProject, recovered, &error) && recovered.size() == 2 &&
+                std::all_of(recovered.begin(), recovered.end(), [](const auto &a) { return a.status == assetimport::ImportReconciliationStatus::Current; }),
+                "Recovered models were queued again on subsequent validation: " + error);
         }
         std::cout << "Headless model import service tests passed\n";
         return 0;

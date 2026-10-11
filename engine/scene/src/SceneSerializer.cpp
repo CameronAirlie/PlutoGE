@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
@@ -275,6 +276,7 @@ namespace PlutoGE::scene
             {
                 return "ColliderComponent";
             }
+            if (dynamic_cast<const AmbientLightVolumeComponent *>(&component)) return "AmbientLightVolumeComponent";
             if (dynamic_cast<const IblCaptureComponent *>(&component))
             {
                 return "IblCaptureComponent";
@@ -391,6 +393,7 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<ColliderComponent>();
             }
+            if (componentType == "AmbientLightVolumeComponent") return std::make_unique<AmbientLightVolumeComponent>();
             if (componentType == "IblCaptureComponent")
             {
                 return std::make_unique<IblCaptureComponent>();
@@ -598,20 +601,6 @@ namespace PlutoGE::scene
                        << captureVolume.intensity << '\t'
                        << captureVolume.blendDistance << '\n';
             }
-
-            const auto &probeVolume = scene.GetBakedProbeVolume();
-            if (probeVolume.IsValid())
-            {
-                output << "PROBE\t"
-                       << SerializeVec3(probeVolume.origin) << '\t'
-                       << SerializeVec3(probeVolume.size) << '\t'
-                       << SerializeIVec3(probeVolume.resolution) << '\n';
-                for (const auto &sample : probeVolume.irradiance)
-                {
-                    output << "PROBE_SAMPLE\t" << SerializeVec3(sample) << '\n';
-                }
-            }
-
 
             for (const auto *entity : entities)
             {
@@ -1009,9 +998,29 @@ namespace PlutoGE::scene
                     bakedProbeVolume.size = ParseVec3(tokens[2]);
                     bakedProbeVolume.resolution = ParseIVec3(tokens[3]);
                     bakedProbeVolume.irradiance.clear();
+                    bakedProbeVolume.positions.clear();
+                    bakedProbeVolume.sphericalHarmonics.clear();
+                    bakedProbeVolume.visibility.clear();
+                    bakedProbeVolume.visibilityNormals.clear();
                     continue;
                 }
 
+                if (tokens[0] == "PROBE_DIRECTIONAL" && tokens.size() == 76) {
+                    bakedProbeVolume.positions.emplace_back(ParseVec3(tokens[1]), std::stof(tokens[2]));
+                    std::array<glm::vec3, 9> sh{};
+                    std::array<float, 64> visibility{};
+                    for (int c = 0; c < 9; ++c) sh[c] = ParseVec3(tokens[3 + c]);
+                    for (int c = 0; c < 64; ++c) visibility[c] = std::stof(tokens[12 + c]);
+                    bakedProbeVolume.sphericalHarmonics.push_back(sh);
+                    bakedProbeVolume.visibility.push_back(visibility);
+                    continue;
+                }
+                if (tokens[0] == "PROBE_VISIBILITY_NORMALS" && tokens.size() == 65) {
+                    std::array<glm::vec3, 64> normals{};
+                    for (int c = 0; c < 64; ++c) normals[c] = ParseVec3(tokens[1+c]);
+                    bakedProbeVolume.visibilityNormals.push_back(normals);
+                    continue;
+                }
                 if (tokens[0] == "PROBE_SAMPLE" && tokens.size() >= 2)
                 {
                     bakedProbeVolume.irradiance.push_back(ParseVec3(tokens[1]));

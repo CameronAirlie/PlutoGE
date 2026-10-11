@@ -9,6 +9,9 @@ the OpenGL compatibility default. New projects inherit the active editor API.
 
 ## Backends and shaders
 
+For automated local ambient lighting and sparse reflection captures, see
+[ambient probe grids](ambient-probe-grids.md).
+
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
 Vulkan scene rendering uses `RhiSceneRenderer`/`BasicRenderer`; the engine also
 retains its legacy OpenGL render-pass pipeline. A feature in that legacy pipeline

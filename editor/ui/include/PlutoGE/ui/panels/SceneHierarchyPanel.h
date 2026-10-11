@@ -44,6 +44,7 @@ namespace PlutoGE::ui
             Cloth,
             ParticleSystem,
             IblCapture,
+            AmbientLightVolume,
         };
 
         void RenderRootDropTarget();

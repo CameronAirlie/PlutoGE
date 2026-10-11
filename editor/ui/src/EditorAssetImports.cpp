@@ -47,6 +47,8 @@ namespace PlutoGE::ui
         assetimport::ModelImportRequest request{.sourceReference=std::move(sourceReference), .options=options, .forceReimport=forceReimport};
         if (!m_modelImportTask->Start(*m_project, std::move(request), errorMessage)) return false;
         m_activeModelImportEpoch = m_assetContextEpoch;
+        m_activeModelImportSource = queuedSource;
+        m_activeModelImportStarted = std::chrono::steady_clock::now();
         std::erase(m_pendingModelImports, queuedSource);
         m_modelImportErrors.erase(queuedSource);
         m_lastModelImportError.clear();
@@ -79,15 +81,27 @@ namespace PlutoGE::ui
 
     bool EditorShell::IsModelImportRunning() const
     {
-        return m_importWatchFuture.valid() || m_assetReconciliation.valid() || m_assetReconciliationRequested || !m_pendingModelImports.empty() ||
+        return m_assetRefreshPending || m_importWatchFuture.valid() || m_assetReconciliation.valid() || m_assetReconciliationRequested || !m_pendingModelImports.empty() ||
                (m_modelImportTask && m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready);
     }
 
     std::string EditorShell::GetModelImportProgress() const
     {
-        if (m_assetReconciliation.valid() || m_assetReconciliationRequested) return "Checking source asset state";
+        if (m_assetReconciliation.valid() || m_assetReconciliationRequested)
+        {
+            if (!m_assetAuditProgress || m_assetReconciliationRequested) return "Preparing cached asset validation";
+            std::lock_guard lock(m_assetAuditProgress->mutex);
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - m_assetAuditProgress->started).count();
+            return "Validating cached assets: " + std::to_string(m_assetAuditProgress->completed) + "/" +
+                std::to_string(m_assetAuditProgress->total) + " models, " + std::to_string(seconds) + "s elapsed" +
+                (m_assetAuditProgress->source.empty() ? std::string{} : " - " + m_assetAuditProgress->source);
+        }
         if (m_importWatchFuture.valid()) return "Checking source file changes";
-        if (m_modelImportTask && m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready) return m_modelImportTask->GetProgress();
+        if (m_modelImportTask && m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready)
+        {
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - m_activeModelImportStarted).count();
+            return m_modelImportTask->GetProgress() + ": " + m_activeModelImportSource + " (" + std::to_string(seconds) + "s elapsed)";
+        }
         return m_pendingModelImports.empty() ? std::string{} : "Queued model imports: " + std::to_string(m_pendingModelImports.size());
     }
 
@@ -155,7 +169,11 @@ namespace PlutoGE::ui
                 m_lastModelImportError = completion->error;
                 m_modelImportErrors[completion->sourceReference] = completion->error;
                 if (!completion->succeeded)
-                    Log(ConsoleSeverity::Error, "Model import failed: " + completion->sourceReference + ": " + completion->error);
+                {
+                    m_pendingRuntimeStart = false;
+                    m_statusMessage = "Model import failed: " + completion->sourceReference + ": " + completion->error;
+                    Log(ConsoleSeverity::Error, m_statusMessage);
+                }
                 else
                 {
                     if (PublishModelImportResult(completion->sourceReference, completion->result, m_activeModelAssetSnapshot, &m_lastModelImportError))
@@ -174,6 +192,17 @@ namespace PlutoGE::ui
                 if (m_project && completion.contextEpoch == m_assetContextEpoch && completion.projectPath == m_project->GetManifestPath() &&
                     !completion.cancelled && !m_assetReconciliationStop.stop_requested())
                 {
+                    if (completion.baseline)
+                    {
+                        m_importWatchDebouncer.Observe(std::move(*completion.baseline), std::chrono::steady_clock::now());
+                        m_importWatchPrimed = true;
+                    }
+                    if (completion.succeeded)
+                    {
+                        const auto current = std::count_if(completion.assessments.begin(), completion.assessments.end(), [](const auto &a) { return a.status == assetimport::ImportReconciliationStatus::Current; });
+                        m_statusMessage = "Asset validation complete: " + std::to_string(current) + "/" + std::to_string(completion.assessments.size()) + " models already current.";
+                        Log(ConsoleSeverity::Info, m_statusMessage);
+                    }
                     if (!completion.succeeded && !completion.cancelled)
                         Log(ConsoleSeverity::Error, "Cannot reconcile model imports: " + completion.error);
                     else if (completion.succeeded)
@@ -215,17 +244,29 @@ namespace PlutoGE::ui
             if (m_project->GetManifest().assetPipelineVersion < 2) return;
             m_assetReconciliationStop = std::stop_source{};
             const auto stop = m_assetReconciliationStop.get_token();
+            m_assetAuditProgress = std::make_shared<AssetAuditProgress>();
             try
             {
                 m_assetReconciliation = std::async(std::launch::async,
-                    [project = *m_project, epoch = m_assetContextEpoch, stop, changedPaths = std::move(m_reconciliationChangedPaths)]() mutable
+                    [project = *m_project, epoch = m_assetContextEpoch, stop, progress = m_assetAuditProgress, captureBaseline = !m_importWatchPrimed, changedPaths = std::move(m_reconciliationChangedPaths)]() mutable
                     {
                         AssetReconciliationCompletion completion{.projectPath=project.GetManifestPath(), .contextEpoch=epoch};
                         assets::ProjectAssetLock lock;
                         if (lock.TryAcquire(project.GetRootDirectory(), &completion.error))
+                        {
+                            if (captureBaseline)
+                            {
+                                assetimport::ImportWatchSnapshot baseline;
+                                if (assetimport::CaptureImportWatchSnapshot(project, baseline, nullptr, stop)) completion.baseline = std::move(baseline);
+                            }
+                            const auto report = [progress](std::size_t completed, std::size_t total, const std::string &source) {
+                                std::lock_guard guard(progress->mutex);
+                                progress->completed = completed; progress->total = total; progress->source = source;
+                            };
                             completion.succeeded = changedPaths.empty()
-                                ? assetimport::ReconcileModelImports(project, completion.assessments, &completion.error, stop)
-                                : assetimport::ReconcileChangedModelImports(project, changedPaths, completion.assessments, &completion.error, stop);
+                                ? assetimport::ReconcileModelImports(project, completion.assessments, &completion.error, stop, report)
+                                : assetimport::ReconcileChangedModelImports(project, changedPaths, completion.assessments, &completion.error, stop, report);
+                        }
                         completion.cancelled = stop.stop_requested();
                         return completion;
                     });
@@ -282,7 +323,7 @@ namespace PlutoGE::ui
             m_nextImportWatch = now + std::chrono::seconds(1);
         }
         if (!m_project || m_project->GetManifest().assetPipelineVersion < 2 || m_engine.IsRuntimeRunning() ||
-            m_assetRefreshPending || m_assetReconciliationRequested || m_assetReconciliation.valid() || !m_pendingModelImports.empty() || now < m_nextImportWatch) return;
+            m_pendingRuntimeStart || m_assetRefreshPending || m_assetReconciliationRequested || m_assetReconciliation.valid() || !m_pendingModelImports.empty() || now < m_nextImportWatch) return;
         m_nextImportWatch = now + std::chrono::seconds(1);
         m_importWatchStop = std::stop_source{};
         const auto stop = m_importWatchStop.get_token();

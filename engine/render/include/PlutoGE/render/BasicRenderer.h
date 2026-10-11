@@ -300,6 +300,7 @@ namespace PlutoGE::render
         float attenuationDistance = 1.0f;
         bool twoSided = false;
         float outlineWidth = 0.0f;
+        glm::vec2 probeDebug{0};
         glm::vec3 outlineColor{0.0f};
         bool outlinePass = false;
         std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
@@ -434,6 +435,10 @@ namespace PlutoGE::render
         float ambientIntensity = 0.3f;
         std::array<BasicIblCapture, 4> iblCaptures{};
         bool localIblEnabled = true;
+        rhi::TextureHandle diffuseProbeAtlas;
+        glm::vec3 diffuseProbeOrigin{0}, diffuseProbeSize{1};
+        glm::ivec3 diffuseProbeResolution{0};
+        int diffuseProbeVolumeCount = 0, diffuseProbeAtlasWidth = 0;
         // Directional environment used by the RHI PBR path. Physical sky
         // parameters share the layout used by the sky post-process pass so
         // the background and surface lighting cannot drift apart.

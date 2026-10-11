@@ -121,8 +121,9 @@ namespace PlutoGE::render
             glm::vec4 pointParameters{0.0f};
             std::array<glm::vec4, 4> iblOriginIntensity{}, iblSizeBlend{}, iblSettings{};
             std::array<glm::vec4, 36> iblIrradiance{};
+            glm::vec4 probeOrigin{}, probeSize{}, probeResolution{};
         };
-        static_assert(sizeof(BasicFrameParameters) == 5264);
+        static_assert(sizeof(BasicFrameParameters) == 5312);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -569,6 +570,7 @@ namespace PlutoGE::render
                 {28,0,28,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {29,0,29,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {30,0,30,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
+                {31,0,31,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {26,1,18,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {22,1,14,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
                 {23,1,15,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::AllGraphics},
@@ -1922,6 +1924,9 @@ namespace PlutoGE::render
                 std::floor(std::log2(std::max(capture.resolution, 1.0f))), 0);
             std::copy(capture.irradiance.begin(), capture.irradiance.end(), frameParameters.iblIrradiance.begin() + i * 9);
         }
+        frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
+        frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
+        frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -2502,6 +2507,7 @@ namespace PlutoGE::render
             if (!geometryResourcesBound)
             {
                 commands.BindUniformBuffer(0, m_cameraBuffer.Get());
+                commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
                 for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
                     commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
             }
@@ -2517,7 +2523,7 @@ namespace PlutoGE::render
                 const BasicObjectParameters objectParameters{
                     model,
                     m_hasPreviousFrame ? previousModel : model,
-                    glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, 0.0f, 0.0f)};
+                    glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y)};
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
                 // each draw's history even when current transforms match.
@@ -2665,7 +2671,7 @@ namespace PlutoGE::render
                             const auto &previous = hasPrevious ? (*draw.previousInstanceModels)[first + instance] : model;
                             movingInstances |= model != previous;
                             parameters.instances[instance] = {model, previous,
-                                glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, 0.0f, 0.0f)};
+                                glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y)};
                         }
                         std::size_t instanceKey = 0;
                         HashBatchValue(instanceKey, draw.instanceModels.get());

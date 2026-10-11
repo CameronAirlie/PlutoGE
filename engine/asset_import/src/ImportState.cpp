@@ -188,7 +188,7 @@ namespace PlutoGE::assetimport
     }
 
     static bool ReconcileModelImportsImpl(const assets::Project &project, std::vector<ImportAssessment> &assessments, std::string *errorMessage, std::stop_token stop,
-                                          const std::vector<std::string> *selectedSources)
+                                          const std::vector<std::string> *selectedSources, const ImportAuditProgress &progress)
     {
         try
         {
@@ -212,6 +212,10 @@ namespace PlutoGE::assetimport
                 source.status = assets::LoadAssetMetadata(assets::GetAssetMetadataPath(project.ResolveAssetReference(entry.reference)), source.value, &source.error);
                 if (source.status == assets::AssetMetadataStatus::Success) ++ownerCounts[source.value.id];
             }
+            const auto total = std::count_if(inventory.GetManifest().assetEntries.begin(), inventory.GetManifest().assetEntries.end(), [&](const auto &entry) {
+                return entry.type == assets::ProjectAssetType::Model && (!selectedSources || std::find(selectedSources->begin(), selectedSources->end(), entry.reference) != selectedSources->end());
+            });
+            if (progress) progress(0, total, {});
             std::vector<ImportAssessment> candidate;
             ImportStateStore states(project.GetRootDirectory());
             ArtifactCache cache(project.GetRootDirectory() / "Library/Artifacts");
@@ -220,6 +224,7 @@ namespace PlutoGE::assetimport
                 if (stop.stop_requested()) return Fail(errorMessage, "Import reconciliation cancelled.");
                 if (entry.type != assets::ProjectAssetType::Model) continue;
                 if (selectedSources && std::find(selectedSources->begin(), selectedSources->end(), entry.reference) == selectedSources->end()) continue;
+                if (progress) progress(candidate.size(), total, entry.reference);
                 ImportAssessment assessment{entry.reference};
                 assessment.automaticImportSafe = !std::filesystem::is_regular_file(assets::FindModelManifestPath(project, entry.reference));
                 const auto &source = sourceMetadata.at(entry.reference);
@@ -304,19 +309,20 @@ namespace PlutoGE::assetimport
             }
             std::sort(candidate.begin(), candidate.end(), [](const auto &a, const auto &b) { return a.sourceReference < b.sourceReference; });
             if (stop.stop_requested()) return Fail(errorMessage, "Import reconciliation cancelled.");
+            if (progress) progress(candidate.size(), total, {});
             assessments = std::move(candidate);
             if (errorMessage) errorMessage->clear();
             return true;
         }
         catch (const std::exception &exception) { return Fail(errorMessage, exception.what()); }
     }
-    bool ReconcileModelImports(const assets::Project &project, std::vector<ImportAssessment> &assessments, std::string *errorMessage, std::stop_token stop)
+    bool ReconcileModelImports(const assets::Project &project, std::vector<ImportAssessment> &assessments, std::string *errorMessage, std::stop_token stop, ImportAuditProgress progress)
     {
-        return ReconcileModelImportsImpl(project, assessments, errorMessage, stop, nullptr);
+        return ReconcileModelImportsImpl(project, assessments, errorMessage, stop, nullptr, progress);
     }
 
     bool ReconcileChangedModelImports(const assets::Project &project, const std::vector<std::filesystem::path> &changedPaths,
-                                      std::vector<ImportAssessment> &assessments, std::string *errorMessage, std::stop_token stop)
+                                      std::vector<ImportAssessment> &assessments, std::string *errorMessage, std::stop_token stop, ImportAuditProgress progress)
     {
         if (stop.stop_requested()) return Fail(errorMessage, "Import reconciliation cancelled.");
         if (std::any_of(changedPaths.begin(), changedPaths.end(), [](const auto &path) { return !path.is_absolute(); }))
@@ -325,7 +331,7 @@ namespace PlutoGE::assetimport
         bool covered = false;
         // Invalid/missing index data must not suppress authoritative diagnostics.
         const bool indexed = FindAffectedModelImports(project, changedPaths, sources, nullptr, &covered);
-        return ReconcileModelImportsImpl(project, assessments, errorMessage, stop, indexed && covered ? &sources : nullptr);
+        return ReconcileModelImportsImpl(project, assessments, errorMessage, stop, indexed && covered ? &sources : nullptr, progress);
     }
 
 }

@@ -119,7 +119,7 @@ namespace PlutoGE::assetimport
         if (!transaction.Publish(assetRoot, outputs, errorMessage)) return ModelCacheRestoreStatus::Failed;
         context.progress("Validating asset database");
         assets::AssetDatabase database;
-        if (!database.Scan(context.project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false}, errorMessage)) return ModelCacheRestoreStatus::Failed;
+        if (!database.Scan(context.project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false, .allowUnavailableImportedStorage=true}, errorMessage)) return ModelCacheRestoreStatus::Failed;
         std::vector<std::string> changedAssets;
         for (const auto &output : generation.outputs) changedAssets.push_back(reference(output.relativePath));
         ModelImportResult candidate{database.GetCatalog(), UsesLibraryModelStorage(project) ? context.request.sourceReference : manifestReference, true, std::move(changedAssets), context.metadata.id, database.GetStorageMap()};

@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/scene/SceneBaker.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -8,6 +9,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -43,6 +45,8 @@ namespace PlutoGE::scene
 
         void LogBakeMessage(const std::string &message)
         {
+            static std::mutex logMutex;
+            const std::lock_guard lock(logMutex);
             std::cout << "[SceneBaker] " << message << std::endl;
         }
 
@@ -175,10 +179,10 @@ namespace PlutoGE::scene
             }
         }
 
-        std::vector<BakeLight> SnapshotStaticLights(const Scene &scene)
+        std::vector<BakeLight> SnapshotStaticLights(const Scene &scene, bool includeDynamic = false)
         {
             std::vector<BakeLight> lights;
-            const auto collectLights = [&lights](const Entity *entity, auto &self) -> void
+            const auto collectLights = [&lights, includeDynamic](const Entity *entity, auto &self) -> void
             {
                 if (!entity || !entity->IsActive())
                 {
@@ -193,7 +197,7 @@ namespace PlutoGE::scene
                     }
 
                     const auto &light = lightComponent->GetLight();
-                    if (!light.isStatic)
+                    if (!includeDynamic && !light.isStatic)
                     {
                         continue;
                     }
@@ -240,52 +244,6 @@ namespace PlutoGE::scene
             return lights;
         }
 
-        bool SceneHasDynamicMeshes(const Scene &scene)
-        {
-            auto collectEntitiesRecursive = [](const Entity *entity, auto &self, std::vector<const Entity *> &entities) -> void
-            {
-                if (!entity || !entity->IsActive())
-                {
-                    return;
-                }
-
-                entities.push_back(entity);
-                for (auto *child : entity->GetChildren())
-                {
-                    self(child, self, entities);
-                }
-            };
-
-            std::vector<const Entity *> entities;
-            for (auto *rootEntity : scene.GetRootEntities())
-            {
-                if (rootEntity)
-                {
-                    collectEntitiesRecursive(rootEntity, collectEntitiesRecursive, entities);
-                }
-            }
-
-            for (const auto *entity : entities)
-            {
-                const auto *meshComponent = entity ? entity->GetComponent<MeshComponent>() : nullptr;
-                if (meshComponent && meshComponent->IsEnabled() && meshComponent->GetMesh() && !meshComponent->IsStatic())
-                {
-                    return true;
-                }
-                const auto *foliageComponent = entity ? entity->GetComponent<FoliageComponent>() : nullptr;
-                if (foliageComponent && foliageComponent->IsEnabled() &&
-                    foliageComponent->GetTotalInstanceCount() > 0)
-                {
-                    // Instanced foliage cannot share a conventional lightmap
-                    // atlas, so it receives baked irradiance from probes even
-                    // when its geometry is marked Static.
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         glm::vec2 ResolveBakeUv(const render::MeshVertexData &vertex, bool useLightmapUvs)
         {
             return useLightmapUvs ? glm::vec2(vertex.uv2[0], vertex.uv2[1]) : glm::vec2(vertex.uv[0], vertex.uv[1]);
@@ -293,7 +251,7 @@ namespace PlutoGE::scene
 
         struct BakeTriangle
         {
-            render::MaterialConfig graphMaterial;
+            std::shared_ptr<const render::MaterialConfig> graphMaterial;
             float graphTime=0;
             glm::vec3 worldPositions[3]{};
             glm::vec3 worldNormals[3]{};
@@ -412,9 +370,12 @@ namespace PlutoGE::scene
             bool includesIndirect = false;
         };
 
+        struct ProbeBakeRequest { EntityID entity; SceneBakeSettings settings; };
+
         struct PreparedSceneBake
         {
             SceneBakeSettings settings;
+            std::vector<ProbeBakeRequest> probeRequests;
             std::chrono::steady_clock::time_point bakeStartTime;
             std::vector<BakeLight> lights;
             std::vector<BakeTriangle> triangles;
@@ -422,6 +383,7 @@ namespace PlutoGE::scene
             BakeAccelerationStructure acceleration;
             std::unordered_map<render::Texture *, CpuTextureData> albedoTextureCache;
             std::vector<glm::vec3> indirectBounceDirections;
+            std::map<int,std::vector<glm::vec3>> probeEnvironments;
             std::map<BakeTargetKey, GpuBakedLightmap> gpuLightmaps;
             bool gpuBakeActive = false;
             bool gpuGiActive = false;
@@ -431,7 +393,6 @@ namespace PlutoGE::scene
         struct CompletedBakeLightmap
         {
             BakeTarget target;
-            std::vector<float> floatPixels;
         };
 
         struct BackgroundBakeOutput
@@ -441,6 +402,7 @@ namespace PlutoGE::scene
             int failedLightmapWrites = 0;
             int invalidLightmapUvCount = 0;
             BakedProbeVolume probeVolume;
+            std::vector<std::pair<EntityID, BakedProbeVolume>> componentVolumes;
             std::vector<CompletedBakeLightmap> lightmaps;
             long long elapsedMs = 0;
         };
@@ -507,7 +469,7 @@ namespace PlutoGE::scene
 
         glm::vec3 ResolveInterpolatedNormal(const BakeTriangle &triangle, const glm::vec3 &barycentric)
         {
-            if (triangle.graphMaterial.shaderGraphProgram)
+            if (triangle.graphMaterial->shaderGraphProgram)
                 return NormalizeOr(SampleBakeGraph(triangle, barycentric).normal, ComputeTriangleNormal(triangle));
             const glm::vec3 interpolatedNormal = triangle.worldNormals[0] * barycentric.x +
                                                  triangle.worldNormals[1] * barycentric.y +
@@ -1449,7 +1411,7 @@ namespace PlutoGE::scene
 
         bool BuildGpuDirectLightmaps(PreparedSceneBake &preparedBake)
         {
-            if(std::any_of(preparedBake.triangles.begin(),preparedBake.triangles.end(),[](const auto &t){return bool(t.graphMaterial.shaderGraphProgram);}))
+            if(std::any_of(preparedBake.triangles.begin(),preparedBake.triangles.end(),[](const auto &t){return bool(t.graphMaterial->shaderGraphProgram);}))
             {
                 LogBakeMessage("Using CPU bake for procedural shader materials.");
                 return false;
@@ -2136,11 +2098,11 @@ namespace PlutoGE::scene
                     }
 
                     const glm::vec3 hitAlbedo = glm::clamp(SampleTriangleAlbedo(triangle, hit->barycentric, textureCache), glm::vec3(0.0f), glm::vec3(1.0f));
-                    if (triangle.graphMaterial.shaderGraphProgram)
+                    if (triangle.graphMaterial->shaderGraphProgram)
                     {
                         const auto surface = SampleBakeGraph(triangle, hit->barycentric);
                         accumulatedIrradiance += throughput * surface.emission * bounceWeight;
-                        if (triangle.graphMaterial.shaderGraphProgram->data.header.y != 0)
+                        if (triangle.graphMaterial->shaderGraphProgram->data.header.y != 0)
                         {
                             accumulatedIrradiance += throughput * glm::vec3(surface.color) * bounceWeight;
                             break;
@@ -2200,19 +2162,22 @@ namespace PlutoGE::scene
             return static_cast<bool>(output);
         }
 
-        std::vector<float> ConvertToFloatPixels(const std::vector<glm::vec3> &pixels)
+        // Completed maps are already on disk. Read just one for upload rather
+        // than keeping every finished float image alive until the bake ends.
+        std::vector<float> ReadBakedLightmap(const std::filesystem::path &path, int resolution)
         {
-            std::vector<float> convertedPixels;
-            convertedPixels.reserve(pixels.size() * 3);
-            for (const auto &pixel : pixels)
-            {
-                const glm::vec3 clamped = glm::max(pixel, glm::vec3(0.0f));
-                convertedPixels.push_back(clamped.r);
-                convertedPixels.push_back(clamped.g);
-                convertedPixels.push_back(clamped.b);
-            }
-
-            return convertedPixels;
+            std::ifstream input(path, std::ios::binary);
+            std::string magic;
+            int width=0,height=0;
+            float scale=0;
+            if (!(input >> magic >> width >> height >> scale) || magic!="PF" ||
+                width!=resolution || height!=resolution || scale!=-1.0f) return {};
+            input.get();
+            std::vector<float> pixels(static_cast<std::size_t>(width)*height*3);
+            for (int y=height-1; y>=0; --y)
+                if (!input.read(reinterpret_cast<char *>(pixels.data()+static_cast<std::size_t>(y)*width*3),
+                                static_cast<std::streamsize>(width)*3*sizeof(float))) return {};
+            return pixels;
         }
 
         const CpuTextureData *FindCpuTexture(const std::unordered_map<render::Texture *, CpuTextureData> &textureCache, render::Texture *texture)
@@ -2333,14 +2298,14 @@ namespace PlutoGE::scene
                 triangle.worldNormals[2]*barycentric.z,glm::vec3(0,0,1));
             sample.viewDirection=sample.worldNormal; // Static bake convention: normal-incidence view.
             sample.time=triangle.graphTime;
-            return render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample);
+            return render::EvaluateMaterialShaderGraph(*triangle.graphMaterial,sample);
         }
 
         glm::vec3 SampleTriangleAlbedo(const BakeTriangle &triangle,
                                        const glm::vec3 &barycentric,
                                        const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
-            if(triangle.graphMaterial.shaderGraphProgram) return glm::vec3(SampleBakeGraph(triangle,barycentric).color);
+            if(triangle.graphMaterial->shaderGraphProgram) return glm::vec3(SampleBakeGraph(triangle,barycentric).color);
             glm::vec3 albedo = triangle.baseColor;
             const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
             if (!textureData)
@@ -2356,7 +2321,7 @@ namespace PlutoGE::scene
                                   const glm::vec3 &barycentric,
                                   const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
-            if(triangle.graphMaterial.shaderGraphProgram) return SampleBakeGraph(triangle,barycentric).color.a;
+            if(triangle.graphMaterial->shaderGraphProgram) return SampleBakeGraph(triangle,barycentric).color.a;
             float alpha = triangle.baseAlpha;
             const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
             if (textureData)
@@ -2383,12 +2348,19 @@ namespace PlutoGE::scene
                 CpuTextureData textureData;
                 textureData.width = texture->GetWidth();
                 textureData.height = texture->GetHeight();
-                textureData.channels = std::max(texture->GetChannels(), 3);
+                const auto retained = texture->GetRgba8Pixels();
+                textureData.channels = retained.empty() ? std::max(texture->GetChannels(), 3) : 4;
                 if (textureData.width <= 0 || textureData.height <= 0)
                 {
                     continue;
                 }
 
+                if (!retained.empty()) {
+                    textureData.pixels.assign(retained.begin(), retained.end());
+                    textureCache.emplace(texture, std::move(textureData));
+                    continue;
+                }
+                if (!texture->GetTextureID()) continue;
                 textureData.pixels.resize(static_cast<std::size_t>(textureData.width * textureData.height * textureData.channels));
                 GLenum format = GL_RGB;
                 if (textureData.channels == 1)
@@ -2404,12 +2376,20 @@ namespace PlutoGE::scene
                     format = GL_RGBA;
                 }
 
+                GLint binding = 0, pack = 4, buffer = 0;
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+                glGetIntegerv(GL_PACK_ALIGNMENT, &pack);
+                glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &buffer);
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
                 glBindTexture(GL_TEXTURE_2D, texture->GetTextureID());
                 glGetTexImage(GL_TEXTURE_2D, 0, format, GL_UNSIGNED_BYTE, textureData.pixels.data());
+                glBindTexture(GL_TEXTURE_2D, binding);
+                glPixelStorei(GL_PACK_ALIGNMENT, pack);
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, buffer);
                 textureCache.emplace(texture, std::move(textureData));
             }
 
-            glBindTexture(GL_TEXTURE_2D, 0);
             return textureCache;
         }
 
@@ -2851,6 +2831,14 @@ namespace PlutoGE::scene
                 }
             }
 
+            // Materials are immutable snapshots shared by all triangles using
+            // the same source material, rather than copying graph data per face.
+            std::unordered_map<const render::Material *, std::shared_ptr<const render::MaterialConfig>> materialSnapshots;
+            const auto snapshotMaterial = [&](const render::Material &material) {
+                auto &snapshot = materialSnapshots[&material];
+                if (!snapshot) snapshot = std::make_shared<const render::MaterialConfig>(material.GetConfig());
+                return snapshot;
+            };
             const auto appendOccluderSubmesh = [&](render::Mesh &mesh,
                                                     std::size_t submeshIndex,
                                                     render::Material &material,
@@ -2872,7 +2860,7 @@ namespace PlutoGE::scene
                     BakeTriangle triangle;
                     glm::vec3 localPositions[3]{};
                     triangle.materialSlot = submesh.materialIndex;
-                    triangle.graphMaterial=material.GetConfig();
+                    triangle.graphMaterial=snapshotMaterial(material);
                     triangle.graphTime=render::ShaderGraphTimeSeconds();
                     triangle.baseColor = glm::vec3(material.GetConfig().color);
                     triangle.baseAlpha = glm::clamp(material.GetConfig().color.a, 0.0f, 1.0f);
@@ -2903,11 +2891,11 @@ namespace PlutoGE::scene
                             glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material.GetConfig().uvScale;
                         triangle.emissionUvs[vertexIndex] = glm::vec2(sourceVertex.uv2[0], sourceVertex.uv2[1]) * material.GetConfig().uvScale;
                         triangle.lightmapUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
-                        if(triangle.graphMaterial.shaderGraphProgram) {
+                        if(triangle.graphMaterial->shaderGraphProgram) {
                             render::ShaderGraphSample sample;
                             sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];
                             sample.uv=triangle.primaryUvs[vertexIndex];sample.time=triangle.graphTime;
-                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample,true).vertexOffset;
+                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(*triangle.graphMaterial,sample,true).vertexOffset;
                         }
                     }
                     if (!validTriangle)
@@ -2977,17 +2965,19 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                const auto &meshData = meshComponent->GetMesh()->GetMeshData();
-
-                // Match MeshComponent::SubmitRenderCommands exactly. Mesh
-                // position/rotation offsets are part of the rendered model
-                // transform and are themselves affected by entity/parent scale.
-                const glm::mat4 worldTransform =
-                    entity->GetWorldTransform() * meshComponent->GetMeshOffsetTransform();
-                const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
-
-                for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
+                // Imported objects often share a complete model mesh while
+                // drawing just one section. Snapshot only their rendered range.
+                const auto submeshCount = meshComponent->GetMesh()->GetSubmeshCount();
+                const auto selectedIndex = meshComponent->GetSubmeshIndex();
+                const std::size_t begin = selectedIndex >= 0 ? static_cast<std::size_t>(selectedIndex) : 0;
+                const std::size_t end = selectedIndex >= 0
+                    ? std::min(submeshCount, begin + static_cast<std::size_t>(std::max(1, meshComponent->GetSubmeshRangeCount())))
+                    : submeshCount;
+                for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                 {
+                    const glm::mat4 worldTransform = entity->GetWorldTransform() *
+                        meshComponent->GetMeshOffsetTransform() * meshComponent->GetSubmeshOffsetTransform(submeshIndex);
+                    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
                     auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
                     auto *renderMesh=meshComponent->GetMesh()->GetTessellated(material&&material->GetConfig().shaderGraphProgram?unsigned(material->GetConfig().shaderGraphProgram->data.header.w):0);
                     const auto &meshData=renderMesh->GetMeshData();
@@ -3031,7 +3021,7 @@ namespace PlutoGE::scene
                         glm::vec3 localPositions[3]{};
                         triangle.meshComponent = meshComponent;
                         triangle.materialSlot = submesh.materialIndex;
-                        triangle.graphMaterial=material->GetConfig();
+                        triangle.graphMaterial=snapshotMaterial(*material);
                         triangle.graphTime=render::ShaderGraphTimeSeconds();
                         triangle.baseColor = glm::vec3(material->GetConfig().color);
                         triangle.baseAlpha = glm::clamp(material->GetConfig().color.a, 0.0f, 1.0f);
@@ -3059,11 +3049,11 @@ namespace PlutoGE::scene
                             const glm::vec2 sourcePrimaryUv(sourceVertex.uv[0], sourceVertex.uv[1]);
                             triangle.primaryUvs[vertexIndex] = sourcePrimaryUv * material->GetConfig().uvScale;
                             triangle.emissionUvs[vertexIndex] = glm::vec2(sourceVertex.uv2[0], sourceVertex.uv2[1]) * material->GetConfig().uvScale;
-                        if(triangle.graphMaterial.shaderGraphProgram) {
+                        if(triangle.graphMaterial->shaderGraphProgram) {
                             render::ShaderGraphSample sample;
                             sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];
                             sample.uv=triangle.primaryUvs[vertexIndex];sample.time=triangle.graphTime;
-                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(triangle.graphMaterial,sample,true).vertexOffset;
+                            triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(*triangle.graphMaterial,sample,true).vertexOffset;
                         }
                             triangle.lightmapUvs[vertexIndex] = useLightmapUvs
                                                                     ? ResolveBakeUv(sourceVertex, true)
@@ -3294,11 +3284,36 @@ namespace PlutoGE::scene
             return generatedCount;
         }
 
+        // Match PhysicalSkyEnvironment.slang's broad sky radiance (the directional
+        // light owns the solar disk). Snapshot parameters before worker threads start.
+        glm::vec3 SampleProbeSky(const PhysicalSkyComponent &sky, glm::vec3 sun, glm::vec3 d)
+        {
+            const float day = glm::smoothstep(-0.09f, 0.035f, sun.y);
+            const float night = 1-glm::smoothstep(-0.31f, -0.04f, sun.y);
+            const float twilight = glm::smoothstep(-0.31f, -0.02f, sun.y)*(1-glm::smoothstep(0.02f, 0.22f, sun.y));
+            const glm::vec3 rayleigh = glm::vec3(0.028f,0.067f,0.155f)*sky.GetRayleighStrength();
+            const glm::vec3 mie(sky.GetMieStrength()*0.035f);
+            const glm::vec3 extinction = rayleigh+mie+glm::vec3(0.004f,0.012f,0.002f)*sky.GetOzoneStrength();
+            const glm::vec3 viewT = glm::exp(-extinction/(std::max(d.y,0.001f)+0.075f));
+            const glm::vec3 sunT = glm::exp(-extinction/std::max(sun.y+0.075f,0.04f));
+            const float cosine = glm::dot(d,sun), g = std::clamp(sky.GetMieAnisotropy(),-0.95f,0.95f);
+            const float phaseR = 3*(1+cosine*cosine)/(16*3.14159265f);
+            const float phaseM = (1-g*g)/(4*3.14159265f*std::pow(std::max(1+g*g-2*g*cosine,0.0001f),1.5f));
+            glm::vec3 color = (rayleigh*phaseR+mie*phaseM)*(1.0f-viewT)/glm::max(extinction,glm::vec3(0.0001f))*sunT*sky.GetSunColor()*sky.GetSunIntensity()*day;
+            color += glm::vec3(1,0.12f,0.018f)*twilight*twilight*std::pow(1-std::clamp(d.y,0.0f,1.0f),5.0f)*(0.02f+std::pow(std::max(cosine,0.0f),12.0f)*0.16f)*sky.GetSunIntensity();
+            color += glm::mix(glm::vec3(0.002f,0.003f,0.009f),glm::vec3(0.012f,0.022f,0.06f),std::pow(std::clamp(d.y,0.0f,1.0f),0.35f))*sky.GetNightIntensity()*night;
+            const float moonCosine = glm::dot(d,-sun), moonRadius = glm::radians(std::max(sky.GetMoonAngularRadius(),0.01f));
+            color += sky.GetMoonColor()*sky.GetMoonIntensity()*night*glm::smoothstep(-0.04f,0.04f,-sun.y)*(glm::smoothstep(std::cos(moonRadius*1.25f),std::cos(moonRadius),moonCosine)+std::pow(std::max(moonCosine,0.0f),256.0f)*0.08f);
+            color = glm::mix(sky.GetGroundColor()*glm::mix(sky.GetNightIntensity()*0.1f,1.0f,day),color,glm::smoothstep(-0.08f,0.015f,d.y));
+            return glm::max(color*sky.GetExposure(),glm::vec3(0));
+        }
+
         BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights,
                                           const std::vector<BakeTriangle> &triangles,
                                           const BakeAccelerationStructure &acceleration,
                                           const SceneBakeSettings &settings,
                                           const std::unordered_map<render::Texture *, CpuTextureData> &textureCache,
+                                          const std::vector<glm::vec3> &environment,
                                           const std::shared_ptr<std::atomic<bool>> &cancelRequested = {})
         {
             BakedProbeVolume probeVolume;
@@ -3321,17 +3336,26 @@ namespace PlutoGE::scene
             const glm::vec3 extent = glm::max(maxBounds - minBounds, glm::vec3(1.0f));
             probeVolume.origin = minBounds - extent * 0.05f;
             probeVolume.size = extent * 1.10f;
-            probeVolume.resolution = glm::ivec3(
-                std::clamp(static_cast<int>(std::ceil(extent.x / 4.0f)), 2, 10),
-                std::clamp(static_cast<int>(std::ceil(extent.y / 4.0f)), 2, 6),
-                std::clamp(static_cast<int>(std::ceil(extent.z / 4.0f)), 2, 10));
+            if (settings.probeVolumeOrigin && settings.probeVolumeSize) {
+                probeVolume.origin=*settings.probeVolumeOrigin; probeVolume.size=*settings.probeVolumeSize;
+            }
+            if (settings.probeGridBasis) probeVolume.gridBasis=*settings.probeGridBasis;
+            const float spacing = std::max(settings.probeSpacing, 0.05f);
+            probeVolume.resolution = SceneBaker::CalculateProbeGridResolution(probeVolume.size, spacing, settings.maxProbeCount);
 
             // Probes have no surface normal, so they must sample the entire
             // sphere. The old upper-hemisphere sampling made lighting depend on
             // world orientation and missed walls/ceilings below the probe.
-            const auto probeDirections = GenerateSphereDirections(settings.probeDirectionCount);
+            const auto probeDirections = GenerateSphereDirections(std::clamp(settings.probeDirectionCount, 64, 4096));
             const std::size_t probeCount = static_cast<std::size_t>(probeVolume.resolution.x * probeVolume.resolution.y * probeVolume.resolution.z);
             probeVolume.irradiance.assign(probeCount, glm::vec3(0.0f));
+            probeVolume.positions.resize(probeCount);
+            probeVolume.sphericalHarmonics.resize(probeCount);
+            probeVolume.visibility.resize(probeCount);
+            probeVolume.visibilityNormals.resize(probeCount);
+            const float clearance = std::clamp(settings.probeSurfaceClearance, 0.001f, std::min(.05f, spacing * 0.1f));
+            const float maxRay = glm::length(probeVolume.size);
+
             const std::size_t workerCount = ResolveBakeWorkerCount(probeCount, kMinProbeCellsPerBakeWorker);
 
             auto flatten = [&probeVolume](int x, int y, int z)
@@ -3358,10 +3382,70 @@ namespace PlutoGE::scene
                     (static_cast<float>(x) + 0.5f) / static_cast<float>(probeVolume.resolution.x),
                     (static_cast<float>(y) + 0.5f) / static_cast<float>(probeVolume.resolution.y),
                     (static_cast<float>(z) + 0.5f) / static_cast<float>(probeVolume.resolution.z));
-                const glm::vec3 probePosition = probeVolume.origin + uvw * probeVolume.size;
+                glm::vec3 probePosition = probeVolume.GridToWorld(uvw);
+                // Relocate near surfaces, then reject cells predominantly seeing back faces
+                // (inside closed solids). Never fill invalid cells with neighbouring light.
+                int backFaces = 0;
+                float closest = clearance;
+                glm::vec3 escape(0);
+                const auto placementDirections = GenerateSphereDirections(64);
+                for (const auto &direction : placementDirections) {
+                    const auto hit = TraceScene(probePosition, direction, maxRay, triangles, acceleration, &textureCache);
+                    if (!hit) continue;
+                    const auto n = ComputeTriangleNormal(triangles[hit->triangleIndex]);
+                    if (glm::dot(n, direction) > 0) ++backFaces;
+                    else if (hit->distance < closest) { closest = hit->distance; escape = n * (clearance - closest); }
+                }
+                // Clearance must fit the local free space. In a narrow slot,
+                // moving away from one wall must not push a probe through the other.
+                const float escapeLength=glm::length(escape);
+                if (escapeLength>0.000001f) {
+                    const auto opposite=TraceScene(probePosition,escape/escapeLength,escapeLength+clearance,
+                        triangles,acceleration,&textureCache);
+                    if (opposite) escape*=std::min(1.0f,opposite->distance*.45f/escapeLength);
+                }
+                probePosition += escape;
+                bool valid = backFaces <= 16;
+                if (glm::length(escape) > 0) {
+                    backFaces = 0;
+                    for (const auto &direction : placementDirections) {
+                        const auto hit = TraceScene(probePosition, direction, maxRay, triangles, acceleration, &textureCache);
+                        if (hit && glm::dot(ComputeTriangleNormal(triangles[hit->triangleIndex]), direction) > 0) ++backFaces;
+                    }
+                    valid = backFaces <= 16;
+                }
+                const auto relocatedGridPosition=probeVolume.WorldToGrid(probePosition);
+                valid = valid && glm::all(glm::greaterThanEqual(relocatedGridPosition,glm::vec3(0))) &&
+                    glm::all(glm::lessThanEqual(relocatedGridPosition,glm::vec3(1)));
+                probeVolume.positions[probeIndex] = glm::vec4(probePosition, valid ? 1.0f : 0.0f);
+                if (!valid) return;
+                // Octahedral visibility is sampled independently from lighting quadrature.
+                for (int v = 0; v < 8; ++v) for (int u = 0; u < 8; ++u) {
+                    glm::vec2 oct((u + 0.5f) / 4.0f - 1, (v + 0.5f) / 4.0f - 1);
+                    glm::vec3 d(oct, 1 - std::abs(oct.x) - std::abs(oct.y));
+                    if (d.z < 0) { d.x = (1 - std::abs(oct.y)) * (oct.x >= 0 ? 1 : -1); d.y = (1 - std::abs(oct.x)) * (oct.y >= 0 ? 1 : -1); }
+                    d = glm::normalize(d);
+                    const auto hit = TraceScene(probePosition, d, maxRay, triangles, acceleration, &textureCache);
+                    probeVolume.visibility[probeIndex][u + v * 8] = hit ? hit->distance : maxRay;
+                    probeVolume.visibilityNormals[probeIndex][u + v * 8] = hit ? ComputeTriangleNormal(triangles[hit->triangleIndex]) : glm::vec3(0);
+                }
+
 
                 glm::vec3 accumulatedIrradiance{0.0f};
+                glm::vec3 environmentSum(0),surfaceSum(0),emissionSum(0);
+                std::size_t dominantTriangle=0; float dominantEnergy=0;
+                glm::vec3 dominantHit(0);
+                int escapeRays=0;
                 float totalWeight = 0.0f;
+                std::size_t directionIndex = 0;
+                const auto accumulateSh = [&](glm::vec3 radiance, glm::vec3 direction) {
+                    const float basis[] = {0.282095f, 0.488603f*direction.y, 0.488603f*direction.z, 0.488603f*direction.x,
+                        1.092548f*direction.x*direction.y, 1.092548f*direction.y*direction.z, 0.315392f*(3*direction.z*direction.z-1),
+                        1.092548f*direction.x*direction.z, 0.546274f*(direction.x*direction.x-direction.y*direction.y)};
+                    for (int c = 0; c < 9; ++c)
+                        probeVolume.sphericalHarmonics[probeIndex][c] += radiance * (basis[c] * settings.probeBounceStrength *
+                            4.0f / static_cast<float>(probeDirections.size()) * (c == 0 ? 3.14159265f : c < 4 ? 2.0943951f : 0.78539816f));
+                };
                 for (const auto &direction : probeDirections)
                 {
                     if (IsBakeCancelled(cancelRequested))
@@ -3369,9 +3453,14 @@ namespace PlutoGE::scene
                         return;
                     }
 
+                    const glm::vec3 environmentRadiance = directionIndex < environment.size() ? environment[directionIndex] : glm::vec3(0);
+                    ++directionIndex;
                     const auto hit = TraceScene(probePosition, direction, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
-                    if (!hit.has_value())
-                    {
+                    if (!hit.has_value()) {
+                        if (settings.logProbeDiagnostics) { environmentSum+=environmentRadiance*3.14159265f; ++escapeRays; }
+                        accumulateSh(environmentRadiance * 3.14159265f, direction);
+                        accumulatedIrradiance += environmentRadiance * 3.14159265f * settings.probeBounceStrength;
+                        totalWeight += 1;
                         continue;
                     }
 
@@ -3387,13 +3476,21 @@ namespace PlutoGE::scene
 
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
                     const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
-                    glm::vec3 radiance = directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache);
-                    if (triangle.graphMaterial.shaderGraphProgram)
+                    const auto albedo = SampleTriangleAlbedo(triangle, hit->barycentric, textureCache);
+                    glm::vec3 radiance = directIrradiance * albedo + triangle.graphMaterial->emission * albedo * 3.14159265f;
+                    if (triangle.graphMaterial->shaderGraphProgram)
                     {
                         const auto surface = SampleBakeGraph(triangle, hit->barycentric);
-                        if (triangle.graphMaterial.shaderGraphProgram->data.header.y != 0) radiance = glm::vec3(surface.color);
-                        radiance += surface.emission;
+                        if (triangle.graphMaterial->shaderGraphProgram->data.header.y != 0) radiance = glm::vec3(surface.color) * 3.14159265f;
+                        radiance += surface.emission * 3.14159265f;
                     }
+                    if (settings.logProbeDiagnostics) {
+                        const auto reflected=directIrradiance*albedo;
+                        surfaceSum+=reflected; emissionSum+=radiance-reflected;
+                        const float energy=glm::dot(radiance,glm::vec3(.2126f,.7152f,.0722f));
+                        if (energy>dominantEnergy) { dominantEnergy=energy; dominantTriangle=hit->triangleIndex; dominantHit=hitPosition; }
+                    }
+                    accumulateSh(radiance, direction);
                     accumulatedIrradiance += radiance * (weight * settings.probeBounceStrength);
                     totalWeight += weight;
                 }
@@ -3401,7 +3498,23 @@ namespace PlutoGE::scene
                 if (totalWeight > 0.0f)
                 {
                     probeVolume.irradiance[flatten(x, y, z)] = accumulatedIrradiance / totalWeight;
-                } });
+                }
+                if (settings.logProbeDiagnostics) {
+                    const auto luminance=[](glm::vec3 value){ return glm::dot(value,glm::vec3(.2126f,.7152f,.0722f)); };
+                    const auto factor=settings.probeBounceStrength/static_cast<float>(probeDirections.size());
+                    std::ostringstream report;
+                    report << "ProbeSource index=" << probeIndex << " position=" << probePosition.x << ',' << probePosition.y << ',' << probePosition.z
+                        << " sky=" << luminance(environmentSum)*factor << " reflected=" << luminance(surfaceSum)*factor
+                        << " emission=" << luminance(emissionSum)*factor << " escapeRays=" << escapeRays << '/' << probeDirections.size();
+                    if (dominantEnergy>0) {
+                        const auto &source=triangles[dominantTriangle];
+                        report << " brightestSurface=" << (source.meshComponent && source.meshComponent->GetOwner() ? source.meshComponent->GetOwner()->GetName() : "terrain/foliage")
+                            << " material=" << (source.albedoTexture ? source.albedoTexture->GetFilePath() : "untextured")
+                            << " hit=" << dominantHit.x << ',' << dominantHit.y << ',' << dominantHit.z;
+                    }
+                    LogBakeMessage(report.str());
+                }
+                });
 
             return probeVolume;
         }
@@ -3416,14 +3529,50 @@ namespace PlutoGE::scene
             preparedBake.settings.indirectDenoisePassCount = std::clamp(preparedBake.settings.indirectDenoisePassCount, 0, 4);
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
             const auto lightSnapshotStart = std::chrono::steady_clock::now();
-            preparedBake.lights = SnapshotStaticLights(scene);
+            preparedBake.lights = SnapshotStaticLights(scene, settings.probesOnly);
+            if (settings.bakeProbeVolume) {
+                const PhysicalSkyComponent *sky = nullptr;
+                for (const auto *candidate : scene.GetPhysicalSkyComponents())
+                    if (candidate && candidate->IsEnabled() && candidate->GetOwner() && candidate->GetOwner()->IsActive()) { sky = candidate; break; }
+                glm::vec3 sun = glm::normalize(glm::vec3(-0.4f,0.8f,-0.3f));
+                float brightest = -1;
+                for (const auto &light : SnapshotStaticLights(scene, true))
+                    if (light.type == LightType::Directional && light.intensity > brightest) { sun = -light.direction; brightest = light.intensity; }
+                // Each component can override the quadrature count. Its sky
+                // samples must correspond to that exact direction sequence.
+                std::vector<int> directionCounts{std::clamp(settings.probeDirectionCount,64,4096)};
+                for (const auto *volume:scene.GetAmbientLightVolumes())
+                    if (std::find(directionCounts.begin(),directionCounts.end(),volume->GetDirectionCount())==directionCounts.end())
+                        directionCounts.push_back(volume->GetDirectionCount());
+                const auto *map = scene.GetEnvironmentMapTexture();
+                const auto pixels = map ? map->GetCubemapPixels() : std::span<const float>{};
+                for (const auto count:directionCounts) {
+                    auto &environment=preparedBake.probeEnvironments[count];
+                    const auto directions=GenerateSphereDirections(count);
+                    environment.reserve(directions.size());
+                    for (auto d : directions) {
+                        glm::vec3 radiance(0);
+                        if (sky) radiance = SampleProbeSky(*sky,sun,d);
+                        else if (!pixels.empty() && map->GetWidth() > 0) {
+                            const auto a = glm::abs(d); int face; glm::vec2 uv;
+                            if (a.x >= a.y && a.x >= a.z) { face=d.x>=0?0:1; uv={d.x>=0?-d.z:d.z,-d.y}; uv/=a.x; }
+                            else if (a.y >= a.z) { face=d.y>=0?2:3; uv={d.x,d.y>=0?d.z:-d.z}; uv/=a.y; }
+                            else { face=d.z>=0?4:5; uv={d.z>=0?d.x:-d.x,-d.y}; uv/=a.z; }
+                            const int r=map->GetWidth();
+                            const auto xy=glm::clamp(glm::ivec2((uv*0.5f+0.5f)*float(r)),glm::ivec2(0),glm::ivec2(r-1));
+                            const auto offset=((std::size_t(face)*r+xy.y)*r+xy.x)*4;
+                            if (offset+2<pixels.size()) radiance=glm::vec3(pixels[offset],pixels[offset+1],pixels[offset+2])*scene.GetEnvironmentIntensity();
+                        }
+                        environment.push_back(radiance);
+                    }
+                }
+            }
             LogBakeTiming("Snapshot static lights", lightSnapshotStart);
 
             const int staticLightCount = static_cast<int>(preparedBake.lights.size());
-            if (staticLightCount == 0)
+            if (staticLightCount == 0 && !settings.probesOnly)
             {
                 outImmediateResult.message = "Bake skipped: no static lights were found. Mark the lights you want baked as Static.";
-                scene.ClearBakedProbeVolume();
                 return std::nullopt;
             }
 
@@ -3432,7 +3581,7 @@ namespace PlutoGE::scene
 
             const std::filesystem::path bakeRoot = std::filesystem::current_path() / "baked" / ResolveBakeDirectoryName(scene);
             std::error_code errorCode;
-            std::filesystem::create_directories(bakeRoot, errorCode);
+            if (!settings.probesOnly) std::filesystem::create_directories(bakeRoot, errorCode);
             if (errorCode)
             {
                 outImmediateResult.message = "Failed to create bake output directory.";
@@ -3442,7 +3591,7 @@ namespace PlutoGE::scene
             const auto geometryCollectionStart = std::chrono::steady_clock::now();
             CollectStaticTriangles(scene, preparedBake.triangles, preparedBake.targets, bakeRoot, std::max(settings.lightmapResolution, 4));
             const size_t generatedAtlasCount =
-                GenerateFallbackLightmapUvAtlases(preparedBake.targets, preparedBake.triangles);
+                settings.probesOnly ? 0 : GenerateFallbackLightmapUvAtlases(preparedBake.targets, preparedBake.triangles);
             if (generatedAtlasCount > 0)
             {
                 LogBakeMessage(
@@ -3460,10 +3609,9 @@ namespace PlutoGE::scene
             }
             LogBakeTiming("Collect geometry and validate/generate UV atlases", geometryCollectionStart);
             LogBakeMessage("Collected " + std::to_string(preparedBake.targets.size()) + " bake target(s) across " + std::to_string(preparedBake.triangles.size()) + " triangle(s).");
-            if (preparedBake.targets.empty())
+            if (preparedBake.triangles.empty() || (!settings.probesOnly && preparedBake.targets.empty()))
             {
                 outImmediateResult.message = "No static meshes with usable bake UVs were found to bake.";
-                scene.ClearBakedProbeVolume();
                 return std::nullopt;
             }
 
@@ -3479,21 +3627,37 @@ namespace PlutoGE::scene
             preparedBake.indirectBounceDirections = settings.bakeIndirectBounce
                                                         ? GenerateHemisphereDirections(settings.indirectBounceSampleCount)
                                                         : std::vector<glm::vec3>{};
-            if (settings.useGpu)
+            if (settings.useGpu && !settings.probesOnly)
             {
                 LogBakeMessage("Preparing GPU bake backend.");
                 const auto gpuBakeStart = std::chrono::steady_clock::now();
                 preparedBake.gpuBakeActive = BuildGpuDirectLightmaps(preparedBake);
                 LogBakeTiming("GPU lighting total", gpuBakeStart);
             }
-            preparedBake.shouldStoreProbeVolume = settings.bakeProbeVolume && SceneHasDynamicMeshes(scene);
+            for (auto *volume : scene.GetAmbientLightVolumes()) {
+                if (!volume->IsEnabled() || !volume->GetOwner()->IsActive()) continue;
+                if (settings.ambientVolumeEntity && volume->GetOwner()->GetID()!=settings.ambientVolumeEntity) continue;
+                auto local=settings;
+                const auto layout=volume->GetGridLayout();
+                if (std::abs(glm::determinant(layout.gridBasis))<.000001f) continue;
+                local.probeVolumeOrigin=layout.origin; local.probeVolumeSize=layout.size; local.probeGridBasis=layout.gridBasis;
+                local.probeSpacing=volume->GetProbeSpacing(); local.probeSurfaceClearance=volume->GetSurfaceClearance();
+                local.maxProbeCount=volume->GetProbeBudget(); local.probeDirectionCount=volume->GetDirectionCount();
+                preparedBake.probeRequests.push_back({volume->GetOwner()->GetID(),local});
+            }
+            const bool hasComponents=!scene.GetAmbientLightVolumes().empty();
+            if ((settings.ambientVolumeEntity || (settings.probesOnly && settings.bakeProbeVolume && hasComponents)) && preparedBake.probeRequests.empty()) {
+                outImmediateResult.message="Ambient volume is missing, disabled or inactive.";
+                return std::nullopt;
+            }
+            preparedBake.shouldStoreProbeVolume = settings.bakeProbeVolume && (!hasComponents || !preparedBake.probeRequests.empty());
             if (preparedBake.shouldStoreProbeVolume)
             {
                 LogBakeMessage("Baking probe volume for dynamic objects.");
             }
             else
             {
-                LogBakeMessage("Skipping probe volume because no dynamic mesh components were found.");
+                LogBakeMessage("Probe volume disabled in bake settings.");
             }
 
             LogBakeTiming("Scene bake preparation total", preparationStart);
@@ -3510,12 +3674,20 @@ namespace PlutoGE::scene
             if (preparedBake.shouldStoreProbeVolume)
             {
                 const auto probeBakeStart = std::chrono::steady_clock::now();
-                output.probeVolume = BuildProbeVolume(preparedBake.lights,
-                                                      preparedBake.triangles,
-                                                      preparedBake.acceleration,
-                                                      preparedBake.settings,
-                                                      preparedBake.albedoTextureCache,
-                                                      cancelRequested);
+                const auto bakeVolume = [&](const SceneBakeSettings &settings) {
+                    const auto environment=preparedBake.probeEnvironments.find(std::clamp(settings.probeDirectionCount,64,4096));
+                    static const std::vector<glm::vec3> emptyEnvironment;
+                    return BuildProbeVolume(preparedBake.lights, preparedBake.triangles, preparedBake.acceleration,
+                        settings, preparedBake.albedoTextureCache,
+                        environment!=preparedBake.probeEnvironments.end() ? environment->second : emptyEnvironment, cancelRequested);
+                };
+                if (preparedBake.probeRequests.empty()) output.probeVolume=bakeVolume(preparedBake.settings);
+                else for (const auto &request:preparedBake.probeRequests) {
+                    if (IsBakeCancelled(cancelRequested)) break;
+                    auto volume=bakeVolume(request.settings);
+                    if (output.componentVolumes.empty()) output.probeVolume=volume;
+                    output.componentVolumes.emplace_back(request.entity,std::move(volume));
+                }
                 LogBakeTiming("Probe volume", probeBakeStart);
                 if (IsBakeCancelled(cancelRequested))
                 {
@@ -3527,6 +3699,10 @@ namespace PlutoGE::scene
                 }
             }
 
+            if (preparedBake.settings.probesOnly) {
+                output.elapsedMs = ElapsedBakeMilliseconds(backgroundStart);
+                return output;
+            }
             int targetIndex = 0;
             for (const auto &[targetKey, target] : preparedBake.targets)
             {
@@ -3907,7 +4083,8 @@ namespace PlutoGE::scene
                         " normalize/denoise/seam/dilation/stats",
                     postProcessStart);
                 const auto fileWriteStart = std::chrono::steady_clock::now();
-                if (!WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution))
+                const bool mainLightmapWritten=WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution);
+                if (!mainLightmapWritten)
                 {
                     ++output.failedLightmapWrites;
                 }
@@ -3927,10 +4104,13 @@ namespace PlutoGE::scene
                 LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " direct avg luminance=" + std::to_string(directAverageLuminance) + ", max luminance=" + std::to_string(directMaxLuminance) + ".");
                 LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " indirect avg luminance=" + std::to_string(indirectAverageLuminance) + ", max luminance=" + std::to_string(indirectMaxLuminance) + ", ratio=" + std::to_string(indirectToDirectRatio) + ".");
 
-                output.lightmaps.push_back(CompletedBakeLightmap{
-                    .target = target,
-                    .floatPixels = ConvertToFloatPixels(bakedPixels),
-                });
+                if (mainLightmapWritten)
+                {
+                    auto completedTarget=target;
+                    completedTarget.triangleIndices.clear();
+                    completedTarget.triangleIndices.shrink_to_fit();
+                    output.lightmaps.push_back(CompletedBakeLightmap{.target=std::move(completedTarget)});
+                }
                 LogBakeTiming(
                     "Lightmap " + std::to_string(targetIndex) + " background total",
                     targetStart);
@@ -3953,12 +4133,16 @@ namespace PlutoGE::scene
                                         int invalidLightmapUvCount,
                                         bool gpuBakeActive,
                                         bool gpuGiActive,
-                                        long long elapsedMs)
+                                        long long elapsedMs, int componentProbeCount = -1)
         {
             SceneBakeResult result;
             result.bakedLightmapCount = bakedLightmapCount;
-            result.bakedProbeCount = probeVolume.IsValid() ? static_cast<int>(probeVolume.irradiance.size()) : 0;
-            result.succeeded = result.bakedLightmapCount > 0;
+            result.bakedProbeCount = !probeVolume.IsValid() ? 0 : probeVolume.HasDirectionalData()
+                ? static_cast<int>(std::count_if(probeVolume.positions.begin(), probeVolume.positions.end(),
+                    [](const glm::vec4 &p) { return p.w > 0.5f; }))
+                : static_cast<int>(probeVolume.irradiance.size());
+            if (componentProbeCount>=0) result.bakedProbeCount=componentProbeCount;
+            result.succeeded = result.bakedLightmapCount > 0 || result.bakedProbeCount > 0;
 
             std::ostringstream message;
             message << "Baked " << result.bakedLightmapCount << " lightmap(s)";
@@ -3992,7 +4176,7 @@ namespace PlutoGE::scene
                 message << " " << invalidLightmapUvCount << " mesh section(s) were skipped because their bake UVs are outside 0..1 or overlap; generate a unique, padded UV2 atlas.";
             }
 
-            if (result.bakedLightmapCount == 0)
+            if (!result.succeeded)
             {
                 message << " Check that your static meshes have valid UVs and that the contributing lights are marked Static.";
             }
@@ -4030,9 +4214,11 @@ namespace PlutoGE::scene
                 LogBakeMessage(
                     "Uploading baked lightmap " + std::to_string(lightmapIndex) + "/" +
                     std::to_string(output.lightmaps.size()) + " to the GPU.");
+                const auto floatPixels=ReadBakedLightmap(lightmap.target.outputPath,lightmap.target.resolution);
+                if (floatPixels.empty()) { ++failedLightmapLoads; continue; }
                 auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromMemory(
                     lightmap.target.outputPath.string(),
-                    lightmap.floatPixels.data(),
+                    floatPixels.data(),
                     lightmap.target.resolution,
                     lightmap.target.resolution,
                     3);
@@ -4061,21 +4247,97 @@ namespace PlutoGE::scene
                     uploadStart);
             }
 
-            if (preparedBake.shouldStoreProbeVolume && output.probeVolume.IsValid())
-            {
+            if (!output.componentVolumes.empty()) {
+                for (const auto &[id,volume]:output.componentVolumes) {
+                    if (auto *entity=scene.FindEntityByID(id))
+                        if (auto *component=entity->GetComponent<AmbientLightVolumeComponent>()) component->SetBakedVolume(volume);
+                }
+            } else if (preparedBake.shouldStoreProbeVolume && output.probeVolume.IsValid()) {
                 scene.SetBakedProbeVolume(output.probeVolume);
-                LogBakeMessage("Probe volume baked with " + std::to_string(output.probeVolume.irradiance.size()) + " sample(s).");
-            }
-            else
-            {
-                scene.ClearBakedProbeVolume();
+                scene.GetAmbientLightVolumes().front()->Configure(preparedBake.settings.probeSpacing,
+                    preparedBake.settings.probeSurfaceClearance,preparedBake.settings.maxProbeCount,preparedBake.settings.probeDirectionCount);
             }
 
-            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, preparedBake.gpuBakeActive, preparedBake.gpuGiActive, output.elapsedMs);
+            int componentProbeCount=-1;
+            if (!output.componentVolumes.empty()) {
+                componentProbeCount=0;
+                for (const auto &[id,volume]:output.componentVolumes) {
+                    if (!volume.IsValid()) continue;
+                    componentProbeCount+=volume.HasDirectionalData() ? static_cast<int>(std::count_if(volume.positions.begin(),volume.positions.end(),[](const auto &p){return p.w>.5f;})) : static_cast<int>(volume.irradiance.size());
+                }
+            }
+            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, preparedBake.gpuBakeActive, preparedBake.gpuGiActive, output.elapsedMs, componentProbeCount);
             LogBakeTiming("Finalize and upload", finalizationStart);
             LogBakeMessage(result.message);
             return result;
         }
+    }
+
+    glm::ivec3 SceneBaker::CalculateProbeGridResolution(glm::vec3 size, float spacing, int budget)
+    {
+        size = glm::max(size, glm::vec3(.001f));
+        spacing = std::max(spacing, .05f);
+        budget = std::clamp(budget, 8, 16384);
+        auto resolution = glm::ivec3(glm::clamp(glm::ceil(size / spacing), glm::vec3(2), glm::vec3(128)));
+        while (resolution.x * resolution.y * resolution.z > budget) {
+            // Reduce the axis whose resulting world-space cell is smallest.
+            // Reducing the largest cell count instead forces elongated volumes
+            // toward cubic resolutions, making their short axis far too dense.
+            int axis = -1;
+            float smallestCell = std::numeric_limits<float>::max();
+            for (int candidate = 0; candidate < 3; ++candidate) {
+                if (resolution[candidate] <= 2) continue;
+                const float cell = size[candidate] / float(resolution[candidate] - 1);
+                if (cell < smallestCell) { smallestCell = cell; axis = candidate; }
+            }
+            if (axis < 0) break;
+            --resolution[axis];
+        }
+        return resolution;
+    }
+
+    std::vector<ReflectionProbePlacement> SceneBaker::GenerateReflectionProbeLayout(const BakedProbeVolume &volume, int count)
+    {
+        std::vector<ReflectionProbePlacement> result;
+        if (!volume.HasDirectionalData()) return result;
+        count = std::clamp(count, 0, kMaxIblCaptureVolumes);
+        std::vector<std::size_t> selected;
+        for (int capture = 0; capture < count; ++capture) {
+            float best = -1;
+            std::size_t candidate = volume.positions.size();
+            for (std::size_t i = 0; i < volume.positions.size(); ++i) {
+                if (volume.positions[i].w < 0.5f || std::find(selected.begin(), selected.end(), i) != selected.end()) continue;
+                const glm::vec3 p(volume.positions[i]);
+                float score;
+                if (selected.empty()) score = 1.0f / (1.0f + glm::length(volume.WorldToGrid(p)-glm::vec3(.5f)));
+                else {
+                    score = std::numeric_limits<float>::max();
+                    for (auto j : selected) score = std::min(score, glm::length(volume.WorldToGrid(p)-volume.WorldToGrid(glm::vec3(volume.positions[j]))));
+                }
+                if (score > best) { best = score; candidate = i; }
+            }
+            if (candidate == volume.positions.size()) break;
+            selected.push_back(candidate);
+            const glm::vec3 position(volume.positions[candidate]);
+            // Conservative symmetric boxes keep captures on their side of room walls.
+            const auto &depth = volume.visibility[candidate];
+            const glm::vec3 radius(std::min(depth[4*8+7], depth[4*8]),
+                                   std::min(depth[7*8+4], depth[4]),
+                                   std::min(depth[4*8+4], depth[0]));
+            const auto uvw=volume.WorldToGrid(position);
+            const auto inverseBasis=glm::inverse(volume.gridBasis);
+            glm::vec3 edge(std::numeric_limits<float>::max());
+            // World-aligned reflection boxes must remain inside every oriented face.
+            for (int axis=0;axis<3;++axis) {
+                const glm::vec3 row(inverseBasis[0][axis],inverseBasis[1][axis],inverseBasis[2][axis]);
+                const float radius=std::min(uvw[axis],1-uvw[axis])*volume.size[axis]/
+                    std::max(glm::dot(glm::abs(row),glm::vec3(1)),.0001f);
+                edge=glm::min(edge,glm::vec3(radius));
+            }
+            const glm::vec3 size = glm::max(glm::vec3(0.1f), glm::min(edge, radius*0.75f)*2.0f);
+            result.push_back({position, size});
+        }
+        return result;
     }
 
     SceneBakeSettings SceneBakeSettings::FastPreview()
@@ -4266,6 +4528,7 @@ namespace PlutoGE::scene
                 return result;
             }
 
+            if (m_impl->future.valid()) m_impl->future.get();
             std::exception_ptr backgroundException;
             {
                 std::lock_guard<std::mutex> lock(m_impl->backgroundState->mutex);
@@ -4315,6 +4578,8 @@ namespace PlutoGE::scene
             "Applying " + std::to_string(m_impl->completedOutput->lightmaps.size()) +
             " completed lightmap(s) to the scene.");
         m_impl->finalizedResult = FinalizePreparedBake(scene, *m_impl->preparedBake, *m_impl->completedOutput);
+        m_impl->preparedBake.reset();
+        m_impl->completedOutput.reset();
         return *m_impl->finalizedResult;
     }
 

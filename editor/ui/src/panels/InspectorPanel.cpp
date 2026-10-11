@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
@@ -195,6 +196,7 @@ namespace PlutoGE::ui
             Sequencer = 31,
             IK = 32,
             SkeletonAttachment = 33,
+            AmbientLightVolume = 34,
         };
 
         struct ScriptAssetOption
@@ -1319,6 +1321,7 @@ namespace PlutoGE::ui
             {
                 return "Collider Component";
             }
+            if (dynamic_cast<const scene::AmbientLightVolumeComponent *>(&component)) return "Ambient Light Volume";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
             {
                 return "IBL Capture Component";
@@ -1410,6 +1413,7 @@ namespace PlutoGE::ui
                 return "NavigationMeshComponent";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
                 return "ColliderComponent";
+            if (dynamic_cast<const scene::AmbientLightVolumeComponent *>(&component)) return "AmbientLightVolumeComponent";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
                 return "IblCaptureComponent";
             if (dynamic_cast<const scene::VolumetricCloudComponent *>(&component))
@@ -1559,6 +1563,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::NavigationMeshComponent>();
             case AddableComponentType::Collider:
                 return !entity.HasComponent<scene::ColliderComponent>();
+            case AddableComponentType::AmbientLightVolume:
+                return !entity.HasComponent<scene::AmbientLightVolumeComponent>();
             case AddableComponentType::IblCapture:
                 return !entity.HasComponent<scene::IblCaptureComponent>();
             case AddableComponentType::PhysicalSky:
@@ -1656,6 +1662,7 @@ namespace PlutoGE::ui
             }
             if (search.IsActive() || ImGui::BeginMenu("Environment"))
             {
+                renderItem("Ambient Light Volume", AddableComponentType::AmbientLightVolume);
                 renderItem("IBL Capture", AddableComponentType::IblCapture);
                 renderItem("Physical Sky", AddableComponentType::PhysicalSky);
                 renderItem("Volumetric Cloud", AddableComponentType::VolumetricCloud);
@@ -1810,6 +1817,9 @@ namespace PlutoGE::ui
                              : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
                                                                              : scene::ColliderShape::Box,
                 });
+                break;
+            case AddableComponentType::AmbientLightVolume:
+                entity.CreateComponent<scene::AmbientLightVolumeComponent>();
                 break;
             case AddableComponentType::IblCapture:
                 entity.CreateComponent<scene::IblCaptureComponent>();
@@ -4398,6 +4408,22 @@ namespace PlutoGE::ui
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {
                             ImGui::TextDisabled("Only lights marked Static contribute to Bake Scene.");
+                        }
+                        else if (auto *volume = dynamic_cast<scene::AmbientLightVolumeComponent *>(componentPtr)) {
+                            properties=volume->SerializeEditableProperties(); propertiesProvided=true;
+                            ImGui::Text("Bake: %s",volume->HasUsableBake() ? "ready" : volume->GetBakedVolume().IsValid() ? "bounds changed; rebake" : "not baked");
+                            ImGui::Text("Probe cells: %zu",volume->GetBakedVolume().irradiance.size());
+                            if (volume->GetBakedVolume().IsValid()) {
+                                const auto &baked=volume->GetBakedVolume();
+                                const auto cell=baked.size/glm::vec3(baked.resolution);
+                                ImGui::Text("Baked spacing X/Y/Z: %.3f / %.3f / %.3f",cell.x,cell.y,cell.z);
+                                if ((std::max)({cell.x,cell.y,cell.z})>volume->GetProbeSpacing()*1.1f)
+                                    ImGui::TextWrapped("The probe budget or axis limit increased spacing. Use a higher budget or a smaller volume for more detail.");
+                            }
+                            ImGui::TextWrapped("Use a smaller volume and spacing for stairs and narrow passages. Moving or resizing the volume requires rebaking.");
+                            if (ImGui::Button("Bake Volume")) editorShell.RequestAmbientBake(entity->GetID());
+                            ImGui::SameLine();
+                            if (ImGui::Button("Clear Bake")) { volume->ClearBake(); editorShell.MarkSceneDirty(); }
                         }
                         else if (auto *iblCaptureComponent = dynamic_cast<scene::IblCaptureComponent *>(componentPtr))
                         {

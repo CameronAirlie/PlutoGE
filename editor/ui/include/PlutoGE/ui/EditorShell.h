@@ -207,6 +207,8 @@ namespace PlutoGE::ui
         [[nodiscard]] const scene::Scene *GetScene() const { return m_scene.get(); }
         [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
         [[nodiscard]] const assets::Project *GetProject() const { return m_project.get(); }
+        void RequestAmbientBake(scene::EntityID entity) { m_pendingAmbientBake = entity; }
+        scene::EntityID m_pendingAmbientBake = 0;
         void RequestIblCapture(scene::IblCaptureComponent *captureComponent);
         [[nodiscard]] bool IsRuntimeExportProject() const;
         bool CreateScriptAsset(std::string_view requestedName,
@@ -422,6 +424,11 @@ namespace PlutoGE::ui
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
+        bool m_generateAmbientReflections = false;
+        bool m_saveAfterAmbientCaptures = false;
+        bool m_autoAmbientReflections = true;
+        int m_ambientReflectionCount = 4;
+        void GenerateAmbientReflectionCaptures();
         std::string m_statusMessage;
         bool m_sceneDirty = false;
         bool m_untrackedSceneEdit = false;
@@ -503,6 +510,7 @@ namespace PlutoGE::ui
             bool succeeded = false;
             bool cancelled = false;
             std::vector<assetimport::ImportAssessment> assessments;
+            std::optional<assetimport::ImportWatchSnapshot> baseline;
             std::string error;
         };
         struct ImportWatchCompletion
@@ -530,12 +538,22 @@ namespace PlutoGE::ui
         std::vector<std::string> m_modelInstanceMessages;
         std::vector<StaticModelSourceDiagnostic> m_modelInstanceSourceDiagnostics;
         std::string m_modelInstanceRefreshError;
+        struct AssetAuditProgress
+        {
+            std::mutex mutex;
+            std::size_t completed = 0, total = 0;
+            std::string source;
+            std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+        };
+        std::shared_ptr<AssetAuditProgress> m_assetAuditProgress;
         bool m_assetRefreshPending = false;
         bool m_assetReconciliationRequested = false;
         std::vector<std::filesystem::path> m_reconciliationChangedPaths;
         std::deque<std::string> m_pendingModelImports;
         std::stop_source m_assetReconciliationStop;
         std::future<AssetReconciliationCompletion> m_assetReconciliation;
+        std::string m_activeModelImportSource;
+        std::chrono::steady_clock::time_point m_activeModelImportStarted{};
         scene::ModelAssetSnapshot m_activeModelAssetSnapshot;
         std::unordered_map<std::string, std::string> m_modelImportErrors;
         std::string m_lastModelImportError;

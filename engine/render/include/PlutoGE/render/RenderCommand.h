@@ -32,6 +32,8 @@ namespace PlutoGE::render
         bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;
         bool terrainGeomorph = false;
+        // Editor lighting preview: mode (0 off, 1 SH, 2 reflection, 3 rejected), source index.
+        glm::vec2 probeDebug{0};
         // Optional producer-owned identity/revision for immutable rigid object
         // state (including motion history and bounds). Zero retains value-based
         // validation for procedural callers and mutable pose/instance arrays.

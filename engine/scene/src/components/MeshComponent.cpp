@@ -1336,6 +1336,24 @@ namespace PlutoGE::scene
         GenerateLightmapUvAtlasForSubmeshes(generatedLightmapUvSubmeshes);
     }
 
+    void MeshComponent::RestoreSourceGeometryForRange()
+    {
+        if (!m_lightmapGeometry || m_mesh != m_lightmapGeometry.get() || !m_lightmapGeometrySource) return;
+        const auto count=m_lightmapGeometrySource->GetSubmeshCount();
+        const std::size_t begin=m_submeshIndex>=0 ? static_cast<std::size_t>(m_submeshIndex) : 0;
+        const std::size_t end=m_submeshIndex>=0 ? std::min(count,begin+static_cast<std::size_t>(m_submeshCount)) : count;
+        for (auto index=begin; index<end; ++index)
+            if (m_lightmapGeometrySource->GetSubmesh(index).indexCount && !m_mesh->GetSubmesh(index).indexCount)
+            {
+                m_mesh=m_lightmapGeometrySource;
+                m_retiredLightmapGeometry.push_back(std::move(m_lightmapGeometry));
+                m_lightmapGeometrySource=nullptr;
+                m_generatedLightmapUvSubmeshes.clear();
+                RefreshMeshDerivedState();
+                return;
+            }
+    }
+
     bool MeshComponent::GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices)
     {
         if (!m_mesh || submeshIndices.empty()) return false;
@@ -1345,7 +1363,7 @@ namespace PlutoGE::scene
         std::sort(requested.begin(), requested.end());
         if (requested == m_generatedLightmapUvSubmeshes) return false;
         const bool replace=!m_lightmapGeometry || m_mesh != m_lightmapGeometry.get();
-        auto staged=replace ? detail::CopyMeshGeometry(*m_mesh) : nullptr;
+        auto staged=replace ? detail::CopyMeshGeometry(*m_mesh, m_submeshIndex, m_submeshCount) : nullptr;
         auto *edited=replace ? staged.get() : m_lightmapGeometry.get();
         if (!edited->GenerateLightmapUvAtlasForSubmeshes(requested)) return false;
         if (replace)

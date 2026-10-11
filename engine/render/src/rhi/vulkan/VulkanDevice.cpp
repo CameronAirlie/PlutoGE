@@ -382,7 +382,25 @@ namespace PlutoGE::render::rhi::vulkan
                     return false;
                 sl::AdapterInfo adapter{};
                 adapter.vkPhysicalDevice = physicalDevice;
-                return m_isSupported(sl::kFeatureDLSS, adapter) == sl::Result::eOk;
+                if (m_isSupported(sl::kFeatureDLSS, adapter) != sl::Result::eOk)
+                    return false;
+                // Vendor support checks can succeed in remote sessions even
+                // when the exposed Vulkan adapter lacks a plugin extension.
+                std::uint32_t count = 0;
+                if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr) != VK_SUCCESS)
+                    return false;
+                std::vector<VkExtensionProperties> available(count);
+                if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, available.data()) != VK_SUCCESS)
+                    return false;
+                available.resize(count);
+                for (const auto *required : DeviceExtensions())
+                    if (std::ranges::none_of(available, [required](const auto &extension)
+                                             { return std::strcmp(extension.extensionName, required) == 0; }))
+                    {
+                        std::clog << "DLSS disabled: Vulkan adapter is missing " << required << std::endl;
+                        return false;
+                    }
+                return true;
             }
 
             bool ConfigureDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,

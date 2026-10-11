@@ -44,7 +44,11 @@ RUNTIME_UPSCALER_QUALITY	Quality
 ```
 
 DLSS currently applies to Vulkan runtime rendering only. At startup, support is
-checked against the selected adapter and driver. Quality mode determines the
+checked against the selected adapter and driver. Required device extensions are
+also checked against Vulkan enumeration: remote sessions can expose fewer
+extensions even when NVIDIA reports DLSS support. Missing extensions disable
+DLSS and are recorded in `PlutoGEEditor.log`; ordinary Vulkan rendering remains
+available. Quality mode determines the
 internal render resolution using Streamline's optimal-settings query; UI and
 presentation remain at output resolution.
 

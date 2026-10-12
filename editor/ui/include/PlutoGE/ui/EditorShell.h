@@ -370,7 +370,10 @@ namespace PlutoGE::ui
         bool m_showScriptBuildDiagnostics = false;
         bool m_persistEditorSettings = true;
         bool SaveProjectToDisk();
-        bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
+        bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath, bool headless = false);
+        std::filesystem::path GetServerOutputPath() const;
+        bool BuildServer(bool runAfterBuild);
+        bool RunServerBuild();
         bool RunTestBuild();
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
@@ -383,7 +386,7 @@ namespace PlutoGE::ui
         void SynchronizeHistoryState();
         void UpdateSceneRecovery();
         void RenderSceneRecovery();
-        bool RunProjectValidation(bool includeCurrentScene);
+        bool RunProjectValidation(bool includeCurrentScene, bool headless = false);
         void RenderProjectValidation(const std::function<void(const std::string &)> &reveal);
         void SaveRecoveryBackup();
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);

@@ -28,7 +28,7 @@ namespace PlutoGE::core
             last = now;
             // Checkpoints may be reached from native calls made by managed
             // OnCreate. Never unwind a presentation exception across that ABI.
-            if (presentationError.empty())
+            if (present && presentationError.empty())
             {
                 try { present(m_status); ++m_status.presentedFrames; }
                 catch (const std::exception &error) { presentationError = error.what(); }

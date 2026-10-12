@@ -1,4 +1,5 @@
 #include <climits>
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/platform/ContentDigest.h"
 #include "PlutoGE/render/TextureManager.h"
@@ -389,6 +390,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadRenderTexture(const std::string &assetPath)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         // Materials, cameras and UI documents spell the same asset differently
         // (normalized asset paths vs. canonical document-relative paths).
         std::error_code canonicalError;
@@ -474,6 +476,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         if (!filePath || filePath[0] == '\0')
         {
             return nullptr;
@@ -547,6 +550,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels, TextureColorSpace colorSpace)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         auto it = m_textureCache.find(cacheKey);
         if (it != m_textureCache.end())
         {
@@ -588,6 +592,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadEnvironmentTextureFromFile(const char *filePath)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         if (!filePath || filePath[0] == '\0')
         {
             return nullptr;
@@ -745,6 +750,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadLightmapFromFile(const char *filePath)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         if (!filePath || filePath[0] == '\0')
         {
             return nullptr;
@@ -834,6 +840,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadLightmapFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         auto it = m_textureCache.find(cacheKey);
         if (it != m_textureCache.end())
         {
@@ -876,6 +883,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadLightmapFromMemory(const std::string &cacheKey, const float *pixels, int width, int height, int channels)
     {
+        if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         if (!pixels || channels < 1 || channels > 4)
         {
             return nullptr;

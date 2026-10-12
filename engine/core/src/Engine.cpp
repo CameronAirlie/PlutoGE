@@ -204,6 +204,12 @@ namespace PlutoGE::core
     bool Engine::Initialize(const EngineConfig &config)
     {
         m_config = config;
+        if (m_config.headless)
+        {
+            m_scriptEngine->Initialize();
+            m_isInitialized = true;
+            return true;
+        }
         m_config.windowConfig.clientApi = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan
                                               ? platform::WindowClientApi::None
                                               : platform::WindowClientApi::OpenGL;
@@ -341,7 +347,7 @@ namespace PlutoGE::core
         ImportedRenderMeshAsset importedRenderMeshAsset;
         importedRenderMeshAsset.mesh = importedMeshAsset.mesh;
         importedRenderMeshAsset.animations = importedMeshAsset.animations;
-        if (!importedMeshAsset.mesh)
+        if (m_config.headless || !importedMeshAsset.mesh)
         {
             return importedRenderMeshAsset;
         }
@@ -554,7 +560,7 @@ namespace PlutoGE::core
 
     void Engine::RequestApplicationQuit()
     {
-        if (m_config.isEditorHost)
+        if (m_config.isEditorHost || m_config.headless)
         {
             m_pendingApplicationQuitRequest = true;
         }
@@ -612,7 +618,7 @@ namespace PlutoGE::core
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: audio");
         m_audioSystem->Shutdown();
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: renderer");
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
+        if (!m_config.headless && m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
             m_renderer->Shutdown();
         m_textureManager->SetWindow(nullptr);
         m_rhiRenderService->Shutdown();

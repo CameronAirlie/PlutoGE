@@ -603,6 +603,11 @@ namespace PlutoGE::scene
 
     void ScriptComponent::EnsureInstance()
     {
+        const auto &config = core::Engine::GetInstance().GetConfig();
+        if (config.headless && std::find(config.headlessScriptClasses.begin(),
+            config.headlessScriptClasses.end(), m_scriptClass) == config.headlessScriptClasses.end())
+            return;
+
         if (m_instance || m_scriptClass.empty())
         {
             return;

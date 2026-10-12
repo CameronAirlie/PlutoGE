@@ -56,3 +56,15 @@ install(TARGETS PlutoGERuntime
     RUNTIME DESTINATION .
     COMPONENT Runtime
 )
+
+# Console entry point: uses CPU engine services without creating a window/device.
+add_executable(PlutoGEServer src/server_main.cpp)
+get_target_property(_pluto_runtime_libraries PlutoGERuntime LINK_LIBRARIES)
+target_link_libraries(PlutoGEServer PRIVATE ${_pluto_runtime_libraries})
+install(TARGETS PlutoGEServer RUNTIME DESTINATION . COMPONENT Runtime)
+
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEServer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:OpenAL> $<TARGET_FILE_DIR:PlutoGEServer>/$<TARGET_FILE_NAME:OpenAL>)
+endif()
+pluto_attach_slang_runtime(PlutoGEServer)

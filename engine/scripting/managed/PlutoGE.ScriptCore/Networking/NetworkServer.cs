@@ -60,6 +60,15 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
         int peerId, ushort channel, T value, JsonSerializerOptions? options = null) =>
         Send(peerId, channel, NetworkPayload.FromJson(value, options));
 
+    /// <summary>Closes one peer and queues its disconnect callback for the next Poll.</summary>
+    public bool Disconnect(int peerId)
+    {
+        if (!_peers.TryRemove(peerId, out var peer)) return false;
+        peer.DisposeAsync().GetAwaiter().GetResult();
+        _events.Enqueue(() => ClientDisconnected?.Invoke(peerId));
+        return true;
+    }
+
     public int Broadcast(ushort channel, ReadOnlySpan<byte> payload, int exceptPeerId = 0)
     {
         var sent = 0;

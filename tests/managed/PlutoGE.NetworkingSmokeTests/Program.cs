@@ -45,6 +45,14 @@ await PumpUntilAsync(
 var jsonMessage = firstMessages.Concat(secondMessages).Single(message => message.Channel == 9);
 Check(jsonMessage.GetJson<PlayerState>() == source, "JSON did not round-trip");
 
+var disconnected = new List<int>();
+server.ClientDisconnected += disconnected.Add;
+Check(server.Disconnect(connectedPeers[0]), "server could not disconnect peer");
+Check(!server.Disconnect(connectedPeers[0]), "disconnect was not idempotent");
+await PumpUntilAsync(() => disconnected.Count == 1 && server.ClientCount == 1, server, firstClient, secondClient);
+Check(disconnected[0] == connectedPeers[0], "wrong peer disconnected");
+Check(server.IsRunning && (firstClient.IsConnected || secondClient.IsConnected), "disconnect stopped listener or both peers");
+
 Console.WriteLine("Networking smoke tests passed.");
 
 static async Task PumpUntilAsync(

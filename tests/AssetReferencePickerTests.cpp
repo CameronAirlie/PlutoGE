@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -136,6 +137,43 @@ namespace
         Require(ui::CollectProjectAssetChoices(&project, ProjectAssetType::Material, {.catalog = &catalog}).empty(),
                 "Retired imported objects must disappear from choices");
     }
+
+    void ClosedPickerLookup()
+    {
+        const auto project = MakeProject(std::filesystem::temp_directory_path() / "PlutoGE-picker-lookup");
+        const std::array types{ProjectAssetType::Texture, ProjectAssetType::ShaderGraph, ProjectAssetType::Material};
+        const std::array builtins{ui::AssetReferenceOption{"custom-default", "Custom Default"}};
+        const ui::ProjectAssetPickerOptions options{.includeEngineAssets = true, .builtinOptions = builtins};
+        for (const auto &choice : ui::CollectProjectAssetChoices(&project, types, options))
+        {
+            const auto found = ui::FindProjectAssetChoice(&project, types, choice.reference, options);
+            Require(found && found->displayName == choice.displayName, "Closed preview must match the open list");
+        }
+        Require(!ui::FindProjectAssetChoice(&project, types, "project://Missing.png", options), "Missing asset accepted");
+        Require(!ui::FindProjectAssetChoice(&project, types, "C:/outside.png", options), "External asset accepted");
+        Require(!ui::FindProjectAssetChoice(&project, types, "project://Textures/Brick.png",
+            {.filter = [](const auto &option) { return option.reference.ends_with(".plutorendertexture"); }}), "Filter ignored");
+
+        assets::AssetCatalog catalog;
+        std::vector<assets::AssetObjectDescriptor> objects;
+        for (int i = 0; i < 5000; ++i)
+            objects.push_back({{"texture" + std::to_string(i), 0}, ProjectAssetType::Texture, assets::AssetOwnership::Authored,
+                "Texture", "project://Textures/" + std::to_string(i) + ".png"});
+        Require(catalog.Replace(std::move(objects)), "Large catalog fixture failed");
+        int filtered = 0;
+        const ui::ProjectAssetPickerOptions indexed{.filter = [&](const auto &) { ++filtered; return true; }, .catalog = &catalog};
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < 1000; ++i)
+            Require(ui::FindProjectAssetChoice(&project, types, "asset://texture2500#0", indexed).has_value(), "Indexed identity lookup failed");
+        Require(filtered == 1000, "Closed pickers evaluated filters for unrelated assets");
+        const auto milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "1000 closed picker lookups over 5000 assets: " << milliseconds << " ms\n";
+        Require(!ui::FindProjectAssetChoice(&project, types, "project://Textures/Brick.png", {.catalog = &catalog}),
+            "Closed picker used a stale manifest asset");
+        Require(catalog.Replace({}), "Could not clear catalog");
+        Require(!ui::FindProjectAssetChoice(&project, types, "asset://texture2500#0", {.catalog = &catalog}),
+            "Retired identity remained selectable");
+    }
 }
 
 int main()
@@ -146,6 +184,7 @@ int main()
         EngineAssetsAndMultipleTypes();
         ReferencesNormalizeToTheProject();
         CatalogBackedImportedChoices();
+        ClosedPickerLookup();
         std::cout << "PASS: material asset pickers offer and normalize project assets only\n";
         return 0;
     }

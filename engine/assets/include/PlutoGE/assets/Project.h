@@ -55,6 +55,24 @@ namespace PlutoGE::assets
         Fsr2,
     };
 
+    struct ServerEnvironmentVariable
+    {
+        std::string name;
+        std::string value;
+    };
+
+    struct ProjectServerSettings
+    {
+        std::string startupScene;
+        std::string outputExecutable = "Build/Server/GameServer.exe";
+        int tickRate = 60;
+        std::vector<std::string> scripts;
+        std::vector<ServerEnvironmentVariable> environment;
+    };
+
+    // Shared validation for authoring, export and command-line overrides.
+    bool IsServerEnvironmentName(std::string_view name);
+
     struct ProjectManifest
     {
         std::string name = "UntitledProject";
@@ -66,6 +84,7 @@ namespace PlutoGE::assets
         std::string startupScene;
         bool buildUsedAssetsOnly = false;
         std::vector<std::string> buildAlwaysInclude;
+        ProjectServerSettings server;
         render::LoadingScreenStyle loadingScreen;
         std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";
@@ -140,6 +159,9 @@ namespace PlutoGE::assets
     std::filesystem::path GetRuntimeManifestPathForExecutable(const std::filesystem::path &executablePath);
     std::filesystem::path GetRuntimeContentPackPathForExecutable(const std::filesystem::path &executablePath);
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot);
+    std::filesystem::path FindServerExecutable(const std::filesystem::path &searchRoot);
+    inline constexpr std::string_view kHeadlessServerMarker = "PLUTOGE_HEADLESS_SERVER_VERSION=1";
+    bool ValidateServerSettings(const Project &project, std::string *errorMessage = nullptr);
     // Embedded capability metadata: require a matching reader before exporting.
     inline constexpr std::string_view kRuntimeContentPackMarker = "PLUTOGE_RUNTIME_CONTENT_PACK_VERSION=2";
     bool IsRuntimeContentPackCompatible(const std::filesystem::path &runtimeExecutablePath);
@@ -156,4 +178,9 @@ namespace PlutoGE::assets
                                  const std::filesystem::path &runtimeExecutablePath,
                                  std::string *errorMessage = nullptr,
                                  const ExportOptions &options = {});
+    bool ExportHeadlessProject(const Project &project,
+                               const std::filesystem::path &destinationExecutablePath,
+                               const std::filesystem::path &serverExecutablePath,
+                               std::string *errorMessage = nullptr,
+                               const ExportOptions &options = {});
 }

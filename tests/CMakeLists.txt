@@ -877,3 +877,7 @@ if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEManagedAssetReferenceTests COMMAND PlutoGEManagedAssetReferenceTests)
     add_dependencies(PlutoGEAssetPipelineChecks PlutoGEManagedAssetReferenceTests)
 endif()
+
+add_executable(PlutoGEHeadlessServerTests HeadlessServerTests.cpp)
+pluto_link_engine(PlutoGEHeadlessServerTests)
+add_test(NAME PlutoGEHeadlessServerTests COMMAND PlutoGEHeadlessServerTests)

@@ -12,6 +12,7 @@
 #include <cctype>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace PlutoGE::ui
 {
@@ -170,13 +171,12 @@ namespace PlutoGE::ui
                                                                  const ProjectAssetPickerOptions &options)
     {
         std::vector<AssetReferenceOption> assetsOffered;
+        std::unordered_set<std::string> offeredReferences;
         const auto offer = [&](const AssetReferenceOption &option) {
             const bool allowed = assets::Project::IsProjectAssetReference(option.reference)
                                      ? project != nullptr
                                      : options.includeEngineAssets && assets::Project::IsEngineAssetReference(option.reference);
-            const bool duplicate = std::any_of(assetsOffered.begin(), assetsOffered.end(),
-                                               [&](const auto &offered) { return offered.reference == option.reference; });
-            if (allowed && !duplicate && (!options.filter || options.filter(option)))
+            if (allowed && (!options.filter || options.filter(option)) && offeredReferences.insert(option.reference).second)
                 assetsOffered.push_back(option);
         };
         for (const auto type : types)
@@ -215,6 +215,50 @@ namespace PlutoGE::ui
         return CollectProjectAssetChoices(project, std::span(&type, 1), options);
     }
 
+    std::optional<AssetReferenceOption> FindProjectAssetChoice(
+        const assets::Project *project, std::span<const assets::ProjectAssetType> types,
+        const std::string &reference, const ProjectAssetPickerOptions &options)
+    {
+        const auto resolved = ResolveAssetPickerReference(options.catalog, reference);
+        for (const auto &option : options.builtinOptions)
+            if (option.reference == resolved) return option;
+        const auto allowed = [&](const AssetReferenceOption &option)
+        {
+            const bool inScope = assets::Project::IsProjectAssetReference(option.reference) ? project != nullptr :
+                options.includeEngineAssets && assets::Project::IsEngineAssetReference(option.reference);
+            return inScope && (!options.filter || options.filter(option));
+        };
+        const auto catalogChoice = [&](const assets::AssetObjectDescriptor &object) -> std::optional<AssetReferenceOption>
+        {
+            if (object.location != resolved || std::find(types.begin(), types.end(), object.type) == types.end()) return {};
+            auto display = object.location;
+            if (display.starts_with(assets::Project::kProjectAssetScheme)) display.erase(0, assets::Project::kProjectAssetScheme.size());
+            AssetReferenceOption option{object.location, std::move(display)};
+            return allowed(option) ? std::optional(option) : std::nullopt;
+        };
+        if (project && options.catalog)
+        {
+            if (const auto identity = options.catalog->FindIdentityByLocation(resolved))
+                if (const auto *object = options.catalog->Find(*identity))
+                    if (auto option = catalogChoice(*object)) return option;
+            // Ambiguous sub-object locations can still be valid choices for a particular type.
+            for (const auto &object : options.catalog->GetObjects())
+                if (auto option = catalogChoice(object)) return option;
+        }
+        for (const auto type : types)
+        {
+            for (const auto &option : GetCachedAssetReferenceOptions(project, type))
+            {
+                if (options.catalog && assets::Project::IsProjectAssetReference(option.reference)) continue;
+                if (option.reference == resolved && allowed(option)) return option;
+            }
+            if (project && options.includeEngineAssets)
+                for (const auto &option : GetCachedAssetReferenceOptions(nullptr, type))
+                    if (option.reference == resolved && allowed(option)) return option;
+        }
+        return {};
+    }
+
     bool RenderProjectAssetPicker(const char *label, const assets::Project *project,
                                   std::span<const assets::ProjectAssetType> types, std::string &reference,
                                   const ProjectAssetPickerOptions &options)
@@ -224,24 +268,21 @@ namespace PlutoGE::ui
         const auto snapshot = project && project == EditorShell::GetInstance().GetProject()
             ? core::Engine::GetInstance().GetAssetManager().GetAssetCatalog() : nullptr;
         if (!effectiveOptions.catalog) effectiveOptions.catalog = snapshot.get();
-        const auto choices = CollectProjectAssetChoices(project, types, effectiveOptions);
         const auto resolvedReference = ResolveAssetPickerReference(effectiveOptions.catalog, reference);
-        const auto current = std::find_if(choices.begin(), choices.end(),
-                                          [&](const auto &choice) { return choice.reference == resolvedReference; });
-        const bool invalid = !reference.empty() && current == choices.end();
+        const auto current = reference.empty() ? std::nullopt : FindProjectAssetChoice(project, types, resolvedReference, effectiveOptions);
+        const bool invalid = !reference.empty() && !current;
         // Distinguish an existing asset the site's filter rejects (for example
         // the wrong scriptable object class) from one deleted or renamed.
         const bool incompatible = invalid && options.filter &&
-            std::ranges::any_of(CollectProjectAssetChoices(project, types, {.includeEngineAssets = options.includeEngineAssets,
-                                                                          .catalog = effectiveOptions.catalog}),
-                                [&](const auto &choice) { return choice.reference == resolvedReference; });
+            FindProjectAssetChoice(project, types, resolvedReference, {.includeEngineAssets = options.includeEngineAssets,
+                                                                       .catalog = effectiveOptions.catalog}).has_value();
         const bool missing = invalid && !incompatible &&
             (assets::Project::IsProjectAssetReference(reference) || reference.starts_with("asset://"));
         const char *emptyPreview = options.emptyPreview ? options.emptyPreview
                                    : options.noneLabel  ? options.noneLabel
                                                         : "None";
         const std::string preview = reference.empty()          ? emptyPreview
-                                    : current != choices.end() ? current->displayName
+                                    : current                  ? current->displayName
                                     : incompatible             ? "Incompatible: " + reference
                                     : missing                  ? "Missing: " + reference
                                                                : "Not a project asset: " + reference;
@@ -269,6 +310,7 @@ namespace PlutoGE::ui
         }
         if (open)
         {
+            const auto choices = CollectProjectAssetChoices(project, types, effectiveOptions);
             // Keyed by widget ID so each picker keeps its own search text.
             static std::unordered_map<ImGuiID, std::array<char, 96>> searches;
             auto &search = searches[ImGui::GetID(label)];
@@ -303,7 +345,7 @@ namespace PlutoGE::ui
                 const std::string dropped(data, data + payload->DataSize - 1);
                 // Drops follow the same rule as the list.
                 const auto resolvedDrop = ResolveAssetPickerReference(effectiveOptions.catalog, dropped);
-                if (std::any_of(choices.begin(), choices.end(), [&](const auto &choice) { return choice.reference == resolvedDrop; }))
+                if (FindProjectAssetChoice(project, types, resolvedDrop, effectiveOptions))
                     choose(resolvedDrop);
             }
             ImGui::EndDragDropTarget();

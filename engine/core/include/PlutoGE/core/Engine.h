@@ -76,6 +76,9 @@ namespace PlutoGE::core
         bool isEditorHost = false;
         render::rhi::TemporalUpscalerOptions temporalUpscaler;
         bool enableProfiling = false;
+        // Headless hosts retain CPU scene/physics/navigation/script services only.
+        bool headless = false;
+        std::vector<std::string> headlessScriptClasses;
     };
 
     class Engine

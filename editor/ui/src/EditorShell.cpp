@@ -2725,7 +2725,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath)
+    bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath, bool headless)
     {
         if (IsModelImportRunning())
         {
@@ -2766,7 +2766,16 @@ namespace PlutoGE::ui
             }
         }
 
-        if (!RunProjectValidation(false))
+        if (headless)
+        {
+            std::string error;
+            if (!assets::ValidateServerSettings(*m_project, &error))
+            { m_statusMessage = error; Log(ConsoleSeverity::Error, error); return false; }
+            for (const auto &script : manifest.server.scripts)
+                if (!m_engine.GetScriptEngine().HasClass(script))
+                { m_statusMessage = "Unknown server script: " + script; Log(ConsoleSeverity::Error, m_statusMessage); return false; }
+        }
+        if (!RunProjectValidation(false, headless))
         {
             m_showProjectValidation = true;
             m_statusMessage = "Export stopped: resolve errors in Project Validation and build again.";
@@ -2774,10 +2783,12 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto runtimeExecutablePath = assets::FindRuntimeExecutable(GetProcessDirectory());
+        const auto runtimeExecutablePath = headless ? assets::FindServerExecutable(GetProcessDirectory()) :
+                                                     assets::FindRuntimeExecutable(GetProcessDirectory());
         if (runtimeExecutablePath.empty())
         {
-            m_statusMessage = "Could not find PlutoGERuntime executable to export. Build the engine runtime first.";
+            m_statusMessage = headless ? "Could not find PlutoGEServer. Build or install the engine server host first." :
+                                        "Could not find PlutoGERuntime executable to export. Build the engine runtime first.";
             return false;
         }
 
@@ -2785,19 +2796,55 @@ namespace PlutoGE::ui
         assets::ExportOptions exportOptions;
         exportOptions.pruneUnused = manifest.buildUsedAssetsOnly;
         exportOptions.alwaysInclude = manifest.buildAlwaysInclude;
-        if (!assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions))
+        const bool exported = headless ?
+            assets::ExportHeadlessProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions) :
+            assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions);
+        if (!exported)
         {
             m_statusMessage = errorMessage.empty() ? "Failed to build project." : errorMessage;
             return false;
         }
 
-        if (!ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
+        if (!headless && !ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Built project but failed to export the script SDK." : errorMessage;
             return false;
         }
 
-        m_statusMessage = "Built project: " + std::filesystem::path(destinationExecutablePath).filename().string();
+        m_statusMessage = std::string(headless ? "Built dedicated server: " : "Built project: ") + destinationExecutablePath.string();
+        Log(ConsoleSeverity::Info, m_statusMessage);
+        return true;
+    }
+
+    std::filesystem::path EditorShell::GetServerOutputPath() const
+    {
+        if (!m_project || m_project->GetManifest().server.outputExecutable.empty()) return {};
+        auto output = std::filesystem::path(m_project->GetManifest().server.outputExecutable);
+        if (output.is_relative()) output = m_project->GetRootDirectory() / output;
+#ifndef _WIN32
+        if (output.extension() == ".exe") output.replace_extension();
+#endif
+        return output.lexically_normal();
+    }
+
+    bool EditorShell::BuildServer(bool runAfterBuild)
+    {
+        const auto output = GetServerOutputPath();
+        if (output.empty()) { m_statusMessage = "Configure the server output executable in Project Settings."; return false; }
+        if (!BuildProjectToPath(output, true)) return false;
+        return !runAfterBuild || RunServerBuild();
+    }
+
+    bool EditorShell::RunServerBuild()
+    {
+        const auto output = GetServerOutputPath();
+        if (output.empty() || !std::filesystem::is_regular_file(output) ||
+            !std::filesystem::is_regular_file(assets::GetRuntimeContentPackPathForExecutable(output)))
+        { m_statusMessage = "Build the dedicated server before running it."; return false; }
+        std::string error;
+        if (!LaunchExecutable(output, &error)) { m_statusMessage = error; return false; }
+        m_statusMessage = "Dedicated server launched: " + output.string() + ". Stop it with Ctrl+C in its console.";
+        Log(ConsoleSeverity::Info, m_statusMessage);
         return true;
     }
 
@@ -3261,6 +3308,7 @@ namespace PlutoGE::ui
         std::string projectStartupScene;
         bool projectBuildUsedAssetsOnly = false;
         std::vector<std::string> projectBuildAlwaysInclude;
+        assets::ProjectServerSettings projectServer;
         std::string projectLoadingScreen;
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
@@ -3287,6 +3335,7 @@ namespace PlutoGE::ui
             projectStartupScene = manifest.startupScene;
             projectBuildUsedAssetsOnly = manifest.buildUsedAssetsOnly;
             projectBuildAlwaysInclude = manifest.buildAlwaysInclude;
+            projectServer = manifest.server;
             projectLoadingScreen = manifest.loadingScreen.assetReference;
             std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
             std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
@@ -4090,6 +4139,10 @@ namespace PlutoGE::ui
                         RunTestBuild();
                     }
                     ImGui::Separator();
+                    if (ImGui::MenuItem("Build Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(false);
+                    if (ImGui::MenuItem("Build and Run Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(true);
+                    if (ImGui::MenuItem("Run Dedicated Server", nullptr, false, m_project != nullptr)) RunServerBuild();
+                    ImGui::Separator();
                     if (ImGui::MenuItem("New Scene", "Ctrl+Alt+N"))
                     {
                         newScene();
@@ -4530,6 +4583,53 @@ namespace PlutoGE::ui
                     ImGui::EndChild();
                     if (ImGui::Button("Add included asset")) projectBuildAlwaysInclude.emplace_back();
 
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Dedicated Server");
+                    (void)RenderProjectAssetPicker("Server Startup Scene", m_project.get(), assets::ProjectAssetType::Scene,
+                        projectServer.startupScene, {.noneLabel = "<select simulation scene>", .includeEngineAssets = true});
+                    const auto serverText = [](const char *label, std::string &value)
+                    {
+                        std::vector<char> buffer((std::max)(value.size() + 1, std::size_t(4096)), '\0');
+                        std::copy(value.begin(), value.end(), buffer.begin());
+                        if (ImGui::InputText(label, buffer.data(), buffer.size())) value = buffer.data();
+                    };
+                    serverText("Server Output Executable", projectServer.outputExecutable);
+                    ImGui::TextWrapped("Relative output paths use the project directory. Build and Run starts the exported console application; Ctrl+C stops it.");
+                    ImGui::SliderInt("Server Tick Rate", &projectServer.tickRate, 10, 240, "%d Hz");
+                    ImGui::TextWrapped("Only allowed simulation scripts run, including on spawned prefabs. Include session, bots and gameplay scripts; leave out player input, menus and cameras.");
+                    ImGui::BeginChild("Server scripts", ImVec2(0, 150), ImGuiChildFlags_Borders);
+                    for (std::size_t i = 0; i < projectServer.scripts.size();)
+                    {
+                        ImGui::PushID(static_cast<int>(i));
+                        auto &script = projectServer.scripts[i];
+                        if (ImGui::BeginCombo("Script", script.empty() ? "<select script>" : script.c_str()))
+                        {
+                            const auto scriptClasses = m_engine.GetScriptEngine().GetClassNames();
+                            for (const auto &name : scriptClasses)
+                                if (ImGui::Selectable(name.c_str(), script == name)) script = name;
+                            ImGui::EndCombo();
+                        }
+                        ImGui::SameLine();
+                        const bool remove = ImGui::SmallButton("Remove");
+                        ImGui::PopID();
+                        if (remove) projectServer.scripts.erase(projectServer.scripts.begin() + i); else ++i;
+                    }
+                    ImGui::EndChild();
+                    if (ImGui::Button("Add server script")) projectServer.scripts.emplace_back();
+                    ImGui::TextWrapped("Application environment defaults (for example port, match mode or bot count). The deployment environment or --env NAME=VALUE overrides these values. Values are stored in the project and package; use deployment settings for secrets.");
+                    ImGui::BeginChild("Server environment", ImVec2(0, 150), ImGuiChildFlags_Borders);
+                    for (std::size_t i = 0; i < projectServer.environment.size();)
+                    {
+                        ImGui::PushID(static_cast<int>(i));
+                        serverText("Name", projectServer.environment[i].name);
+                        serverText("Value", projectServer.environment[i].value);
+                        const bool remove = ImGui::SmallButton("Remove variable");
+                        ImGui::PopID();
+                        if (remove) projectServer.environment.erase(projectServer.environment.begin() + i); else ++i;
+                    }
+                    ImGui::EndChild();
+                    if (ImGui::Button("Add server variable")) projectServer.environment.emplace_back();
+
                     if (ImGui::Button("Save"))
                     {
                         const bool graphicsApiChanged = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
@@ -4537,6 +4637,7 @@ namespace PlutoGE::ui
                         manifest.startupScene = projectStartupScene;
                         manifest.buildUsedAssetsOnly = projectBuildUsedAssetsOnly;
                         manifest.buildAlwaysInclude = projectBuildAlwaysInclude;
+                        manifest.server = projectServer;
                         std::erase(manifest.buildAlwaysInclude, std::string{});
                         manifest.windowTitle = projectWindowTitleBuffer.data();
                         manifest.loadingScreen.assetReference = projectLoadingScreen;

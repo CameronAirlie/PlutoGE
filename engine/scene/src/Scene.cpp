@@ -135,7 +135,8 @@ namespace PlutoGE::scene
 
             if (volumes)
                 for (auto *volume : entity->GetComponents<AudioEnvironmentVolumeComponent>())
-                    if (volume && volume->IsEnabled()) volumes->push_back(volume);
+                    if (volume && volume->IsEnabled())
+                        volumes->push_back(volume);
 
             for (auto *child : entity->GetChildren())
             {
@@ -882,7 +883,7 @@ namespace PlutoGE::scene
 
         void LogRagdollDiagnostic(const std::string &message)
         {
-            scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, message);
+            // scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, message);
         }
 
         std::vector<size_t> SelectPhysicalRagdollJoints(const render::Skeleton &skeleton)
@@ -1101,11 +1102,13 @@ namespace PlutoGE::scene
             for (auto *foliage : foliageComponents)
             {
                 auto *owner = foliage ? foliage->GetOwner() : nullptr;
-                if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive()) continue;
+                if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive())
+                    continue;
                 for (const auto &cell : foliage->BuildCollisionCells())
                 {
                     auto shapeData = CreateFoliageCellBulletShape(cell);
-                    if (!shapeData.shape || cell.instances.empty()) continue;
+                    if (!shapeData.shape || cell.instances.empty())
+                        continue;
                     auto object = std::make_unique<btCollisionObject>();
                     object->setCollisionShape(shapeData.shape.get());
                     object->setWorldTransform(btTransform::getIdentity());
@@ -1113,7 +1116,8 @@ namespace PlutoGE::scene
                     queryWorld->collisionWorld.addCollisionObject(object.get());
                     std::vector<std::uint64_t> instanceIds;
                     instanceIds.reserve(cell.instances.size());
-                    for (const auto &instance : cell.instances) instanceIds.push_back(instance.instanceId);
+                    for (const auto &instance : cell.instances)
+                        instanceIds.push_back(instance.instanceId);
                     queryWorld->bodies.push_back(BulletQueryBody{
                         .entity = owner,
                         .foliage = foliage,
@@ -1415,10 +1419,10 @@ namespace PlutoGE::scene
     void Scene::UnregisterRuntimeComponent(Component *component) { m_runtimeComponents->Unregister(component); }
     void Scene::InvalidateRuntimeHierarchy() { m_runtimeComponents->InvalidateHierarchy(); }
 
-
     SceneStreaming &Scene::GetStreaming()
     {
-        if (!m_streaming) m_streaming = std::make_unique<SceneStreaming>(*this);
+        if (!m_streaming)
+            m_streaming = std::make_unique<SceneStreaming>(*this);
         return *m_streaming;
     }
     std::uint64_t Scene::GetSectionOwner(EntityID id) const
@@ -1428,45 +1432,53 @@ namespace PlutoGE::scene
     }
     void Scene::AdoptSectionEntities(Scene &source, std::uint64_t section)
     {
-        if (&source == this || source.IsRuntimeStarted() || !section) throw std::runtime_error("Invalid section activation");
+        if (&source == this || source.IsRuntimeStarted() || !section)
+            throw std::runtime_error("Invalid section activation");
         // Linked generation contexts must move with their complete scene entity maps.
         std::unordered_map<EntityID, EntityID> remap;
         for (const auto &entity : source.m_entityStorage)
         {
             const auto id = Entity::GenerateUniqueID();
-            if (!id || FindEntityByID(id) || remap.contains(entity->GetID())) throw std::runtime_error("Scene entity IDs exhausted or duplicated");
+            if (!id || FindEntityByID(id) || remap.contains(entity->GetID()))
+                throw std::runtime_error("Scene entity IDs exhausted or duplicated");
             remap.emplace(entity->GetID(), id);
         }
         // Remap the complete section before publishing any entities, so references
         // between different roots remain internal to this section instance.
         for (const auto &entity : source.m_entityStorage)
         {
-            for (const auto &bucket : entity->GetComponentBuckets()) for (auto *component : bucket)
-            {
-                if (auto *script = dynamic_cast<ScriptComponent *>(component))
+            for (const auto &bucket : entity->GetComponentBuckets())
+                for (auto *component : bucket)
                 {
-                    for (const auto &[name, value] : script->GetFieldValues())
-                        if (const auto *id = std::get_if<std::uint32_t>(&value); id && *id && !remap.contains(*id))
-                            throw std::runtime_error("Section script contains an external entity reference");
-                    script->RemapEntityReferences(remap);
+                    if (auto *script = dynamic_cast<ScriptComponent *>(component))
+                    {
+                        for (const auto &[name, value] : script->GetFieldValues())
+                            if (const auto *id = std::get_if<std::uint32_t>(&value); id && *id && !remap.contains(*id))
+                                throw std::runtime_error("Section script contains an external entity reference");
+                        script->RemapEntityReferences(remap);
+                    }
+                    if (auto *sequence = dynamic_cast<SequencerComponent *>(component))
+                    {
+                        for (const auto &track : sequence->GetTimeline().tracks)
+                            if (!remap.contains(track.entity))
+                                throw std::runtime_error("Section timeline contains an external entity reference");
+                        sequence->RemapBindings(remap);
+                    }
+                    std::vector<Property> changed;
+                    for (auto property : component->Serialize())
+                    {
+                        if (property.type != PropertyType::Entity && property.name != "Target Entity")
+                            continue;
+                        const auto id = static_cast<EntityID>(std::stoul(property.value));
+                        if (auto it = remap.find(id); it != remap.end())
+                            property.value = std::to_string(it->second);
+                        else if (id)
+                            throw std::runtime_error("Section contains an external entity reference");
+                        changed.push_back(std::move(property));
+                    }
+                    if (!changed.empty())
+                        component->Deserialize(changed);
                 }
-                if (auto *sequence = dynamic_cast<SequencerComponent *>(component))
-                {
-                    for (const auto &track : sequence->GetTimeline().tracks)
-                        if (!remap.contains(track.entity)) throw std::runtime_error("Section timeline contains an external entity reference");
-                    sequence->RemapBindings(remap);
-                }
-                std::vector<Property> changed;
-                for (auto property : component->Serialize())
-                {
-                    if (property.type != PropertyType::Entity && property.name != "Target Entity") continue;
-                    const auto id = static_cast<EntityID>(std::stoul(property.value));
-                    if (auto it = remap.find(id); it != remap.end()) property.value = std::to_string(it->second);
-                    else if (id) throw std::runtime_error("Section contains an external entity reference");
-                    changed.push_back(std::move(property));
-                }
-                if (!changed.empty()) component->Deserialize(changed);
-            }
         }
         std::vector<StaticModelSceneInstance> modelInstances;
         modelInstances.reserve(source.m_staticModelInstances.size());
@@ -1474,8 +1486,10 @@ namespace PlutoGE::scene
         {
             auto moved = instance;
             moved.state.rootEntityId = remap.at(root);
-            for (auto &node : moved.state.nodeEntities) node.sceneEntityId = remap.at(node.sceneEntityId);
-            for (auto &binding : moved.state.bindingEntities) binding = remap.at(binding);
+            for (auto &node : moved.state.nodeEntities)
+                node.sceneEntityId = remap.at(node.sceneEntityId);
+            for (auto &binding : moved.state.bindingEntities)
+                binding = remap.at(binding);
             modelInstances.push_back(std::move(moved));
         }
         m_staticModelInstances.reserve(m_staticModelInstances.size() + modelInstances.size());
@@ -1494,7 +1508,8 @@ namespace PlutoGE::scene
             root->SetSceneRecursive(this);
             m_rootEntities.push_back(root);
         }
-        for (auto &entity : source.m_entityStorage) m_entityStorage.push_back(std::move(entity));
+        for (auto &entity : source.m_entityStorage)
+            m_entityStorage.push_back(std::move(entity));
         for (auto &instance : modelInstances)
             m_staticModelInstances.emplace(instance.state.rootEntityId, std::move(instance));
         source.m_staticModelInstances.clear();
@@ -1511,16 +1526,17 @@ namespace PlutoGE::scene
         {
             for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
                 navigation->InvalidateBake();
-            for (auto *agent : entity->GetComponents<NavAgentComponent>()) agent->InvalidatePath();
+            for (auto *agent : entity->GetComponents<NavAgentComponent>())
+                agent->InvalidatePath();
         }
     }
     void Scene::UnloadSectionEntities(std::uint64_t section)
     {
         for (auto *root : m_rootEntities)
-            if (GetSectionOwner(root->GetID()) == section) DestroyEntity(root->GetID());
+            if (GetSectionOwner(root->GetID()) == section)
+                DestroyEntity(root->GetID());
         InvalidateSectionNavigation();
     }
-
 
     UISystem &Scene::GetUISystem()
     {
@@ -1554,7 +1570,8 @@ namespace PlutoGE::scene
         {
             const auto &bodies = m_physicsQueryCache->world->bodies;
             size_t entityBodyCount = 0;
-            for (const auto &body : bodies) entityBodyCount += body.foliage == nullptr ? 1u : 0u;
+            for (const auto &body : bodies)
+                entityBodyCount += body.foliage == nullptr ? 1u : 0u;
             rebuild = entityBodyCount != queryEntities.size();
             for (size_t index = 0; !rebuild && index < queryEntities.size(); ++index)
             {
@@ -1574,8 +1591,10 @@ namespace PlutoGE::scene
                 if (!rebuild && foliage && foliage->IsEnabled())
                 {
                     const bool represented = std::any_of(bodies.begin(), bodies.end(),
-                        [foliage](const BulletQueryBody &body) { return body.foliage == foliage; });
-                    if (!represented && !foliage->BuildCollisionCells().empty()) rebuild = true;
+                                                         [foliage](const BulletQueryBody &body)
+                                                         { return body.foliage == foliage; });
+                    if (!represented && !foliage->BuildCollisionCells().empty())
+                        rebuild = true;
                 }
         }
 
@@ -1710,12 +1729,12 @@ namespace PlutoGE::scene
                         if (!part.body)
                             continue;
                         preservedParts.emplace(part.jointIndex, PreservedRagdollPart{
-                            .transform = part.body->getWorldTransform(),
-                            .linearVelocity = part.body->getLinearVelocity(),
-                            .angularVelocity = part.body->getAngularVelocity(),
-                            .jointFromBody = part.jointFromBody,
-                            .activationState = part.body->getActivationState(),
-                        });
+                                                                    .transform = part.body->getWorldTransform(),
+                                                                    .linearVelocity = part.body->getLinearVelocity(),
+                                                                    .angularVelocity = part.body->getAngularVelocity(),
+                                                                    .jointFromBody = part.jointFromBody,
+                                                                    .activationState = part.body->getActivationState(),
+                                                                });
                     }
                     ragdoll.animation->ClearRagdollPhysicsPose();
                 }
@@ -1764,8 +1783,8 @@ namespace PlutoGE::scene
             const bool dynamic = rigidbodyEnabled && !rigidbody->IsKinematic();
             const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
             const glm::vec3 scaledCenterOfMass = rigidbodyEnabled
-                ? rigidbody->GetCenterOfMass() * worldScale
-                : glm::vec3(0.0f);
+                                                     ? rigidbody->GetCenterOfMass() * worldScale
+                                                     : glm::vec3(0.0f);
             const btVector3 centerOfMassOffset = ToBullet(scaledCenterOfMass);
             if (rigidbodyEnabled && glm::length2(scaledCenterOfMass) > 0.00000001f)
             {
@@ -1853,11 +1872,13 @@ namespace PlutoGE::scene
         for (auto *foliage : m_foliageComponents)
         {
             auto *owner = foliage ? foliage->GetOwner() : nullptr;
-            if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive()) continue;
+            if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive())
+                continue;
             for (const auto &cell : foliage->BuildCollisionCells())
             {
                 auto shapeData = CreateFoliageCellBulletShape(cell);
-                if (!shapeData.shape || cell.instances.empty()) continue;
+                if (!shapeData.shape || cell.instances.empty())
+                    continue;
                 btTransform identity;
                 identity.setIdentity();
                 auto motionState = std::make_unique<btDefaultMotionState>(identity);
@@ -2140,23 +2161,29 @@ namespace PlutoGE::scene
 
     namespace
     {
-        template<class Function> void VisitCameraRigs(const std::vector<Entity *> &roots, Function function)
+        template <class Function>
+        void VisitCameraRigs(const std::vector<Entity *> &roots, Function function)
         {
             const auto visit = [&](Entity *entity, const auto &self) -> void
             {
-                for (auto *rig : entity->GetComponents<CameraRigComponent>()) function(*rig);
-                for (auto *child : entity->GetChildren()) self(child, self);
+                for (auto *rig : entity->GetComponents<CameraRigComponent>())
+                    function(*rig);
+                for (auto *child : entity->GetChildren())
+                    self(child, self);
             };
-            for (auto *root : roots) visit(root, visit);
+            for (auto *root : roots)
+                visit(root, visit);
         }
     }
 
-    namespace {
+    namespace
+    {
         void ResetSequencers(const std::vector<Entity *> &roots)
         {
             for (auto *entity : roots)
             {
-                for (auto *sequencer : entity->GetComponents<SequencerComponent>()) sequencer->ResetRuntime();
+                for (auto *sequencer : entity->GetComponents<SequencerComponent>())
+                    sequencer->ResetRuntime();
                 ResetSequencers(entity->GetChildren());
             }
         }
@@ -2170,7 +2197,8 @@ namespace PlutoGE::scene
         }
 
         ResetSequencers(m_rootEntities);
-        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
+        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig)
+                        { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
         m_physicsTimeAccumulator = 0.0f;
@@ -2218,13 +2246,14 @@ namespace PlutoGE::scene
         // OnCreate may request additive loads or query the scene generation.
         // Publish the runtime lifetime before invoking gameplay callbacks.
         m_runtimeStarted = true;
-        m_shaderTime=0.0f;
+        m_shaderTime = 0.0f;
         render::SetShaderGraphTimeSeconds(0.0f);
         m_runtimeComponents->Refresh(m_rootEntities);
         for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
-            if (!scriptComponent) continue;
+            if (!scriptComponent)
+                continue;
             platform::LoadingWork::Checkpoint();
             scriptComponent->Start();
         }
@@ -2232,6 +2261,8 @@ namespace PlutoGE::scene
         auto &engine = core::Engine::GetInstance();
         auto &audioSystem = engine.GetAudioSystem();
         audioSystem.ClearEmitters();
+        if (engine.GetConfig().headless)
+            return;
         audioSystem.PrewarmVoicePool(audio::AudioSystem::MaximumMixedVoiceCount);
 
         // Decode and upload scene clips before gameplay begins. Without this,
@@ -2249,7 +2280,6 @@ namespace PlutoGE::scene
             if (!clipPath.empty() && preloadedClipPaths.insert(clipPath).second)
                 (void)audioSystem.PreloadClip(clipPath);
         }
-
     }
 
     void Scene::StopRuntime()
@@ -2263,18 +2293,21 @@ namespace PlutoGE::scene
         for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
-            if (!scriptComponent) continue;
+            if (!scriptComponent)
+                continue;
             platform::LoadingWork::Checkpoint();
             scriptComponent->Stop();
         }
 
         core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
 
-        if (m_streaming) m_streaming->Reset();
+        if (m_streaming)
+            m_streaming->Reset();
         FlushPendingDestroyEntities();
         m_runtimeStarted = false;
         ResetSequencers(m_rootEntities);
-        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig) { rig.ResetRuntime(); });
+        VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig)
+                        { rig.ResetRuntime(); });
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
         m_physicsTimeAccumulator = 0.0f;
@@ -2336,52 +2369,65 @@ namespace PlutoGE::scene
     std::vector<AmbientLightVolumeComponent *> Scene::GetAmbientLightVolumes() const
     {
         std::vector<AmbientLightVolumeComponent *> volumes;
-        const auto visit = [&](auto &&self, Entity *entity) -> void {
-            if (!entity) return;
-            if (auto *volume=entity->GetComponent<AmbientLightVolumeComponent>()) volumes.push_back(volume);
-            for (auto *child:entity->GetChildren()) self(self,child);
+        const auto visit = [&](auto &&self, Entity *entity) -> void
+        {
+            if (!entity)
+                return;
+            if (auto *volume = entity->GetComponent<AmbientLightVolumeComponent>())
+                volumes.push_back(volume);
+            for (auto *child : entity->GetChildren())
+                self(self, child);
         };
-        for (auto *root:m_rootEntities) visit(visit,root);
+        for (auto *root : m_rootEntities)
+            visit(visit, root);
         return volumes;
     }
     std::vector<const BakedProbeVolume *> Scene::GetBakedProbeVolumes() const
     {
         std::vector<const BakedProbeVolume *> volumes;
-        for (auto *component:GetAmbientLightVolumes())
-            if (component->HasUsableBake()) volumes.push_back(&component->GetBakedVolume());
+        for (auto *component : GetAmbientLightVolumes())
+            if (component->HasUsableBake())
+                volumes.push_back(&component->GetBakedVolume());
         return volumes;
     }
     const BakedProbeVolume &Scene::GetBakedProbeVolume() const
     {
-        for (auto *component:GetAmbientLightVolumes())
-            if (component->HasUsableBake()) return component->GetBakedVolume();
+        for (auto *component : GetAmbientLightVolumes())
+            if (component->HasUsableBake())
+                return component->GetBakedVolume();
         static const BakedProbeVolume empty;
         return empty;
     }
     std::uint64_t Scene::GetBakedProbeRevision() const
     {
-        std::uint64_t hash=1469598103934665603ull;
-        for (auto *component:GetAmbientLightVolumes()) {
-            if (!component->HasUsableBake()) continue;
-            hash=(hash ^ component->GetRevision())*1099511628211ull;
-            hash=(hash ^ component->GetOwner()->GetID())*1099511628211ull;
+        std::uint64_t hash = 1469598103934665603ull;
+        for (auto *component : GetAmbientLightVolumes())
+        {
+            if (!component->HasUsableBake())
+                continue;
+            hash = (hash ^ component->GetRevision()) * 1099511628211ull;
+            hash = (hash ^ component->GetOwner()->GetID()) * 1099511628211ull;
         }
         return hash;
     }
     void Scene::SetBakedProbeVolume(BakedProbeVolume volume)
     {
-        auto components=GetAmbientLightVolumes();
-        auto *component=components.empty() ? nullptr : components.front();
-        if (!component) {
-            auto entity=std::make_unique<Entity>(); entity->SetName("Ambient Light Volume");
-            component=entity->CreateComponent<AmbientLightVolumeComponent>();
+        auto components = GetAmbientLightVolumes();
+        auto *component = components.empty() ? nullptr : components.front();
+        if (!component)
+        {
+            auto entity = std::make_unique<Entity>();
+            entity->SetName("Ambient Light Volume");
+            component = entity->CreateComponent<AmbientLightVolumeComponent>();
             AddEntity(std::move(entity));
         }
-        if (volume.IsValid()) {
-            auto *owner=component->GetOwner();
+        if (volume.IsValid())
+        {
+            auto *owner = component->GetOwner();
             glm::mat4 transform(volume.gridBasis);
-            transform[3]=glm::vec4(volume.GridToWorld(glm::vec3(.5f)),1);
-            if (owner->GetParent()) transform=glm::inverse(owner->GetParent()->GetWorldTransform())*transform;
+            transform[3] = glm::vec4(volume.GridToWorld(glm::vec3(.5f)), 1);
+            if (owner->GetParent())
+                transform = glm::inverse(owner->GetParent()->GetWorldTransform()) * transform;
             owner->SetLocalTransformMatrix(transform);
             component->SetSize(volume.size);
         }
@@ -2390,16 +2436,20 @@ namespace PlutoGE::scene
     }
     render::Texture *Scene::GetBakedProbeTexture() const
     {
-        const auto revision=GetBakedProbeRevision();
-        if (m_bakedProbeRevision!=revision) {
-            m_bakedProbeTexture.reset(); m_bakedProbeRevision=revision;
+        const auto revision = GetBakedProbeRevision();
+        if (m_bakedProbeRevision != revision)
+        {
+            m_bakedProbeTexture.reset();
+            m_bakedProbeRevision = revision;
         }
-        if (!m_bakedProbeTexture && HasBakedProbeVolume()) const_cast<Scene *>(this)->RebuildBakedProbeTexture();
+        if (!m_bakedProbeTexture && HasBakedProbeVolume())
+            const_cast<Scene *>(this)->RebuildBakedProbeTexture();
         return m_bakedProbeTexture.get();
     }
     void Scene::ClearBakedProbeVolume()
     {
-        for (auto *component:GetAmbientLightVolumes()) component->ClearBake();
+        for (auto *component : GetAmbientLightVolumes())
+            component->ClearBake();
         m_bakedProbeTexture.reset();
     }
 
@@ -2413,7 +2463,8 @@ namespace PlutoGE::scene
                 continue;
 
             for (auto *material : meshComponent->GetMaterials())
-                if (material) materials.insert(material);
+                if (material)
+                    materials.insert(material);
 
             if (auto *mesh = meshComponent->GetMesh())
             {
@@ -2439,11 +2490,14 @@ namespace PlutoGE::scene
                 auto *type = foliageComponent->GetType(typeIndex);
                 if (!type)
                     continue;
-                if (type->materialOverride) materials.insert(type->materialOverride);
+                if (type->materialOverride)
+                    materials.insert(type->materialOverride);
                 for (auto *material : type->materials)
-                    if (material) materials.insert(material);
+                    if (material)
+                        materials.insert(material);
                 for (const auto &material : type->ownedMaterials)
-                    if (material) materials.insert(material.get());
+                    if (material)
+                        materials.insert(material.get());
             }
         }
 
@@ -2510,7 +2564,8 @@ namespace PlutoGE::scene
         m_environmentLights.clear();
         m_physicalSkies.clear();
         m_volumetricClouds.clear();
-        const auto collect = [&](auto &&self, Entity *entity) -> void {
+        const auto collect = [&](auto &&self, Entity *entity) -> void
+        {
             if (!entity)
                 return;
             for (auto *light : entity->GetComponents<LightComponent>())
@@ -2541,7 +2596,8 @@ namespace PlutoGE::scene
 
     std::vector<Light *> Scene::GetLights() const
     {
-        return GetLights([](const Entity &) { return true; });
+        return GetLights([](const Entity &)
+                         { return true; });
     }
 
     std::vector<Light *> Scene::GetLights(const std::function<bool(const Entity &)> &include) const
@@ -2575,7 +2631,8 @@ namespace PlutoGE::scene
 
         if (parent)
         {
-            if (const auto section = GetSectionOwner(parent->GetID())) m_sectionOwners[entityPtr->GetID()] = section;
+            if (const auto section = GetSectionOwner(parent->GetID()))
+                m_sectionOwners[entityPtr->GetID()] = section;
             parent->AddChild(entityPtr);
         }
         else
@@ -2640,7 +2697,8 @@ namespace PlutoGE::scene
         const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
         std::vector<EntityID> removedInstanceRoots;
         for (const auto *removed : subtree)
-            if (m_staticModelInstances.contains(removed->GetID())) removedInstanceRoots.push_back(removed->GetID());
+            if (m_staticModelInstances.contains(removed->GetID()))
+                removedInstanceRoots.push_back(removed->GetID());
         for (const auto *subtreeEntity : subtree)
         {
             m_sectionOwners.erase(subtreeEntity->GetID());
@@ -2657,7 +2715,8 @@ namespace PlutoGE::scene
                 }),
             m_entityStorage.end());
 
-        for (const auto id : removedInstanceRoots) m_staticModelInstances.erase(id);
+        for (const auto id : removedInstanceRoots)
+            m_staticModelInstances.erase(id);
 
         if (affectsPhysics)
             ResetRuntimePhysicsState();
@@ -2693,32 +2752,28 @@ namespace PlutoGE::scene
     bool Scene::HasNativeRuntimeUI() const
     {
         return std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
-        {
+                           {
             if (!canvas || !canvas->IsEnabled() || !canvas->GetOwner() || !canvas->GetOwner()->IsActive())
                 return false;
             if (canvas->GetBackend() == UIRenderBackend::Native)
                 return true;
             return canvas->GetBackend() == UIRenderBackend::RmlUi &&
                    canvas->GetContentSource() == RmlUiContentSource::Text &&
-                   canvas->GetRenderMode() != CanvasRenderMode::WorldSpace;
-        });
+                   canvas->GetRenderMode() != CanvasRenderMode::WorldSpace; });
     }
 
     bool Scene::HasRmlRuntimeUI() const
     {
         const bool hasRmlCanvas = std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
-        {
-            return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::RmlUi &&
-                   canvas->GetOwner() && canvas->GetOwner()->IsActive();
-        });
+                                              { return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::RmlUi &&
+                                                       canvas->GetOwner() && canvas->GetOwner()->IsActive(); });
         if (hasRmlCanvas)
             return true;
 
         return std::any_of(m_rmlWidgetComponents.begin(), m_rmlWidgetComponents.end(), [](const auto *widget)
-        {
+                           {
             const auto *entity = widget ? widget->GetOwner() : nullptr;
-            return entity && entity->IsActive() && widget->IsEnabled() && !widget->GetSource().empty();
-        });
+            return entity && entity->IsActive() && widget->IsEnabled() && !widget->GetSource().empty(); });
     }
 
     std::size_t Scene::RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material)
@@ -2792,7 +2847,8 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
-        if (m_streaming) m_streaming->Pump();
+        if (m_streaming)
+            m_streaming->Pump();
         using Clock = std::chrono::high_resolution_clock;
         core::CpuScope preparationScope("Scene.Preparation");
         const auto updateStart = Clock::now();
@@ -2803,7 +2859,7 @@ namespace PlutoGE::scene
         const float simulationDeltaTime = m_runtimeStarted
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
-        m_shaderTime += std::max(simulationDeltaTime,0.0f);
+        m_shaderTime += std::max(simulationDeltaTime, 0.0f);
         render::SetShaderGraphTimeSeconds(m_shaderTime);
         RestoreRuntimePhysicsTransforms();
         ++m_updateSequence;
@@ -2815,20 +2871,22 @@ namespace PlutoGE::scene
             for (const auto &entity : m_entityStorage)
                 if (entity->IsActive())
                     for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
-                        if (navigation->IsEnabled()) navigation->Update(0);
+                        if (navigation->IsEnabled())
+                            navigation->Update(0);
         }
         // Continuous forces are state sampled by scripts each render frame. If
         // no fixed step occurred after the previous sample, replace that stale
         // sample rather than accumulating another full-strength copy. Impulses
         // are discrete events and must remain queued until physics consumes them.
         std::erase_if(m_pendingRigidbodyForces,
-                      [](const PendingRigidbodyForce &force) { return !force.impulse; });
+                      [](const PendingRigidbodyForce &force)
+                      { return !force.impulse; });
         ClearIblCaptureVolumes();
         preparationScope.End();
         const auto preparationEnd = Clock::now();
         core::CpuScope runtimeScope("Runtime UI", core::CpuCategory::UI);
 
-        if (m_runtimeStarted)
+        if (m_runtimeStarted && !core::Engine::GetInstance().GetConfig().headless)
         {
             auto &window = core::Engine::GetInstance().GetWindow();
             const auto extents = window.GetExtents();
@@ -2847,7 +2905,7 @@ namespace PlutoGE::scene
                                        .viewportSize = canvasSize,
                                        .pointerPosition = pointerInside ? mousePosition : glm::vec2(-1.0f),
                                        .pointerDelta = glm::vec2(static_cast<float>(input.mouseState.deltaX),
-                                                                static_cast<float>(-input.mouseState.deltaY)),
+                                                                 static_cast<float>(-input.mouseState.deltaY)),
                                        .pointerInside = pointerInside,
                                        .pointerDown = pointerInside && input.IsMouseButtonDown(0),
                                        .pointerPressed = pointerInside && input.IsMouseButtonPressed(0),
@@ -2918,17 +2976,20 @@ namespace PlutoGE::scene
         // cameras and other followers observe the same extrapolated transforms
         // that will be rendered this frame. These transforms are restored to
         // the authoritative fixed-step state at the start of the next update.
-        ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
+        if (!core::Engine::GetInstance().GetConfig().headless)
+            ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
 
         // Resolve built-in cameras before late followers compute screen/world positions.
         if (m_runtimeStarted)
-            VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig) { rig.UpdateRig(simulationDeltaTime); });
+            VisitCameraRigs(m_rootEntities, [simulationDeltaTime](CameraRigComponent &rig)
+                            { rig.UpdateRig(simulationDeltaTime); });
 
         m_runtimeComponents->Refresh(m_rootEntities);
         for (const auto handle : m_runtimeComponents->SnapshotScripts())
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
-            if (!scriptComponent) continue;
+            if (!scriptComponent)
+                continue;
             if (scriptComponent && scriptComponent->IsEnabled())
             {
                 const auto scriptStart = Clock::now();
@@ -2946,7 +3007,7 @@ namespace PlutoGE::scene
         core::CpuScope audioScope("Audio.Update", core::CpuCategory::Audio);
 
         const auto audioStart = Clock::now();
-        if (m_runtimeStarted)
+        if (m_runtimeStarted && !core::Engine::GetInstance().GetConfig().headless)
         {
             // Retain frame-scratch capacity so audio-heavy scenes do not churn the
             // allocator while collecting the same component sets each update.
@@ -2960,11 +3021,14 @@ namespace PlutoGE::scene
             emitterStates.clear();
             m_runtimeComponents->Refresh(m_rootEntities);
             for (auto *emitter : m_runtimeComponents->emitters)
-                if (RuntimeComponentIndex::Active(emitter)) emitters.push_back(emitter);
+                if (RuntimeComponentIndex::Active(emitter))
+                    emitters.push_back(emitter);
             for (auto *listener : m_runtimeComponents->listeners)
-                if (RuntimeComponentIndex::Active(listener)) listeners.push_back(listener);
+                if (RuntimeComponentIndex::Active(listener))
+                    listeners.push_back(listener);
             for (auto *volume : m_runtimeComponents->volumes)
-                if (RuntimeComponentIndex::Active(volume)) environmentVolumes.push_back(volume);
+                if (RuntimeComponentIndex::Active(volume))
+                    environmentVolumes.push_back(volume);
 
             audio::ListenerState listenerState;
             const auto *listenerComponent = ChoosePrimaryListener(listeners);
@@ -2985,22 +3049,40 @@ namespace PlutoGE::scene
                 for (const auto *v : environmentVolumes)
                 {
                     const float w = v->InfluenceAt(listenerState.position);
-                    if (w <= 0.0f || v->GetPriority() < priority) continue;
+                    if (w <= 0.0f || v->GetPriority() < priority)
+                        continue;
                     if (v->GetPriority() > priority)
                     {
-                        priority=v->GetPriority(); weight=0.0f;
-                        listenerState.environmentReverbWet=listenerState.environmentReverbDecay=listenerState.environmentReverbDensity=listenerState.environmentReverbDiffusion=0.0f;
-                        listenerState.environmentEchoWet=listenerState.environmentEchoDelay=listenerState.environmentEchoFeedback=listenerState.environmentLowPass=listenerState.environmentGain=0.0f;
+                        priority = v->GetPriority();
+                        weight = 0.0f;
+                        listenerState.environmentReverbWet = listenerState.environmentReverbDecay = listenerState.environmentReverbDensity = listenerState.environmentReverbDiffusion = 0.0f;
+                        listenerState.environmentEchoWet = listenerState.environmentEchoDelay = listenerState.environmentEchoFeedback = listenerState.environmentLowPass = listenerState.environmentGain = 0.0f;
                     }
-                    weight+=w; listenerState.environmentReverbWet+=v->GetReverbWet()*w; listenerState.environmentReverbDecay+=v->GetReverbDecay()*w; listenerState.environmentReverbDensity+=v->GetReverbDensity()*w; listenerState.environmentReverbDiffusion+=v->GetReverbDiffusion()*w;
-                    listenerState.environmentEchoWet+=v->GetEchoWet()*w; listenerState.environmentEchoDelay+=v->GetEchoDelay()*w; listenerState.environmentEchoFeedback+=v->GetEchoFeedback()*w; listenerState.environmentLowPass+=v->GetLowPass()*w; listenerState.environmentGain+=v->GetGain()*w;
+                    weight += w;
+                    listenerState.environmentReverbWet += v->GetReverbWet() * w;
+                    listenerState.environmentReverbDecay += v->GetReverbDecay() * w;
+                    listenerState.environmentReverbDensity += v->GetReverbDensity() * w;
+                    listenerState.environmentReverbDiffusion += v->GetReverbDiffusion() * w;
+                    listenerState.environmentEchoWet += v->GetEchoWet() * w;
+                    listenerState.environmentEchoDelay += v->GetEchoDelay() * w;
+                    listenerState.environmentEchoFeedback += v->GetEchoFeedback() * w;
+                    listenerState.environmentLowPass += v->GetLowPass() * w;
+                    listenerState.environmentGain += v->GetGain() * w;
                 }
                 if (weight > 0.0f)
                 {
                     // Preserve a dry contribution while entering a boundary fade.
                     listenerState.environmentGain += std::max(1.0f - weight, 0.0f);
-                    const float k=1.0f/std::max(weight, 1.0f); listenerState.environmentReverbWet*=k; listenerState.environmentReverbDecay*=k; listenerState.environmentReverbDensity*=k; listenerState.environmentReverbDiffusion*=k;
-                    listenerState.environmentEchoWet*=k; listenerState.environmentEchoDelay*=k; listenerState.environmentEchoFeedback*=k; listenerState.environmentLowPass*=k; listenerState.environmentGain*=k;
+                    const float k = 1.0f / std::max(weight, 1.0f);
+                    listenerState.environmentReverbWet *= k;
+                    listenerState.environmentReverbDecay *= k;
+                    listenerState.environmentReverbDensity *= k;
+                    listenerState.environmentReverbDiffusion *= k;
+                    listenerState.environmentEchoWet *= k;
+                    listenerState.environmentEchoDelay *= k;
+                    listenerState.environmentEchoFeedback *= k;
+                    listenerState.environmentLowPass *= k;
+                    listenerState.environmentGain *= k;
                 }
             }
 
@@ -3157,7 +3239,8 @@ namespace PlutoGE::scene
         audioScope.End();
         const auto audioEnd = Clock::now();
         core::CpuScope submissionScope("Render.Submission", core::CpuCategory::Rendering);
-        SubmitRenderCommands();
+        if (!core::Engine::GetInstance().GetConfig().headless)
+            SubmitRenderCommands();
         submissionScope.End();
         const auto submissionEnd = Clock::now();
 
@@ -3175,7 +3258,8 @@ namespace PlutoGE::scene
         void AccumulateTiming(std::vector<SceneUpdateTimingStats::ComponentTiming> &timings,
                               std::string name, float elapsedMs, const Entity &entity)
         {
-            auto it = std::find_if(timings.begin(), timings.end(), [&](const auto &timing) { return timing.name == name; });
+            auto it = std::find_if(timings.begin(), timings.end(), [&](const auto &timing)
+                                   { return timing.name == name; });
             if (it == timings.end())
             {
                 timings.push_back({.name = std::move(name)});
@@ -3221,10 +3305,12 @@ namespace PlutoGE::scene
 
     bool Scene::GetRuntimePointerViewport(glm::vec4 &viewport) const
     {
-        if (!m_runtimeUIInputOverride) return false;
+        if (!m_runtimeUIInputOverride)
+            return false;
         const auto bounds = m_runtimeUIInputOverride->pointerViewport;
         if (!std::isfinite(bounds.x) || !std::isfinite(bounds.y) || !std::isfinite(bounds.z) ||
-            !std::isfinite(bounds.w) || bounds.z <= 0 || bounds.w <= 0) return false;
+            !std::isfinite(bounds.w) || bounds.z <= 0 || bounds.w <= 0)
+            return false;
         viewport = bounds;
         return true;
     }
@@ -3263,7 +3349,11 @@ namespace PlutoGE::scene
         const auto meshStart = Clock::now();
         auto &renderer = core::Engine::GetInstance().GetRenderer();
         const bool republish = renderer.BeginRenderSceneScope(m_renderSceneLifetime);
-        struct ScopeExit { render::Renderer &renderer; ~ScopeExit() { renderer.EndRenderSceneScope(); } } scopeExit{renderer};
+        struct ScopeExit
+        {
+            render::Renderer &renderer;
+            ~ScopeExit() { renderer.EndRenderSceneScope(); }
+        } scopeExit{renderer};
         // Geometry mutation is rare. Until all asset writers send per-resource
         // notifications, an epoch gates this compatibility invalidation walk.
         const auto meshEpoch = render::Mesh::ContentEpoch();
@@ -3272,11 +3362,20 @@ namespace PlutoGE::scene
             {
                 const auto revision = mesh->GetMesh() ? mesh->GetMesh()->GetContentRevision() : 0;
                 auto &previousRevision = m_renderMeshRevisions[mesh];
-                if (previousRevision != revision) { mesh->NotifyMeshDataChanged(); previousRevision = revision; }
-                if (republish) { mesh->ResetRenderHistory(); m_dirtyRenderMeshes.insert(mesh); }
+                if (previousRevision != revision)
+                {
+                    mesh->NotifyMeshDataChanged();
+                    previousRevision = revision;
+                }
+                if (republish)
+                {
+                    mesh->ResetRenderHistory();
+                    m_dirtyRenderMeshes.insert(mesh);
+                }
             }
         m_meshContentEpoch = meshEpoch;
-        for (auto id : m_removedRenderProducers) renderer.RemoveRenderProducer(id);
+        for (auto id : m_removedRenderProducers)
+            renderer.RemoveRenderProducer(id);
         m_removedRenderProducers.clear();
         auto pending = std::move(m_dirtyRenderMeshes);
         m_dirtyRenderMeshes.clear();
@@ -3285,8 +3384,10 @@ namespace PlutoGE::scene
         std::ranges::sort(ordered, {}, &MeshComponent::GetRenderProducerId);
         for (auto *meshComponent : ordered)
         {
-            if (meshComponent->NeedsFrameRenderSubmission()) m_dynamicRenderMeshes.insert(meshComponent);
-            else m_dynamicRenderMeshes.erase(meshComponent);
+            if (meshComponent->NeedsFrameRenderSubmission())
+                m_dynamicRenderMeshes.insert(meshComponent);
+            else
+                m_dynamicRenderMeshes.erase(meshComponent);
             auto *owner = meshComponent->GetOwner();
             if (!meshComponent->IsEnabled() || !meshComponent->IsVisible() || !meshComponent->GetMesh() || !owner || !owner->IsActive())
             {
@@ -3416,14 +3517,18 @@ namespace PlutoGE::scene
 
     void Scene::QueueRenderSubtree(Entity *entity)
     {
-        if (!entity) return;
-        for (auto *mesh : entity->GetComponents<MeshComponent>()) QueueMeshRenderUpdate(mesh);
-        for (auto *child : entity->GetChildren()) QueueRenderSubtree(child);
+        if (!entity)
+            return;
+        for (auto *mesh : entity->GetComponents<MeshComponent>())
+            QueueMeshRenderUpdate(mesh);
+        for (auto *child : entity->GetChildren())
+            QueueRenderSubtree(child);
     }
 
     void Scene::QueueMeshRenderUpdate(MeshComponent *meshComponent)
     {
-        if (meshComponent) m_dirtyRenderMeshes.insert(meshComponent);
+        if (meshComponent)
+            m_dirtyRenderMeshes.insert(meshComponent);
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)
@@ -3557,7 +3662,8 @@ namespace PlutoGE::scene
             for (const auto &body : GetPhysicsQueryCache().world->bodies)
                 if (body.object.get() == callback.m_collisionObject)
                 {
-                    if (childIndex < body.foliageInstanceIds.size()) hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
+                    if (childIndex < body.foliageInstanceIds.size())
+                        hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
                     break;
                 }
         }
@@ -3570,7 +3676,8 @@ namespace PlutoGE::scene
         hit = {};
         const float distance = glm::length(to - from);
         btVector3 start, end;
-        if (!std::isfinite(radius) || radius <= 0 || !BuildRaycastEndpoints(from, to - from, distance, start, end)) return false;
+        if (!std::isfinite(radius) || radius <= 0 || !BuildRaycastEndpoints(from, to - from, distance, start, end))
+            return false;
         class Filter final : public btCollisionWorld::ClosestConvexResultCallback
         {
         public:
@@ -3578,7 +3685,8 @@ namespace PlutoGE::scene
                 : ClosestConvexResultCallback(a, b), first(first), second(second) {}
             bool needsCollision(btBroadphaseProxy *proxy) const override
             {
-                if (!ClosestConvexResultCallback::needsCollision(proxy)) return false;
+                if (!ClosestConvexResultCallback::needsCollision(proxy))
+                    return false;
                 auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
                 return object && object->hasContactResponse() && !IsEntityOrDescendantOf(entity, first) && !IsEntityOrDescendantOf(entity, second);
@@ -3587,12 +3695,17 @@ namespace PlutoGE::scene
         } callback(start, end, ignoredEntityId, secondIgnoredEntityId);
         btSphereShape shape(radius);
         btTransform a, b;
-        a.setIdentity(); b.setIdentity();
-        a.setOrigin(start); b.setOrigin(end);
+        a.setIdentity();
+        b.setIdentity();
+        a.setOrigin(start);
+        b.setOrigin(end);
         const bool runtimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
-        if (runtimeWorld) m_runtimePhysicsState->world->dynamicsWorld.convexSweepTest(&shape, a, b, callback);
-        else GetPhysicsQueryCache().world->collisionWorld.convexSweepTest(&shape, a, b, callback);
-        if (!callback.hasHit()) return false;
+        if (runtimeWorld)
+            m_runtimePhysicsState->world->dynamicsWorld.convexSweepTest(&shape, a, b, callback);
+        else
+            GetPhysicsQueryCache().world->collisionWorld.convexSweepTest(&shape, a, b, callback);
+        if (!callback.hasHit())
+            return false;
         auto *entity = static_cast<Entity *>(callback.m_hitCollisionObject->getUserPointer());
         hit.entityId = entity ? entity->GetID() : 0;
         hit.point = FromBullet(callback.m_hitPointWorld);
@@ -3649,7 +3762,8 @@ namespace PlutoGE::scene
                     if (body.object.get() == callback.m_collisionObject)
                     {
                         const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
-                        if (childIndex < body.foliageInstanceIds.size()) hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
+                        if (childIndex < body.foliageInstanceIds.size())
+                            hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
                         break;
                     }
             hitResults[index] = 1;
@@ -3928,13 +4042,17 @@ namespace PlutoGE::scene
                                                        : btVector3(0.0f, 0.0f, 0.0f);
                 if (impulse)
                 {
-                    if (worldPosition) bodyIterator->body->applyImpulse(nativeValue, relativePosition);
-                    else bodyIterator->body->applyCentralImpulse(nativeValue);
+                    if (worldPosition)
+                        bodyIterator->body->applyImpulse(nativeValue, relativePosition);
+                    else
+                        bodyIterator->body->applyCentralImpulse(nativeValue);
                 }
                 else
                 {
-                    if (worldPosition) bodyIterator->body->applyForce(nativeValue, relativePosition);
-                    else bodyIterator->body->applyCentralForce(nativeValue);
+                    if (worldPosition)
+                        bodyIterator->body->applyForce(nativeValue, relativePosition);
+                    else
+                        bodyIterator->body->applyCentralForce(nativeValue);
                 }
                 return true;
             }
@@ -4037,7 +4155,8 @@ namespace PlutoGE::scene
         std::vector<AnimationComponent *> activeRagdolls;
         for (auto *animation : m_runtimeComponents->animations)
             if (RuntimeComponentIndex::Active(animation) && animation->IsRagdollEnabled() &&
-                FindRagdollMesh(animation->GetOwner(), animation)) activeRagdolls.push_back(animation);
+                FindRagdollMesh(animation->GetOwner(), animation))
+                activeRagdolls.push_back(animation);
 
         if (!rebuildRuntimePhysics)
         {
@@ -4047,19 +4166,20 @@ namespace PlutoGE::scene
             // surviving Bullet bodies (and their mesh shapes and simulation
             // state) instead of rebuilding the entire world for that removal.
             size_t previousEntityCount = 0;
-            for (const auto &body : existingBodies) previousEntityCount += body.foliage == nullptr ? 1u : 0u;
+            for (const auto &body : existingBodies)
+                previousEntityCount += body.foliage == nullptr ? 1u : 0u;
             if (previousEntityCount > physicsEntities.size())
             {
                 const std::unordered_set<Entity *> active(physicsEntities.begin(), physicsEntities.end());
                 std::erase_if(existingBodies, [&](BulletStepBody &body)
-                {
+                              {
                     if (body.foliage || active.contains(body.entity)) return false;
                     if (body.body) world.dynamicsWorld.removeRigidBody(body.body.get());
-                    return true;
-                });
+                    return true; });
             }
             size_t entityBodyCount = 0;
-            for (const auto &body : existingBodies) entityBodyCount += body.foliage == nullptr ? 1u : 0u;
+            for (const auto &body : existingBodies)
+                entityBodyCount += body.foliage == nullptr ? 1u : 0u;
             if (entityBodyCount != physicsEntities.size())
             {
                 std::ostringstream message;
@@ -4085,7 +4205,7 @@ namespace PlutoGE::scene
                                 << " identityChanged=" << (existingBodies[index].entity != entity)
                                 << " signatureChanged="
                                 << (existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(
-                                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr));
+                                                                                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr));
                         LogRagdollDiagnostic(message.str());
                         rebuildRuntimePhysics = true;
                         break;
@@ -4100,7 +4220,8 @@ namespace PlutoGE::scene
                     if (!rebuildRuntimePhysics && foliage && foliage->IsEnabled())
                     {
                         const bool represented = std::any_of(existingBodies.begin(), existingBodies.end(),
-                            [foliage](const BulletStepBody &body) { return body.foliage == foliage; });
+                                                             [foliage](const BulletStepBody &body)
+                                                             { return body.foliage == foliage; });
                         if (!represented && !foliage->BuildCollisionCells().empty())
                             rebuildRuntimePhysics = true;
                     }
@@ -4144,7 +4265,8 @@ namespace PlutoGE::scene
         {
             core::CpuScope rebuildScope("Physics body world rebuild", core::CpuCategory::Physics);
             std::vector<Entity *> entities;
-            for (auto *rootEntity : m_rootEntities) CollectActiveEntities(rootEntity, entities);
+            for (auto *rootEntity : m_rootEntities)
+                CollectActiveEntities(rootEntity, entities);
             RebuildRuntimePhysicsState(physicsEntities, entities);
         }
 
@@ -4199,8 +4321,8 @@ namespace PlutoGE::scene
             const auto transformRevision = stepBody.entity->GetTransformRevision();
             const bool revisionChanged = transformRevision != stepBody.synchronizedTransformRevision;
             const btTransform transform = revisionChanged
-                ? EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset)
-                : stepBody.body->getWorldTransform();
+                                              ? EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset)
+                                              : stepBody.body->getWorldTransform();
             stepBody.synchronizedTransformRevision = transformRevision;
             const bool transformChanged = revisionChanged && !(stepBody.body->getWorldTransform() == transform);
             if (!transformChanged)
@@ -4629,10 +4751,12 @@ namespace PlutoGE::scene
 {
     assets::SurfaceResponseAsset Scene::ResolveSurfaceResponse(EntityID id, bool *loaded) const
     {
-        if (loaded) *loaded = false;
+        if (loaded)
+            *loaded = false;
         const auto *entity = FindEntityByID(id);
         const auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-        if (!collider || !collider->IsEnabled()) return {};
+        if (!collider || !collider->IsEnabled())
+            return {};
         return core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider->GetSurfaceAssetReference(), loaded);
     }
 }

@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "RuntimeProfiler.h"
+#include "RuntimeContent.h"
 #include "ProjectBenchmark.h"
 #include "RuntimeViewportInput.h"
 #include <optional>
@@ -52,21 +53,6 @@ namespace PlutoGE
 {
     namespace
     {
-        struct TemporaryContentDirectory
-        {
-            std::filesystem::path path;
-
-            ~TemporaryContentDirectory()
-            {
-                content::UnmountAll();
-                if (!path.empty())
-                {
-                    std::error_code errorCode;
-                    std::filesystem::remove_all(path, errorCode);
-                }
-            }
-        };
-
 #ifdef _WIN32
         struct RuntimeDiagnostics
         {
@@ -361,7 +347,7 @@ int RunRuntime(int argc, char **argv)
     }
 
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
-    PlutoGE::TemporaryContentDirectory temporaryContent;
+    PlutoGE::RuntimeContent temporaryContent;
     auto manifestPath = projectBenchmark ? projectBenchmark->project : argc > 1 && !benchmarkEnabled && !profilerEnabled
                             ? std::filesystem::path(argv[1])
                             : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
@@ -371,47 +357,8 @@ int RunRuntime(int argc, char **argv)
         const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
         if (std::filesystem::exists(contentPackPath))
         {
-            std::error_code temporaryError;
-            const auto temporaryRoot = std::filesystem::temp_directory_path(temporaryError);
-            const auto uniqueName = executablePath.stem().string() + "-" +
-                                    std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
-            const auto candidate = temporaryRoot / "PlutoGE" / "Content" / uniqueName;
-            if (!temporaryError) std::filesystem::create_directories(candidate.parent_path(), temporaryError);
-            if (temporaryError || !std::filesystem::create_directory(candidate, temporaryError))
-            {
-                std::cerr << "Cannot reserve runtime content directory: " << temporaryError.message() << '\n';
-                return 1;
-            }
-            temporaryContent.path = candidate;
-            std::string unpackError;
-            if (temporaryError || !PlutoGE::content::Mount(contentPackPath, temporaryContent.path, &unpackError))
-            {
-                std::cerr << (unpackError.empty() ? "Failed to mount the game content pack." : unpackError) << std::endl;
-                return 1;
-            }
-            // Explicit ordered list avoids silently mounting arbitrary sidecar archives.
-            auto mountsPath = executablePath; mountsPath.replace_extension(".plutomounts");
-            std::ifstream mounts(mountsPath);
-            std::string packName;
-            while (std::getline(mounts, packName))
-            {
-                if (!packName.empty() && packName.back() == '\r') packName.pop_back();
-                if (packName.empty() || packName.front() == '#') continue;
-                const auto relative = std::filesystem::u8path(packName);
-                if (relative.has_parent_path() || relative.is_absolute() || relative.extension() != ".plutopack" ||
-                    !PlutoGE::content::Mount(executablePath.parent_path() / relative, temporaryContent.path, &unpackError))
-                { std::cerr << "Cannot mount patch pack " << packName << ": " << unpackError << '\n'; return 1; }
-            }
-            // Managed dependencies, ProjectStorage JSON data, and InputActionMap's
-            // System.IO loader require disk paths. Native readers use the pack directly.
-            for (const auto &path : PlutoGE::content::Files(temporaryContent.path))
-            {
-                auto extension = path.extension().string();
-                std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (extension == ".dll" || extension == ".pdb" || extension == ".plutoinput" || extension == ".json")
-                    if (!PlutoGE::content::Materialize(path, &unpackError)) { std::cerr << unpackError << '\n'; return 1; }
-            }
-            manifestPath = temporaryContent.path / PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath).filename();
+            try { manifestPath = temporaryContent.MountProject(contentPackPath); }
+            catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
         }
     }
 

@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstdint>
+#include <cwctype>
 #include <fstream>
 #include <limits>
 #include <system_error>
@@ -669,6 +670,18 @@ namespace PlutoGE::assets
                 manifest.buildAlwaysInclude.push_back(tokens[1]);
                 continue;
             }
+            if (tokens[0] == "SERVER_SCENE" && tokens.size() >= 2) { manifest.server.startupScene = tokens[1]; continue; }
+            if (tokens[0] == "SERVER_OUTPUT" && tokens.size() >= 2) { manifest.server.outputExecutable = tokens[1]; continue; }
+            if (tokens[0] == "SERVER_TICK_RATE" && tokens.size() >= 2)
+            {
+                const auto &text = tokens[1];
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), manifest.server.tickRate);
+                if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+                { SetError(errorMessage, "Invalid SERVER_TICK_RATE"); return nullptr; }
+                continue;
+            }
+            if (tokens[0] == "SERVER_SCRIPT" && tokens.size() >= 2) { manifest.server.scripts.push_back(tokens[1]); continue; }
+            if (tokens[0] == "SERVER_ENV" && tokens.size() >= 3) { manifest.server.environment.push_back({tokens[1], tokens[2]}); continue; }
 
             if (tokens[0] == "SCRIPT_ASSEMBLY" && tokens.size() >= 2)
             {
@@ -1029,6 +1042,13 @@ namespace PlutoGE::assets
         output << "BUILD_USED_ASSETS_ONLY\t" << (m_manifest.buildUsedAssetsOnly ? 1 : 0) << '\n';
         for (const auto &reference : m_manifest.buildAlwaysInclude)
             output << "BUILD_ALWAYS_INCLUDE\t" << EscapeText(reference) << '\n';
+        output << "SERVER_SCENE\t" << EscapeText(m_manifest.server.startupScene) << '\n';
+        output << "SERVER_OUTPUT\t" << EscapeText(m_manifest.server.outputExecutable) << '\n';
+        output << "SERVER_TICK_RATE\t" << m_manifest.server.tickRate << '\n';
+        for (const auto &script : m_manifest.server.scripts)
+            output << "SERVER_SCRIPT\t" << EscapeText(script) << '\n';
+        for (const auto &variable : m_manifest.server.environment)
+            output << "SERVER_ENV\t" << EscapeText(variable.name) << '\t' << EscapeText(variable.value) << '\n';
         output << "SCRIPT_ASSEMBLY\t" << EscapeText(m_manifest.scriptAssembly) << '\n';
         if (!m_manifest.loadingScreen.assetReference.empty())
             output << "LOADING_SCREEN\t" << EscapeText(m_manifest.loadingScreen.assetReference) << '\n';
@@ -1421,5 +1441,110 @@ namespace PlutoGE::assets
         std::filesystem::remove(GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath), errorCode);
 
         return true;
+    }
+
+    std::filesystem::path FindServerExecutable(const std::filesystem::path &searchRoot)
+    {
+        const auto name = "PlutoGEServer" + GetExecutableExtension();
+        auto root = NormalizeAbsolutePath(searchRoot);
+        for (int depth = 0; depth < kRuntimeSearchAncestorLimit && !root.empty(); ++depth)
+        {
+            const auto adjacent = root / name;
+            if (RuntimeHasMarker(adjacent, kHeadlessServerMarker) && IsRuntimeContentPackCompatible(adjacent)) return adjacent;
+            const auto match = FindNewestRuntimeExecutableInTree(root, name);
+            if (!match.empty() && RuntimeHasMarker(match, kHeadlessServerMarker)) return match;
+            const auto parent = root.parent_path();
+            if (parent == root) break;
+            root = parent;
+        }
+        return {};
+    }
+
+    bool IsServerEnvironmentName(std::string_view name)
+    {
+        std::string upper(name);
+        std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        if (name.empty() || upper == "PLUTOGE_HEADLESS") return false;
+        const auto letter = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; };
+        if (!letter(name.front())) return false;
+        return std::all_of(name.begin(), name.end(), [&](char c) { return letter(c) || (c >= '0' && c <= '9'); });
+    }
+
+    bool ValidateServerSettings(const Project &project, std::string *errorMessage)
+    {
+        const auto &settings = project.GetManifest().server;
+        const auto fail = [&](const std::string &message) { SetError(errorMessage, message); return false; };
+        if (settings.tickRate < 10 || settings.tickRate > 240) return fail("Server tick rate must be between 10 and 240 Hz.");
+        if (settings.startupScene.empty() || Project::GetAssetTypeForReference(settings.startupScene) != ProjectAssetType::Scene)
+            return fail("Select a server startup scene in Project Settings.");
+        std::error_code error;
+        if (!content::IsRegularFile(project.ResolveAssetReference(settings.startupScene), error))
+            return fail("Server startup scene was not found: " + settings.startupScene);
+        if (settings.scripts.empty()) return fail("Select at least one simulation script in the server allow list.");
+        std::vector<std::string> scripts;
+        for (const auto &script : settings.scripts)
+        {
+            if (script.empty() || std::find(scripts.begin(), scripts.end(), script) != scripts.end())
+                return fail("Server script names must be nonempty and unique.");
+            scripts.push_back(script);
+        }
+        std::vector<std::string> names;
+        for (const auto &variable : settings.environment)
+        {
+            std::string name = variable.name;
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (!IsServerEnvironmentName(variable.name) || variable.value.find('\0') != std::string::npos ||
+                std::find(names.begin(), names.end(), name) != names.end())
+                return fail("Server environment names must be valid and unique; PLUTOGE_HEADLESS is reserved.");
+            names.push_back(name);
+        }
+        return true;
+    }
+
+    bool ExportHeadlessProject(const Project &project,
+                               const std::filesystem::path &destinationExecutablePath,
+                               const std::filesystem::path &serverExecutablePath,
+                               std::string *errorMessage,
+                               const ExportOptions &options) try
+    {
+        if (!ValidateServerSettings(project, errorMessage)) return false;
+        const auto comparisonPath = [](const std::filesystem::path &path)
+        {
+            auto canonical = std::filesystem::weakly_canonical(path).native();
+#ifdef _WIN32
+            std::transform(canonical.begin(), canonical.end(), canonical.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+#endif
+            return std::filesystem::path(canonical);
+        };
+        const auto outputDirectory = comparisonPath(NormalizeAbsolutePath(destinationExecutablePath).parent_path());
+        const auto projectRoot = comparisonPath(project.GetRootDirectory());
+        const auto within = [](const std::filesystem::path &path, const std::filesystem::path &root)
+        {
+            const auto relative = path.lexically_relative(root);
+            return !relative.empty() && *relative.begin() != "..";
+        };
+        if (destinationExecutablePath.filename().empty() || outputDirectory == projectRoot ||
+            within(outputDirectory, comparisonPath(project.GetAssetDirectoryPath())) ||
+            within(outputDirectory, comparisonPath(project.GetRootDirectory() / "Library")) ||
+            comparisonPath(NormalizeAbsolutePath(destinationExecutablePath)) == comparisonPath(NormalizeAbsolutePath(serverExecutablePath)))
+        {
+            SetError(errorMessage, "Choose a separate server output directory, outside project Assets and Library (for example Build/Server/GameServer.exe).");
+            return false;
+        }
+        if (!RuntimeHasMarker(serverExecutablePath, kHeadlessServerMarker))
+        {
+            SetError(errorMessage, "The selected host does not support saved headless server settings. Rebuild PlutoGEServer.");
+            return false;
+        }
+        // Cook from the simulation scene without changing the author's graphical startup scene.
+        auto manifest = project.GetManifest();
+        manifest.startupScene = manifest.server.startupScene;
+        Project serverProject(project.GetManifestPath(), std::move(manifest));
+        return ExportStandaloneProject(serverProject, destinationExecutablePath, serverExecutablePath, errorMessage, options);
+    }
+    catch (const std::filesystem::filesystem_error &error)
+    {
+        SetError(errorMessage, "Could not export dedicated server: " + std::string(error.what()));
+        return false;
     }
 }

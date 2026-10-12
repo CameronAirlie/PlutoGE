@@ -18,9 +18,12 @@ namespace PlutoGE::ui
             return project.MakeAssetReference(scene.GetFilePath());
         }
     }
-    bool EditorShell::RunProjectValidation(bool includeCurrentScene)
+    bool EditorShell::RunProjectValidation(bool includeCurrentScene, bool headless)
     {
         if (!m_project || m_engine.IsRuntimeRunning() || m_activeBakeTask) return false;
+        auto manifest = m_project->GetManifest();
+        if (headless) manifest.startupScene = manifest.server.startupScene;
+        assets::Project validationProject(m_project->GetManifestPath(), manifest);
         m_validationProject = m_project->GetManifestPath();
         m_validationResult = {};
         m_validationHasRun = true;
@@ -43,7 +46,7 @@ namespace PlutoGE::ui
                 !assets::ValidateStaticModelInstanceBaseline(state, prepared, error)) return {};
             return generation.catalog;
         };
-        input.startupScene = m_project->GetManifest().startupScene;
+        input.startupScene = manifest.startupScene;
         if (!includeCurrentScene && m_project->GetManifest().buildUsedAssetsOnly)
         {
             assets::AssetDatabase database;
@@ -56,8 +59,8 @@ namespace PlutoGE::ui
             cook.alwaysInclude = m_project->GetManifest().buildAlwaysInclude;
             std::set<std::string> references;
             std::string error;
-            if (!database.Scan(*m_project, scan, &error) ||
-                !assets::CollectCookAssetReferences(*m_project, database, cook, references, &error))
+            if (!database.Scan(validationProject, scan, &error) ||
+                !assets::CollectCookAssetReferences(validationProject, database, cook, references, &error))
             {
                 m_validationResult.diagnostics.push_back({assets::ValidationSeverity::Error,
                     "build.dependencies", "Project", 0, 0, error});

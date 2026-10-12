@@ -4,6 +4,7 @@
 #include "PlutoGE/assets/AssetCatalog.h"
 
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -57,6 +58,11 @@ namespace PlutoGE::ui
         const ProjectAssetPickerOptions &options = {});
     [[nodiscard]] std::vector<AssetReferenceOption> CollectProjectAssetChoices(
         const assets::Project *project, assets::ProjectAssetType type, const ProjectAssetPickerOptions &options = {});
+
+    // Validate a closed picker's current value without constructing/sorting its full list.
+    [[nodiscard]] std::optional<AssetReferenceOption> FindProjectAssetChoice(
+        const assets::Project *project, std::span<const assets::ProjectAssetType> types,
+        const std::string &reference, const ProjectAssetPickerOptions &options = {});
 
     // Searchable dropdown restricted to CollectProjectAssetChoices, accepting
     // matching drag-and-drop from the Content Browser. A current value outside

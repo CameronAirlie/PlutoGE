@@ -346,6 +346,11 @@ namespace PlutoGE::scene
         }
     }
 
+    bool ScriptComponent::OnServerCommand(std::string_view command)
+    {
+        return m_started && m_instance && m_instance->OnServerCommand(command);
+    }
+
     void ScriptComponent::OnAnimationEvent(const render::AnimationClip::Event &event)
     {
         if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())

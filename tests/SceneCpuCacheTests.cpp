@@ -196,6 +196,50 @@ int main() try
         Require(rebuilt(), "Changed surviving shape was not rebuilt");
         simulation.StopRuntime();
     }
+    // Adding another physics actor must not restart a corpse already in flight.
+    {
+        render::MeshConfig config;
+        config.skeleton.joints.push_back({.name = "Hips"});
+        render::Mesh mesh(config);
+        scene::Scene steady, changing;
+        auto createCorpse = [&](scene::Scene &world) {
+            auto *entity = world.AddEntity(std::make_unique<scene::Entity>());
+            entity->SetPosition({0, 10, 0});
+            entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{.mesh = &mesh});
+            auto *animation = entity->CreateComponent<scene::AnimationComponent>();
+            animation->SetRagdollWeight(1);
+            animation->SetRagdollEnabled(true);
+            return animation;
+        };
+        auto *baseline = createCorpse(steady);
+        auto *corpse = createCorpse(changing);
+        auto *obstacle = changing.AddEntity(std::make_unique<scene::Entity>());
+        obstacle->SetPosition({100, 0, 0});
+        auto *collider = obstacle->CreateComponent<scene::ColliderComponent>();
+        steady.StartRuntime(); changing.StartRuntime();
+        scene::AnimationComponent *secondCorpse = nullptr;
+        for (int frame = 0; frame < 90; ++frame)
+        {
+            if (frame == 30)
+            {
+                secondCorpse = createCorpse(changing);
+                secondCorpse->GetOwner()->SetPosition({50, 10, 0});
+            }
+            if (frame == 60) secondCorpse->SetRagdollEnabled(false);
+            collider->SetCenter({float(frame % 2), 0, 0});
+            steady.Update(1.f / 60.f); changing.Update(1.f / 60.f);
+            const auto &expected = baseline->GetJointMatrices(mesh.GetSkeleton());
+            const auto &actual = corpse->GetJointMatrices(mesh.GetSkeleton());
+            Require(expected.size() == 1 && actual.size() == 1, "Ragdoll pose missing");
+            Require(Near(expected[0], actual[0]), "Physics rebuild restarted an existing ragdoll");
+        }
+        const float fallenHeight = corpse->GetJointMatrices(mesh.GetSkeleton())[0][3].y;
+        corpse->ResetRagdoll();
+        changing.Update(1.f / 60.f);
+        Require(corpse->GetJointMatrices(mesh.GetSkeleton())[0][3].y > fallenHeight + 5,
+                "Explicit ragdoll reset incorrectly retained the previous corpse");
+        steady.StopRuntime(); changing.StopRuntime();
+    }
     std::cout << "Scene CPU cache checks passed\n";
     return 0;
 }

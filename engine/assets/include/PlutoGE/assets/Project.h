@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 #include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
@@ -172,6 +173,7 @@ namespace PlutoGE::assets
         bool compress = true;
         bool pruneUnused = false;
         std::vector<std::string> alwaysInclude;
+        std::function<void(float)> progress; // Stage completion, 0..1; called on the export thread.
     };
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,

@@ -1712,6 +1712,23 @@ internal static unsafe partial class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeServerCommand")]
+    public static int InvokeServerCommand(long handle, nint commandPtr)
+    {
+        try
+        {
+            if (Environment.GetEnvironmentVariable("PLUTOGE_HEADLESS") != "1" ||
+                !Instances.TryGetValue(handle, out var instance) || instance is not IServerCommandHandler handler)
+                return 0;
+            return handler.HandleServerCommand(Marshal.PtrToStringUTF8(commandPtr) ?? string.Empty) ? 1 : 0;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError($"Server command failed: {exception.Message}");
+            return 1;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnAnimationEvent")]
     public static int InvokeOnAnimationEvent(long handle, nint namePtr, nint stringParameterPtr,
                                              float floatParameter, int intParameter)

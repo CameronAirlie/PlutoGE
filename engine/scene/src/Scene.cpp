@@ -1720,7 +1720,7 @@ namespace PlutoGE::scene
         {
             for (auto &ragdoll : m_runtimePhysicsState->world->ragdolls)
             {
-                if (ragdoll.animation)
+                if (ragdoll.animation && ragdoll.revision == ragdoll.animation->GetRagdollRevision())
                 {
                     auto &preservedParts = preservedRagdolls[ragdoll.animation];
                     preservedParts.reserve(ragdoll.parts.size());
@@ -1736,7 +1736,6 @@ namespace PlutoGE::scene
                                                                     .activationState = part.body->getActivationState(),
                                                                 });
                     }
-                    ragdoll.animation->ClearRagdollPhysicsPose();
                 }
             }
         }
@@ -1920,6 +1919,32 @@ namespace PlutoGE::scene
             }
 
             const auto &skeleton = mesh->GetSkeleton();
+            if (m_runtimePhysicsState->world)
+            {
+                auto &previousWorld = *m_runtimePhysicsState->world;
+                auto previous = std::find_if(previousWorld.ragdolls.begin(), previousWorld.ragdolls.end(),
+                    [&](const BulletRagdoll &ragdoll)
+                    {
+                        return ragdoll.animation == animation && !ragdoll.parts.empty() &&
+                            ragdoll.revision == animation->GetRagdollRevision() &&
+                            ragdoll.skeleton == &skeleton && ragdoll.meshComponent == meshComponent;
+                    });
+                if (previous != previousWorld.ragdolls.end())
+                {
+                    // Unrelated deaths, spawns and collider changes must not
+                    // restart an existing corpse or clear its rendered pose.
+                    for (auto &constraint : previous->constraints)
+                        previousWorld.dynamicsWorld.removeConstraint(constraint.get());
+                    for (auto &part : previous->parts)
+                        previousWorld.dynamicsWorld.removeRigidBody(part.body.get());
+                    for (auto &part : previous->parts)
+                        runtimeWorld->dynamicsWorld.addRigidBody(part.body.get());
+                    for (auto &constraint : previous->constraints)
+                        runtimeWorld->dynamicsWorld.addConstraint(constraint.get(), true);
+                    runtimeWorld->ragdolls.push_back(std::move(*previous));
+                    continue;
+                }
+            }
             animation->ClearRagdollPhysicsPose();
             const auto &skinMatrices = animation->GetJointMatrices(skeleton, mesh->GetAnimationNodes());
             if (skinMatrices.size() != skeleton.joints.size())

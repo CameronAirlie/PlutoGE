@@ -370,6 +370,13 @@ namespace PlutoGE::ui
         bool m_showScriptBuildDiagnostics = false;
         bool m_persistEditorSettings = true;
         bool SaveProjectToDisk();
+        std::function<void()> m_pendingBuild;
+        bool m_buildExecuting = false;
+        float m_buildProgress = 0;
+        double m_buildStartedAt = 0;
+        std::string m_buildStage;
+        void PresentBuildProgress();
+        void SetBuildProgress(float progress, std::string stage);
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath, bool headless = false);
         std::filesystem::path GetServerOutputPath() const;
         bool BuildServer(bool runAfterBuild);

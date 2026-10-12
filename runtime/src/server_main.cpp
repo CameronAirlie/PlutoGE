@@ -1,10 +1,13 @@
 #include "ServerOptions.h"
+#include "ServerConsole.h"
 #include "RuntimeContent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include <chrono>
@@ -23,6 +26,14 @@ namespace
 {
     volatile std::sig_atomic_t stopRequested = 0;
     void RequestStop(int) { stopRequested = 1; }
+    bool DispatchServerCommand(PlutoGE::scene::Entity *entity, std::string_view command)
+    {
+        for (auto *script : entity->GetComponents<PlutoGE::scene::ScriptComponent>())
+            if (script->OnServerCommand(command)) return true;
+        for (auto *child : entity->GetChildren())
+            if (DispatchServerCommand(child, command)) return true;
+        return false;
+    }
     std::filesystem::path ExecutablePath(const char *argument)
     {
 #ifdef _WIN32
@@ -87,6 +98,8 @@ int main(int argc, char **argv)
             options.project.replace_extension(".plutopack");
         }
         SetEnvironment("PLUTOGE_HEADLESS", "1");
+        PlutoGE::ServerConsole console;
+        console.StartPanel();
         std::signal(SIGINT, RequestStop);
         std::signal(SIGTERM, RequestStop);
         PlutoGE::scripting::SetScriptLogSink([](auto severity, std::string_view text)
@@ -143,12 +156,55 @@ int main(int argc, char **argv)
         const auto interval = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / options.tickRate));
         auto deadline = Clock::now();
         unsigned ticks = 0;
+        std::cout << "Commands: help, status, quit (or stop/exit).\n";
+        console.Prompt();
         while (!stopRequested && !engine.ConsumeApplicationQuitRequest() && (!options.ticks || ticks < options.ticks))
         {
+            for (const auto &command : console.Poll())
+            {
+                if (command == "quit" || command == "stop" || command == "exit")
+                {
+                    stopRequested = 1;
+                    break;
+                }
+                if (command == "help" || command == "?")
+                {
+                    std::cout << "help    Show commands\nstatus  Show scene, tick rate and elapsed simulation time\nquit    Shut down gracefully (aliases: stop, exit)\n";
+                    for (auto *root : lifetime.scene->GetRootEntities())
+                        if (DispatchServerCommand(root, "help")) break;
+                }
+                else if (command == "status")
+                    std::cout << "Scene: " << options.scene << " | " << options.tickRate << " Hz | "
+                              << ticks << " ticks | " << ticks / options.tickRate << " simulated seconds\n";
+                else if (!command.empty())
+                {
+                    bool handled = false;
+                    for (auto *root : lifetime.scene->GetRootEntities())
+                        if (DispatchServerCommand(root, command)) { handled = true; break; }
+                    if (!handled) std::cout << "Unknown command: " << command << ". Type help for commands.\n";
+                }
+                console.Prompt();
+            }
+            if (stopRequested) break;
             lifetime.scene->Update(1.0f / options.tickRate);
             ++ticks;
-            if (engine.ConsumeSceneLoadRequest())
-                throw std::runtime_error("Server scripts requested a scene transition; restart with the desired --scene");
+            if (const auto requested = engine.ConsumeSceneLoadRequest())
+            {
+                const auto reference = project->FindSceneAssetReference(*requested);
+                const auto path = reference.empty() ? std::string{} : assets.ResolveAssetPath(reference);
+                if (!engine.GetSceneLoading().Load(path, [&](auto nextScene)
+                    {
+                        engine.StopRuntime();
+                        engine.SetScene(nullptr);
+                        lifetime.scene.reset();
+                        lifetime.scene = std::move(nextScene);
+                        engine.SetScene(lifetime.scene.get());
+                        engine.StartRuntime();
+                        options.scene = reference;
+                    }, {}))
+                    std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << '\n';
+                deadline = Clock::now();
+            }
             deadline += interval;
             // Bound catch-up work after a long stall rather than spinning indefinitely.
             if (Clock::now() - deadline > interval * 5) deadline = Clock::now();

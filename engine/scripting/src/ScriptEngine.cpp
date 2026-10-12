@@ -1,3 +1,4 @@
+#include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptBuildProcess.h"
 #include "PlutoGE/render/DebugDraw.h"
@@ -101,7 +102,7 @@ namespace PlutoGE::scripting
         std::vector<std::string> arguments{"dotnet", "build", utf8(config.projectPath), "-c", config.configuration, "--nologo"};
         if (!config.outputDirectory.empty()) { arguments.push_back("-o"); arguments.push_back(utf8(config.outputDirectory)); }
         if (!config.framework.empty()) { arguments.push_back("-f"); arguments.push_back(config.framework); }
-        const auto output = RunBuildProcess(arguments);
+        const auto output = platform::LoadingWork::Prepare([arguments] { return RunBuildProcess(arguments); });
         result.exitCode = output.exitCode;
         result.output = output.text;
         std::istringstream lines(result.output);

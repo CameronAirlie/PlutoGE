@@ -1,5 +1,7 @@
 #include "PlutoGE/asset_import/ModelImportTask.h"
 #include "PlutoGE/assets/AssetDatabase.h"
+#include "PlutoGE/platform/LoadingWork.h"
+#include <atomic>
 #include "PlutoGE/assets/ProjectAssetLock.h"
 #include "PlutoGE/asset_import/ImportFileTransaction.h"
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
@@ -2725,8 +2727,48 @@ namespace PlutoGE::ui
         return true;
     }
 
+    void EditorShell::SetBuildProgress(float progress, std::string stage)
+    {
+        if (!m_buildExecuting) return;
+        m_buildProgress = progress;
+        m_buildStage = std::move(stage);
+        platform::LoadingWork::Checkpoint(true);
+    }
+
+    void EditorShell::PresentBuildProgress()
+    {
+        auto &window = m_engine.GetWindow();
+        window.PollEvents();
+        const auto extents = window.GetExtents();
+        if (extents.width <= 0 || extents.height <= 0) return;
+        const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
+        m_engine.GetRenderer().BeginFrame();
+        m_panelManager.BeginPanelUpdate(true);
+        const auto *viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(.5f, .5f));
+        ImGui::SetNextWindowSize(ImVec2(480, 0));
+        ImGui::Begin("Building project", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking);
+        constexpr const char *activity[] = {"|", "/", "-", "\\"};
+        ImGui::Text("%s  %s", activity[static_cast<int>(ImGui::GetTime() * 5) % 4], m_buildStage.c_str());
+        ImGui::Spacing();
+        ImGui::ProgressBar(m_buildProgress, ImVec2(-1, 0), "");
+        ImGui::TextDisabled("Elapsed: %.1f s", ImGui::GetTime() - m_buildStartedAt);
+        ImGui::TextWrapped("Please wait while the build finishes.");
+        ImGui::End();
+        m_panelManager.EndPanelUpdate();
+        if (vulkan) static_cast<void>(m_engine.GetRhiRenderService().Present());
+        else m_engine.GetRenderer().EndFrame();
+    }
+
     bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath, bool headless)
     {
+        if (!m_buildExecuting)
+        {
+            if (m_pendingBuild) return false;
+            m_pendingBuild = [=, this] { BuildProjectToPath(destinationExecutablePath, headless); };
+            return true;
+        }
         if (IsModelImportRunning())
         {
             m_statusMessage = "Finish or cancel the active model import before exporting.";
@@ -2738,6 +2780,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        SetBuildProgress(.02f, headless ? "Saving dedicated server project..." : "Saving game project...");
         if (!SaveProjectToDisk())
         {
             return false;
@@ -2750,6 +2793,7 @@ namespace PlutoGE::ui
             const auto scriptSourceDirectory = GetProjectScriptSourceDirectory();
             if (std::filesystem::exists(scriptProjectPath) || std::filesystem::exists(scriptSourceDirectory))
             {
+                SetBuildProgress(.10f, "Compiling project scripts...");
                 if (!BuildProjectScripts())
                 {
                     m_statusMessage = "Game export stopped because project scripts failed to build. " + m_statusMessage;
@@ -2775,6 +2819,7 @@ namespace PlutoGE::ui
                 if (!m_engine.GetScriptEngine().HasClass(script))
                 { m_statusMessage = "Unknown server script: " + script; Log(ConsoleSeverity::Error, m_statusMessage); return false; }
         }
+        SetBuildProgress(.30f, "Validating project assets...");
         if (!RunProjectValidation(false, headless))
         {
             m_showProjectValidation = true;
@@ -2796,15 +2841,36 @@ namespace PlutoGE::ui
         assets::ExportOptions exportOptions;
         exportOptions.pruneUnused = manifest.buildUsedAssetsOnly;
         exportOptions.alwaysInclude = manifest.buildAlwaysInclude;
-        const bool exported = headless ?
-            assets::ExportHeadlessProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions) :
-            assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions);
+        SetBuildProgress(.45f, "Exporting runtime and packaging assets...");
+        std::atomic<float> exportProgress{0};
+        exportOptions.progress = [&](float progress) { exportProgress.store(progress); };
+        const assets::Project exportProject(m_project->GetManifestPath(), manifest);
+        const bool exported = [&]
+        {
+            platform::LoadingWork exportWork([&]
+            {
+                const float progress = exportProgress.load();
+                m_buildProgress = .45f + .48f * progress;
+                m_buildStage = progress < .15f ? "Copying runtime files..." :
+                    progress < .30f ? "Copying shaders and .NET runtime..." :
+                    progress < .70f ? "Cooking project assets..." :
+                    progress < .80f ? "Writing asset catalog..." : "Compressing content pack...";
+                PresentBuildProgress();
+            }, std::chrono::milliseconds(33));
+            return platform::LoadingWork::Prepare([&]
+            {
+                return headless ?
+                    assets::ExportHeadlessProject(exportProject, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions) :
+                    assets::ExportStandaloneProject(exportProject, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions);
+            });
+        }();
         if (!exported)
         {
             m_statusMessage = errorMessage.empty() ? "Failed to build project." : errorMessage;
             return false;
         }
 
+        SetBuildProgress(.95f, "Finishing build...");
         if (!headless && !ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Built project but failed to export the script SDK." : errorMessage;
@@ -2829,6 +2895,12 @@ namespace PlutoGE::ui
 
     bool EditorShell::BuildServer(bool runAfterBuild)
     {
+        if (!m_buildExecuting)
+        {
+            if (m_pendingBuild) return false;
+            m_pendingBuild = [=, this] { BuildServer(runAfterBuild); };
+            return true;
+        }
         const auto output = GetServerOutputPath();
         if (output.empty()) { m_statusMessage = "Configure the server output executable in Project Settings."; return false; }
         if (!BuildProjectToPath(output, true)) return false;
@@ -2967,6 +3039,12 @@ namespace PlutoGE::ui
 
     bool EditorShell::RunTestBuild()
     {
+        if (!m_buildExecuting)
+        {
+            if (m_pendingBuild) return false;
+            m_pendingBuild = [=, this] { RunTestBuild(); };
+            return true;
+        }
         if (!m_project)
             return false;
 
@@ -3005,6 +3083,12 @@ namespace PlutoGE::ui
 
     bool EditorShell::BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath)
     {
+        if (!m_buildExecuting)
+        {
+            if (m_pendingBuild) return false;
+            m_pendingBuild = [=, this] { BuildAndRunProjectToPath(destinationExecutablePath); };
+            return true;
+        }
         if (!BuildProjectToPath(destinationExecutablePath))
         {
             return false;
@@ -4881,6 +4965,32 @@ namespace PlutoGE::ui
                     window.SetScriptInputEnabled(shouldEnableRuntimeInput());
                 }
                 if (m_engine.IsRuntimeRunning()) HandleRuntimeSceneLoadRequest(*viewportPanel2);
+            }
+
+            if (m_pendingBuild && !window.ShouldClose())
+            {
+                auto build = std::exchange(m_pendingBuild, {});
+                m_buildExecuting = true;
+                m_buildStartedAt = ImGui::GetTime();
+                m_buildStage = "Preparing build...";
+                m_buildProgress = 0;
+                const bool scriptInput = window.IsScriptInputEnabled();
+                window.SetScriptInputEnabled(false);
+                {
+                    platform::LoadingWork work([this] { PresentBuildProgress(); }, std::chrono::milliseconds(33));
+                    platform::LoadingWork::Checkpoint(true);
+                    try { build(); }
+                    catch (const std::exception &error)
+                    {
+                        m_statusMessage = std::string("Build failed: ") + error.what();
+                        Log(ConsoleSeverity::Error, m_statusMessage);
+                    }
+                }
+                auto &io = ImGui::GetIO();
+                io.ClearEventsQueue(); io.ClearInputKeys(); io.ClearInputMouse();
+                window.SetScriptInputEnabled(scriptInput);
+                m_buildExecuting = false;
+                currentTime = std::chrono::high_resolution_clock::now();
             }
 
             if (m_pendingGraphicsApi)

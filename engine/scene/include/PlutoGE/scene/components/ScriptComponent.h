@@ -34,6 +34,7 @@ namespace PlutoGE::scene
 
         void Start();
         void Stop();
+        bool OnServerCommand(std::string_view command);
         void Update(float deltaTime) override;
         void FixedUpdate(float fixedDeltaTime);
         void LateUpdate(float deltaTime);

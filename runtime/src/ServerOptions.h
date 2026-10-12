@@ -29,6 +29,8 @@ namespace PlutoGE
                 if (option == "--project") result.project = value;
                 else if (option == "--scene") result.scene = value;
                 else if (option == "--script") result.scripts.push_back(value);
+                else if (option == "--mode" || option == "--map")
+                    result.environment.push_back({option == "--mode" ? "PLUTOGE_SERVER_MODE" : "PLUTOGE_SERVER_MAP", value});
                 else if (option == "--env")
                 {
                     const auto equals = value.find('=');

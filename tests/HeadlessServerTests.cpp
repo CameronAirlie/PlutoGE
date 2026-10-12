@@ -1,4 +1,5 @@
 #include "../runtime/src/ServerOptions.h"
+#include "../runtime/src/ServerConsole.h"
 #include "../runtime/src/RuntimeContent.h"
 #include <fstream>
 #include "PlutoGE/core/Engine.h"
@@ -21,9 +22,67 @@ namespace
         void OnDestroy() override { ++destroys; }
     };
 }
-int main() try
+int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
+#ifdef _WIN32
+    if (argc == 2 && std::string_view(argv[1]) == "--console-panel-test")
+    {
+        ServerConsolePanel panel;
+        panel.Start();
+        Check(panel.Active(), "Interactive console panel did not activate");
+        for (int i = 0; i < 600; ++i) std::cout << "Server log " << i << '\n';
+        panel.Draw("status");
+        const auto screen = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        CONSOLE_SCREEN_BUFFER_INFO info{};
+        Check(GetConsoleScreenBufferInfo(screen, &info) != 0, "Panel screen unavailable");
+        const auto readRow = [&](SHORT row)
+        {
+            std::string text(info.srWindow.Right - info.srWindow.Left + 1, ' ');
+            DWORD count = 0;
+            ReadConsoleOutputCharacterA(screen, text.data(), static_cast<DWORD>(text.size()),
+                {info.srWindow.Left, row}, &count);
+            return text;
+        };
+        const auto commandBefore = readRow(info.srWindow.Bottom - 1);
+        std::clog << "Live log while typing\n";
+        panel.Draw("status");
+        const auto commandAfter = readRow(info.srWindow.Bottom - 1);
+        const auto lastLog = readRow(info.srWindow.Bottom - 3);
+        const auto title = readRow(info.srWindow.Top);
+        CloseHandle(screen);
+        panel.Stop();
+        Check(commandBefore.find("| > status") == 0 && commandBefore == commandAfter,
+            "Logging overwrote the command box");
+        Check(lastLog.find("Live log while typing") == 0, "Log tail did not scroll above command box");
+        Check(title.find("DEDICATED SERVER") != std::string::npos, "Panel title missing");
+        return 0;
+    }
+#endif
+    Check(ServerConsole::Normalize(" \tSTATUS\r\n") == "status", "Console command normalization failed");
+    Check(ServerConsole::Normalize(" \t") == "", "Blank console command was not ignored");
+#ifdef _WIN32
+    // An open pipe with only part of a command must not block the simulation.
+    HANDLE consoleRead = nullptr, consoleWrite = nullptr;
+    Check(CreatePipe(&consoleRead, &consoleWrite, nullptr, 0) != 0, "Console test pipe failed");
+    const auto originalInput = GetStdHandle(STD_INPUT_HANDLE);
+    SetStdHandle(STD_INPUT_HANDLE, consoleRead);
+    ServerConsole console;
+    DWORD written = 0;
+    WriteFile(consoleWrite, "sta", 3, &written, nullptr);
+    const auto partial = console.Poll();
+    WriteFile(consoleWrite, "tus\r\nHELP\nquit", 14, &written, nullptr);
+    const auto commands = console.Poll();
+    CloseHandle(consoleWrite);
+    const auto finalCommand = console.Poll();
+    const auto afterEof = console.Poll();
+    SetStdHandle(STD_INPUT_HANDLE, originalInput);
+    CloseHandle(consoleRead);
+    Check(partial.empty(), "Partial console input was dispatched");
+    Check(commands == std::vector<std::string>{"status", "help"}, "Console line framing failed");
+    Check(finalCommand == std::vector<std::string>{"quit"} && afterEof.empty(), "Console EOF handling failed");
+#endif
     const char *arguments[] = {"server", "--project", "game.plutoproject", "--scene", "project://arena.plutoscene", "--script", "Test.Simulation", "--tick-rate", "60", "--ticks", "10"};
     auto options = ServerOptions::Parse(11, const_cast<char **>(arguments));
     Check(options.tickRate == 60 && options.ticks == 10 && options.scripts.size() == 1, "Server options parse failed");
@@ -78,6 +137,11 @@ int main() try
     const char *environmentArguments[] = {"server", "--env", "GAME_MODE=a=b"};
     auto overrides = ServerOptions::Parse(3, const_cast<char **>(environmentArguments));
     Check(overrides.environment[0].value == "a=b", "Environment value split incorrectly");
+    const char *modeArguments[] = {"server", "--mode", "Defusal", "--map", "Foundry"};
+    const auto modeOptions = ServerOptions::Parse(5, const_cast<char **>(modeArguments));
+    Check(modeOptions.environment.size() == 2 && modeOptions.environment[0].name == "PLUTOGE_SERVER_MODE" &&
+        modeOptions.environment[0].value == "Defusal" && modeOptions.environment[1].name == "PLUTOGE_SERVER_MAP" &&
+        modeOptions.environment[1].value == "Foundry", "Mode/map CLI overrides lost");
     Check(!assets::IsServerEnvironmentName("PLUTOGE_HEADLESS") && !assets::IsServerEnvironmentName("1BAD") &&
         !assets::IsServerEnvironmentName("BAD=NAME"), "Invalid environment name accepted");
     settingsProject.GetManifest().server.scripts.push_back("Test.Simulation");
@@ -92,7 +156,18 @@ int main() try
     const auto exported = contentRoot / "deployment" / "Test Server.exe";
     Check(!assets::ExportHeadlessProject(settingsProject, contentRoot / "source" / "Server.exe", host, &packError),
         "Server export permitted destructive project-root output");
-    Check(assets::ExportHeadlessProject(settingsProject, exported, host, &packError, {.pruneUnused = true}), packError.c_str());
+    std::vector<float> buildProgress;
+    assets::ExportOptions progressOptions;
+    progressOptions.pruneUnused = true;
+    progressOptions.progress = [&](float value)
+    {
+        Check(value >= 0 && value <= 1 && (buildProgress.empty() || value >= buildProgress.back()),
+            "Export progress must stay monotonic and within 0..1");
+        buildProgress.push_back(value);
+    };
+    const bool serverExported = assets::ExportHeadlessProject(settingsProject, exported, host, &packError, progressOptions);
+    Check(serverExported, packError.c_str());
+    Check(buildProgress.size() >= 5 && buildProgress.back() == 1, "Export did not report stage progress/completion");
     Check(settingsProject.GetManifest().startupScene == "project://Title.plutoscene", "Export changed graphical startup scene");
     {
         RuntimeContent packed;

@@ -76,6 +76,15 @@ public override void OnCollisionExit(GameObject other) {}
 
 ## Multiplayer networking
 
+Dedicated-server scripts can implement `IServerCommandHandler.HandleServerCommand(string)`
+to receive local console commands on the simulation thread. Return `false` for
+unknown commands and `true` after handling a command (including invalid arguments).
+Use `Debug.Log` for responses. The server dispatches to the first started script
+that handles the command; `help` is also forwarded so games can list their commands.
+Built-in `status` and shutdown commands stay with the native host. This is a local
+administration API, not a network RPC. Rebuild ScriptCore and native hosts together
+when updating the bridge, and include both in exported server packages.
+
 Import `PlutoGE.ScriptCore.Networking` to use the built-in reliable networking
 module. It provides one server accepting multiple clients and a client that
 connects to one server. Messages are length-framed TCP packets with a `ushort`
@@ -617,3 +626,11 @@ When generating a PlutoGE script:
 - Script component lifecycle: `engine/scene/src/components/ScriptComponent.cpp`
 
 Pointer-ray queries in hosted game viewports sample the current OS cursor using the viewport's host-window logical bounds. Call `CameraComponent.TryGetPointerRay` during `OnLateUpdate` for camera-relative aiming. Runtime UI event coordinates remain frame snapshots so UI processing is deterministic. A rendered world reticle still incurs normal rendering/presentation latency.
+
+Dedicated servers accept `--mode <name>` and `--map <name>` as application-defined
+startup settings (`PLUTOGE_SERVER_MODE` / `PLUTOGE_SERVER_MAP`). Game scripts own
+mode/map validation and defaults. Headless hosts now honor `SceneManager.LoadScene`
+requests at the end of a simulation tick, constructing the next scene before
+stopping the old runtime and starting the new one. A failed construction leaves
+the current scene running. Scene changes reset simulation components and network
+sessions; games must arrange reconnection where needed.

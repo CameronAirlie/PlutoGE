@@ -214,6 +214,13 @@ The initial checks cover:
 - Invalid scene headers, malformed records, missing component owners, duplicate
   entity IDs, missing parents, cycles, and incomplete scans.
 
+Game and dedicated-server builds show a centered build screen with a stage progress
+bar, animated activity indicator, and elapsed time. Stages cover saving, script
+compilation, validation, runtime copying, asset cooking, compression, and finishing.
+The bar measures completed stages rather than estimating time remaining. Build and
+Run launches only after a successful export; failures return to the editor with
+status and existing diagnostics. Editing and gameplay stay suspended during export.
+
 **Build Project**, **Build and Run Project**, and **Run Test Build** validate saved project data after
 saving and building scripts, before rebuilding/copying the runtime. Errors stop
 export and open the panel. Warnings permit export. By default all saved assets are

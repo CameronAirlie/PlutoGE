@@ -26,6 +26,7 @@ namespace PlutoGE::scripting
         virtual void OnFixedUpdate(float fixedDeltaTime) { (void)fixedDeltaTime; }
         virtual void OnLateUpdate(float deltaTime) {}
         virtual void OnDestroy() {}
+        virtual bool OnServerCommand(std::string_view command) { (void)command; return false; }
         virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }
         virtual void OnCollisionExit(uint32_t otherEntityId) { (void)otherEntityId; }
         virtual void OnAnimationEvent(std::string_view name, std::string_view stringParameter,

@@ -3541,6 +3541,7 @@ namespace PlutoGE::scripting
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
         invoke_on_collision_fn invokeOnCollisionExit = nullptr;
         invoke_on_animation_event_fn invokeOnAnimationEvent = nullptr;
+        int(PLUTO_HOST_CALL *invokeServerCommand)(int64_t, const char *) = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
@@ -4019,6 +4020,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionEnter"), impl.invokeOnCollisionEnter) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionExit"), impl.invokeOnCollisionExit) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnAnimationEvent"), impl.invokeOnAnimationEvent) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeServerCommand"), impl.invokeServerCommand) &&
                 LoadManagedExport(impl, HOST_TEXT("ApplyFieldData"), impl.applyFieldData) &&
                 LoadManagedExport(impl, HOST_TEXT("SetEntityId"), impl.setEntityId) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
@@ -4203,6 +4205,13 @@ namespace PlutoGE::scripting
                 {
                     m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId);
                 }
+            }
+
+            bool OnServerCommand(std::string_view command) override
+            {
+                const std::string text(command);
+                return m_impl && m_impl->invokeServerCommand &&
+                    m_impl->invokeServerCommand(m_instanceHandle, text.c_str()) != 0;
             }
 
             void OnAnimationEvent(std::string_view name, std::string_view stringParameter,

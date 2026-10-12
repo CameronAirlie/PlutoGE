@@ -1351,6 +1351,7 @@ namespace PlutoGE::assets
             }
         }
 
+        if (options.progress) options.progress(0.05f);
         const auto normalizedDestinationExecutablePath = NormalizeAbsolutePath(destinationExecutablePath);
         const std::filesystem::path assetDirectoryPath(manifest.assetDirectory);
         const auto normalizedAssetDirectory = assetDirectoryPath.lexically_normal().generic_string();
@@ -1383,6 +1384,7 @@ namespace PlutoGE::assets
             return false;
         }
 
+        if (options.progress) options.progress(.15f);
         const auto runtimeShaders = normalizedRuntimeExecutablePath.parent_path() / "Shaders";
         const auto exportedShaders = normalizedDestinationExecutablePath.parent_path() / "Shaders";
         if (std::filesystem::is_directory(runtimeShaders) && runtimeShaders != exportedShaders)
@@ -1402,6 +1404,7 @@ namespace PlutoGE::assets
             return false;
         }
 
+        if (options.progress) options.progress(.30f);
         const auto stagingDirectory = normalizedDestinationExecutablePath.parent_path() / (".pluto-pack-" + normalizedDestinationExecutablePath.stem().string());
         std::filesystem::remove_all(stagingDirectory, errorCode);
         errorCode.clear();
@@ -1421,6 +1424,7 @@ namespace PlutoGE::assets
             return false;
         }
 
+        if (options.progress) options.progress(.70f);
         Project exportedProject(stagingDirectory / GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath).filename(), project.GetManifest());
         exportedProject.RefreshAssetRegistry();
         if (!exportedProject.Save(errorMessage))
@@ -1428,6 +1432,7 @@ namespace PlutoGE::assets
             return false;
         }
 
+        if (options.progress) options.progress(.80f);
         const auto contentPackPath = GetRuntimeContentPackPathForExecutable(normalizedDestinationExecutablePath);
         if (!content::WritePack(stagingDirectory, contentPackPath, {.compress = options.compress}, errorMessage))
         {
@@ -1439,6 +1444,7 @@ namespace PlutoGE::assets
         // Remove files produced by older loose-content exports only after the new pack is complete.
         std::filesystem::remove_all(normalizedDestinationExecutablePath.parent_path() / project.GetManifest().assetDirectory, errorCode);
         std::filesystem::remove(GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath), errorCode);
+        if (options.progress) options.progress(1.0f);
 
         return true;
     }

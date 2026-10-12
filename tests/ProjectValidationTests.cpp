@@ -133,6 +133,16 @@ int main()
         Write(scratch.root / ".pluto-generations/private.plutoscene", "invalid packed infrastructure");
         auto result = ValidateProject(input);
         Require(result.diagnostics.empty() && result.checkedFiles == 1, "Valid scene or private infrastructure filtering produced diagnostics");
+        Write(scratch.root / "Unused.plutoscene", "SCENE\t1\n" + entity +
+            "COMPONENT\t1\tMeshComponent\t1\nPROPERTY\tMeshAssetReference\t2\tproject://Missing.plutomesh\t0\nEND_COMPONENT\n");
+        Require(ValidateProject(input).HasErrors(), "Whole-project validation skipped unused broken scene");
+        input.assetReferences = std::set<std::string>{"project://Main.plutoscene"};
+        result = ValidateProject(input);
+        Require(result.diagnostics.empty() && result.checkedFiles == 1, "Build validation scanned excluded scene");
+        input.assetReferences->insert("project://Unused.plutoscene");
+        Require(Has(ValidateProject(input), "asset.missing"), "Included broken scene escaped build validation");
+        input.assetReferences.reset();
+        std::filesystem::remove(scratch.root / "Unused.plutoscene");
         {
             Scratch nested;
             Write(nested.root / "Assets/Library/Main.plutoscene", good);

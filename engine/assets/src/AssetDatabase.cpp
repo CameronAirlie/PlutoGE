@@ -429,30 +429,10 @@ namespace PlutoGE::assets
         const auto found = m_byReference.find(std::string(reference)); return found == m_byReference.end() ? nullptr : &m_records[found->second];
     }
 
-    bool CookProjectContent(Project &project, const std::filesystem::path &requestedDestination, const CookOptions &options, std::string *errorMessage)
+    bool CollectCookAssetReferences(const Project &project, const AssetDatabase &database,
+                                    const CookOptions &options, std::set<std::string> &references,
+                                    std::string *errorMessage)
     {
-        ProjectAssetLock projectLock;
-        if (!projectLock.TryAcquire(project.GetRootDirectory(), errorMessage)) return false;
-        if (!ValidateNoPendingAssetTransactions(project.GetRootDirectory(), errorMessage)) return false;
-        std::filesystem::path destination, sourceRoot, projectRoot;
-        if (!content::ResolveDirectoryForCreation(requestedDestination, destination, errorMessage) ||
-            !content::ResolveDirectoryForCreation(project.GetAssetDirectoryPath(), sourceRoot, errorMessage) ||
-            !content::ResolveDirectoryForCreation(project.GetRootDirectory(), projectRoot, errorMessage)) return false;
-        const auto relativeDestination = destination.lexically_relative(sourceRoot);
-        const bool insideAssets = !relativeDestination.empty() && !relativeDestination.is_absolute() && *relativeDestination.begin() != "..";
-        if (insideAssets && !IsAssetInfrastructurePath(projectRoot, destination))
-        {
-            SetError(errorMessage, "Cook destination cannot be inside authored assets; use the project Build directory or an external directory.");
-            return false;
-        }
-
-        AssetDatabase database;
-        AssetScanOptions scanOptions;
-        scanOptions.importedStorage = options.importedStorage;
-        // Pruned exports need only reachable current objects; accepted generations
-        // have separate complete proofs below. Selected unavailable bytes still fail.
-        scanOptions.allowUnavailableImportedStorage = !options.includeUnreferencedAssets;
-        if (!database.Scan(project, scanOptions, errorMessage)) return false;
         auto resolveLogical = [&](std::string &reference)
         {
             if (!reference.starts_with("asset://")) return true;
@@ -479,7 +459,7 @@ namespace PlutoGE::assets
         std::set<std::string> reachable;
         if (!options.includeUnreferencedAssets)
         {
-            std::vector<std::string> pending{project.GetManifest().startupScene, project.GetManifest().scriptAssembly};
+            std::vector<std::string> pending{project.GetManifest().startupScene, project.GetManifest().scriptAssembly, project.GetManifest().loadingScreen.assetReference};
             pending.insert(pending.end(), explicitRoots.begin(), explicitRoots.end());
             while (!pending.empty())
             {
@@ -503,6 +483,38 @@ namespace PlutoGE::assets
                 }
             }
         }
+        if (options.includeUnreferencedAssets)
+            for (const auto &record : database.GetRecords()) reachable.insert(record.reference);
+        references = std::move(reachable);
+        return true;
+    }
+
+    bool CookProjectContent(Project &project, const std::filesystem::path &requestedDestination, const CookOptions &options, std::string *errorMessage)
+    {
+        ProjectAssetLock projectLock;
+        if (!projectLock.TryAcquire(project.GetRootDirectory(), errorMessage)) return false;
+        if (!ValidateNoPendingAssetTransactions(project.GetRootDirectory(), errorMessage)) return false;
+        std::filesystem::path destination, sourceRoot, projectRoot;
+        if (!content::ResolveDirectoryForCreation(requestedDestination, destination, errorMessage) ||
+            !content::ResolveDirectoryForCreation(project.GetAssetDirectoryPath(), sourceRoot, errorMessage) ||
+            !content::ResolveDirectoryForCreation(project.GetRootDirectory(), projectRoot, errorMessage)) return false;
+        const auto relativeDestination = destination.lexically_relative(sourceRoot);
+        const bool insideAssets = !relativeDestination.empty() && !relativeDestination.is_absolute() && *relativeDestination.begin() != "..";
+        if (insideAssets && !IsAssetInfrastructurePath(projectRoot, destination))
+        {
+            SetError(errorMessage, "Cook destination cannot be inside authored assets; use the project Build directory or an external directory.");
+            return false;
+        }
+
+        AssetDatabase database;
+        AssetScanOptions scanOptions;
+        scanOptions.importedStorage = options.importedStorage;
+        // Pruned exports need only reachable current objects; accepted generations
+        // have separate complete proofs below. Selected unavailable bytes still fail.
+        scanOptions.allowUnavailableImportedStorage = !options.includeUnreferencedAssets;
+        if (!database.Scan(project, scanOptions, errorMessage)) return false;
+        std::set<std::string> reachable;
+        if (!CollectCookAssetReferences(project, database, options, reachable, errorMessage)) return false;
         // Accepted generations belong to each linked instance, independently of
         // the current catalog. Validate all baselines before creating output.
         std::map<std::string, ModelGenerationSnapshot> linkedGenerations;

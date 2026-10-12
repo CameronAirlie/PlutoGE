@@ -377,6 +377,11 @@ namespace PlutoGE::assets
             if (it->is_regular_file(ec) && SupportsAssetReferenceScan(path))
             {
                 const auto owner = "project://" + Utf8(path.lexically_relative(input.assetRoot));
+                if (input.assetReferences && !input.assetReferences->contains(owner))
+                {
+                    it.increment(ec);
+                    continue;
+                }
                 ++v.result.checkedFiles;
                 if (!(input.currentScene && owner == input.currentSceneOwner))
                 {

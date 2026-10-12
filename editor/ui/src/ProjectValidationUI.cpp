@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/ModelGenerationSnapshot.h"
 #include "PlutoGE/scene/Entity.h"
@@ -43,6 +44,28 @@ namespace PlutoGE::ui
             return generation.catalog;
         };
         input.startupScene = m_project->GetManifest().startupScene;
+        if (!includeCurrentScene && m_project->GetManifest().buildUsedAssetsOnly)
+        {
+            assets::AssetDatabase database;
+            assets::AssetScanOptions scan;
+            scan.createMissingMetadata = false;
+            scan.hashContent = false;
+            scan.allowUnavailableImportedStorage = true;
+            assets::CookOptions cook;
+            cook.includeUnreferencedAssets = false;
+            cook.alwaysInclude = m_project->GetManifest().buildAlwaysInclude;
+            std::set<std::string> references;
+            std::string error;
+            if (!database.Scan(*m_project, scan, &error) ||
+                !assets::CollectCookAssetReferences(*m_project, database, cook, references, &error))
+            {
+                m_validationResult.diagnostics.push_back({assets::ValidationSeverity::Error,
+                    "build.dependencies", "Project", 0, 0, error});
+                return false;
+            }
+            input.assetReferences = std::move(references);
+            input.assetCatalog = database.GetCatalog();
+        }
         if (!m_project->GetManifest().scriptAssembly.empty()) input.scriptAssembly = ResolveProjectScriptAssemblyPath();
         const auto builtins = assets::Project::GetBuiltinAssetReferences();
         input.builtinReferences.insert(builtins.begin(), builtins.end());

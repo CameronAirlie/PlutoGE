@@ -659,6 +659,17 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "BUILD_USED_ASSETS_ONLY" && tokens.size() >= 2)
+            {
+                manifest.buildUsedAssetsOnly = tokens[1] == "1";
+                continue;
+            }
+            if (tokens[0] == "BUILD_ALWAYS_INCLUDE" && tokens.size() >= 2)
+            {
+                manifest.buildAlwaysInclude.push_back(tokens[1]);
+                continue;
+            }
+
             if (tokens[0] == "SCRIPT_ASSEMBLY" && tokens.size() >= 2)
             {
                 manifest.scriptAssembly = tokens[1];
@@ -1015,6 +1026,9 @@ namespace PlutoGE::assets
         output << "NAME\t" << EscapeText(m_manifest.name) << '\n';
         output << "ASSET_DIR\t" << EscapeText(m_manifest.assetDirectory) << '\n';
         output << "STARTUP_SCENE\t" << EscapeText(m_manifest.startupScene) << '\n';
+        output << "BUILD_USED_ASSETS_ONLY\t" << (m_manifest.buildUsedAssetsOnly ? 1 : 0) << '\n';
+        for (const auto &reference : m_manifest.buildAlwaysInclude)
+            output << "BUILD_ALWAYS_INCLUDE\t" << EscapeText(reference) << '\n';
         output << "SCRIPT_ASSEMBLY\t" << EscapeText(m_manifest.scriptAssembly) << '\n';
         if (!m_manifest.loadingScreen.assetReference.empty())
             output << "LOADING_SCREEN\t" << EscapeText(m_manifest.loadingScreen.assetReference) << '\n';

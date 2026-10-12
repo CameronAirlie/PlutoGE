@@ -216,9 +216,18 @@ The initial checks cover:
 
 **Build Project**, **Build and Run Project**, and **Run Test Build** validate saved project data after
 saving and building scripts, before rebuilding/copying the runtime. Errors stop
-export and open the panel. Warnings permit export. All saved assets are checked,
-including unused assets. Fix errors and build again; there is no stale-result
-bypass. Other callers of the low-level export API must invoke validation themselves.
+export and open the panel. Warnings permit export. By default all saved assets are
+checked, including unused assets. In **Project Settings**, enable **Build used
+assets only** to validate and package the startup scene, loading screen, script
+assembly and their transitive dependencies. **Always include in builds** adds
+roots for additional scenes, prefabs, UI, sounds or other content selected
+dynamically by scripts. Computed paths and scene names in scripts cannot be
+inferred automatically; include those assets explicitly. These settings are saved
+in the project manifest and apply to all three editor build commands. On-demand
+**Validate Project** continues to check the entire project and unsaved scene.
+Missing included dependencies still stop the build. Fix errors and build again;
+there is no stale-result bypass. Other callers of the low-level export API must
+invoke validation themselves.
 
 **File > Run Test Build** exports to a unique `PlutoGE-TestBuild-*` folder in the
 system temporary directory without an output-path dialog, then launches the

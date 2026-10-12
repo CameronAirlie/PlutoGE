@@ -2782,7 +2782,10 @@ namespace PlutoGE::ui
         }
 
         std::string errorMessage;
-        if (!assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage))
+        assets::ExportOptions exportOptions;
+        exportOptions.pruneUnused = manifest.buildUsedAssetsOnly;
+        exportOptions.alwaysInclude = manifest.buildAlwaysInclude;
+        if (!assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage, exportOptions))
         {
             m_statusMessage = errorMessage.empty() ? "Failed to build project." : errorMessage;
             return false;
@@ -3256,6 +3259,8 @@ namespace PlutoGE::ui
         std::array<char, 256> projectWindowTitleBuffer{};
         std::array<char, 512> projectScriptAssemblyBuffer{};
         std::string projectStartupScene;
+        bool projectBuildUsedAssetsOnly = false;
+        std::vector<std::string> projectBuildAlwaysInclude;
         std::string projectLoadingScreen;
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
@@ -3280,6 +3285,8 @@ namespace PlutoGE::ui
             m_project->RefreshAssetRegistry();
             const auto &manifest = m_project->GetManifest();
             projectStartupScene = manifest.startupScene;
+            projectBuildUsedAssetsOnly = manifest.buildUsedAssetsOnly;
+            projectBuildAlwaysInclude = manifest.buildAlwaysInclude;
             projectLoadingScreen = manifest.loadingScreen.assetReference;
             std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
             std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
@@ -4501,11 +4508,36 @@ namespace PlutoGE::ui
                                                    projectStartupScene, {.noneLabel = "<none>", .includeEngineAssets = true});
                     ImGui::TextWrapped("The startup scene is used when opening the project and launching the runtime. Saving another scene does not change it.");
 
+                    ImGui::Separator();
+                    ImGui::Checkbox("Build used assets only", &projectBuildUsedAssetsOnly);
+                    ImGui::TextWrapped("Builds validate and package the startup scene, loading screen, scripts and their dependencies. Add content loaded dynamically by scripts below. Validate Project still checks all assets.");
+                    ImGui::TextUnformatted("Always include in builds");
+                    std::array<assets::ProjectAssetType, static_cast<std::size_t>(assets::ProjectAssetType::Count)> buildAssetTypes;
+                    for (std::size_t i = 0; i < buildAssetTypes.size(); ++i)
+                        buildAssetTypes[i] = static_cast<assets::ProjectAssetType>(i);
+                    ImGui::BeginChild("Build included assets", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders);
+                    for (std::size_t i = 0; i < projectBuildAlwaysInclude.size();)
+                    {
+                        ImGui::PushID(static_cast<int>(i));
+                        (void)RenderProjectAssetPicker("Asset", m_project.get(), buildAssetTypes,
+                            projectBuildAlwaysInclude[i], {.noneLabel = "<select asset>"});
+                        ImGui::SameLine();
+                        const bool remove = ImGui::SmallButton("Remove");
+                        ImGui::PopID();
+                        if (remove) projectBuildAlwaysInclude.erase(projectBuildAlwaysInclude.begin() + i);
+                        else ++i;
+                    }
+                    ImGui::EndChild();
+                    if (ImGui::Button("Add included asset")) projectBuildAlwaysInclude.emplace_back();
+
                     if (ImGui::Button("Save"))
                     {
                         const bool graphicsApiChanged = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
                         manifest.name = projectNameBuffer.data();
                         manifest.startupScene = projectStartupScene;
+                        manifest.buildUsedAssetsOnly = projectBuildUsedAssetsOnly;
+                        manifest.buildAlwaysInclude = projectBuildAlwaysInclude;
+                        std::erase(manifest.buildAlwaysInclude, std::string{});
                         manifest.windowTitle = projectWindowTitleBuffer.data();
                         manifest.loadingScreen.assetReference = projectLoadingScreen;
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);

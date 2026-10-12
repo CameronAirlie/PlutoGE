@@ -29,6 +29,8 @@ namespace PlutoGE::assets
         std::filesystem::path projectRoot;
         std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
+        // Absent for whole-project validation; otherwise only these owners are scanned.
+        std::optional<std::set<std::string>> assetReferences;
         std::filesystem::path scriptAssembly;
         // An absent class catalogue means class availability cannot be verified.
         std::optional<std::set<std::string>> scriptClasses;

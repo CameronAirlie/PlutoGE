@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -79,6 +80,11 @@ namespace PlutoGE::assets
         // Validated importer generation locations; runtime output stays relative.
         std::shared_ptr<const AssetStorageMap> importedStorage;
     };
+
+    // Shared by build validation and cooking. Requires a dependency-enabled scan.
+    bool CollectCookAssetReferences(const Project &project, const AssetDatabase &database,
+                                    const CookOptions &options, std::set<std::string> &references,
+                                    std::string *errorMessage = nullptr);
 
     bool CookProjectContent(Project &project,
                             const std::filesystem::path &destinationAssetDirectory,

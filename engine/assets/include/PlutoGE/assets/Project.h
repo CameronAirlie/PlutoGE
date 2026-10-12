@@ -64,6 +64,8 @@ namespace PlutoGE::assets
         // version until explicitly migrated; Project::Create selects version 3.
         std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
+        bool buildUsedAssetsOnly = false;
+        std::vector<std::string> buildAlwaysInclude;
         render::LoadingScreenStyle loadingScreen;
         std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";

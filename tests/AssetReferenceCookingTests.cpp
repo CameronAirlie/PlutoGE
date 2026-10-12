@@ -77,10 +77,15 @@ int main(int argc, char **argv)
             "Version 3 runtime accepted affine project exports");
         auto affineManifest = manifest;
         affineManifest.assetPipelineVersion = 4;
+        affineManifest.buildUsedAssetsOnly = true;
+        affineManifest.buildAlwaysInclude = {"project://Section.plutoscene", "project://UI/title.rml"};
         Project affineProject(scratch.root / "Affine.plutoproject", affineManifest);
         Require(affineProject.Save(&compatibilityError), "Version 4 project could not save");
         auto reopenedAffine = Project::Load(affineProject.GetManifestPath(), &compatibilityError);
         Require(reopenedAffine && reopenedAffine->GetManifest().assetPipelineVersion == 4, "Version 4 project could not reload");
+        Require(reopenedAffine->GetManifest().buildUsedAssetsOnly &&
+                reopenedAffine->GetManifest().buildAlwaysInclude == affineManifest.buildAlwaysInclude,
+                "Build asset settings did not round-trip");
         Write(staleRuntime, std::string(kRuntimeContentPackMarker) + "\nPLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=2");
         Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 2) && !IsRuntimeAssetPipelineCompatible(staleRuntime, 3),
             "Version 2 runtime compatibility leaked into Library project exports");
@@ -111,6 +116,7 @@ int main(int argc, char **argv)
           scene << "PROPERTY\tParticleSystemAsset\t2\tproject://Flash.plutoparticles\t0\n";
           scene << "PROPERTY\tField.sceneAsset\t2\tproject://Section.plutoscene\t0\n"; }
         Write(assets / "Unused.png", "fixture");
+        Write(assets / "Unused.plutoscene", "SCENE\t1\nPROPERTY\tMeshAssetReference\t2\tasset://missing-unused#0\t0\n");
         Write(assets / "Paladin.glb", "direct model fixture");
         { std::ofstream scene(assets / "Main.plutoscene", std::ios::app);
           scene << "PROPERTY\tMeshAssetReference\t2\tproject://Paladin.glb\t0\n"; }
@@ -142,11 +148,22 @@ int main(int argc, char **argv)
         Require(std::filesystem::exists(cooked / "Section.plutoscene") && std::filesystem::exists(cooked / "Section.png"), "Additive scene or transitive section assets omitted from pruned cook");
         Require(std::filesystem::exists(cooked / "Paladin.glb"), "Direct runtime model was omitted");
         Require(!std::filesystem::exists(cooked / "Unused.png"), "Unreferenced asset was cooked");
+        Require(!std::filesystem::exists(cooked / "Unused.plutoscene"), "Unused broken scene was cooked");
         Require(!std::filesystem::exists(cooked / "Robot.fbx"), "Source model shipped");
         Require(std::filesystem::exists(cooked / "Robot.plutomodel"), "Runtime model manifest omitted");
         Require(std::filesystem::exists(cooked / "Robot.plutomesh"), "Model object dependency omitted");
         AssetDatabase identities;
         Require(identities.Scan(project, &error), error);
+        std::set<std::string> buildReferences;
+        Require(CollectCookAssetReferences(project, identities, options, buildReferences, &error), error);
+        Require(buildReferences.contains("project://Section.plutoscene") &&
+                buildReferences.contains("project://Stone texture.png") &&
+                !buildReferences.contains("project://Unused.plutoscene"),
+                "Build validation dependency scope differs from pruned cooking");
+        auto brokenOptions = options;
+        brokenOptions.alwaysInclude.push_back("project://Unused.plutoscene");
+        Require(!CollectCookAssetReferences(project, identities, brokenOptions, buildReferences, &error),
+                "Explicitly included broken scene escaped dependency checks");
         const auto stoneId = identities.FindByReference("project://Stone texture.png")->id;
         const auto modelId = identities.FindByReference("project://Robot.fbx")->id;
         Require(identities.FindById(stoneId) == identities.FindByReference("project://Stone texture.png"), "ID lookup differs from path lookup");

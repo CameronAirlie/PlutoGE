@@ -2720,6 +2720,34 @@ namespace PlutoGE::scene
         std::vector<Entity *> subtree;
         CollectEntitySubtree(entity, subtree);
         const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
+        // Remove references before freeing the subtree, while leaving surviving
+        // corpses in their current simulation state. Resetting the whole world
+        // here restarts every other ragdoll when a corpse is cleaned up.
+        RestoreRuntimePhysicsTransforms();
+        if (m_runtimePhysicsState && m_runtimePhysicsState->world)
+        {
+            auto &world = *m_runtimePhysicsState->world;
+            std::erase_if(world.ragdolls, [&](BulletRagdoll &ragdoll)
+            {
+                if (!entitySet.contains(ragdoll.animation->GetOwner()) &&
+                    !entitySet.contains(ragdoll.meshComponent->GetOwner()))
+                    return false;
+                for (auto &constraint : ragdoll.constraints)
+                    world.dynamicsWorld.removeConstraint(constraint.get());
+                for (auto &part : ragdoll.parts)
+                    world.dynamicsWorld.removeRigidBody(part.body.get());
+                ragdoll.animation->ClearRagdollPhysicsPose();
+                return true;
+            });
+            std::erase_if(world.bodies, [&](BulletStepBody &body)
+            {
+                if (!entitySet.contains(body.entity))
+                    return false;
+                if (body.body)
+                    world.dynamicsWorld.removeRigidBody(body.body.get());
+                return true;
+            });
+        }
         std::vector<EntityID> removedInstanceRoots;
         for (const auto *removed : subtree)
             if (m_staticModelInstances.contains(removed->GetID()))
@@ -2742,9 +2770,6 @@ namespace PlutoGE::scene
 
         for (const auto id : removedInstanceRoots)
             m_staticModelInstances.erase(id);
-
-        if (affectsPhysics)
-            ResetRuntimePhysicsState();
     }
 
     bool Scene::DestroyEntity(EntityID entityId)

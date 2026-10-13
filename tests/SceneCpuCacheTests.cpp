@@ -226,7 +226,10 @@ int main() try
                 secondCorpse->GetOwner()->SetPosition({50, 10, 0});
             }
             if (frame == 60) secondCorpse->SetRagdollEnabled(false);
-            collider->SetCenter({float(frame % 2), 0, 0});
+            if (frame == 63) secondCorpse->SetRagdollEnabled(true);
+            if (frame == 65) changing.DestroyEntity(secondCorpse->GetOwner()->GetID());
+            if (frame == 70) changing.DestroyEntity(obstacle->GetID());
+            if (frame < 70) collider->SetCenter({float(frame % 2), 0, 0});
             steady.Update(1.f / 60.f); changing.Update(1.f / 60.f);
             const auto &expected = baseline->GetJointMatrices(mesh.GetSkeleton());
             const auto &actual = corpse->GetJointMatrices(mesh.GetSkeleton());

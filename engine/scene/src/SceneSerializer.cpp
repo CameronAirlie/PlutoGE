@@ -48,6 +48,8 @@
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Camera.h"
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -737,6 +739,26 @@ namespace PlutoGE::scene
             std::string prepared;
             if (!PrepareSave(scene, prepared, errorMessage)) return false;
             const auto destination = std::filesystem::absolute(filePath).lexically_normal();
+            std::error_code sizeError;
+            if (std::filesystem::file_size(destination, sizeError) == prepared.size() && !sizeError)
+            {
+                std::ifstream existing(destination, std::ios::binary);
+                std::array<char, 64 * 1024> buffer{};
+                std::size_t offset = 0;
+                while (existing && offset < prepared.size())
+                {
+                    const auto count = std::min(buffer.size(), prepared.size() - offset);
+                    existing.read(buffer.data(), static_cast<std::streamsize>(count));
+                    if (existing.gcount() != static_cast<std::streamsize>(count) ||
+                        !std::equal(buffer.begin(), buffer.begin() + count, prepared.begin() + offset)) break;
+                    offset += count;
+                }
+                if (existing && offset == prepared.size() && existing.peek() == EOF)
+                {
+                    if (errorMessage) errorMessage->clear();
+                    return true;
+                }
+            }
             for (unsigned attempt = 0; attempt < 32; ++attempt)
             {
                 const auto candidate = destination.parent_path() / (".pluto-scene-" + assets::GenerateAssetId());

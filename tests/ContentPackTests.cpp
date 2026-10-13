@@ -3,6 +3,7 @@
 #include <iostream>
 #include <random>
 #include <stdexcept>
+#include <string_view>
 
 namespace fs = std::filesystem;
 using namespace PlutoGE::content;
@@ -22,7 +23,7 @@ void Legacy(const fs::path &path, std::string name, std::string bytes)
     for (auto &c : name) c ^= 0xA7; for (auto &c : bytes) c ^= 0xA7;
     out << name << bytes;
 }
-int main()
+int main(int argc, char **argv)
 {
     auto root = fs::temp_directory_path() / ("pluto-pack-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup { fs::path root; ~Cleanup() { UnmountAll(); std::error_code ec; fs::remove_all(root, ec); } } cleanup{root};
@@ -94,6 +95,50 @@ int main()
         auto before = fs::file_size(packed); Require(!WritePack(root / "missing", packed, {}, &error), "Missing source accepted");
         Require(fs::file_size(packed) == before && Pack::Open(packed)->Verify(), "Failed export damaged old pack");
         Require(WritePack(source, packed, {}, &error), "Repeat export: " + error);
+        PackWriteStatistics statistics;
+        Require(WritePack(source, packed, {}, &error, &statistics), error);
+        Require(statistics.reusedBlocks == 3 && statistics.compressedBlocks == 0,
+                "Unchanged compressed blocks were not reused");
+        Require(statistics.sourceBytes == large.size() + random.size() + 10, "Source byte accounting");
+        const auto savedTime = fs::last_write_time(source / "Assets/large.bin");
+        auto changed = large;
+        changed[300000] = 'y';
+        Write(source / "Assets/large.bin", changed);
+        fs::last_write_time(source / "Assets/large.bin", savedTime);
+        fs::remove(source / "Assets/empty");
+        Require(WritePack(source, packed, {}, &error, &statistics), error);
+        Require(statistics.reusedBlocks == 2 && statistics.compressedBlocks == 1,
+                "Same-size/timestamp edit did not invalidate its block");
+        auto updated = Pack::Open(packed, &error);
+        bytes.resize(changed.size());
+        Require(updated && updated->Read("Assets/large.bin", 0, bytes, &error) && bytes == changed, "Stale block reused");
+        Require(!updated->Contains("Assets/empty"), "Deleted file retained in pack");
+        // Corrupt old payloads are cache misses; the authored source repairs them.
+        { std::fstream out(packed, std::ios::binary | std::ios::in | std::ios::out); out.seekp(40); out.put('!'); }
+        Require(WritePack(source, packed, {}, &error, &statistics) && Pack::Open(packed)->Verify(), "Corrupt cache did not recover");
+        Require(statistics.reusedBlocks == 2 && statistics.compressedBlocks == 1, "Corrupt block reused");
+        Require(WritePack(source, root / "fresh.plutopack", {.reuseExistingBlocks=false}, &error), error);
+        Require(ReadFile(packed, bytes, &error), error);
+        std::string fresh;
+        Require(ReadFile(root / "fresh.plutopack", fresh, &error) && fresh == bytes, "Incremental pack differs from clean pack");
+        Require(WritePack(source, packed, {.compress=false}, &error, &statistics), error);
+        Require(statistics.reusedBlocks == 0 && Pack::Open(packed)->Verify(), "Compression setting change reused compressed blocks");
+        Write(packed, "invalid old index");
+        Require(WritePack(source, packed, {}, &error) && Pack::Open(packed)->Verify(), "Invalid index did not recover");
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark")
+        {
+            Write(root / "benchmark/source/repeated.bin", std::string(32 * 1024 * 1024, 'x'));
+            const auto benchmarkPack = root / "benchmark/content.plutopack";
+            Require(WritePack(root / "benchmark/source", benchmarkPack, {}, &error), error);
+            std::cout << "mode,elapsed_ms,source_bytes,reused_blocks,compressed_blocks\n";
+            for (int sample = 0; sample < 3; ++sample)
+                for (const bool reuse : {false, true})
+                {
+                    Require(WritePack(root / "benchmark/source", benchmarkPack, {.reuseExistingBlocks=reuse}, &error, &statistics), error);
+                    std::cout << (reuse ? "reuse" : "recompress") << ',' << statistics.elapsedMs << ',' << statistics.sourceBytes
+                              << ',' << statistics.reusedBlocks << ',' << statistics.compressedBlocks << '\n';
+                }
+        }
         std::cout << "Content pack tests passed\n";
         return 0;
     }

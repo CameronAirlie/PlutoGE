@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/AssetPathPolicy.h"
 #include "PlutoGE/platform/ContentPack.h"
+#include "PlutoGE/platform/FilesystemPaths.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/render/RenderTexture.h"
@@ -1173,6 +1174,64 @@ namespace PlutoGE::assets
                   });
     }
 
+    bool Project::RefreshAssetEntry(const std::filesystem::path &filePath, std::string *errorMessage)
+    {
+        const auto path = NormalizeAbsolutePath(filePath);
+        auto reference = MakeAssetReference(path);
+        // Resolve missing parents with the shared Windows-aware path utility.
+        // Do not reinterpret an existing symlink whose target is outside Assets.
+        std::error_code existenceError;
+        if (!IsProjectAssetReference(reference) && !std::filesystem::exists(path, existenceError) && !existenceError)
+        {
+            std::filesystem::path parent, root;
+            if (content::ResolveDirectoryForCreation(path.parent_path(), parent) &&
+                content::ResolveDirectoryForCreation(GetAssetDirectoryPath(), root) &&
+                content::IsPathWithinDirectory(parent / path.filename(), root))
+                reference = std::string(kProjectAssetScheme) + PathToGenericUtf8String((parent / path.filename()).lexically_relative(root));
+        }
+        if (!IsProjectAssetReference(reference) || IsAssetInfrastructurePath(GetRootDirectory(), path) ||
+            path == m_manifestPath || path.extension() == ".plutometa" || path.extension() == ".plutomodel")
+        {
+            SetError(errorMessage, "The file is not a visible project asset: " + PathToUtf8String(path));
+            return false;
+        }
+        std::error_code error;
+        const bool exists = std::filesystem::exists(path, error);
+        if (error)
+        {
+            SetError(errorMessage, "Cannot inspect project asset: " + error.message());
+            return false;
+        }
+        std::uintmax_t size = 0;
+        if (exists)
+        {
+            size = std::filesystem::file_size(path, error);
+            if (error)
+            {
+                SetError(errorMessage, "Cannot inspect project asset size: " + error.message());
+                return false;
+            }
+        }
+        auto &entries = m_manifest.assetEntries;
+        const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) { return entry.reference == reference; });
+        if (!exists)
+        {
+            if (found != entries.end()) entries.erase(found);
+        }
+        else
+        {
+            ProjectAssetEntry entry{.reference=reference, .size=size, .type=GetAssetTypeForReference(reference)};
+            if (found != entries.end()) *found = std::move(entry);
+            else
+            {
+                entries.push_back(std::move(entry));
+                std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) { return left.reference < right.reference; });
+            }
+        }
+        if (errorMessage) errorMessage->clear();
+        return true;
+    }
+
     std::string Project::MakeAssetReference(const std::filesystem::path &filePath) const
     {
         const auto genericPath = PathToGenericUtf8String(filePath);
@@ -1295,9 +1354,28 @@ namespace PlutoGE::assets
             (version == 2 && RuntimeHasMarker(runtimeExecutablePath, "PLUTOGE_RUNTIME_ASSET_PIPELINE_VERSION=2"));
     }
 
+    namespace
+    {
+        std::filesystem::path FindRuntimeInHostLayout(const std::filesystem::path &searchRoot,
+                                                     const std::string &name, bool headless)
+        {
+            const auto root = NormalizeAbsolutePath(searchRoot);
+            // Installed hosts are adjacent; CMake multi-config hosts live in
+            // sibling editor/<config> and runtime/<config> directories.
+            const std::array candidates{root / name, root.parent_path() / "runtime" / name,
+                root.parent_path().parent_path() / "runtime" / root.filename() / name};
+            for (const auto &candidate : candidates)
+                if (IsRuntimeContentPackCompatible(candidate) &&
+                    (!headless || RuntimeHasMarker(candidate, kHeadlessServerMarker)))
+                    return candidate.lexically_normal();
+            return {};
+        }
+    }
+
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot)
     {
         const std::string runtimeFileName = "PlutoGERuntime" + GetExecutableExtension();
+        if (const auto adjacent = FindRuntimeInHostLayout(searchRoot, runtimeFileName, false); !adjacent.empty()) return adjacent;
         auto candidateRoot = NormalizeAbsolutePath(searchRoot);
         for (int depth = 0; depth < kRuntimeSearchAncestorLimit && !candidateRoot.empty(); ++depth)
         {
@@ -1452,6 +1530,7 @@ namespace PlutoGE::assets
     std::filesystem::path FindServerExecutable(const std::filesystem::path &searchRoot)
     {
         const auto name = "PlutoGEServer" + GetExecutableExtension();
+        if (const auto adjacent = FindRuntimeInHostLayout(searchRoot, name, true); !adjacent.empty()) return adjacent;
         auto root = NormalizeAbsolutePath(searchRoot);
         for (int depth = 0; depth < kRuntimeSearchAncestorLimit && !root.empty(); ++depth)
         {

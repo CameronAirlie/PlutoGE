@@ -164,6 +164,17 @@ namespace
         } file;
         std::string error;
         Require(SceneSerializer::Save(scene, file.path.string(), &error), "Could not save primitive scene");
+        const auto savedTime = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+        std::filesystem::last_write_time(file.path, savedTime);
+        Require(SceneSerializer::Save(scene, file.path.string(), &error), "Repeated scene save failed");
+        Require(std::filesystem::last_write_time(file.path) == savedTime, "Unchanged scene was rewritten");
+        // A clean in-memory scene must still repair external edits or deletion.
+        { std::fstream external(file.path, std::ios::binary | std::ios::in | std::ios::out); external.put('!'); }
+        std::filesystem::last_write_time(file.path, savedTime);
+        Require(SceneSerializer::Save(scene, file.path.string(), &error), "External scene edit was not repaired");
+        Require(std::filesystem::last_write_time(file.path) != savedTime, "Same-size external scene edit was ignored");
+        std::filesystem::remove(file.path);
+        Require(SceneSerializer::Save(scene, file.path.string(), &error), "Deleted scene was not recreated");
         auto loaded = SceneSerializer::Load(file.path.string(), &error);
         Require(loaded && error.empty(), "Could not load primitive scene");
         const auto beforePlay = Snapshot(*loaded);

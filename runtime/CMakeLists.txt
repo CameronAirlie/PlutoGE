@@ -37,8 +37,13 @@ pluto_attach_streamline_runtime(PlutoGERuntime)
 pluto_attach_slang_runtime(PlutoGERuntime)
 if (TARGET PlutoGERhiShaders)
     add_dependencies(PlutoGERuntime PlutoGERhiShaders)
+    if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+        set(PLUTO_SHADER_COPY_COMMAND copy_directory_if_different)
+    else()
+        set(PLUTO_SHADER_COPY_COMMAND copy_directory)
+    endif()
     add_custom_command(TARGET PlutoGERuntime POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        COMMAND ${CMAKE_COMMAND} -E ${PLUTO_SHADER_COPY_COMMAND}
             "$<TARGET_PROPERTY:PlutoGERhiShaders,PLUTO_SHADER_DIRECTORY>"
             "$<TARGET_FILE_DIR:PlutoGERuntime>/Shaders"
     )

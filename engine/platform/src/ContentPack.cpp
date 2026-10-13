@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -217,8 +218,10 @@ namespace PlutoGE::content
         return true;
     }
 
-    bool WritePack(const std::filesystem::path &directory, const std::filesystem::path &output, const PackOptions &options, std::string *error)
+    bool WritePack(const std::filesystem::path &directory, const std::filesystem::path &output, const PackOptions &options, std::string *error, PackWriteStatistics *statistics)
     {
+        const auto started = std::chrono::steady_clock::now();
+        if (statistics) *statistics = {};
         // A sibling temporary directory gives this invocation exclusive ownership
         // and permits atomic replacement without deleting an existing good pack.
         std::filesystem::path scratch;
@@ -246,6 +249,12 @@ namespace PlutoGE::content
                 Entry entry; const auto utf8 = item.path().lexically_relative(root).generic_u8string(); entry.name.assign(reinterpret_cast<const char *>(utf8.data()), utf8.size()); entry.size = item.file_size();
                 AddEntry(entries, std::move(entry));
             }
+            // An existing pack is only an optimization hint. Corrupt/missing old
+            // data falls back to compression, never to stale content.
+            const auto previous = options.compress && options.reuseExistingBlocks ? Pack::Open(destination) : nullptr;
+            std::ifstream previousInput;
+            if (previous) previousInput.open(destination, std::ios::binary);
+            std::string previousStored, previousDecoded(BlockSize, '\0');
             std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
             out.write(std::string(HeaderSize, '\0').data(), HeaderSize);
             std::string raw(BlockSize, '\0'), compressed(compressBound(BlockSize), '\0');
@@ -253,16 +262,46 @@ namespace PlutoGE::content
             {
                 std::ifstream in(root / std::filesystem::u8path(entry.name), std::ios::binary);
                 if (!in) Fail("Cannot open pack source: " + entry.name);
+                const Entry *oldEntry = nullptr;
+                if (previous)
+                {
+                    const auto found = previous->m_impl->entries.find(key);
+                    if (found != previous->m_impl->entries.end()) oldEntry = &found->second;
+                }
                 for (std::uint64_t remaining = entry.size; remaining;)
                 {
                     auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, BlockSize));
                     in.read(raw.data(), count); if (!in) Fail("Cannot read pack source: " + entry.name);
                     Block block{static_cast<std::uint64_t>(out.tellp()), count, count, Crc(std::span(raw.data(), count)), 0};
+                    if (statistics) statistics->sourceBytes += count;
+                    bool reused = false;
+                    const auto blockIndex = entry.blocks.size();
+                    if (oldEntry && blockIndex < oldEntry->blocks.size())
+                    {
+                        const auto &old = oldEntry->blocks[blockIndex];
+                        if (old.codec == 1 && old.raw == count && old.crc == block.crc)
+                        {
+                            previousStored.resize(old.stored);
+                            previousInput.clear();
+                            previousInput.seekg(static_cast<std::streamoff>(old.offset));
+                            previousInput.read(previousStored.data(), old.stored);
+                            uLongf decodedSize = count;
+                            reused = previousInput && uncompress(reinterpret_cast<Bytef *>(previousDecoded.data()), &decodedSize,
+                                reinterpret_cast<const Bytef *>(previousStored.data()), old.stored) == Z_OK && decodedSize == count &&
+                                std::equal(raw.begin(), raw.begin() + count, previousDecoded.begin());
+                            if (reused)
+                            {
+                                block.codec = 1;
+                                block.stored = old.stored;
+                                if (statistics) ++statistics->reusedBlocks;
+                            }
+                        }
+                    }
                     uLongf compressedSize = static_cast<uLongf>(compressed.size());
-                    if (options.compress && compress2(reinterpret_cast<Bytef *>(compressed.data()), &compressedSize,
+                    if (!reused && options.compress && compress2(reinterpret_cast<Bytef *>(compressed.data()), &compressedSize,
                         reinterpret_cast<const Bytef *>(raw.data()), count, Z_BEST_SPEED) == Z_OK && compressedSize < count)
-                    { block.codec = 1; block.stored = static_cast<std::uint32_t>(compressedSize); }
-                    out.write(block.codec ? compressed.data() : raw.data(), block.stored);
+                    { block.codec = 1; block.stored = static_cast<std::uint32_t>(compressedSize); if (statistics) ++statistics->compressedBlocks; }
+                    out.write(reused ? previousStored.data() : block.codec ? compressed.data() : raw.data(), block.stored);
                     entry.blocks.push_back(block); remaining -= count;
                 }
                 if (in.peek() != EOF) Fail("Source changed while packing: " + entry.name);
@@ -282,6 +321,7 @@ namespace PlutoGE::content
             Put(out, std::uint32_t{2}); Put(out, BlockSize); Put(out, indexOffset); Put(out, static_cast<std::uint64_t>(bytes.size()));
             Put(out, Crc(bytes)); Put(out, static_cast<std::uint32_t>(entries.size())); out.close();
             if (!out) Fail("Failed to finish content pack.");
+            previousInput.close();
             auto verification = Pack::Open(temporary, error);
             if (!verification || !verification->Verify(error)) Fail(error && !error->empty() ? *error : "Pack verification failed.");
 #ifdef _WIN32
@@ -290,6 +330,8 @@ namespace PlutoGE::content
             std::filesystem::rename(temporary, destination);
 #endif
             std::filesystem::remove(scratch);
+            if (statistics) statistics->elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            if (error) error->clear();
             return true;
         }
         catch (const std::exception &e)

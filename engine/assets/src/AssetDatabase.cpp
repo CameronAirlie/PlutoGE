@@ -406,7 +406,8 @@ namespace PlutoGE::assets
         m_records.swap(records);
         m_byId.swap(byId);
         m_byReference.swap(byReference);
-        project.RefreshAssetRegistry();
+        // Metadata sidecars created by the scan are excluded from the registry;
+        // the registry collected at scan entry is still current.
         if (errorMessage) errorMessage->clear();
         return true;
     }

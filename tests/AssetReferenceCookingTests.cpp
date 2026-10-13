@@ -52,6 +52,43 @@ int main(int argc, char **argv)
         manifest.startupScene = "project://Main.plutoscene";
         Project project(scratch.root / "Test.plutoproject", manifest);
         const auto assets = scratch.root / "Assets";
+        {
+            std::string registryError;
+            project.RefreshAssetRegistry();
+            const auto initialCount = project.GetManifest().assetEntries.size();
+            const auto tracked = assets / "Tracked.plutoscene";
+            const auto unrelated = assets / "Unrelated.png";
+            Write(tracked, "scene");
+            Write(unrelated, "unrelated");
+            Require(project.RefreshAssetEntry(tracked, &registryError), registryError);
+            Require(project.GetManifest().assetEntries.size() == initialCount + 1, "Targeted registry update enumerated unrelated assets");
+            auto findTracked = [&]() -> const ProjectAssetEntry &
+            {
+                for (const auto &entry : project.GetManifest().assetEntries)
+                    if (entry.reference == "project://Tracked.plutoscene") return entry;
+                throw std::runtime_error("Tracked entry missing");
+            };
+            Require(findTracked().size == 5 && findTracked().type == ProjectAssetType::Scene, "Targeted entry metadata");
+            Write(tracked, "updated scene");
+            Require(project.RefreshAssetEntry(tracked, &registryError) && findTracked().size == 13, "Targeted size update failed");
+            Require(!project.RefreshAssetEntry(assets, &registryError), "Directory accepted as an asset");
+            Require(!project.RefreshAssetEntry(scratch.root / "external.png", &registryError), "External registry entry accepted");
+            Require(project.GetManifest().assetEntries.size() == initialCount + 1, "Rejected update changed registry");
+            std::filesystem::remove(tracked);
+            const bool removed = project.RefreshAssetEntry(tracked, &registryError);
+            Require(removed && project.GetManifest().assetEntries.size() == initialCount,
+                    "Targeted removal failed: " + registryError + " count=" + std::to_string(project.GetManifest().assetEntries.size()) + " expected=" + std::to_string(initialCount));
+            const auto nested = assets / "RemovedDirectory/Nested.plutoscene";
+            std::filesystem::create_directory(nested.parent_path());
+            Write(nested, "nested");
+            Require(project.RefreshAssetEntry(nested, &registryError), registryError);
+            std::filesystem::remove(nested);
+            std::filesystem::remove(nested.parent_path());
+            Require(project.RefreshAssetEntry(nested, &registryError) && project.GetManifest().assetEntries.size() == initialCount,
+                    "Removed parent directory broke targeted removal");
+            std::filesystem::remove(unrelated);
+        }
+
         const auto staleRuntime = scratch.root / "stale-runtime.exe";
         Write(staleRuntime, "Old runtime fixture");
         Require(!IsRuntimeContentPackCompatible(staleRuntime), "Stale runtime accepted");
@@ -61,6 +98,24 @@ int main(int argc, char **argv)
         Require(!std::filesystem::exists(rejectedOutput.parent_path()), "Rejected export modified its destination");
         Write(staleRuntime, std::string(65530, 'x') + std::string(kRuntimeContentPackMarker));
         Require(IsRuntimeContentPackCompatible(staleRuntime), "Runtime marker crossing a read boundary was missed");
+        {
+#ifdef _WIN32
+            const std::string hostName = "PlutoGERuntime.exe";
+#else
+            const std::string hostName = "PlutoGERuntime";
+#endif
+            const auto hostRoot = scratch.root / "HostLayout";
+            const auto editorRoot = hostRoot / "editor" / "Debug";
+            const auto runtime = hostRoot / "runtime" / "Debug" / hostName;
+            std::filesystem::create_directories(editorRoot);
+            std::filesystem::create_directories(runtime.parent_path());
+            Write(runtime, std::string(kRuntimeContentPackMarker));
+            Write(editorRoot / hostName, "incompatible adjacent runtime");
+            Require(FindRuntimeExecutable(editorRoot) == runtime, "Sibling runtime layout was not found");
+            Write(editorRoot / hostName, std::string(kRuntimeContentPackMarker));
+            Require(FindRuntimeExecutable(editorRoot) == editorRoot / hostName, "Adjacent runtime was not preferred");
+        }
+
         Require(IsRuntimeAssetPipelineCompatible(staleRuntime, 1), "Legacy runtime compatibility changed");
         Require(!IsRuntimeAssetPipelineCompatible(staleRuntime, 2), "Old runtime accepted the new asset pipeline");
         auto nextManifest = manifest;
@@ -154,6 +209,22 @@ int main(int argc, char **argv)
         Require(std::filesystem::exists(cooked / "Robot.plutomesh"), "Model object dependency omitted");
         AssetDatabase identities;
         Require(identities.Scan(project, &error), error);
+        {
+            AssetDatabase editorSnapshot;
+            AssetScanOptions identityOnly;
+            identityOnly.hashContent = false;
+            identityOnly.collectDependencies = false;
+            Require(editorSnapshot.Scan(project, identityOnly, &error), error);
+            Require(editorSnapshot.GetRecords().size() == identities.GetRecords().size(), "Identity-only scan lost records");
+            for (const auto &record : identities.GetRecords())
+            {
+                const auto *identity = editorSnapshot.FindByReference(record.reference);
+                Require(identity && identity->id == record.id && identity->type == record.type && identity->size == record.size,
+                        "Identity-only scan changed an asset identity");
+                Require(identity->contentHash == 0, "Identity-only scan hashed content");
+            }
+        }
+
         std::set<std::string> buildReferences;
         Require(CollectCookAssetReferences(project, identities, options, buildReferences, &error), error);
         Require(buildReferences.contains("project://Section.plutoscene") &&

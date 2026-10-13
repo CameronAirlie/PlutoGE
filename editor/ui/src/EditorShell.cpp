@@ -65,6 +65,9 @@
 #include <filesystem>
 #include <cstring>
 #include <fstream>
+#include <functional>
+#include <string_view>
+#include <utility>
 #include <memory>
 #include <array>
 #ifndef _WIN32
@@ -186,6 +189,33 @@ namespace PlutoGE::ui
 
     namespace
     {
+        class ProjectOperationTiming
+        {
+        public:
+            using Clock = std::chrono::steady_clock;
+            ProjectOperationTiming(std::string operation, std::function<void(std::string)> report)
+                : m_operation(std::move(operation)), m_report(std::move(report)) {}
+            void Stage(std::string_view name)
+            {
+                const auto now = Clock::now();
+                m_report("[Project timing] " + m_operation + "/" + std::string(name) + ": " +
+                    std::to_string(std::chrono::duration<double, std::milli>(now - m_previous).count()) + " ms");
+                m_previous = now;
+            }
+            ~ProjectOperationTiming() noexcept
+            {
+                try
+                {
+                    m_report("[Project timing] " + m_operation + "/total: " +
+                        std::to_string(std::chrono::duration<double, std::milli>(Clock::now() - m_started).count()) + " ms");
+                }
+                catch (...) {} // Diagnostics must not change operation success or exception handling.
+            }
+        private:
+            std::string m_operation;
+            std::function<void(std::string)> m_report;
+            Clock::time_point m_started = Clock::now(), m_previous = m_started;
+        };
         constexpr float kEditorCameraBoostMultiplier = 2.5f;
         constexpr float kEditorCameraScrollStepFactor = 1.2f;
         constexpr float kEditorCameraMinMoveSpeed = 0.1f;
@@ -967,7 +997,7 @@ namespace PlutoGE::ui
             return false;
         }
         if (!assetimport::ImportFileTransaction::Recover(m_project->GetRootDirectory(), m_project->GetAssetDirectoryPath(), &error) ||
-            !database.Scan(*m_project, assets::AssetScanOptions{.allowUnavailableImportedStorage=true}, &error))
+            !database.Scan(*m_project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false, .allowUnavailableImportedStorage=true}, &error))
         {
             Log(ConsoleSeverity::Error, "Cannot refresh asset catalog: " + error);
             return false;
@@ -1365,6 +1395,7 @@ namespace PlutoGE::ui
 
     bool EditorShell::BuildProjectScripts()
     {
+        ProjectOperationTiming timing("scripts", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         if (m_scriptBuildFuture.valid())
         {
             m_statusMessage = "An automatic script build is in progress.";
@@ -1374,12 +1405,6 @@ namespace PlutoGE::ui
         if (!EnsureProjectScriptBuildScaffold(&errorMessage))
         {
             m_statusMessage = errorMessage;
-            return false;
-        }
-
-        if (!SaveProjectManifest(&errorMessage))
-        {
-            m_statusMessage = errorMessage.empty() ? "Failed to save project manifest before building scripts." : errorMessage;
             return false;
         }
 
@@ -1399,7 +1424,9 @@ namespace PlutoGE::ui
         buildConfig.configuration = "Debug";
         buildConfig.framework = "net8.0";
 
+        timing.Stage("prepare");
         const auto buildResult = scriptEngine.BuildProject(buildConfig);
+        timing.Stage("dotnet build");
         m_scriptBuildOutput = buildResult.output;
         if (!buildResult.succeeded) m_showScriptBuildDiagnostics = true;
         if (!buildResult.succeeded)
@@ -2490,6 +2517,7 @@ namespace PlutoGE::ui
 
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
+        ProjectOperationTiming timing("open", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
 
         std::string errorMessage;
@@ -2500,6 +2528,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        timing.Stage("manifest");
         // Finish the editor play session while its original asset context is active.
         if (!StopEditorRuntime())
             return false;
@@ -2525,7 +2554,7 @@ namespace PlutoGE::ui
         m_undoStack.clear();
         m_redoStack.clear();
         ApplyProjectContext();
-        m_project->RefreshAssetRegistry();
+        timing.Stage("asset catalog");
 
         const auto &manifest = m_project->GetManifest();
         m_panelManager.SetEditorFontSize(manifest.editorFontSize);
@@ -2550,6 +2579,7 @@ namespace PlutoGE::ui
             ReloadProjectScriptAssembly(&scriptErrorMessage);
         }
 
+        timing.Stage("settings and script assembly");
         std::unique_ptr<scene::Scene> loadedScene;
         if (!manifest.startupScene.empty())
         {
@@ -2560,6 +2590,7 @@ namespace PlutoGE::ui
             }
         }
 
+        timing.Stage("scene deserialization");
         if (loadedScene)
         {
             SetScene(std::move(loadedScene));
@@ -2676,14 +2707,15 @@ namespace PlutoGE::ui
 
     bool EditorShell::SaveProjectToDisk()
     {
+        ProjectOperationTiming timing("save", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         if (!m_project)
         {
             m_statusMessage = "No project loaded.";
             return false;
         }
 
-        ApplyProjectContext();
-
+        // Saving does not change the project context. Keep the live catalog,
+        // import watcher and resource caches intact.
         if (!IsRuntimeExportProject())
         {
             std::string scriptErrorMessage;
@@ -2710,17 +2742,25 @@ namespace PlutoGE::ui
             return false;
         }
 
-        m_project->RefreshAssetRegistry();
-
+        timing.Stage("scene save");
         std::string errorMessage;
+        if (m_scene && m_project->IsInAssetDirectory(m_scene->GetFilePath()) &&
+            !m_project->RefreshAssetEntry(m_scene->GetFilePath(), &errorMessage))
+        {
+            m_statusMessage = errorMessage;
+            return false;
+        }
+        timing.Stage("registry");
+
         if (!m_project->Save(&errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Failed to save project." : errorMessage;
             return false;
         }
 
+        timing.Stage("manifest save");
         m_statusMessage = "Saved project: " + m_project->GetManifestPath().filename().string();
-        MarkSceneClean();
+        // SaveActiveSceneIntoProject already captured the clean scene state.
         MarkProjectClean();
         Log(ConsoleSeverity::Info, m_statusMessage);
         UpdateWindowTitle();
@@ -2769,6 +2809,7 @@ namespace PlutoGE::ui
             m_pendingBuild = [=, this] { BuildProjectToPath(destinationExecutablePath, headless); };
             return true;
         }
+        ProjectOperationTiming timing("export", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         if (IsModelImportRunning())
         {
             m_statusMessage = "Finish or cancel the active model import before exporting.";
@@ -2786,6 +2827,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        timing.Stage("save");
         const auto &manifest = m_project->GetManifest();
         if (!manifest.scriptAssembly.empty())
         {
@@ -2810,6 +2852,7 @@ namespace PlutoGE::ui
             }
         }
 
+        timing.Stage("scripts");
         if (headless)
         {
             std::string error;
@@ -2828,6 +2871,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        timing.Stage("validation");
         const auto runtimeExecutablePath = headless ? assets::FindServerExecutable(GetProcessDirectory()) :
                                                      assets::FindRuntimeExecutable(GetProcessDirectory());
         if (runtimeExecutablePath.empty())
@@ -2837,6 +2881,7 @@ namespace PlutoGE::ui
             return false;
         }
 
+        timing.Stage("runtime discovery");
         std::string errorMessage;
         assets::ExportOptions exportOptions;
         exportOptions.pruneUnused = manifest.buildUsedAssetsOnly;

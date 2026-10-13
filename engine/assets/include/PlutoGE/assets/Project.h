@@ -139,6 +139,9 @@ namespace PlutoGE::assets
 
         bool Save(std::string *errorMessage = nullptr) const;
         void RefreshAssetRegistry();
+        // Update one known changed file without enumerating unrelated assets.
+        // Missing files are removed; I/O failures leave the registry unchanged.
+        bool RefreshAssetEntry(const std::filesystem::path &filePath, std::string *errorMessage = nullptr);
 
         std::string MakeAssetReference(const std::filesystem::path &filePath) const;
         std::filesystem::path ResolveAssetReference(std::string_view reference) const;

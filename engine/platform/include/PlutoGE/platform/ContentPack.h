@@ -12,11 +12,21 @@
 
 namespace PlutoGE::content
 {
-    struct PackOptions { bool compress = true; };
+    struct PackOptions
+    {
+        bool compress = true;
+        // Reuse only compressed blocks whose decoded bytes match the source.
+        bool reuseExistingBlocks = true;
+    };
+    struct PackWriteStatistics
+    {
+        std::uint64_t sourceBytes = 0, reusedBlocks = 0, compressedBlocks = 0;
+        double elapsedMs = 0;
+    };
     // Files are stored in independently compressed 256 KiB blocks. CRCs detect
     // accidental corruption; they do not authenticate untrusted publishers.
     bool WritePack(const std::filesystem::path &directory, const std::filesystem::path &output,
-                   const PackOptions &options = {}, std::string *error = nullptr);
+                   const PackOptions &options = {}, std::string *error = nullptr, PackWriteStatistics *statistics = nullptr);
 
     class Pack
     {
@@ -29,6 +39,8 @@ namespace PlutoGE::content
         bool Verify(std::string *error = nullptr) const;
         bool ExtractTo(const std::filesystem::path &directory, std::string *error = nullptr) const;
     private:
+        friend bool WritePack(const std::filesystem::path &, const std::filesystem::path &,
+                              const PackOptions &, std::string *, PackWriteStatistics *);
         struct Impl;
         std::shared_ptr<Impl> m_impl;
     };

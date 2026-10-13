@@ -22,6 +22,7 @@
 #include "RhiDrawPreparationCache.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "RhiSkinning.h"
+#include "IblPrefilter.h"
 #include "rhi/NormalMipmaps.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -1084,12 +1085,11 @@ namespace PlutoGE::render
                     rhi::TextureDescriptor descriptor;
                     unsigned atlasResolution = 1;
                     while (atlasResolution < static_cast<unsigned>(resolution)) atlasResolution *= 2;
-                    descriptor.width = atlasResolution;
+                    descriptor.width = atlasResolution * 2;
                     descriptor.height = atlasResolution * 6;
                     descriptor.format = rhi::Format::R32G32B32A32Float;
-                    descriptor.debugName = "Local IBL HDR faces";
-                    // Stop at one texel per face; higher levels would mix unrelated faces.
-                    descriptor.mipLevels = static_cast<unsigned>(std::log2(atlasResolution)) + 1;
+                    descriptor.debugName = "Local IBL GGX roughness atlas";
+                    descriptor.mipLevels = 1;
                     // Each face must start on a mip-aligned boundary, including authored non-power-of-two captures.
                     std::vector<float> resampled;
                     std::span<const float> atlasPixels = pixels;
@@ -1114,7 +1114,8 @@ namespace PlutoGE::render
                                 }
                         atlasPixels = resampled;
                     }
-                    cached.atlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(atlasPixels)));
+                    const auto filtered = BuildIblPrefilterAtlas(atlasPixels, atlasResolution);
+                    cached.atlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(std::span(filtered))));
                     cached.version = {source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()};
                 }
                 unsigned atlasResolution = 1;

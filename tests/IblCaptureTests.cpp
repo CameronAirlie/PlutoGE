@@ -17,6 +17,7 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/DebugDrawUI.h"
+#include "IblPrefilter.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
 #include <cmath>
@@ -31,6 +32,30 @@ int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
     using namespace render;
+    // A constant HDR environment must conserve radiance at every roughness.
+    {
+        constexpr unsigned size = 16;
+        std::vector<float> faces(size*size*24, 1);
+        for (std::size_t i=0; i<faces.size(); i+=4) { faces[i]=2; faces[i+1]=3; faces[i+2]=4; }
+        const auto atlas = BuildIblPrefilterAtlas(faces, size);
+        for (unsigned level=0; level<=4; ++level) {
+            const unsigned side=size>>level, start=size*2-side*2;
+            for (unsigned face=0; face<6; ++face) for (unsigned y=0; y<side; ++y) for (unsigned x=0; x<side; ++x) {
+                const auto offset=((face*side+y)*size*2+start+x)*4;
+                for (unsigned c=0;c<3;++c)
+                    if (std::abs(atlas[offset+c]-float(c+2))>.0001f)
+                        throw std::runtime_error("IBL convolution changes uniform HDR radiance");
+            }
+        }
+        // A rough +Z reflection must receive radiance from adjacent faces;
+        // ordinary per-face mipmaps cannot spread that lighting at all.
+        std::fill(faces.begin(),faces.end(),0.0f);
+        for (unsigned i=0;i<size*size;++i) faces[i*4]=2;
+        const auto filtered = BuildIblPrefilterAtlas(faces,size);
+        const auto roughZ=(4*size*2+(size*2-2))*4;
+        if (filtered[roughZ]<.05f || filtered[(4*size*size*2)*4]>.0001f)
+            throw std::runtime_error("IBL roughness filtering does not broaden reflections across cube faces");
+    }
     // Budget pressure must preserve world-space density in elongated volumes,
     // regardless of whether their short axis is vertical or horizontal.
     for (const auto size : {glm::vec3(100,10,100),glm::vec3(10,100,100),glm::vec3(100,100,10)}) {
@@ -410,8 +435,9 @@ int main(int argc, char **argv) try
         ? glm::perspectiveRH_ZO(glm::radians(45.0f),1.0f,.1f,100.0f)
         : glm::perspectiveRH_NO(glm::radians(45.0f),1.0f,.1f,100.0f);
     previewCamera.renderRuntimeUI = false;
+    std::vector<RenderCommand> previewCommands;
     const auto sphereFrame = [&] {
-        if (!service.Render(64,64,previewCamera,{},{},{},&previewScene,PostProcessDebugView::None))
+        if (!service.Render(64,64,previewCamera,previewCommands,{},{},&previewScene,PostProcessDebugView::None))
             throw std::runtime_error(service.GetLastRenderError());
         std::vector<std::byte> image;
         if (api == rhi::GraphicsApi::Vulkan) {
@@ -438,18 +464,36 @@ int main(int argc, char **argv) try
     scene::IblCaptureComponent previewCapture;
     previewCapture.SetResolution(32);
     std::vector<float> blueFaces(32*32*24,0);
-    for (std::size_t i=0; i<blueFaces.size(); i+=4) { blueFaces[i+2]=2; blueFaces[i+3]=1; }
+    for (std::size_t i=0; i<blueFaces.size(); i+=4) {
+        blueFaces[i+2]=(i/(32*32*4)==4) ? 0.8f : 0.0f; blueFaces[i+3]=1;
+    }
     if (!previewCapture.SetCapturePixels(blueFaces)) throw std::runtime_error("Cannot prepare reflection preview capture");
     auto previewVolume = previewCapture.BuildCaptureVolume();
     previewVolume.origin = {-1,-1,-1}; previewVolume.size = {2,2,2};
     previewScene.AddIblCaptureVolume(previewVolume);
     debug.reflections = true;
     const auto chrome = sphereFrame();
-    if (chrome.b < .95f || chrome.r > .02f || chrome.g > .02f) throw std::runtime_error("Viewport chrome sphere does not show the capture's radiance");
+    if (chrome.b < .7f || chrome.r > .02f || chrome.g > .02f) throw std::runtime_error("Viewport chrome sphere does not show the capture's radiance");
+    debug.reflectionRoughness = 1;
+    const auto roughReflection = sphereFrame();
+    if (roughReflection.b >= chrome.b-.1f || roughReflection.b < .1f)
+        throw std::runtime_error("Rough IBL reflection remains sharp or loses convolved radiance");
     debug.reflections = false;
     debug.diffuse = true;
     service.SetAmbientProbeDebugEnabled(false);
     if (glm::length(sphereFrame()-background) > .02f) throw std::runtime_error("Probe overlays escaped into a viewport without debug enabled");
+    std::unique_ptr<Mesh> materialSphere(Mesh::Sphere(24,32));
+    Material reflectiveMaterial;
+    reflectiveMaterial.SetMetallic(1);
+    reflectiveMaterial.SetRoughness(0);
+    RenderCommand materialCommand;
+    materialCommand.mesh=materialSphere.get(); materialCommand.material=&reflectiveMaterial;
+    previewCommands.push_back(materialCommand);
+    const auto smoothMaterial=sphereFrame();
+    reflectiveMaterial.SetRoughness(1);
+    const auto roughMaterial=sphereFrame();
+    if (roughMaterial.b >= smoothMaterial.b-.1f || roughMaterial.b < .05f)
+        throw std::runtime_error("Material IBL ignores GGX roughness or its integrated specular response");
     debug = {};
     std::cout << "PASS: six linear HDR IBL faces captured through RHI\n";
     return 0;

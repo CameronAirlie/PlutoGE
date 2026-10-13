@@ -255,6 +255,29 @@ float iblWeight(int index, float3 position)
     return iblSizeBlend[index].w > 0 ? saturate(distance / iblSizeBlend[index].w) : 1;
 }
 
+float3 sampleIblRoughnessLevel(int index, int face, float2 faceUV, float level)
+{
+    const float resolution = iblSettings[index].y;
+    const float size = max(1.0, resolution / exp2(level));
+    const float2 texel = float2(2.0 * resolution - 2.0 * size, face * size) +
+                         clamp(faceUV * size, 0.5, size - 0.5);
+    const float2 uv = texel / float2(2.0 * resolution, 6.0 * resolution);
+    if (index == 0) return iblAtlas0.SampleLevel(uv, 0).rgb;
+    if (index == 1) return iblAtlas1.SampleLevel(uv, 0).rgb;
+    if (index == 2) return iblAtlas2.SampleLevel(uv, 0).rgb;
+    return iblAtlas3.SampleLevel(uv, 0).rgb;
+}
+
+float3 iblSpecularResponse(float3 f0, float roughness, float ndotv)
+{
+    // Split-sum GGX environment BRDF, paired with the GGX capture convolution.
+    const float4 r = roughness * float4(-1, -0.0275, -0.572, 0.022) +
+                                float4(1, 0.0425, 1.04, -0.04);
+    const float a004 = min(r.x * r.x, exp2(-9.28 * ndotv)) * r.x + r.y;
+    const float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return max(f0 * ab.x + ab.y, 0.0);
+}
+
 float3 iblRadiance(int index, float3 position, float3 direction, float roughness)
 {
     const float3 lo = iblOriginIntensity[index].xyz;
@@ -282,15 +305,10 @@ float3 iblRadiance(int index, float3 position, float3 direction, float roughness
         face = direction.z >= 0 ? 4 : 5;
         faceUV = float2(direction.z >= 0 ? direction.x : -direction.x, -direction.y) / max(a.z, 0.000001);
     }
-    const float lod = roughness * iblSettings[index].z;
-    const float inset = min(0.5, 0.5 * exp2(ceil(lod)) / iblSettings[index].y);
-    faceUV = clamp(faceUV * 0.5 + 0.5, inset, 1.0 - inset);
-    const float2 uv = float2(faceUV.x, (faceUV.y + face) / 6.0);
-    float3 radiance;
-    if (index == 0) radiance = iblAtlas0.SampleLevel(uv, lod).rgb;
-    else if (index == 1) radiance = iblAtlas1.SampleLevel(uv, lod).rgb;
-    else if (index == 2) radiance = iblAtlas2.SampleLevel(uv, lod).rgb;
-    else radiance = iblAtlas3.SampleLevel(uv, lod).rgb;
+    const float lod = saturate(roughness) * iblSettings[index].z;
+    faceUV = faceUV * 0.5 + 0.5;
+    const float3 radiance = lerp(sampleIblRoughnessLevel(index, face, faceUV, floor(lod)),
+                                 sampleIblRoughnessLevel(index, face, faceUV, ceil(lod)), frac(lod));
     return max(radiance, 0.0) * iblOriginIntensity[index].w;
 }
 
@@ -1234,7 +1252,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             if (weight > 0)
             {
                 const float3 diffuse = (gridIrradiance.w > 0 ? gridIrradiance.rgb : iblDiffuse(i, normal)) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
-                const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * fresnel * (1.0 - materialRoughness * 0.45);
+                const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * iblSpecularResponse(f0, materialRoughness, ndotv);
                 capturedAmbient += (diffuse + specular) * weight;
             }
             weightSum += weight;

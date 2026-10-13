@@ -588,6 +588,7 @@ add_test(NAME PlutoGEOpenGLUiInterfaceScale COMMAND PlutoGERmlUiInterfaceScaleTe
 if(TARGET PlutoGEEditorUI)
     add_executable(PlutoGEIblCaptureTests IblCaptureTests.cpp)
     target_link_libraries(PlutoGEIblCaptureTests PRIVATE PlutoGE::EditorUI)
+    target_include_directories(PlutoGEIblCaptureTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
     add_test(NAME PlutoGEVulkanIblCaptureTests COMMAND PlutoGEIblCaptureTests)
     add_test(NAME PlutoGEOpenGLIblCaptureTests COMMAND PlutoGEIblCaptureTests --opengl)
     add_executable(PlutoGECameraUiVisibilityTests CameraUiVisibilityTests.cpp)

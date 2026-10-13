@@ -114,14 +114,20 @@ int2 probeVisibilityTexel(int2 texel)
     return texel;
 }
 
-float3 probeVisibilityPoint(int index, int2 texel)
+float3 probeVisibilityDirection(int2 texel)
 {
     texel = probeVisibilityTexel(texel);
     const float2 oct = (float2(texel) + 0.5) / 4.0 - 1.0;
     float3 direction = float3(oct, 1.0 - abs(oct.x) - abs(oct.y));
     if (direction.z < 0)
         direction.xy = (1.0 - abs(oct.yx)) * float2(oct.x >= 0 ? 1 : -1, oct.y >= 0 ? 1 : -1);
-    return normalize(direction) * probeTexel(index, 10 + texel.x + texel.y * 8).x;
+    return normalize(direction);
+}
+
+float3 probeVisibilityPoint(int index, int2 texel)
+{
+    texel = probeVisibilityTexel(texel);
+    return probeVisibilityDirection(texel) * probeTexel(index, 10 + texel.x + texel.y * 8).x;
 }
 
 float probeVisibility(int index, float3 direction, float receiverDistance, float bias)
@@ -137,7 +143,7 @@ float probeVisibility(int index, float3 direction, float receiverDistance, float
         for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
             const int2 texel = probeVisibilityTexel(cell + int2(x,y));
             const float4 surface = probeTexel(index, 10 + texel.x + texel.y * 8);
-            const float3 hitPoint = probeVisibilityPoint(index, texel);
+            const float3 hitPoint = probeVisibilityDirection(texel) * surface.x;
             const float denominator = dot(surface.yzw, direction);
             float depth = surface.x;
             if (dot(surface.yzw, surface.yzw) > 0.5 && abs(denominator) > 0.00001) {
@@ -475,6 +481,14 @@ float compareShadowCascade(int cascade, float2 uv, float receiverDepth)
     return receiverDepth <= sampleConventionalShadowCascade(cascade, uv) ? 1.0 : 0.0;
 }
 
+float4 gatherConventionalShadowCascade(int cascade, float2 uv)
+{
+    if (cascade == 0) return directionalShadowTexture.GatherRed(uv);
+    if (cascade == 1) return directionalShadowTexture1.GatherRed(uv);
+    if (cascade == 2) return directionalShadowTexture2.GatherRed(uv);
+    return directionalShadowTexture3.GatherRed(uv);
+}
+
 // Interpolate visibility, never depth. Sampling texel centres works with the
 // existing point sampler on both backends, without a comparison-sampler ABI.
 float compareShadowCascadeBilinear(int cascade, float2 uv, float receiverDepth,
@@ -484,6 +498,26 @@ float compareShadowCascadeBilinear(int cascade, float2 uv, float receiverDepth,
     const float2 texelPosition = uv / texelSize - 0.5;
     const float2 baseTexel = floor(texelPosition);
     const float2 fraction = frac(texelPosition);
+    // Gather only fully resident footprints: the scalar path explicitly treats
+    // out-of-map taps as lit, independently of sampler address modes. Snap to
+    // the footprint centre to avoid gather selection at texel boundaries.
+    if (pointParameters.w != 3.0 && all(baseTexel >= 0.0) &&
+        all((baseTexel + 1.5) * texelSize < 1.0))
+    {
+        const float4 depths = gatherConventionalShadowCascade(cascade, (baseTexel + 1.0) * texelSize);
+        float visibility = 0.0;
+        [unroll] for (int y = 0; y < 2; ++y)
+            [unroll] for (int x = 0; x < 2; ++x)
+            {
+                // Gather order: (0,1), (1,1), (1,0), (0,0).
+                const int component = y == 0 ? 3 - x : x;
+                const float2 sampleUv = (baseTexel + float2(x, y) + 0.5) * texelSize;
+                const float2 weight = lerp(1.0 - fraction, fraction, float2(x, y));
+                const float depth = receiverDepth + dot(receiverPlaneGradient, sampleUv - uv);
+                visibility += weight.x * weight.y * (depth <= depths[component] ? 1.0 : 0.0);
+            }
+        return visibility;
+    }
     float visibility = 0.0;
     for (int y = 0; y < 2; ++y)
         for (int x = 0; x < 2; ++x)

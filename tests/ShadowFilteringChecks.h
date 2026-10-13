@@ -78,6 +78,36 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     }
     lighting.shadowFilterEnabled = false;
 
+    // Keep the scalar implementation as an independent GPU reference for the
+    // gather path. Exercise fractional footprints, slopes and map borders,
+    // including all supported softness values on both graphics backends.
+    const auto originalReceiverModel = receiver.model;
+    const auto originalShadowMatrix = lighting.shadowMatrices[0];
+    for (float softness : {0.0f, 0.5f, 1.0f, 2.0f, 4.0f})
+        for (bool border : {false, true})
+        {
+            lighting.shadowSoftness = softness;
+            lighting.shadowMatrices[0] = glm::scale(glm::mat4(1),
+                glm::vec3(border ? 1.2f : .1f, border ? 1.2f : .1f, 1));
+            receiver.model = originalReceiverModel * glm::rotate(glm::mat4(1), .12f, glm::vec3(0,1,0));
+            lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+            renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {},
+                            std::span(&caster, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
+            const auto gathered = readPixels(renderer.GetColorTexture());
+            lighting.geometryDiagnosticMode = GeometryDiagnosticMode::ReferenceDirectionalShadows;
+            renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {},
+                            std::span(&caster, 1), PostProcessDebugView::DirectionalShadowMaskFiltered);
+            const auto scalar = readPixels(renderer.GetColorTexture());
+            if (gathered.size() != pixels.size() || scalar.size() != pixels.size())
+                throw std::runtime_error("Shadow gather reference readback size mismatch");
+            for (std::size_t i = 0; i < scalar.size(); ++i)
+                if (std::abs(int(gathered[i]) - int(scalar[i])) > 1)
+                    throw std::runtime_error("Gather shadow filtering differs from scalar reference");
+        }
+    receiver.model = originalReceiverModel;
+    lighting.shadowMatrices[0] = originalShadowMatrix;
+    lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+
     // A straight, magnified edge exposes plateaus hidden by counting unique
     // levels across a diagonal. Sparse bilinear taps at radius two create
     // several-pixel constant bands at intermediate visibility.

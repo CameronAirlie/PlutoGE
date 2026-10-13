@@ -34,6 +34,27 @@ namespace PlutoGE::ui
         input.assetRoot = m_project->GetAssetDirectoryPath();
         input.projectRoot = m_project->GetRootDirectory();
         input.assetCatalog = m_engine.GetAssetManager().GetAssetCatalog();
+        // Validation must remain useful even if the live snapshot was cleared
+        // or an editor asset refresh has not completed. Read persisted identities
+        // without creating metadata or changing the live asset manager.
+        assets::AssetDatabase database;
+        const bool usedAssetsOnly = !includeCurrentScene && manifest.buildUsedAssetsOnly;
+        if (!input.assetCatalog || usedAssetsOnly)
+        {
+            assets::AssetScanOptions scan;
+            scan.createMissingMetadata = false;
+            scan.hashContent = false;
+            scan.collectDependencies = usedAssetsOnly;
+            scan.allowUnavailableImportedStorage = true;
+            std::string error;
+            if (!database.Scan(validationProject, scan, &error))
+            {
+                m_validationResult.diagnostics.push_back({assets::ValidationSeverity::Error,
+                    "scan.failed", "Project", 0, 0, error});
+                return false;
+            }
+            input.assetCatalog = database.GetCatalog();
+        }
         input.prepareModelInstance = [&](const assets::StaticModelInstanceState &state, std::string *error)
             -> std::shared_ptr<const assets::AssetCatalog>
         {
@@ -47,20 +68,14 @@ namespace PlutoGE::ui
             return generation.catalog;
         };
         input.startupScene = manifest.startupScene;
-        if (!includeCurrentScene && m_project->GetManifest().buildUsedAssetsOnly)
+        if (usedAssetsOnly)
         {
-            assets::AssetDatabase database;
-            assets::AssetScanOptions scan;
-            scan.createMissingMetadata = false;
-            scan.hashContent = false;
-            scan.allowUnavailableImportedStorage = true;
             assets::CookOptions cook;
             cook.includeUnreferencedAssets = false;
             cook.alwaysInclude = m_project->GetManifest().buildAlwaysInclude;
             std::set<std::string> references;
             std::string error;
-            if (!database.Scan(validationProject, scan, &error) ||
-                !assets::CollectCookAssetReferences(validationProject, database, cook, references, &error))
+            if (!assets::CollectCookAssetReferences(validationProject, database, cook, references, &error))
             {
                 m_validationResult.diagnostics.push_back({assets::ValidationSeverity::Error,
                     "build.dependencies", "Project", 0, 0, error});

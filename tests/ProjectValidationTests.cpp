@@ -212,6 +212,12 @@ int main()
         input.assetPipelineVersion = 1;
         input.currentScene.reset();
         Write(main, good);
+        Write(scratch.root / "UI/loading.rml", "<rml><body><img src=\"Artwork/loading.tga\"/></body></rml>\n");
+        Write(scratch.root / "UI/Artwork/loading.tga", "fixture");
+        Require(!ValidateProject(input).HasErrors(), "Document-relative RML artwork reported missing");
+        std::filesystem::remove(scratch.root / "UI/Artwork/loading.tga");
+        Require(Has(ValidateProject(input), "asset.missing"), "Missing document-relative RML artwork accepted");
+        std::filesystem::remove(scratch.root / "UI/loading.rml");
         Write(scratch.root / "Prefab.plutoprefab", "SCENE\t1\n" + entity);
         Write(scratch.root / "Stone.plutomaterial", "AlbedoTexture=Stone texture.png\nShaderGraph=engine://builtin/mesh/cube\n");
         Write(scratch.root / "Stone texture.png", "fixture");

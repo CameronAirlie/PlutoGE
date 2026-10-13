@@ -326,9 +326,9 @@ namespace PlutoGE::assets
                 if (!closed) continue;
                 Add(scan, field, line);
                 if (root.empty() || field.empty() || field.front() == '#' || field.find(':') != std::string::npos) continue;
-                // Stylesheet links and glTF URIs resolve beside their document.
-                // RmlUi image sources pass the document URL's directory to
-                // JoinPath, which strips its final segment before appending src.
+                // Stylesheets, images and glTF URIs resolve beside their document.
+                // RmlUi image sources pass a directory ending in '/' to JoinPath,
+                // so stripping the filename preserves that directory.
                 auto before = value.substr(0, start);
                 while (!before.empty() && std::isspace(static_cast<unsigned char>(before.back()))) before.remove_suffix(1);
                 if (before.empty() || (before.back() != '=' && before.back() != ':')) continue;
@@ -359,8 +359,7 @@ namespace PlutoGE::assets
                     { scan.errors.push_back("Invalid glTF URI at line " + std::to_string(line)); continue; }
                     field = std::move(decoded);
                 }
-                const auto base = key == "src" && path.extension() == ".rml"
-                    ? path.parent_path().parent_path() : path.parent_path();
+                const auto base = path.parent_path();
                 try
                 {
                     const auto resolved = (base / FromUtf8(field)).lexically_normal();

@@ -134,8 +134,8 @@ namespace
         Write(root / "Ui/Hud.rml", "<img src='Textures/Rough, stone; 01.png'/><img src='Textures/A&amp;B.png'/>"
             "<link href='../Textures/Style.rcss'/>\n");
         scan = ScanAssetReferences(root / "Ui/Hud.rml", {}, root);
-        Require(Has(scan, reference) && Has(scan, "project://Textures/A&B.png") &&
-            Has(scan, "project://Textures/Style.rcss"), "RmlUi image and stylesheet paths failed");
+        Require(Has(scan, "project://Ui/Textures/Rough, stone; 01.png") && Has(scan, "project://Ui/Textures/A&B.png") &&
+            Has(scan, "project://Textures/Style.rcss") && !Has(scan, reference), "RmlUi image and stylesheet paths failed");
         Write(root / "Models/source.gltf", "{\"images\":[{\"uri\":\"../Textures/Rough, stone; 01.png\"}]}\n");
         Require(Has(ScanAssetReferences(root / "Models/source.gltf", {}, root), reference), "glTF URI paths failed");
         Write(root / "Models/encoded.gltf", "{\"buffers\":[{\"uri\":\"geometry%20data%2B100%25.bin\"}],\"images\":[{\"uri\":\"A&amp;B.png\"}]}\n");

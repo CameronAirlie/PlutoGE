@@ -1,5 +1,6 @@
 #include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
+#include "CloudTransformChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
 #include "SkyQuadratureChecks.h"
@@ -24,6 +25,7 @@
 #include "PlutoGE/render/rhi/Resource.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "ShadowFilteringChecks.h"
+#include "OpaqueShadowBatchingChecks.h"
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
@@ -504,6 +506,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--cloud-transforms")
+        {
+            CheckCloudTransforms(device, shaders,
+                {{.glsl = ReadText("CloudTransformReference.vertex.glsl")}, {.glsl = ReadText("CloudTransformReference.fragment.glsl")}},
+                {{.glsl = ReadText("CloudTransformTraceReference.vertex.glsl")}, {.glsl = ReadText("CloudTransformTraceReference.fragment.glsl")}},
+                [&](auto texture) {
+                    std::vector<unsigned char> pixels(97 * 65 * 4);
+                    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    return pixels;
+                });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--fog-only")
         {
             CheckFogRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
@@ -569,6 +584,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             return pixels;
         });
+        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
+        {
+            CheckOpaqueShadowBatching(basicRenderer, device, [&](auto texture) {
+                std::vector<unsigned char> pixels(128 * 96 * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, false); // OpenGL RHI does not expose GPU scope timing.
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 

@@ -77,7 +77,7 @@ namespace PlutoGE::scripting
         PROCESS_INFORMATION process{};
         if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process))
         {
-            result.text = "Cannot start dotnet (Windows error " + std::to_string(GetLastError()) + ").";
+            result.text = "Cannot start " + arguments.front() + " (Windows error " + std::to_string(GetLastError()) + ").";
             return result;
         }
         Handle processHandle{process.hProcess}, threadHandle{process.hThread};

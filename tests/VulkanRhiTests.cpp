@@ -3,6 +3,7 @@
 #include "CameraStackRenderingChecks.h"
 #include "RenderTextureRenderingChecks.h"
 #include "FogRenderingChecks.h"
+#include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
 #include "GlassRenderingChecks.h"
@@ -23,6 +24,7 @@
 #include "MeshReplacementRenderingChecks.h"
 #include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
+#include "OpaqueShadowBatchingChecks.h"
 #include "SkinningRenderingChecks.h"
 #include "GpuSkinningChecks.h"
 #include "BufferUploadChecks.h"
@@ -355,6 +357,14 @@ int main(int argc, char **argv)
             CheckFogRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--cloud-transforms")
+        {
+            CheckCloudTransforms(device, shaders,
+                {{.spirv = ReadSpirv("CloudTransformReference.vertex.spv")}, {.spirv = ReadSpirv("CloudTransformReference.fragment.spv")}},
+                {{.spirv = ReadSpirv("CloudTransformTraceReference.vertex.spv")}, {.spirv = ReadSpirv("CloudTransformTraceReference.fragment.spv")}},
+                [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--ssr-only")
         {
             // Exercise odd extents and replacement of pooled trace/resolve
@@ -401,6 +411,11 @@ int main(int argc, char **argv)
         {
             return device.ReadTextureRgba8(texture);
         });
+        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
+        {
+            CheckOpaqueShadowBatching(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 

@@ -19,6 +19,17 @@ int main() try
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Invalid frame count accepted");
     }
+    const std::array frozen{"game.plutoproject", "results.csv", "10", "2", "--frozen-render", "--scalar-shadows"};
+    const auto frozenOptions = ProjectBenchmarkOptions::Parse(frozen);
+    if (!frozenOptions.frozenRender || !frozenOptions.scalarShadows || frozenOptions.frames != 10)
+        throw std::runtime_error("Frozen benchmark options lost");
+    for (const auto *bad : {"--unknown", "--scalar-shadows"})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Invalid benchmark switch accepted");
+    }
     struct TempFile
     {
         std::filesystem::path path = std::filesystem::temp_directory_path() /
@@ -33,7 +44,7 @@ int main() try
     std::getline(input, line);
     if (!line.starts_with("sample,frame_ms,")) throw std::runtime_error("CSV header missing");
     const auto columnSeparators = std::count(line.begin(), line.end(), ',');
-    if (columnSeparators != 8 + ProjectBenchmarkSample::DetailNames.size() || !line.ends_with(",shadow_draws"))
+    if (columnSeparators != 8 + ProjectBenchmarkSample::DetailNames.size() || !line.ends_with(",gpu_observation_id"))
         throw std::runtime_error("Detailed CSV header invalid");
     std::getline(input, line);
     if (!line.starts_with("0,4.500000,") || line.find(",2.000000,1,") == std::string::npos)

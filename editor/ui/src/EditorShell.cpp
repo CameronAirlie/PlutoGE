@@ -3082,6 +3082,98 @@ namespace PlutoGE::ui
         return WriteTextFile(sdkDirectory / "README.md", readmeContent, errorMessage);
     }
 
+    void EditorShell::RunProjectBenchmark()
+    {
+        if (!m_project || m_projectBenchmark.valid() || m_engine.IsRuntimeRunning() ||
+            m_activeBakeTask || IsModelImportRunning() || m_scriptBuildFuture.valid() || m_assetReconciliation.valid()) return;
+        const auto root = m_project->GetRootDirectory();
+        const auto tool = root / "Tools" / "benchmark_render.py";
+        const auto profile = root / "Tools" / "Benchmarks" / "opaque.json";
+        const auto runtime = assets::FindRuntimeExecutable(GetProcessDirectory());
+        if (!std::filesystem::is_regular_file(tool) || !std::filesystem::is_regular_file(profile) || runtime.empty())
+        {
+            m_statusMessage = "Benchmark requires Tools/benchmark_render.py, Tools/Benchmarks/opaque.json and a built PlutoGERuntime.";
+            Log(ConsoleSeverity::Error, m_statusMessage);
+            return;
+        }
+        m_projectBenchmarkOutput = root / "BenchmarkResults" /
+            ("editor-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()));
+        // Argument vectors use the existing direct process runner: no shell
+        // interpolation, visible console, or changes to the editor working directory.
+        const std::vector<std::string> arguments{
+#ifdef _WIN32
+            "python",
+#else
+            "python3",
+#endif
+            "-X", "utf8", "-u", tool.string(), "run", "--runtime", runtime.string(),
+            "--profile", profile.string(), "--output", m_projectBenchmarkOutput.string()};
+        try
+        {
+            m_projectBenchmark = std::async(std::launch::async, [arguments] { return scripting::RunBuildProcess(arguments); });
+            m_statusMessage = "Benchmark running from saved profile and scene. Editor rendering is paused until it finishes.";
+            Log(ConsoleSeverity::Info, m_statusMessage);
+        }
+        catch (const std::exception &error)
+        {
+            m_statusMessage = "Could not start benchmark: " + std::string(error.what());
+            Log(ConsoleSeverity::Error, m_statusMessage);
+        }
+    }
+
+    bool EditorShell::PollProjectBenchmark()
+    {
+        if (!m_projectBenchmark.valid()) return false;
+        if (m_projectBenchmark.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
+        try
+        {
+            const auto result = m_projectBenchmark.get();
+            if (std::filesystem::is_directory(m_projectBenchmarkOutput))
+            {
+                std::ofstream log(m_projectBenchmarkOutput / "launcher.log");
+                log << result.text;
+            }
+            const bool succeeded = result.exitCode == 0 && std::filesystem::is_regular_file(m_projectBenchmarkOutput / "COMPLETE");
+            m_statusMessage = std::string(succeeded ? "Benchmark complete: " : "Benchmark failed: ") + m_projectBenchmarkOutput.string();
+            Log(succeeded ? ConsoleSeverity::Info : ConsoleSeverity::Error, m_statusMessage + "\n" + result.text);
+        }
+        catch (const std::exception &error)
+        {
+            m_statusMessage = "Benchmark failed: " + std::string(error.what());
+            Log(ConsoleSeverity::Error, m_statusMessage);
+        }
+        return false;
+    }
+
+    void EditorShell::RenderProjectBenchmarkMenu()
+    {
+        if (!m_project) return;
+        const auto root = m_project->GetRootDirectory();
+        if (!std::filesystem::is_regular_file(root / "Tools" / "benchmark_render.py")) return;
+        if (!ImGui::BeginMenu("Project Benchmark")) return;
+        const bool available = !m_engine.IsRuntimeRunning() && !m_activeBakeTask && !IsModelImportRunning() &&
+            !m_scriptBuildFuture.valid() && !m_assetReconciliation.valid();
+        if (ImGui::MenuItem("Run Render Benchmark", nullptr, false, available)) RunProjectBenchmark();
+        ImGui::SetItemTooltip("Uses the saved benchmark profile and scene. Pauses editor rendering to avoid competing for GPU time. Results and errors appear in Console.");
+        const auto open = [&](const std::filesystem::path &path)
+        {
+#ifdef _WIN32
+            const auto result = reinterpret_cast<std::intptr_t>(ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+            if (result > 32) return;
+#else
+            std::string error;
+            if (LaunchExecutable("/usr/bin/xdg-open", &error, path.string())) return;
+#endif
+            m_statusMessage = "Could not open " + path.string();
+            Log(ConsoleSeverity::Error, m_statusMessage);
+        };
+        const auto results = root / "BenchmarkResults";
+        if (ImGui::MenuItem("Open Results Folder", nullptr, false, std::filesystem::is_directory(results))) open(results);
+        const auto profile = root / "Tools" / "Benchmarks" / "opaque.json";
+        if (ImGui::MenuItem("Open Benchmark Profile", nullptr, false, std::filesystem::is_regular_file(profile))) open(profile);
+        ImGui::EndMenu();
+    }
+
     bool EditorShell::RunTestBuild()
     {
         if (!m_buildExecuting)
@@ -3497,6 +3589,19 @@ namespace PlutoGE::ui
 
         while (true)
         {
+            // Keep processing native window messages without submitting editor
+            // GPU work or running authoring/import polls during external captures.
+            if (m_projectBenchmark.valid())
+            {
+                window.PollEvents();
+                if (PollProjectBenchmark())
+                {
+                    glfwWaitEventsTimeout(0.05);
+                    lastTime = std::chrono::high_resolution_clock::now();
+                    continue;
+                }
+                lastTime = std::chrono::high_resolution_clock::now();
+            }
             if (window.ShouldClose())
             {
                 if (ConfirmContinueWithUnsavedChanges()) break;
@@ -4267,6 +4372,7 @@ namespace PlutoGE::ui
                     {
                         RunTestBuild();
                     }
+                    RenderProjectBenchmarkMenu();
                     ImGui::Separator();
                     if (ImGui::MenuItem("Build Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(false);
                     if (ImGui::MenuItem("Build and Run Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(true);

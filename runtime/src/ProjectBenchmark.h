@@ -40,12 +40,13 @@ namespace PlutoGE
     {
         std::filesystem::path project, output;
         std::size_t frames = 600, warmup = 120;
+        bool frozenRender = false, scalarShadows = false;
         static constexpr float FixedDelta = 1.0f / 60.0f;
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 4)
-                throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120]");
+            if (args.size() < 2 || args.size() > 6)
+                throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] [--scalar-shadows]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -56,8 +57,19 @@ namespace PlutoGE
                     throw std::invalid_argument("Benchmark counts must be integers in range (frames 1..100000, warmup 0..100000)");
                 return number;
             };
-            if (args.size() > 2) result.frames = count(args[2], false);
-            if (args.size() > 3) result.warmup = count(args[3], true);
+            std::size_t positional = 0;
+            for (std::size_t i = 2; i < args.size(); ++i)
+            {
+                const std::string_view value(args[i]);
+                if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
+                else if (value == "--scalar-shadows" && !result.scalarShadows) result.scalarShadows = true;
+                else if (value.starts_with("--") || positional >= 2)
+                    throw std::invalid_argument("Unknown or duplicate benchmark option");
+                else if (positional++ == 0) result.frames = count(value, false);
+                else result.warmup = count(value, true);
+            }
+            if (result.scalarShadows && !result.frozenRender)
+                throw std::invalid_argument("Scalar shadow comparisons require --frozen-render");
             if (result.output.extension() != ".csv")
                 throw std::invalid_argument("Benchmark output must have a .csv extension");
             return result;
@@ -69,7 +81,8 @@ namespace PlutoGE
         static constexpr std::array DetailNames{
             "preparation_ms", "runtime_ui_ms", "components_ms", "physics_ms", "late_scripts_ms", "audio_ms", "scene_submission_ms",
             "translation_ms", "skinning_upload_ms", "scene_setup_ms", "recording_ms", "begin_frame_ms", "shadow_recording_ms", "geometry_recording_ms", "post_recording_ms", "submit_ms",
-            "scripts_ms", "animation_components_ms", "skinning_wait_ms", "skinning_caller_ms", "hud_sync_ms", "hud_update_ms", "hud_render_ms", "skinning_vertices", "geometry_draws", "shadow_draws"};
+            "scripts_ms", "animation_components_ms", "skinning_wait_ms", "skinning_caller_ms", "hud_sync_ms", "hud_update_ms", "hud_render_ms", "skinning_vertices", "geometry_draws", "shadow_draws",
+            "internal_width", "internal_height", "output_width", "output_height", "opaque_triangles", "geometry_instances", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

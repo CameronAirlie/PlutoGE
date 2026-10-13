@@ -242,6 +242,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(VSMPage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" pageVertex pageFragment)
     pluto_add_slang_graphics_shader(VSMClear "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang" clearVertex clearFragment)
     pluto_add_slang_graphics_shader(DirectionalShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(OpaqueShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OpaqueShadow.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(ShadowDepthSeed "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShadowDepthSeed.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadowInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DirectionalShadowMasked "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadow.slang" vertexMain maskedFragmentMain)
     pluto_add_slang_graphics_shader(DisplayOutput "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DisplayOutput.slang" vertexMain fragmentMain)
@@ -268,6 +270,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
     if(BUILD_TESTING)
+        pluto_add_slang_graphics_shader(CloudTransformReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain fragmentMain
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
+        pluto_add_slang_graphics_shader(CloudTransformTraceReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain traceMain
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
         pluto_add_slang_graphics_shader(CloudNoiseProbe "${PROJECT_SOURCE_DIR}/tests/shaders/CloudNoiseProbe.slang" vertexMain noiseProbeMain
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
         pluto_add_slang_graphics_shader(OceanNoiseProbe "${PROJECT_SOURCE_DIR}/tests/shaders/OceanWaveProbe.slang" vertexMain noiseProbeMain

@@ -25,6 +25,8 @@ inline void LoadRenderOptimizationShaders(PlutoGE::render::BasicRendererShaderPa
     shaders.opaqueDepth = additions.opaqueDepth;
     shaders.volumetricTrace = additions.volumetricTrace;
     shaders.volumetricComposite = additions.volumetricComposite;
+    shaders.opaqueShadow = additions.opaqueShadow;
+    shaders.shadowDepthSeed = additions.shadowDepthSeed;
     shaders.fusedColor = additions.fusedColor;
     shaders.postProcess[static_cast<std::size_t>(BasicPostProcessEffectType::VolumetricCloud)] =
         additions.postProcess[static_cast<std::size_t>(BasicPostProcessEffectType::VolumetricCloud)];

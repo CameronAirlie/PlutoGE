@@ -37,6 +37,8 @@ namespace PlutoGE::render
     class PersistentParameterCache;
     class MaterialPreparationCache;
     class ShaderGraphVariantCache;
+    class OpaqueShadowBatches;
+    class CascadedShadowLayers;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -222,6 +224,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode maskedShadowFragment;
+        BasicPostProcessShaderPackage opaqueShadow;
+        BasicPostProcessShaderPackage shadowDepthSeed;
         VirtualShadowShaders virtualShadows;
         OcclusionShaders occlusion;
         BasicPostProcessShaderPackage displayOutput;
@@ -609,6 +613,15 @@ namespace PlutoGE::render
         // Reference switches for controlled rendering/performance comparisons.
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
+        void SetOpaqueShadowBatchingEnabled(bool enabled) noexcept
+        {
+            if (m_opaqueShadowBatchingEnabled != enabled)
+            {
+                m_opaqueShadowBatchingEnabled = enabled;
+                m_shadowCacheValid.fill(false);
+            }
+        }
+        void SetStaticShadowCachingEnabled(bool enabled) noexcept;
         [[nodiscard]] const char *VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
                                                                std::span<const BasicDraw> shadowDraws = {}) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
@@ -750,6 +763,14 @@ namespace PlutoGE::render
         // once per caster, then referenced by every intersecting cascade.
         std::vector<rhi::Buffer> m_shadowObjectBuffers;
         std::vector<rhi::Buffer> m_shadowInstanceBuffers;
+        rhi::GraphicsPipeline m_opaqueShadowPipeline;
+        std::unique_ptr<OpaqueShadowBatches> m_opaqueShadowBatches;
+        std::vector<rhi::Buffer> m_opaqueShadowInstanceBuffers;
+        bool m_opaqueShadowBatchingEnabled = true;
+        rhi::GraphicsPipeline m_shadowDepthSeedPipeline;
+        std::unique_ptr<CascadedShadowLayers> m_shadowLayers;
+        // Opt-in: full-resolution depth seeding can cost more than rerasterizing.
+        bool m_staticShadowCachingEnabled = false;
         // Reused visibility scratch keeps cascade filtering out of the command-recording
         // loop without introducing per-frame allocations.
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;

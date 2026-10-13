@@ -5,6 +5,7 @@
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/ScriptSourceWatch.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scripting/ScriptBuildProcess.h"
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
@@ -382,6 +383,11 @@ namespace PlutoGE::ui
         bool BuildServer(bool runAfterBuild);
         bool RunServerBuild();
         bool RunTestBuild();
+        void RenderProjectBenchmarkMenu();
+        void RunProjectBenchmark();
+        bool PollProjectBenchmark();
+        std::future<scripting::ProcessOutput> m_projectBenchmark;
+        std::filesystem::path m_projectBenchmarkOutput;
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr, SceneGenerationRetention *retained = nullptr) const;

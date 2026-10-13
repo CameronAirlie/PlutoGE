@@ -451,7 +451,7 @@ int RunRuntime(int argc, char **argv)
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
 
-    if (!project->GetManifest().scriptAssembly.empty())
+    if (!(projectBenchmark && projectBenchmark->frozenRender) && !project->GetManifest().scriptAssembly.empty())
     {
         const std::string scriptAssemblyPath = engine.GetAssetManager().ResolveAssetPath(project->GetManifest().scriptAssembly);
         if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath) || !engine.GetScriptEngine().LoadAssembly(scriptAssemblyPath))
@@ -512,7 +512,7 @@ int RunRuntime(int argc, char **argv)
         {
             scene = std::move(loaded);
             engine.SetScene(scene.get());
-            engine.StartRuntime();
+            if (!(projectBenchmark && projectBenchmark->frozenRender)) engine.StartRuntime();
         }))
     {
         std::cerr << engine.GetSceneLoading().Status().error << std::endl;
@@ -554,6 +554,7 @@ int RunRuntime(int argc, char **argv)
     std::vector<double> benchmarkFrameTimes;
     std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
     PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes;
+    std::uint64_t lastBenchmarkGpuObservation = 0;
     if (projectBenchmark) projectBenchmarkSamples.reserve(benchmarkFrameCount);
     if (benchmarkEnabled)
         benchmarkFrameTimes.reserve(benchmarkFrameCount);
@@ -599,7 +600,7 @@ int RunRuntime(int argc, char **argv)
                 {mouse.x, mouse.y}, glfwGetWindowAttrib(nativeWindow, GLFW_FOCUSED) != 0);
             scene->SetRuntimeUIInputOverride(viewportInput.canvasSize, viewportInput.canvasPointer,
                                              viewportInput.pointerInside, viewportInput.logicalViewport);
-            scene->Update(deltaTime);
+            scene->Update(projectBenchmark && projectBenchmark->frozenRender ? 0.0f : deltaTime);
         }
         const auto updateEnd = std::chrono::high_resolution_clock::now();
         PlutoGE::core::CpuScope renderScope("Runtime.Render", PlutoGE::core::CpuCategory::Rendering);
@@ -666,7 +667,16 @@ int RunRuntime(int argc, char **argv)
 #endif
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
                 const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
-                const auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
+                auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
+                if (projectBenchmark && projectBenchmark->scalarShadows)
+                    lighting.geometryDiagnosticMode = PlutoGE::render::GeometryDiagnosticMode::ReferenceDirectionalShadows;
+                if (projectBenchmark && benchmarkFrameIndex == 0)
+                    std::cerr << "Benchmark base camera: " << lighting.cameraPosition.x << ',' << lighting.cameraPosition.y << ','
+                              << lighting.cameraPosition.z << "; lights " << cameraLights.size()
+                              << "; directional intensity " << lighting.directionalIntensity
+                              << "; shadows " << lighting.shadowsEnabled
+                              << "; shadow method " << static_cast<unsigned>(lighting.shadowMethod)
+                              << "; diagnostic mode " << static_cast<unsigned>(lighting.geometryDiagnosticMode) << '\n';
                 std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
                 postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
                 for (const auto &effect : cameraComponent->GetPostProcessEffects())
@@ -795,18 +805,26 @@ int RunRuntime(int argc, char **argv)
                         scriptsMs, animationMs, render.skinningWaitMs, render.skinningCallerMs,
                         ui.synchronizeMs, ui.inputUpdateMs, ui.renderMs,
                         static_cast<double>(render.skinningVertexCount), static_cast<double>(render.recordedGeometryDrawCount),
-                        static_cast<double>(render.recordedShadowDrawCount)};
+                        static_cast<double>(render.recordedShadowDrawCount),
+                        static_cast<double>(render.renderSize.width), static_cast<double>(render.renderSize.height),
+                        static_cast<double>(render.outputSize.width), static_cast<double>(render.outputSize.height),
+                        static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount), 0};
                     if (useVulkanRenderer)
                     {
                         const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
-                        sample.gpuAvailable = gpu.hasGpuResult;
+                        sample.gpuAvailable = gpu.hasGpuResult && gpu.gpuObservationId != 0 &&
+                            gpu.gpuObservationId != lastBenchmarkGpuObservation;
+                        sample.details.back() = static_cast<double>(gpu.gpuObservationId);
+                        lastBenchmarkGpuObservation = gpu.gpuObservationId;
                         sample.gpuMs = gpu.frameGpuMs;
                         sample.skinningMs = engine.GetRhiRenderService().GetTimingStats().skinningDeformationMs;
                         std::map<std::string, float> gpuScopeTotals;
+                        std::map<std::string, unsigned> scopeOccurrences;
                         for (const auto &scope : gpu.gpuScopes)
                         {
                             if (scope.name == "RHI VSM Planning / Receiver requests") sample.shadowRequestMs = scope.milliseconds;
-                            if (gpu.hasGpuResult) gpuScopeTotals[scope.name] += scope.milliseconds;
+                            if (sample.gpuAvailable)
+                                gpuScopeTotals[scope.name + " #" + std::to_string(++scopeOccurrences[scope.name])] = scope.milliseconds;
                         }
                         for (const auto &[name, milliseconds] : gpuScopeTotals)
                             projectBenchmarkGpuScopes[name].push_back(milliseconds);

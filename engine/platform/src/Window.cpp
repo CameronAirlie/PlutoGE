@@ -134,6 +134,7 @@ namespace PlutoGE::platform
             glfwMakeContextCurrent(m_window);
         glfwSetWindowUserPointer(m_window, this);
         glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
+        glfwGetCursorPos(m_window, &m_inputState.mouseState.x, &m_inputState.mouseState.y);
 
         if (!m_config.resizable)
         {
@@ -565,13 +566,25 @@ namespace PlutoGE::platform
         if (m_window)
         {
             auto *window = static_cast<GLFWwindow *>(m_window);
-            glfwSetInputMode(window, GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            const int cursorMode = m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+            const bool modeChanged = glfwGetInputMode(window, GLFW_CURSOR) != cursorMode;
+            glfwSetInputMode(window, GLFW_CURSOR, cursorMode);
 
             // Bypass OS cursor acceleration while locked so mouse deltas represent
             // unmodified device motion, as expected by first-person camera controls.
             if (glfwRawMouseMotionSupported())
             {
                 glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, m_isCursorLocked ? GLFW_TRUE : GLFW_FALSE);
+            }
+            if (modeChanged)
+            {
+                // GLFW resets its virtual position when entering disabled mode
+                // and restores the desktop cursor on release. Neither is mouse
+                // motion: rebase before the next callback and discard deltas
+                // collected in the previous coordinate system.
+                glfwGetCursorPos(window, &m_inputState.mouseState.x, &m_inputState.mouseState.y);
+                m_inputState.mouseState.deltaX = 0.0;
+                m_inputState.mouseState.deltaY = 0.0;
             }
         }
     }

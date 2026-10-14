@@ -81,10 +81,17 @@ namespace PlutoGE::assets
         std::shared_ptr<const AssetStorageMap> importedStorage;
     };
 
+    struct CookDependencyDiagnostic
+    {
+        std::string owner = "Project";
+        std::size_t line = 0;
+    };
+
     // Shared by build validation and cooking. Requires a dependency-enabled scan.
     bool CollectCookAssetReferences(const Project &project, const AssetDatabase &database,
                                     const CookOptions &options, std::set<std::string> &references,
-                                    std::string *errorMessage = nullptr);
+                                    std::string *errorMessage = nullptr,
+                                    CookDependencyDiagnostic *diagnostic = nullptr);
 
     bool CookProjectContent(Project &project,
                             const std::filesystem::path &destinationAssetDirectory,

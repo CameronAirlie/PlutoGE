@@ -47,6 +47,24 @@ int main(int argc, char **argv)
     try
     {
         using namespace PlutoGE::assets;
+        if (argc == 3 && std::string_view(argv[1]) == "--check-project")
+        {
+            std::string error;
+            auto project = Project::Load(argv[2], &error);
+            Require(static_cast<bool>(project), error);
+            AssetDatabase database;
+            AssetScanOptions scan;
+            scan.createMissingMetadata = false;
+            scan.hashContent = false;
+            Require(database.Scan(*project, scan, &error), error);
+            CookOptions cook;
+            cook.includeUnreferencedAssets = false;
+            cook.alwaysInclude = project->GetManifest().buildAlwaysInclude;
+            std::set<std::string> references;
+            Require(CollectCookAssetReferences(*project, database, cook, references, &error), error);
+            std::cout << references.size() << " reachable project dependencies checked\n";
+            return 0;
+        }
         Scratch scratch;
         ProjectManifest manifest;
         manifest.startupScene = "project://Main.plutoscene";
@@ -235,6 +253,31 @@ int main(int argc, char **argv)
         brokenOptions.alwaysInclude.push_back("project://Unused.plutoscene");
         Require(!CollectCookAssetReferences(project, identities, brokenOptions, buildReferences, &error),
                 "Explicitly included broken scene escaped dependency checks");
+        {
+            Scratch ui;
+            const auto uiAssets = ui.root / "Assets";
+            std::filesystem::create_directories(uiAssets / "UI/Weapons");
+            Write(uiAssets / "UI/Weapons/pistol.tga", "texture");
+            Write(uiAssets / "UI/inventory.rml", "<rml>\n<img src=\"UI/Weapons/pistol.tga\"/>\n</rml>\n");
+            Project uiProject(ui.root / "UI.plutoproject", {});
+            AssetDatabase uiDatabase;
+            Require(uiDatabase.Scan(uiProject, &error), error);
+            CookOptions uiCook;
+            uiCook.includeUnreferencedAssets = false;
+            uiCook.alwaysInclude = {"project://UI/inventory.rml"};
+            CookDependencyDiagnostic diagnostic;
+            Require(!CollectCookAssetReferences(uiProject, uiDatabase, uiCook, buildReferences, &error, &diagnostic),
+                    "Incorrect document-relative image escaped dependency checks");
+            Require(diagnostic.owner == "project://UI/inventory.rml" && diagnostic.line == 2 &&
+                    error.find("project://UI/UI/Weapons/pistol.tga") != std::string::npos &&
+                    error.find("Referenced by: project://UI/inventory.rml at line 2") != std::string::npos,
+                    "Missing image error did not identify its source asset and line: " + error);
+            Write(uiAssets / "UI/inventory.rml", "<rml>\n<img src=\"Weapons/pistol.tga\"/>\n</rml>\n");
+            Require(uiDatabase.Scan(uiProject, &error), error);
+            Require(CollectCookAssetReferences(uiProject, uiDatabase, uiCook, buildReferences, &error, &diagnostic), error);
+            Require(buildReferences.contains("project://UI/Weapons/pistol.tga") && error.empty() && diagnostic.line == 0,
+                    "Corrected image dependency did not resolve or stale diagnostics remained");
+        }
         const auto stoneId = identities.FindByReference("project://Stone texture.png")->id;
         const auto modelId = identities.FindByReference("project://Robot.fbx")->id;
         Require(identities.FindById(stoneId) == identities.FindByReference("project://Stone texture.png"), "ID lookup differs from path lookup");

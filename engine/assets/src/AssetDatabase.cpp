@@ -432,8 +432,30 @@ namespace PlutoGE::assets
 
     bool CollectCookAssetReferences(const Project &project, const AssetDatabase &database,
                                     const CookOptions &options, std::set<std::string> &references,
-                                    std::string *errorMessage)
+                                    std::string *errorMessage, CookDependencyDiagnostic *diagnostic)
     {
+        if (errorMessage) errorMessage->clear();
+        if (diagnostic) *diagnostic = {};
+        auto fail = [&](std::string message, const std::string &reference, const std::string &owner)
+        {
+            CookDependencyDiagnostic location;
+            location.owner = owner;
+            if (const auto *record = database.FindByReference(owner))
+            {
+                const auto path = record->storagePath.empty() ? project.ResolveAssetReference(owner) : record->storagePath;
+                const auto scan = ScanAssetReferences(path, {}, project.GetAssetDirectoryPath());
+                for (const auto &occurrence : scan.occurrences)
+                    if (occurrence.reference == reference) { location.line = occurrence.line; break; }
+            }
+            if (owner != "Project")
+            {
+                message += "\nReferenced by: " + owner;
+                if (location.line) message += " at line " + std::to_string(location.line);
+            }
+            SetError(errorMessage, message);
+            if (diagnostic) *diagnostic = std::move(location);
+            return false;
+        };
         auto resolveLogical = [&](std::string &reference)
         {
             if (!reference.starts_with("asset://")) return true;
@@ -462,25 +484,28 @@ namespace PlutoGE::assets
         {
             std::vector<std::string> pending{project.GetManifest().startupScene, project.GetManifest().scriptAssembly, project.GetManifest().loadingScreen.assetReference};
             pending.insert(pending.end(), explicitRoots.begin(), explicitRoots.end());
+            std::map<std::string, std::string> owners;
+            for (const auto &root : pending) owners.try_emplace(root, "Project");
             while (!pending.empty())
             {
                 auto reference = std::move(pending.back());
                 pending.pop_back();
-                if (!resolveLogical(reference)) return false;
+                const auto owner = owners.at(reference);
+                if (!resolveLogical(reference))
+                    return fail("Missing or invalid logical cook dependency: " + reference, reference, owner);
                 if (reference.empty() || !reachable.insert(reference).second) continue;
                 if (const auto *record = database.FindByReference(reference))
                 {
                     if (!record->dependencyScanErrors.empty())
                     {
-                        SetError(errorMessage, "Cannot determine dependencies for " + reference + ": " + record->dependencyScanErrors.front());
-                        return false;
+                        return fail("Cannot determine dependencies for " + reference + ": " + record->dependencyScanErrors.front(), {}, reference);
                     }
                     pending.insert(pending.end(), record->dependencies.begin(), record->dependencies.end());
+                    for (const auto &dependency : record->dependencies) owners.try_emplace(dependency, reference);
                 }
                 else if (Project::IsProjectAssetReference(reference))
                 {
-                    SetError(errorMessage, "Missing cook dependency: " + reference);
-                    return false;
+                    return fail("Missing cook dependency: " + reference, reference, owner);
                 }
             }
         }

@@ -26,6 +26,27 @@ int main(int argc, char **argv)
         return 5;
 
     auto *native = static_cast<GLFWwindow *>(window.GetWindow());
+    // Exercise coordinate changes deterministically through the installed
+    // callback, without requiring physical mouse input or a focused window.
+    const auto cursorCallback = glfwSetCursorPosCallback(native, nullptr);
+    glfwSetCursorPosCallback(native, cursorCallback);
+    auto &mouse = window.GetInputState().mouseState;
+    cursorCallback(native, 10000.0, -10000.0);
+    window.SetCursorLocked(true);
+    double baselineX, baselineY;
+    glfwGetCursorPos(native, &baselineX, &baselineY);
+    if (mouse.x != baselineX || mouse.y != baselineY || mouse.deltaX != 0.0 || mouse.deltaY != 0.0) return 24;
+    if (glfwGetInputMode(native, GLFW_CURSOR) != GLFW_CURSOR_DISABLED) return 25;
+    if (glfwRawMouseMotionSupported() && !glfwGetInputMode(native, GLFW_RAW_MOUSE_MOTION)) return 26;
+    cursorCallback(native, baselineX + 3.0, baselineY - 2.0);
+    window.SetCursorLocked(true); // Repeated gameplay requests must preserve motion.
+    if (mouse.deltaX != 3.0 || mouse.deltaY != -2.0) return 27;
+    window.SetCursorLockOverride(true);
+    glfwGetCursorPos(native, &baselineX, &baselineY);
+    if (mouse.x != baselineX || mouse.y != baselineY || mouse.deltaX != 0.0 || mouse.deltaY != 0.0) return 28;
+    if (glfwGetInputMode(native, GLFW_CURSOR) != GLFW_CURSOR_NORMAL) return 29;
+    window.SetCursorLocked(false);
+    window.SetCursorLockOverride(false);
     int resizeCount = 0, resizedWidth = 0, resizedHeight = 0;
     window.SetResizeCallback([&](int width, int height)
     {

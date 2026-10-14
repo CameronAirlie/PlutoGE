@@ -75,10 +75,11 @@ namespace PlutoGE::ui
             cook.alwaysInclude = m_project->GetManifest().buildAlwaysInclude;
             std::set<std::string> references;
             std::string error;
-            if (!assets::CollectCookAssetReferences(validationProject, database, cook, references, &error))
+            assets::CookDependencyDiagnostic diagnostic;
+            if (!assets::CollectCookAssetReferences(validationProject, database, cook, references, &error, &diagnostic))
             {
                 m_validationResult.diagnostics.push_back({assets::ValidationSeverity::Error,
-                    "build.dependencies", "Project", 0, 0, error});
+                    "build.dependencies", diagnostic.owner, 0, diagnostic.line, error});
                 return false;
             }
             input.assetReferences = std::move(references);
@@ -150,7 +151,9 @@ namespace PlutoGE::ui
             ImGui::PushID(static_cast<int>(i));
             ImGui::Text("%s [%s]", d.severity == assets::ValidationSeverity::Error ? "Error" : "Warning", d.code.c_str());
             ImGui::TextWrapped("%s", d.message.c_str());
-            ImGui::TextWrapped("%s | Entity %u | Line %zu", d.owner.c_str(), d.entity, d.line);
+            ImGui::TextWrapped("%s", d.owner.c_str());
+            if (d.entity) { ImGui::SameLine(); ImGui::Text("| Entity %u", d.entity); }
+            if (d.line) { ImGui::SameLine(); ImGui::Text("| Line %zu", d.line); }
             ImGui::BeginDisabled(busy);
             if (d.owner.starts_with("project://"))
             {

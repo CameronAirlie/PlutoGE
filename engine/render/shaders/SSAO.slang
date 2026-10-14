@@ -46,12 +46,17 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         pass.inverseResolution * 2.0, float2(0.15, 0.15));
     float occlusion = 0.0;
     float sampleWeight = 0.0;
+    float2 sampleDirection = float2(cos(noiseAngle), sin(noiseAngle));
     for (uint i = 0; i < samples; ++i)
     {
         const float fraction = (float(i) + 0.5) / float(samples);
-        const float angle = noiseAngle + float(i) * 2.39996323;
+        const float2 direction = sampleDirection;
+        // Rotate the spiral iteratively; avoid sine/cosine for every depth tap.
+        sampleDirection = float2(
+            direction.x * -0.737368878 - direction.y * 0.675490294,
+            direction.x * 0.675490294 + direction.y * -0.737368878);
         const float radial = sqrt(fraction);
-        const float2 sampleUv = uv + float2(cos(angle), sin(angle)) *
+        const float2 sampleUv = uv + direction *
                                      projectedRadius * radial;
         if (any(sampleUv < 0.0) || any(sampleUv > 1.0)) continue;
         const float sceneDepth = depthTexture.Sample(sampleUv).r;

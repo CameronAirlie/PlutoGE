@@ -58,37 +58,41 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 centerView = mul(pass.view, float4(centerWorld, 1.0)).xyz;
     const float3 centerNormal = decodeNormal(normalTexture.Sample(textureUv).xyz);
     const int blurRadius = clamp(int(pass.parameters[1].x), 0, 4);
+    const bool halfResolution = pass.parameters[1].w > 0.5;
+    const float2 aoTexel = pass.parameters[2].zw;
+    const float2 sampleStep = halfResolution ? aoTexel : pass.inverseResolution;
+    const float2 sampleOrigin = halfResolution
+        ? (floor(textureUv / aoTexel) + 0.5) * aoTexel : textureUv;
+    // Transform the receiver plane once. Each tap needs only two dot products
+    // to measure its world-space distance, rather than a full unprojection.
+    const float4 clipPlane = mul(float4(centerNormal, -dot(centerWorld, centerNormal)),
+                                pass.inverseViewProjection);
+    const float4 clipW = mul(float4(0.0, 0.0, 0.0, 1.0), pass.inverseViewProjection);
     float aoSum = 0.0;
     float weightSum = 0.0;
     float minAo = 1.0;
     float maxAo = 0.0;
-    for (int y = -4; y <= 4; ++y)
+    for (int y = -blurRadius; y <= blurRadius; ++y)
     {
-        if (abs(y) > blurRadius)
-            continue;
-        for (int x = -4; x <= 4; ++x)
+        for (int x = -blurRadius; x <= blurRadius; ++x)
         {
-            if (abs(x) > blurRadius)
+            if (blurRadius >= 2 && abs(x) + abs(y) > blurRadius)
                 continue;
             const float2 offset = float2(x, y);
             // In reduced-resolution mode, evaluate depth/normal weights at the
             // same texel centers that generated the AO, rather than mixing AO
             // from one surface with geometry from another at silhouettes.
-            const bool halfResolution = pass.parameters[1].w > 0.5;
-            const float2 aoTexel = pass.parameters[2].zw;
-            const float2 sampleUv = halfResolution
-                ? clamp((floor(textureUv / aoTexel) + 0.5 + offset) * aoTexel,
-                        aoTexel * 0.5, 1.0 - aoTexel * 0.5)
-                : saturate(textureUv + offset * pass.inverseResolution);
+            const float2 sampleUv = clamp(sampleOrigin + offset * sampleStep,
+                                          sampleStep * 0.5, 1.0 - sampleStep * 0.5);
             const float sampleDepth = depthTexture.Sample(sampleUv).r;
             if (sampleDepth <= 0.000001)
                 continue;
-            const float3 sampleWorld = reconstructWorldPosition(sampleUv, sampleDepth,
-                                                                pass.inverseViewProjection, pass.flipY,
-                                                                pass.zeroToOneDepth);
-            // Coplanar neighbours remain filterable even on a steeply receding floor.
-            // Distance from the receiver plane still rejects unrelated surfaces.
-            const float depthDelta = abs(dot(sampleWorld - centerWorld, centerNormal));
+            float2 ndc = sampleUv * 2.0 - 1.0;
+            if (pass.flipY != 0) ndc.y = -ndc.y;
+            const float4 clip = float4(ndc,
+                pass.zeroToOneDepth != 0 ? sampleDepth : sampleDepth * 2.0 - 1.0, 1.0);
+            const float worldW = dot(clipW, clip);
+            const float depthDelta = abs(dot(clipPlane, clip)) / max(abs(worldW), 0.000001);
             if (depthDelta > 0.35)
                 continue;
             const float3 sampleNormal = decodeNormal(normalTexture.Sample(sampleUv).xyz);

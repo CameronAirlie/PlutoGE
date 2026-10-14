@@ -540,6 +540,41 @@ int main(int argc, char **argv)
         neutralLighting.ambientIntensity = 1.0f;
         neutralLighting.directionalIntensity = 0.0f;
         neutralLighting.shadowsEnabled = true;
+        // Keep AO validation independent of unrelated shadow/statistics checks.
+        if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
+        {
+            neutralLighting.shadowsEnabled = false;
+            neutralLighting.requiredGeometryInputs = BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
+            BasicPostProcessEffect ao{BasicPostProcessEffectType::SSAO};
+            ao.quality = 32;
+            ao.parameters[0] = {1.5f, 0.02f, 3.0f, 1.0f};
+            ao.parameters[1] = {2.0f, 1.0f, 0.9f, 1.0f};
+            ao.parameters[2] = {0.02f, 0.85f, 0.0f, 0.0f};
+            for (const auto extent : {rhi::Extent2D{96, 64}, rhi::Extent2D{95, 63}})
+            {
+                renderer.Resize(extent.width, extent.height);
+                for (float halfResolution : {0.0f, 1.0f, 0.0f})
+                {
+                    ao.parameters[1].w = halfResolution;
+                    for (int frame = 0; frame < 12; ++frame)
+                    {
+                        const glm::vec3 eye(2.5f + frame * 0.01f, 1.8f, 3.0f);
+                        neutralLighting.view = glm::lookAtRH(eye, glm::vec3(0), glm::vec3(0, 1, 0));
+                        neutralLighting.cameraPosition = eye;
+                        renderer.Render(projection * neutralLighting.view, neutralLighting, draws, std::span(&ao, 1));
+                    }
+                    const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
+                    if (pixels.size() != std::size_t(extent.width) * extent.height * 4)
+                        throw std::runtime_error("SSAO changed output extent");
+                    std::size_t occluded = 0;
+                    for (std::size_t i = 0; i < pixels.size(); i += 4)
+                        if (std::to_integer<unsigned char>(pixels[i]) < 254) ++occluded;
+                    if (occluded < 10) throw std::runtime_error("SSAO lost contact occlusion during camera movement");
+                }
+            }
+            std::cout << "SSAO camera movement, full/half resolution and odd extents passed\n";
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--benchmark")
         {
             std::vector<BasicDraw> manyDraws(1532, BasicDraw{.mesh = &cube});

@@ -370,16 +370,12 @@ namespace PlutoGE::render
                 maxAo = 0.0;
 
 
-                for (int offsetY = -4; offsetY <= 4; ++offsetY)
+                vec3 viewNormal = normalize(mat3(uView) * centerNormal);
+                for (int offsetY = -uBlurRadius; offsetY <= uBlurRadius; ++offsetY)
                 {
-                    if (abs(offsetY) > uBlurRadius)
+                    for (int offsetX = -uBlurRadius; offsetX <= uBlurRadius; ++offsetX)
                     {
-                        continue;
-                    }
-
-                    for (int offsetX = -4; offsetX <= 4; ++offsetX)
-                    {
-                        if (abs(offsetX) > uBlurRadius)
+                        if (uBlurRadius >= 2 && abs(offsetX) + abs(offsetY) > uBlurRadius)
                         {
                             continue;
                         }
@@ -396,7 +392,6 @@ namespace PlutoGE::render
                         float sampleAo = texture(uRawAoTexture, sampleUv).r;
 
                         // Filter along the surface, preserving depth discontinuities.
-                        vec3 viewNormal = normalize(mat3(uView) * centerNormal);
                         float depthDelta = abs(dot(sampleViewPos - centerViewPos, viewNormal));
                         if (depthDelta > 0.35)
                         {

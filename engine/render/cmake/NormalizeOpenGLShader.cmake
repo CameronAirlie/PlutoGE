@@ -68,6 +68,9 @@ endif()
 # GLSL. Desktop OpenGL exposes the equivalent builtin as gl_VertexID.
 string(REPLACE "gl_VertexIndex" "gl_VertexID" shader_source "${shader_source}")
 string(REPLACE "gl_InstanceIndex" "gl_InstanceID" shader_source "${shader_source}")
+# Glass SSR uses one extra immutable opaque-scene sampler. Slots 27..31
+# already belong to reflection probes, so flatten this binding to slot 32.
+string(REGEX REPLACE "binding[ \t]*=[ \t]*19,[ \t]*set[ \t]*=[ \t]*1" "binding = 32" shader_source "${shader_source}")
 # Slang derives the GLSL image qualifier from the source value type. Some
 # resources intentionally store 32-bit shader values into 16-bit float images;
 # OpenGL requires the declaration to match the bound image's internal format.

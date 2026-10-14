@@ -481,6 +481,41 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     faceFrame(oppositeProjection);
     if (renderer.GetFrameStats().pointShadowFaceUpdates != 1 || renderer.GetFrameStats().pointShadowDraws != 0)
         throw std::runtime_error("Removing a caster did not clear only its previously occupied face");
+    // Place a magnified receiver inside the outer tenth of the finest
+    // clipmap. Both probes still select level zero: the level diagnostic must
+    // advance only because resident neighbouring levels are blended. This
+    // catches a hard switch independently of the scene's shadow edge shape.
+    if (!renderer.Resize(1024, 1024))
+        throw std::runtime_error("VSM transition test resize failed");
+    lighting = BasicLighting{};
+    lighting.shadowMethod = ShadowMethod::Virtual;
+    lighting.shadowsEnabled = true;
+    lighting.shadowDistance = 8;
+    lighting.cameraPosition = {0,0,0};
+    lighting.directionalDirection = {0,0,1};
+    lighting.virtualShadowPoolPages = 1024;
+    lighting.virtualShadowPageBudget = 512;
+    receiver.model = glm::translate(glm::mat4(1), glm::vec3(.9f,0,.8f)) *
+                     glm::scale(glm::mat4(1), glm::vec3(1.f/9.f,1.f/9.f,1));
+    caster = receiver;
+    caster.model[3].z = .2f;
+    caster.shadowBoundsCenter = glm::vec3(caster.model[3]);
+    caster.shadowBoundsRadius = .2f;
+    const auto transitionProjection = glm::scale(glm::mat4(1), glm::vec3(10,10,1)) *
+                                      glm::translate(glm::mat4(1), glm::vec3(-.9f,0,0));
+    for (int frame = 0; frame < 12; ++frame)
+        renderer.Render(transitionProjection, lighting, {&receiver,1}, {}, {&caster,1},
+                        PostProcessDebugView::ShadowCascades);
+    const auto transition = readPixels(renderer.GetColorTexture());
+    if (transition.size() != 1024 * 1024 * 4)
+        throw std::runtime_error("VSM transition readback size mismatch");
+    const auto inner = (512 * 1024 + 102) * 4;
+    const auto outer = (512 * 1024 + 768) * 4;
+    std::cout << "VSM transition: inner=" << int(transition[inner]) << ',' << int(transition[inner+1])
+              << " outer=" << int(transition[outer]) << ',' << int(transition[outer+1]) << '\n';
+    if (int(transition[inner]) < 200 || int(transition[inner+1]) > 100 ||
+        int(transition[outer]) > 100 || int(transition[outer+1]) < 200)
+        throw std::runtime_error("VSM clipmap edge did not blend resident neighbouring levels");
     if (!renderer.Resize(width, height))
         throw std::runtime_error("Shadow filter test restore failed");
     std::cout << "Shadow filter: " << intermediateLevels << " intermediate coverage levels\n";

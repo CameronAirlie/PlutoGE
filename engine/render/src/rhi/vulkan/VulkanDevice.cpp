@@ -2126,7 +2126,8 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
         static constexpr std::size_t MaxDescriptorBindings = 32;
-        static constexpr std::size_t MaxResourceSlots = 32;
+        // Slots 0..31 cover existing lighting; slot 32 is glass's opaque SSR snapshot.
+        static constexpr std::size_t MaxResourceSlots = 33;
         static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
         static constexpr std::uint32_t MaxTimestampQueries = 128;
         void ResolveTimestamps(FrameResources &frame)

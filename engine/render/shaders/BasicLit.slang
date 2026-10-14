@@ -277,6 +277,14 @@ Sampler2D directionalShadowTexture3 : register(t8, space1);
 Sampler2D glassSceneColor : register(t9, space1);
 [[vk::binding(10, 1)]]
 Sampler2D glassSceneDepth : register(t10, space1);
+// Immutable opaque HDR image: refraction snapshots can contain earlier panes.
+[[vk::binding(19, 1)]] Sampler2D glassReflectionScene : register(t19, space1);
+[[vk::binding(3, 0)]] cbuffer GlassReflectionParameters : register(b3, space0)
+{
+    column_major float4x4 glassInverseViewProjection;
+    float4 glassReflectionTrace; // intensity, distance, hit thickness, start bias
+    float4 glassReflectionOptions; // steps, refinements, edge fade, zero-to-one depth
+};
 
 #endif
 float2 shaderGraphScreenUV(float3 worldPosition) {
@@ -312,6 +320,79 @@ float3 sampleGlassBackground(float2 uv, float2 originalUv, float surfaceDepth)
     if (glassSceneDepth.SampleLevel(uv, 0.0).r > surfaceDepth + 0.00001)
         uv = originalUv;
     return glassSceneColor.SampleLevel(uv, 0.0).rgb;
+}
+
+
+// Glass supplies its own receiver position/normal; the opaque SSR G-buffer
+// deliberately excludes panes. Trace only the immutable opaque colour/depth.
+bool projectGlassReflection(float3 world, out float2 uv, out float depth)
+{
+    float4 clip = mul(viewProjection, float4(world, 1.0));
+    uv = 0.0; depth = 0.0;
+    if (clip.w <= 0.000001) return false;
+    uv = (clip.xy / clip.w + temporalClipOffset.xy) * 0.5 + 0.5;
+    if (glassViewport.z > 0.5) uv.y = 1.0 - uv.y;
+    depth = clip.z / clip.w;
+    if (glassReflectionOptions.w < 0.5) depth = depth * 0.5 + 0.5;
+    return all(uv > glassViewport.xy * 0.5) && all(uv < 1.0 - glassViewport.xy * 0.5)
+        && depth > 0.0 && depth <= 1.0;
+}
+float4 traceGlassReflection(float3 world, float3 normal, float3 viewDirection, float roughness)
+{
+    if (glassReflectionTrace.x <= 0.0 || roughness >= 1.0) return float4(0.0);
+    const float start = max(glassReflectionTrace.w, 0.001);
+    const float distance = max(glassReflectionTrace.y, start);
+    const float3 origin = world + normal * start;
+    const float3 tangent = normalize(cross(abs(normal.z) < 0.999 ? float3(0,0,1) : float3(1,0,0), normal));
+    const float3 bitangent = cross(normal, tangent);
+    const int samples = roughness > 0.15 ? 4 : 1;
+    float3 sum = 0.0; float confidence = 0.0;
+    for (int sample = 0; sample < samples; ++sample)
+    {
+        const float phi = float(sample) * 2.39996323;
+        const float radius = samples == 1 ? 0.0 : roughness * roughness * sqrt((float(sample) + 0.5) / samples);
+        const float3 halfVector = normalize(normal + radius * (cos(phi) * tangent + sin(phi) * bitangent));
+        const float3 ray = reflect(-viewDirection, halfVector);
+        if (dot(normal, ray) <= 0.0) continue;
+        float previousTravel = 0.0;
+        for (int step = 0; step < clamp(int(glassReflectionOptions.x), 8, 128); ++step)
+        {
+            const float fraction = (float(step) + 1.0) / clamp(glassReflectionOptions.x, 8.0, 128.0);
+            const float travel = start + distance * fraction * fraction;
+            float2 uv; float rayDepth;
+            if (!projectGlassReflection(origin + ray * travel, uv, rayDepth)) break;
+            float sceneDepth = glassSceneDepth.SampleLevel(uv, 0.0).r;
+            if (sceneDepth > 0.000001 && sceneDepth >= rayDepth)
+            {
+                float low = previousTravel, high = travel;
+                for (int refinement = 0; refinement < clamp(int(glassReflectionOptions.y), 0, 8); ++refinement)
+                {
+                    const float middle = (low + high) * 0.5;
+                    float2 middleUv; float middleDepth;
+                    if (!projectGlassReflection(origin + ray * middle, middleUv, middleDepth)) break;
+                    const float middleScene = glassSceneDepth.SampleLevel(middleUv, 0.0).r;
+                    if (middleScene > 0.000001 && middleScene >= middleDepth)
+                    { high = middle; uv = middleUv; sceneDepth = middleScene; }
+                    else low = middle;
+                }
+                float2 ndc = uv * 2.0 - 1.0;
+                if (glassViewport.z > 0.5) ndc.y = -ndc.y;
+                const float z = glassReflectionOptions.w > 0.5 ? sceneDepth : sceneDepth * 2.0 - 1.0;
+                const float4 hit = mul(glassInverseViewProjection, float4(ndc, z, 1.0));
+                if (abs(hit.w) > 0.000001 &&
+                    length(hit.xyz / hit.w - (origin + ray * high)) <= max(glassReflectionTrace.z, 0.001))
+                {
+                    const float2 edge = min(uv, 1.0 - uv);
+                    const float fade = saturate(min(edge.x, edge.y) / max(glassReflectionOptions.z, 0.000001));
+                    sum += glassReflectionScene.SampleLevel(uv, 0.0).rgb * fade;
+                    confidence += fade;
+                }
+                break;
+            }
+            previousTravel = travel;
+        }
+    }
+    return float4(sum / max(confidence, 0.000001), confidence / float(samples));
 }
 
 #endif
@@ -500,13 +581,12 @@ float evaluateSpotVirtualShadow(uint level, float3 world, float3 normal, float3 
     }
     return 1.0;
 }
-float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
-                            float slope, out float rawVisibility, out float normalizedLevel)
+float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, float3 worldDy,
+                                  float slope, int firstLevel, int endLevel,
+                                  out float rawVisibility, out float normalizedLevel)
 {
     rawVisibility = 1.0; normalizedLevel = 0.0;
-    int firstLevel = selectVirtualLevel(vsm, world, virtualReceiverFootprint(vsm, world));
-    if (firstLevel < 0) return -1.0;
-    for (int level = firstLevel; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
+    for (int level = firstLevel; level < endLevel; ++level)
     {
         // Softness is defined at the requested resolution. A coarse fallback
         // must not multiply the world-space penumbra by its larger texel size.
@@ -594,6 +674,31 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
         return visibility / max(weightSum, 0.000001);
     }
     return -1.0;
+}
+
+
+float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
+                            float slope, out float rawVisibility, out float normalizedLevel)
+{
+    rawVisibility = 1.0; normalizedLevel = 0.0;
+    const float footprint = virtualReceiverFootprint(vsm, world);
+    const int firstLevel = selectVirtualLevel(vsm, world, footprint);
+    if (firstLevel < 0) return -1.0;
+    const float visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
+        slope, firstLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
+    // Residency fallback already returns a coherent coarse footprint. Blend
+    // only the requested level with its immediate neighbour, never with an
+    // arbitrarily distant fallback or missing (unshadowed) page.
+    const float blend = virtualLevelBlend(vsm, firstLevel, world, footprint);
+    if (visibility < 0.0 || blend <= 0.0 ||
+        normalizedLevel != float(firstLevel) / PLUTO_VSM_ROOT_LEVEL) return visibility;
+    float nextRaw, nextLevel;
+    const float nextVisibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
+        slope, firstLevel + 1, firstLevel + 2, nextRaw, nextLevel);
+    if (nextVisibility < 0.0) return visibility;
+    rawVisibility = lerp(rawVisibility, nextRaw, blend);
+    normalizedLevel = lerp(normalizedLevel, nextLevel, blend);
+    return lerp(visibility, nextVisibility, blend);
 }
 
 float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, float3 worldDy, float depthBias)
@@ -1172,7 +1277,12 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         const float3 fallbackEnvironment = physicalSkySettings.x > 0.5
             ? samplePhysicalSkyEnvironment(reflectionDirection, 0.0) * physicalSkySettings.z
             : float3(cameraPositionAmbient.w);
-        const float3 environment = blendIblReflection(fallbackEnvironment, input.worldPosition, reflectionDirection, materialRoughness);
+        float3 environment = blendIblReflection(fallbackEnvironment, input.worldPosition, reflectionDirection, materialRoughness);
+        const float4 screenReflection = traceGlassReflection(input.worldPosition, normal, viewDirection, materialRoughness);
+        // Replace the covered environment contribution; Fresnel is applied once
+        // below. Misses and screen edges retain the sky/probe fallback.
+        environment = lerp(environment, screenReflection.rgb,
+            saturate(screenReflection.a * glassReflectionTrace.x * (1.0 - materialRoughness)));
         const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
             directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
         const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *

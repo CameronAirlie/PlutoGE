@@ -459,5 +459,100 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
             "Non-consecutive material reuse changed rendered glass");
     require(renderer.Resize(48,32), "Glass resize failed");
     require(render(layers)[0] > 0, "Glass failed after resize");
+    // A transparent floor must reflect an on-screen emissive wall even though
+    // it never writes the opaque normal/material/depth buffers used by SSR.
+    require(renderer.Resize(256,192), "Glass SSR test resize failed");
+    lighting = BasicLighting{};
+    lighting.requiredGeometryInputs = BasicPostProcessInput::Normal | BasicPostProcessInput::Material;
+    lighting.cameraPosition = {0,2,4};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0,0,-1), glm::vec3(0,1,0));
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    glm::mat4 reflectionProjection(0);
+    reflectionProjection[0][0] = 1.5f;
+    reflectionProjection[1][1] = 2.0f;
+    reflectionProjection[2][2] = .1f / (100.f - .1f);
+    reflectionProjection[2][3] = -1;
+    reflectionProjection[3][2] = 100.f * .1f / (100.f - .1f);
+    BasicDraw ground;
+    ground.mesh = &mesh;
+    ground.model = glm::translate(glm::mat4(1), glm::vec3(0,-.1f,0)) *
+        glm::scale(glm::rotate(glm::mat4(1), glm::radians(-90.f), glm::vec3(1,0,0)), glm::vec3(4));
+    ground.emission = {.02f,.02f,.02f};
+    ground.roughness = 1;
+    BasicDraw ssrPane = ground;
+    ssrPane.model[3].y = 0;
+    ssrPane.surfaceType = 1;
+    ssrPane.transmission = 1;
+    ssrPane.ior = 1.5f;
+    ssrPane.roughness = .04f;
+    ssrPane.emission = {0,0,0};
+    ssrPane.twoSided = true;
+    ssrPane.thickness = 0;
+    BasicDraw wall;
+    wall.mesh = &mesh;
+    wall.model = glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,1.5f,-2)), glm::vec3(.65f,1.5f,1));
+    wall.emission = {0,1,0};
+    wall.roughness = 1;
+    std::array reflectionDraws{ground, wall, ssrPane};
+    const auto reflectionFrame = [&](std::span<const BasicPostProcessEffect> reflectionEffects) {
+        renderer.Render(reflectionProjection * lighting.view, lighting, reflectionDraws, reflectionEffects);
+        return readPixels(renderer.GetColorTexture());
+    };
+    const auto noReflection = reflectionFrame({});
+    const auto reflectionNormals = readPixels(renderer.GetNormalTexture());
+    const auto reflectionMaterial = readPixels(renderer.GetMaterialTexture());
+    BasicPostProcessEffect reflectionEffect{BasicPostProcessEffectType::SSR};
+    reflectionEffect.quality = 128;
+    reflectionEffect.parameters[0] = {1,20,.2f,.02f};
+    reflectionEffect.parameters[1] = {.02f,5,1,8};
+    const auto reflectedGlass = reflectionFrame({&reflectionEffect,1});
+    require(reflectedGlass.size() == noReflection.size(), "Glass SSR readback size mismatch");
+    std::uint64_t greenReflection = 0, redReflection = 0;
+    for (std::size_t pixel = 0; pixel < reflectedGlass.size(); pixel += 4)
+        if (int(reflectionNormals[pixel+1]) > 240)
+        {
+            greenReflection += std::max(int(reflectedGlass[pixel+1]) - int(noReflection[pixel+1]), 0);
+            redReflection += std::max(int(reflectedGlass[pixel]) - int(noReflection[pixel]), 0);
+        }
+    std::cout << "Glass SSR energy: green=" << greenReflection << " red=" << redReflection << '\n';
+    require(greenReflection > 100 && greenReflection > redReflection * 2,
+            "Glass SSR did not reflect the opaque wall's colour");
+    require(readPixels(renderer.GetNormalTexture()) == reflectionNormals &&
+            readPixels(renderer.GetMaterialTexture()) == reflectionMaterial,
+            "Glass SSR changed the opaque G-buffer");
+    reflectionEffect.parameters[0].x = 0;
+    require(reflectionFrame({&reflectionEffect,1}) == noReflection,
+            "Disabling SSR intensity retained glass reflections");
+    reflectionEffect.parameters[0].x = 1;
+    reflectionDraws[2].roughness = .5f;
+    const auto roughBaseline = reflectionFrame({});
+    const auto roughReflection = reflectionFrame({&reflectionEffect,1});
+    std::uint64_t roughGreen = 0;
+    for (std::size_t pixel = 0; pixel < roughReflection.size(); pixel += 4)
+        if (int(reflectionNormals[pixel+1]) > 240)
+            roughGreen += std::max(int(roughReflection[pixel+1]) - int(roughBaseline[pixel+1]), 0);
+    std::cout << "Rough glass SSR energy: green=" << roughGreen << '\n';
+    require(roughGreen > 100, "Rough glass lost its multi-ray SSR lobe");
+    reflectionDraws[2].roughness = 1;
+    const auto fullyRough = reflectionFrame({});
+    require(reflectionFrame({&reflectionEffect,1}) == fullyRough,
+            "Fully rough glass retained SSR");
+    reflectionDraws[2].roughness = .04f;
+    reflectionDraws[2].roughness = .12f;
+    reflectionEffect.quality = 48;
+    reflectionEffect.parameters[0] = {.8f,30,.35f,.08f};
+    reflectionEffect.parameters[1] = {.12f,5,1,5};
+    const auto projectBaseline = reflectionFrame({});
+    const auto projectReflection = reflectionFrame({&reflectionEffect,1});
+    std::uint64_t projectGreen = 0;
+    for (std::size_t pixel = 0; pixel < projectReflection.size(); pixel += 4)
+        if (int(reflectionNormals[pixel+1]) > 240)
+            projectGreen += std::max(int(projectReflection[pixel+1]) - int(projectBaseline[pixel+1]), 0);
+    std::cout << "Project glass SSR energy: green=" << projectGreen << '\n';
+    require(projectGreen > 100, "Player SSR settings did not reflect the wall on glass");
+    reflectionDraws[2].ior = 1;
+    const auto indexMatched = reflectionFrame({});
+    require(reflectionFrame({&reflectionEffect,1}) == indexMatched,
+            "Glass SSR ignored index-matched Fresnel");
     require(renderer.Resize(96,64), "Glass test restore resize failed");
 }

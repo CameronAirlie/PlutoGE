@@ -67,3 +67,18 @@ int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
     }
     return -1;
 }
+
+// Match shading and residency at clipmap/footprint transitions. Start blending
+// before the level selector advances, ending at exactly the selector boundary.
+float virtualLevelBlend(VirtualShadowParameters p, int level, float3 world, float footprint)
+{
+    if (level < 0 || level >= PLUTO_VSM_ROOT_LEVEL) return 0.0;
+    float3 uv = virtualCoordinate(p, level, world);
+    float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    float guard = 7.0 / virtualResolution(p, level);
+    float spatial = 1.0 - smoothstep(guard, 0.1, edge);
+    float resolutionBlend = level < PLUTO_VSM_FINE_LEVELS - 1
+        ? smoothstep(1.5, 2.0, footprint * max(p.settings.w, 1.0) / p.metrics[level].x)
+        : 0.0;
+    return max(spatial, resolutionBlend);
+}

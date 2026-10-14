@@ -766,6 +766,7 @@ namespace PlutoGE::render
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         rhi::Texture m_glassDepthCopy;
+        rhi::Buffer m_glassReflectionBuffer;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;

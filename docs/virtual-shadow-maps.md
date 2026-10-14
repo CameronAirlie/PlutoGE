@@ -38,6 +38,29 @@ volume-space injection shadow map, not a cascade fallback. Persistent maps and
 asynchronous diagnostics are independent: no CPU readback determines allocation
 or submission. See [exclusive VSM rendering](vsm-exclusive-shadow-path.md).
 
+## Surface level transitions
+
+Directional surface shadows blend adjacent resident clipmaps across the outer
+10% of a clipmap window and as the receiver footprint approaches the next
+resolution threshold. The depth-request pass uses the same transition rule and
+requests both filter footprints in that band. Each level keeps its own
+receiver-plane correction, texel-scaled bias and filter; blending their visibility
+avoids a sudden change in shadow edge width at the level boundary.
+
+Only the immediate resident neighbour participates. Missing pages retain the
+existing coherent coarse fallback; they are never blended as lit samples. The
+legacy **Shadow Cascade Blend Distance** setting does not control VSM transitions.
+The transition band adds page requests and a second surface filter where both
+levels are resident, within the existing pool and update budgets.
+
+Validation (14 October 2026): Vulkan and OpenGL `--shadows-only` pass,
+including a magnified clipmap-edge regression. That regression fails with the
+previous surface shader (both probes remain in the fine-level diagnostic colour)
+and passes with blending. OpenGL validation used an isolated SSAO depth-shader
+override removing its unused `GL_EXT_samplerless_texture_functions` requirement;
+the unchanged startup path otherwise fails on this driver. Vulkan
+`--vsm-performance` also passes cache, update-budget and submission checks.
+
 ## Performance controls and instrumentation
 
 Directional-light properties expose **VSM Page Updates per Frame** (default 64, range 1–256) and **VSM Triangle Budget per Frame** (default 1,000,000, range 1–16,000,000). These normally limit atlas updates; an enabled aged oversized-page update may exceed the triangle budget. Counters report the actual submitted work; receiver depth and ordinary scene rendering are additional work. Deferred pages may retain older resident depth or use coarser VSM coverage. Large meshes should have accurate bounds and useful submesh or LOD granularity.

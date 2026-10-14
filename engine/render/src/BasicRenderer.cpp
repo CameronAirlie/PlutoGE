@@ -77,6 +77,13 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 80);
 
+        struct alignas(16) GlassReflectionParameters
+        {
+            glm::mat4 inverseViewProjection{1.0f};
+            glm::vec4 trace{0.0f};
+            glm::vec4 options{0.0f};
+        };
+
         struct alignas(16) GraphShadowMaterial
         {
             glm::vec4 alpha, color, factors, emission, cameraTime;
@@ -655,6 +662,10 @@ namespace PlutoGE::render
                     {17, 1, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 transparentDescriptor.resourceBindings.push_back(
                     {18, 1, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                transparentDescriptor.resourceBindings.push_back(
+                    {3, 0, 3, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
+                transparentDescriptor.resourceBindings.push_back(
+                    {32, 1, 19, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 transparentDescriptor.cullMode = rhi::CullMode::Back;
                 transparentDescriptor.debugName = "RHI glass and translucency";
                 m_transparentPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
@@ -1429,6 +1440,7 @@ namespace PlutoGE::render
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
         m_glassDepthCopy.Reset();
+        m_glassReflectionBuffer.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
         m_width = 0;
@@ -2657,6 +2669,17 @@ namespace PlutoGE::render
                 glassFog[3].x = float(std::clamp(effect.quality, 1u, 64u));
                 break;
             }
+        GlassReflectionParameters glassReflection;
+        glassReflection.inverseViewProjection = glm::inverse(occlusionProjection);
+        for (const auto &effect : postProcessEffects)
+            if (effect.type == BasicPostProcessEffectType::SSR)
+            {
+                glassReflection.trace = effect.parameters[0];
+                glassReflection.options = {float(std::clamp(effect.quality, 8u, 128u)),
+                    std::clamp(effect.parameters[1].w, 0.0f, 8.0f), effect.parameters[1].x,
+                    m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.0f};
+                break;
+            }
         m_materialPreparation->BeginFrame(m_width, m_height, glassFog);
         bool geometryResourcesBound = false;
         bool skyTextureBound = false;
@@ -3089,14 +3112,20 @@ namespace PlutoGE::render
             ScopedGpuTiming transparencyTiming(commands, "RHI Transparency");
             if (!m_transparentPipeline || !m_glassSceneCopyPipeline || !m_glassColorCopyPipeline || !m_glassDepthCopyPipeline)
                 throw std::runtime_error("Transparent RHI materials require the Glass shader artifacts");
+            if (!m_glassReflectionBuffer)
+                m_glassReflectionBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                    {sizeof(GlassReflectionParameters), rhi::BufferUsage::Uniform, "Glass SSR parameters"}));
+            m_device->UpdateBuffer(m_glassReflectionBuffer.Get(), 0, Bytes(glassReflection));
+            const bool hasGlass = std::any_of(transparentDraws.begin(), transparentDraws.end(), [](const auto &draw) { return draw.surfaceType == 1u; });
+            const bool glassSsr = hasGlass && glassReflection.trace.x > 0.0f;
             rhi::TextureHandle snapshot;
             rhi::TextureHandle graphSnapshot;
             const bool graphReadsScene = std::any_of(transparentDraws.begin(), transparentDraws.end(), [](const auto &draw) {
                 return draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures;
             });
-            if (graphReadsScene)
+            if (graphReadsScene || glassSsr)
             {
-                // Graph UVs are arbitrary. Capture the full opaque image once,
+                // Graph UVs and reflection hits are arbitrary. Capture the opaque image once,
                 // before any overlays, independently of per-pane glass copies.
                 graphSnapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
                 if (!m_glassDepthCopy)
@@ -3115,9 +3144,8 @@ namespace PlutoGE::render
                 commands.Draw(3);
                 commands.EndRendering();
             }
-            const bool hasGlass = std::any_of(transparentDraws.begin(), transparentDraws.end(), [](const auto &draw) { return draw.surfaceType == 1u; });
-            if (graphReadsScene) ++m_frameStats.glassDepthSnapshots;
-            if (hasGlass && !graphReadsScene)
+            if (graphReadsScene || glassSsr) ++m_frameStats.glassDepthSnapshots;
+            if (hasGlass && !graphReadsScene && !glassSsr)
             {
                 if (!m_glassDepthCopy)
                     m_glassDepthCopy = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -3217,6 +3245,8 @@ namespace PlutoGE::render
                 const auto sceneColor = graphScene ? graphSnapshot : snapshot;
                 commands.BindTexture(17, sceneColor ? sceneColor : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 commands.BindTexture(18, sceneColor ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                commands.BindUniformBuffer(3, m_glassReflectionBuffer.Get());
+                commands.BindTexture(32, graphSnapshot ? graphSnapshot : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                 recordDraw(pane, true, m_previousModels.size());
                 const auto damageStart = std::chrono::steady_clock::now();
                 m_frameStats.glassDrawRecordingCpuMs += elapsedMs(drawStart, damageStart);

@@ -102,7 +102,12 @@ void requestMain(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
     float3 world = reconstruct(id.xy, depth);
     float footprint = virtualReceiverFootprint(vsm, world);
     int level = selectVirtualLevel(vsm, world, footprint);
-    if (vsm.camera.w > 0.5 && level >= 0) requestFootprint(world, level);
+    if (vsm.camera.w > 0.5 && level >= 0)
+    {
+        requestFootprint(world, level);
+        if (virtualLevelBlend(vsm, level, world, footprint) > 0.0)
+            requestFootprint(world, level + 1);
+    }
     for (uint spot = PLUTO_VSM_DIRECTIONAL_LEVELS; spot < PLUTO_VSM_SPOT_ROOT_BASE; ++spot)
     {
         if (vsm.origins[spot].w == 0) continue;

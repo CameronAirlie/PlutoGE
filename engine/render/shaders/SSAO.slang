@@ -19,11 +19,20 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float centerLinearDepth = linearViewDepth(centerDepth,
                                                     pass.parameters[5].x,
                                                     pass.parameters[5].y);
-    const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
+    const float3 shadingNormal = decodeNormal(normalTexture.Sample(uv).xyz);
     const float3 centerPosition = reconstructWorldPosition(uv, centerDepth,
                                                            pass.inverseViewProjection,
                                                            pass.flipY, pass.zeroToOneDepth);
-    const float noiseAngle = frac(52.9829189 * frac(dot(floor(input.position.xy),
+    // Material normal detail must not turn a coplanar wall into an occluder.
+    float3 planeNormal = cross(ddx(centerPosition), ddy(centerPosition));
+    const float planeLength = length(planeNormal);
+    planeNormal /= max(planeLength, 0.000001);
+    if (dot(planeNormal, shadingNormal) < 0.0) planeNormal = -planeNormal;
+    const float3 normal = planeLength > 0.000001 && dot(planeNormal, shadingNormal) > 0.5
+        ? planeNormal : shadingNormal;
+    const float temporalRotation = pass.parameters[1].z > 0.0
+        ? frac(round(pass.time * 60.0) * 0.618033989) : 0.0;
+    const float noiseAngle = frac(temporalRotation + 52.9829189 * frac(dot(floor(input.position.xy),
                                                        float2(0.06711056, 0.00583715)))) * 6.2831853;
     const float radius = max(pass.parameters[0].x, 0.05);
     const float bias = max(pass.parameters[0].y, 0.0);

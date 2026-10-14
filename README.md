@@ -60,7 +60,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Post-processing including bloom, tone mapping, color grading, chromatic aberration, auto exposure, SSAO, SSGI, SSR, TAA, FXAA, motion blur, depth of field, lens flare, volumetric fog, gamma correction, and voxel cone tracing
 - Voxel GI world caching and secondary bounce, rough reflections, glass, decals, toon shading, and outlines
 - Procedural ocean waves, crest/shoreline foam, ripples, and shallow-water caustics
-- Spatial upscaling and optional Vulkan FSR 2 / NVIDIA DLSS Super Resolution integrations
+- Spatial upscaling, NVIDIA DLSS Super Resolution (Windows, used when the GPU supports it) and optional Vulkan FSR 2
 - CPU/GPU render-pass timings and draw/submission statistics in the editor profiler
 
 Standalone games disable OpenGL renderer profiling and Vulkan GPU timestamp/scope
@@ -137,11 +137,7 @@ The Windows workflow requires:
 - The .NET 8 SDK for building gameplay scripts
 - PowerShell for the shipping export helper
 
-The repository also contains a `gcc` preset aimed at `C:\w64devkit`, but it is machine-specific. The MSVC presets are the portable starting point for a normal Windows checkout.
-
-Check `CMakePresets.json` before configuring: the development `msvc` generator
-in this checkout is Visual Studio 18 2026, while `msvc-shipping` selects Visual
-Studio 17 2022. Their display labels may differ from the actual generator.
+Use the `msvc17` preset for Visual Studio 2022 or `msvc18` for Visual Studio 2026.
 Vulkan headers and the loader integration are fetched by CMake; a machine-wide
 Vulkan SDK is not required for the base renderer. Optional upscalers have
 additional requirements in [FSR 2](docs/FSR2.md) and [DLSS](docs/DLSS.md).
@@ -153,42 +149,43 @@ additional requirements in [FSR 2](docs/FSR2.md) and [DLSS](docs/DLSS.md).
 ```bash
 git clone https://github.com/CameronAirlie/PlutoGE.git
 cd PlutoGE
-cmake --preset linux
-cmake --build --preset linux -j"$(nproc)"
-./out/build/linux/editor/PlutoGEEditor
+cmake --preset linux-debug
+cmake --build --preset linux-debug -j"$(nproc)"
+./out/build/linux-debug/editor/PlutoGEEditor
 ```
 
-The runtime is at `out/build/linux/runtime/PlutoGERuntime`. To install into `out/install/linux` or create a portable `.tar.gz` package:
+Use `linux-release` for an optimized build. The runtime is at `out/build/linux-debug/runtime/PlutoGERuntime`. To install into `out/install/linux-debug` or create a portable `.tar.gz` package:
 
 ```bash
-cmake --install out/build/linux
-cpack --config out/build/linux/CPackConfig.cmake
+cmake --install out/build/linux-debug
+cpack --config out/build/linux-debug/CPackConfig.cmake
 ```
 
 ### Windows
 
-Clone and configure the MSVC build using the Visual Studio version selected by the preset:
+Clone and configure the MSVC build for your Visual Studio version (`msvc17` for 2022, `msvc18` for 2026):
 
 ```powershell
 git clone https://github.com/CameronAirlie/PlutoGE.git
 cd PlutoGE
-cmake --preset msvc
-cmake --build --preset msvc-debug
+cmake --preset msvc18
+cmake --build --preset msvc18-debug
 ```
+
+Use `msvc18-release` (or `msvc17-release`) for an optimized build in the same tree.
 
 The first configure downloads and configures the dependencies declared in [`third_party/CMakeLists.txt`](third_party/CMakeLists.txt), so it can take longer than later builds.
 
-For day-to-day editor development, build the editor and its dependencies with
-eight parallel project jobs (override the count with `--parallel N`):
+For day-to-day editor development, build only the editor and its dependencies:
 
 ```powershell
-cmake --build --preset editor-debug
+cmake --build --preset msvc18-debug --target PlutoGEEditor
 ```
 
 Building `PlutoGEEditor` also builds `PlutoGERuntime` in the selected configuration
 when `PLUTO_BUILD_RUNTIME` is enabled (the default), keeping the executable used
 for game exports current. Existing exported games must be exported again to pick
-up runtime changes. The `msvc-debug` preset additionally builds tests. Visual Studio
+up runtime changes. Building without `--target` additionally builds tests. Visual Studio
 builds schedule individual compiles across all projects, one per core; configure
 `-DPLUTO_MSVC_MAX_COMPILES=N` to cap them and reduce memory pressure.
 The larger render, scene, asset, editor UI, and runtime targets use private
@@ -198,40 +195,30 @@ compatibility. Changing this option rebuilds those targets. ScriptCore builds
 only when its tracked inputs change, and editor resources are copied
 individually when changed, including resource-only edits.
 
-For a full Windows build with NVIDIA DLSS and FSR 2 enabled, use the MSVC
-NVIDIA presets. These build the editor, runtime, and tests with eight parallel
-project jobs. The SDK path and project GUID match the existing `gcc-nvidia`
-preset and expect Streamline at `C:/SDKs/Streamline-2.12.0`.
+Windows builds always include NVIDIA DLSS: the first configure downloads the
+pinned Streamline SDK and stages its signed DLLs beside the executables. At
+runtime DLSS is used only on supported NVIDIA GPUs and drivers; elsewhere it
+stays disabled and rendering falls back to the built-in TAA. See
+[DLSS](docs/DLSS.md). FSR 2 is off by default; enable it with
+`-DPLUTO_ENABLE_FSR2=ON` (see [FSR 2](docs/FSR2.md)).
+
+Run the editor from the `msvc18-debug` build:
 
 ```powershell
-cmake --preset msvc-nvidia
-cmake --build --preset msvc-nvidia
-.\out\build\msvc-nvidia\editor\RelWithDebInfo\PlutoGEEditor.exe
-```
-
-This uses `RelWithDebInfo` for optimized execution with debug symbols. For
-unoptimized debugging, use `cmake --build --preset msvc-nvidia-debug` with the
-same configure preset; its executables are in the `Debug` directories.
-Building tests does not run them; run
-`ctest --test-dir out/build/msvc-nvidia -C RelWithDebInfo --output-on-failure`.
-
-Run the editor from the standard `msvc-debug` build:
-
-```powershell
-.\out\build\msvc\editor\Debug\PlutoGEEditor.exe
+.\out\build\msvc18\editor\Debug\PlutoGEEditor.exe
 ```
 
 The same build also produces the development runtime:
 
 ```powershell
-.\out\build\msvc\runtime\Debug\PlutoGERuntime.exe
+.\out\build\msvc18\runtime\Debug\PlutoGERuntime.exe
 ```
 
 If your generator places executables in a different subdirectory, find them with:
 
 ```powershell
-Get-ChildItem .\out\build\msvc -Recurse -Filter PlutoGEEditor.exe
-Get-ChildItem .\out\build\msvc -Recurse -Filter PlutoGERuntime.exe
+Get-ChildItem .\out\build\msvc18 -Recurse -Filter PlutoGEEditor.exe
+Get-ChildItem .\out\build\msvc18 -Recurse -Filter PlutoGERuntime.exe
 ```
 
 ### Build without a preset
@@ -424,7 +411,7 @@ Generated mesh-import cache data is stored under `.plutoge-cache/` and is intent
 Pass a project manifest directly to the runtime:
 
 ```powershell
-.\out\build\msvc\runtime\Debug\PlutoGERuntime.exe `
+.\out\build\msvc18\runtime\Debug\PlutoGERuntime.exe `
   "C:\Projects\MyGame\MyGame.plutoproject"
 ```
 
@@ -449,7 +436,7 @@ The export helper reuses a prebuilt shipping runtime by default. On first export
 or after engine changes, add `-RebuildRuntime`; use `-RuntimePath` to select a
 different prebuilt runtime. With `-RebuildRuntime`, it:
 
-1. Configures the `msvc-shipping` preset.
+1. Configures a Release runtime tree in `out/build/msvc-shipping`.
 2. Builds a Release runtime without the editor or tests.
 3. Builds the adjacent `*.Scripts.csproj`, if present.
 4. Cooks project assets into a `.plutopack`.
@@ -472,14 +459,14 @@ registered suites and build-dependent tests.
 Build and run them from the MSVC tree:
 
 ```powershell
-cmake --build out/build/msvc --config Debug
-ctest --test-dir out/build/msvc -C Debug --output-on-failure
+cmake --build out/build/msvc18 --config Debug
+ctest --test-dir out/build/msvc18 -C Debug --output-on-failure
 ```
 
 Run one group by name:
 
 ```powershell
-ctest --test-dir out/build/msvc -C Debug `
+ctest --test-dir out/build/msvc18 -C Debug `
   -R PlutoGEModelAssetTests `
   --output-on-failure
 ```
@@ -492,21 +479,16 @@ ctest --test-dir out/build/msvc -C Debug `
 | `PLUTO_BUILD_RUNTIME` | `ON` | Build `PlutoGERuntime` |
 | `BUILD_TESTING` | `ON` | Build and register the test executables |
 | `PLUTO_ENABLE_PCH` | `ON` | Precompile stable headers for larger targets |
-| `PLUTO_ENABLE_FSR2` | `OFF` | Build the Vulkan FSR 2 integration; some presets enable it |
-| `PLUTO_ENABLE_STREAMLINE` | `OFF` | Build the Vulkan DLSS integration with an external Streamline SDK |
+| `PLUTO_ENABLE_FSR2` | `OFF` | Build the Vulkan FSR 2 integration |
+| `PLUTO_ENABLE_STREAMLINE` | `ON` (Windows) | Build the Vulkan DLSS integration; downloads the Streamline SDK unless `PLUTO_STREAMLINE_SDK_ROOT` is set |
 
 | Preset | Purpose |
 |---|---|
-| `msvc` | Windows x64 configure preset; check its `generator` for the required Visual Studio version |
-| `msvc-debug` | Debug build for the `msvc` tree |
-| `editor-debug` | Build the editor and dependencies in the `msvc` tree |
-| `msvc-nvidia` / `msvc-nvidia-debug` | Full optimized/debug NVIDIA builds with FSR 2 and Streamline |
-| `linux` | Linux configure/build preset |
-| `msvc-shipping` | Release-only runtime configure preset with editor/tests disabled |
-| `shipping` | Builds `PlutoGERuntime` in Release from `msvc-shipping` |
-| `gcc` | Machine-specific w64devkit configure/build preset |
-| `gcc-nvidia` / `gcc-profile` | Streamline-enabled / optimized profiling variants of `gcc` |
-| `all` | Alias build preset using the `gcc` configure tree |
+| `linux-debug` / `linux-release` | Linux configure and build presets (Unix Makefiles) |
+| `msvc17` | Windows x64 configure preset for Visual Studio 17 2022 |
+| `msvc18` | Windows x64 configure preset for Visual Studio 18 2026 |
+| `msvc17-debug` / `msvc17-release` | Debug/Release builds of the `msvc17` tree |
+| `msvc18-debug` / `msvc18-release` | Debug/Release builds of the `msvc18` tree |
 
 ## Architecture
 
@@ -560,7 +542,7 @@ PlutoGE/
 ├── tools/                  Build/export helper scripts
 ├── docs/                   Detailed subsystem documentation
 ├── CMakeLists.txt          Root build
-└── CMakePresets.json       Windows/Linux development and shipping presets
+└── CMakePresets.json       Linux and MSVC 17/18 debug/release presets
 ```
 
 ## Troubleshooting
@@ -570,7 +552,7 @@ PlutoGE/
 The first configure clones several dependencies. Confirm Git is on `PATH`, that the machine can access GitHub, and then rerun:
 
 ```powershell
-cmake --preset msvc
+cmake --preset msvc18
 ```
 
 ### The editor fails to initialize rendering
@@ -594,10 +576,10 @@ Install a .NET runtime/SDK or set `DOTNET_ROOT` to the .NET installation. Export
 
 ### Export cannot find `PlutoGERuntime`
 
-Build the runtime alongside the editor or use the shipping helper:
+Build the runtime alongside the editor or let the export helper build it:
 
 ```powershell
-cmake --build --preset shipping
+.\tools\Export-Game.ps1 <project> <output.exe> -RebuildRuntime
 ```
 
 ### A standalone game opens without the expected scene

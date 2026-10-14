@@ -4615,7 +4615,7 @@ namespace PlutoGE::render
             static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
             m_device->UsesZeroToOneClipDepth() ? 1u : 0u, parameters,
             m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
-            m_postProcessCameraPosition, effect.worldToLocal};
+            m_postProcessCameraPosition, m_ssaoPreviousView};
 
         auto &rawBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(rawBuffer.Get(), 0, Bytes(block));
@@ -4670,6 +4670,7 @@ namespace PlutoGE::render
 
         m_ssaoHistoryIndex = 1u - m_ssaoHistoryIndex;
         m_ssaoHistoryValid = true;
+        m_ssaoPreviousView = m_postProcessView;
         return destination->Get();
     }
 

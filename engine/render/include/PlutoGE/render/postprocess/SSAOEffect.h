@@ -24,8 +24,8 @@ namespace PlutoGE::render
         float temporalBlend = 0.9f;
         float historyDepthThreshold = 0.02f;
         float historyNormalThreshold = 0.85f;
-        int sampleCount = 16;
-        int blurRadius = 1;
+        int sampleCount = 32;
+        int blurRadius = 2;
         bool halfResolution = true;
     };
 
@@ -81,6 +81,7 @@ namespace PlutoGE::render
         int m_outputMode = 0;
         int m_internalWidth = 0;
         int m_internalHeight = 0;
+        std::uint32_t m_sampleFrame = 0;
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
         bool m_halfResolution = false;

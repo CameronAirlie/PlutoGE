@@ -9,12 +9,12 @@ hardware; it does not require an RTX GPU.
 Enable the pinned official AMD SDK integration with:
 
 ```powershell
-cmake --preset gcc
-cmake --build --preset gcc --target PlutoGEEditor
+cmake --preset msvc18 -DPLUTO_ENABLE_FSR2=ON
+cmake --build --preset msvc18-debug --target PlutoGEEditor
 ```
 
-The `gcc` preset enables FSR2 and leaves NVIDIA Streamline disabled. Use the
-separate `gcc-nvidia` preset only on a system where DLSS development is needed.
+FSR2 is independent of DLSS, which every Windows build already includes (see
+[DLSS](DLSS.md)).
 
 The Windows build generates AMD's Vulkan shader permutations and links the
 FSR2 implementation statically. No FSR runtime DLL needs to ship beside the

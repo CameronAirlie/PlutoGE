@@ -339,18 +339,43 @@ else()
     target_compile_definitions(PlutoGERender PRIVATE PLUTO_HAS_FSR2=0)
 endif()
 
-option(PLUTO_ENABLE_STREAMLINE "Enable NVIDIA Streamline/DLSS for the Vulkan RHI" OFF)
-set(PLUTO_STREAMLINE_SDK_ROOT "" CACHE PATH "Path to an extracted NVIDIA Streamline SDK release")
-set(PLUTO_STREAMLINE_PROJECT_ID "" CACHE STRING "NVIDIA Streamline project GUID")
+# DLSS is compiled into every Windows build. Whether it is used is decided at
+# runtime: unsupported adapters, drivers or missing modules fall back to the
+# regular Vulkan path.
+if (WIN32)
+    set(_pluto_streamline_default ON)
+else()
+    set(_pluto_streamline_default OFF)
+endif()
+option(PLUTO_ENABLE_STREAMLINE "Enable NVIDIA Streamline/DLSS for the Vulkan RHI" ${_pluto_streamline_default})
+set(PLUTO_STREAMLINE_SDK_ROOT "" CACHE PATH
+    "Path to an extracted NVIDIA Streamline SDK release; empty downloads the pinned release")
+set(_pluto_streamline_default_project_id "cb4d8370-925d-4b0a-b4bc-30bbde158074")
+set(PLUTO_STREAMLINE_PROJECT_ID "${_pluto_streamline_default_project_id}" CACHE STRING
+    "NVIDIA Streamline project GUID")
 if (PLUTO_ENABLE_STREAMLINE)
     if (NOT WIN32)
         message(FATAL_ERROR "PlutoGE's Streamline integration currently supports Windows only")
+    endif()
+    if (PLUTO_STREAMLINE_SDK_ROOT STREQUAL "")
+        include(FetchContent)
+        FetchContent_Declare(
+            streamline_sdk
+            URL      https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.12.0/streamline-sdk-v2.12.0.zip
+            URL_HASH SHA256=f5c0a3d870707dddc3570fb4bcd3655cf48a8a68c3a9d342910cfa21b77dcf48
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            # The release ships NVIDIA's own CMake project; only its headers
+            # and signed runtime modules are consumed.
+            SOURCE_SUBDIR _pluto_no_cmake
+        )
+        FetchContent_MakeAvailable(streamline_sdk)
+        set(PLUTO_STREAMLINE_SDK_ROOT "${streamline_sdk_SOURCE_DIR}")
     endif()
     if (NOT EXISTS "${PLUTO_STREAMLINE_SDK_ROOT}/include/sl.h")
         message(FATAL_ERROR "PLUTO_STREAMLINE_SDK_ROOT must point to an extracted Streamline SDK release")
     endif()
     if (PLUTO_STREAMLINE_PROJECT_ID STREQUAL "")
-        message(FATAL_ERROR "PLUTO_STREAMLINE_PROJECT_ID must be the GUID registered for this application")
+        set(PLUTO_STREAMLINE_PROJECT_ID "${_pluto_streamline_default_project_id}")
     endif()
     target_include_directories(PlutoGERender PRIVATE "${PLUTO_STREAMLINE_SDK_ROOT}/include")
     target_compile_definitions(PlutoGERender PRIVATE

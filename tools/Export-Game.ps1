@@ -42,11 +42,13 @@ if (-not $RuntimePath) {
 
 if ($RebuildRuntime) {
     Write-Host 'Configuring the shipping runtime...'
-    & cmake --preset msvc-shipping -S $repositoryRoot
+    $shippingBuildDirectory = Join-Path $repositoryRoot 'out/build/msvc-shipping'
+    & cmake -S $repositoryRoot -B $shippingBuildDirectory -A x64 -T host=x64 `
+        -DPLUTO_BUILD_EDITOR=OFF -DPLUTO_BUILD_RUNTIME=ON -DBUILD_TESTING=OFF
     if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 
     Write-Host 'Building the Release runtime...'
-    & cmake --build (Join-Path $repositoryRoot 'out/build/msvc-shipping') --config Release --target PlutoGERuntime
+    & cmake --build $shippingBuildDirectory --config Release --target PlutoGERuntime
     if ($LASTEXITCODE -ne 0) { throw 'Shipping runtime build failed.' }
 }
 

@@ -914,6 +914,7 @@ namespace PlutoGE::render
         bool m_exposureHistoryValid = false;
         std::uint8_t m_ssaoHistoryIndex = 0;
         bool m_ssaoHistoryValid = false;
+        glm::mat4 m_ssaoPreviousView{1.0f};
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
         rhi::GraphicsPipeline m_particlePipeline;

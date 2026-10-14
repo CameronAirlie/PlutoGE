@@ -2,165 +2,105 @@
     "version": 8,
     "configurePresets": [
         {
-            "name": "linux",
-            "displayName": "Linux (Debug)",
-            "description": "Native Linux build for GCC or Clang",
-            "generator": "Unix Makefiles",
+            "name": "base",
+            "hidden": true,
             "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "ON",
                 "PLUTO_BUILD_RUNTIME": "ON",
-                "BUILD_TESTING": "ON",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "BUILD_TESTING": "ON"
+            }
+        },
+        {
+            "name": "linux-base",
+            "hidden": true,
+            "inherits": "base",
+            "generator": "Unix Makefiles",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-debug",
+            "displayName": "Linux Debug",
+            "inherits": "linux-base",
+            "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "gcc",
-            "displayName": "GCC 14.2.0 x86_64-w64-mingw32",
-            "description": "Using compilers: C = C:\\w64devkit\\bin\\gcc.exe, CXX = C:\\w64devkit\\bin\\g++.exe",
-            "generator": "MinGW Makefiles",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "name": "linux-release",
+            "displayName": "Linux Release",
+            "inherits": "linux-base",
             "cacheVariables": {
-                "PLUTO_BUILD_EDITOR": "ON",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "C:/w64devkit/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/w64devkit/bin/g++.exe",
-                "CMAKE_BUILD_TYPE": "Debug",
-                "PLUTO_ENABLE_FSR2": "ON",
-                "PLUTO_ENABLE_STREAMLINE": "OFF"
+                "CMAKE_BUILD_TYPE": "Release"
             }
         },
         {
-            "name": "gcc-nvidia",
-            "displayName": "GCC 14.2.0 with NVIDIA Streamline",
-            "description": "GCC Windows build with both FSR 2 and NVIDIA DLSS enabled",
-            "inherits": "gcc",
-            "cacheVariables": {
-                "PLUTO_ENABLE_STREAMLINE": "ON",
-                "PLUTO_STREAMLINE_SDK_ROOT": "C:/SDKs/Streamline-2.12.0",
-                "PLUTO_STREAMLINE_PROJECT_ID": "cb4d8370-925d-4b0a-b4bc-30bbde158074"
-            }
-        },
-        {
-            "name": "gcc-profile",
-            "displayName": "GCC optimized profiling build",
-            "description": "RelWithDebInfo editor build for representative CPU/GPU performance measurements",
-            "inherits": "gcc",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
-            }
-        },
-        {
-            "name": "msvc",
-            "displayName": "Visual Studio Community 2026 Release - amd64",
-            "description": "Using compilers for Visual Studio 18 2026 (x64 architecture)",
-            "generator": "Visual Studio 17 2022",
-            "toolset": "host=x64",
+            "name": "msvc-base",
+            "hidden": true,
+            "inherits": "base",
             "architecture": "x64",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
-            "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
-            }
-        },
-        {
-            "name": "msvc-nvidia",
-            "displayName": "Windows MSVC with NVIDIA DLSS",
-            "description": "Full editor, runtime, and tests build with FSR 2 and NVIDIA Streamline/DLSS",
-            "inherits": "msvc",
-            "cacheVariables": {
-                "PLUTO_BUILD_EDITOR": "ON",
-                "PLUTO_BUILD_RUNTIME": "ON",
-                "BUILD_TESTING": "ON",
-                "PLUTO_ENABLE_FSR2": "ON",
-                "PLUTO_ENABLE_STREAMLINE": "ON",
-                "PLUTO_STREAMLINE_SDK_ROOT": "C:/SDKs/Streamline-2.12.0",
-                "PLUTO_STREAMLINE_PROJECT_ID": "cb4d8370-925d-4b0a-b4bc-30bbde158074"
-            }
-        },
-        {
-            "name": "msvc-shipping",
-            "displayName": "Windows Shipping Runtime",
-            "description": "Release-only runtime used to export distributable games",
-            "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
-            "architecture": "x64",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "PLUTO_BUILD_EDITOR": "OFF",
-                "PLUTO_BUILD_RUNTIME": "ON",
-                "BUILD_TESTING": "OFF",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
+                "PLUTO_ENABLE_STREAMLINE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
             }
+        },
+        {
+            "name": "msvc17",
+            "displayName": "Visual Studio 17 2022 (x64)",
+            "inherits": "msvc-base",
+            "generator": "Visual Studio 17 2022"
+        },
+        {
+            "name": "msvc18",
+            "displayName": "Visual Studio 18 2026 (x64)",
+            "inherits": "msvc-base",
+            "generator": "Visual Studio 18 2026"
         }
     ],
     "buildPresets": [
         {
-            "name": "msvc-nvidia",
-            "displayName": "Full Windows NVIDIA build (RelWithDebInfo, 8 jobs)",
-            "configurePreset": "msvc-nvidia",
-            "configuration": "RelWithDebInfo",
-            "jobs": 8
+            "name": "linux-debug",
+            "displayName": "Linux Debug",
+            "configurePreset": "linux-debug"
         },
         {
-            "name": "msvc-nvidia-debug",
-            "displayName": "Full Windows NVIDIA build (Debug, 8 jobs)",
-            "inherits": "msvc-nvidia",
+            "name": "linux-release",
+            "displayName": "Linux Release",
+            "configurePreset": "linux-release"
+        },
+        {
+            "name": "msvc17-debug",
+            "displayName": "Visual Studio 17 2022 Debug",
+            "configurePreset": "msvc17",
             "configuration": "Debug"
         },
         {
-            "name": "editor-debug",
-            "displayName": "Build editor and runtime (Debug, 8 jobs)",
-            "configurePreset": "msvc",
-            "configuration": "Debug",
-            "targets": [
-                "PlutoGEEditor"
-            ],
-            "jobs": 8
+            "name": "msvc17-release",
+            "displayName": "Visual Studio 17 2022 Release",
+            "configurePreset": "msvc17",
+            "configuration": "Release"
         },
         {
-            "name": "linux",
-            "displayName": "Build Linux Debug",
-            "configurePreset": "linux"
-        },
-        {
-            "name": "gcc",
-            "description": "",
-            "displayName": "",
-            "configurePreset": "gcc"
-        },
-        {
-            "name": "gcc-nvidia",
-            "displayName": "Build GCC with NVIDIA Streamline",
-            "configurePreset": "gcc-nvidia"
-        },
-        {
-            "name": "gcc-profile",
-            "displayName": "Build optimized profiling editor",
-            "configurePreset": "gcc-profile"
-        },
-        {
-            "name": "all",
-            "description": "",
-            "displayName": "",
-            "configurePreset": "gcc"
-        },
-        {
-            "name": "msvc-debug",
-            "displayName": "Visual Studio Community 2022 Release - amd64 - Debug",
-            "configurePreset": "msvc",
+            "name": "msvc18-debug",
+            "displayName": "Visual Studio 18 2026 Debug",
+            "configurePreset": "msvc18",
             "configuration": "Debug"
         },
         {
-            "name": "shipping",
-            "displayName": "Build Windows Shipping Runtime",
-            "configurePreset": "msvc-shipping",
-            "configuration": "Release",
-            "targets": [
-                "PlutoGERuntime"
-            ]
+            "name": "msvc18-release",
+            "displayName": "Visual Studio 18 2026 Release",
+            "configurePreset": "msvc18",
+            "configuration": "Release"
         }
     ]
 }

@@ -204,6 +204,7 @@ namespace PlutoGE::render
             uniform float uBias;
             uniform float uIntensity;
             uniform float uPower;
+            uniform float uSampleRotation;
 
             vec3 ReconstructViewPosition(vec2 uv, float depth)
             {
@@ -216,7 +217,7 @@ namespace PlutoGE::render
                 // Hash the complete pixel coordinate. Repeating a tiny rotation tile
                 // makes low-sample AO read as an obvious stipple pattern.
                 vec2 pixelPosition = floor(fragmentPosition);
-                float angle = fract(52.9829189 * fract(dot(pixelPosition, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+                float angle = fract(uSampleRotation + 52.9829189 * fract(dot(pixelPosition, vec2(0.06711056, 0.00583715)))) * 6.2831853;
                 return vec3(cos(angle), sin(angle), 0.0);
             }
 
@@ -232,7 +233,13 @@ namespace PlutoGE::render
 
                 float centerDepth = texture(uSceneDepthTexture, UV).r;
                 vec3 fragViewPos = ReconstructViewPosition(UV, centerDepth);
-                vec3 normal = normalize(mat3(uView) * worldNormal);
+                vec3 shadingNormal = normalize(mat3(uView) * worldNormal);
+                vec3 planeNormal = cross(dFdx(fragViewPos), dFdy(fragViewPos));
+                float planeLength = length(planeNormal);
+                planeNormal /= max(planeLength, 0.000001);
+                if (dot(planeNormal, shadingNormal) < 0.0) planeNormal = -planeNormal;
+                vec3 normal = planeLength > 0.000001 && dot(planeNormal, shadingNormal) > 0.5
+                    ? planeNormal : shadingNormal;
 
                 vec3 randomVec = KernelRotation(gl_FragCoord.xy);
                 vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
@@ -361,7 +368,7 @@ namespace PlutoGE::render
                 float weightSum = 0.0;
                 minAo = 1.0;
                 maxAo = 0.0;
-                float centerViewDepth = -centerViewPos.z;
+
 
                 for (int offsetY = -4; offsetY <= 4; ++offsetY)
                 {
@@ -377,13 +384,6 @@ namespace PlutoGE::render
                             continue;
                         }
 
-                        // A diamond footprint keeps a radius-two resolve to 13 taps
-                        // instead of the 25 taps used by a full square kernel.
-                        if (abs(offsetX) + abs(offsetY) > uBlurRadius)
-                        {
-                            continue;
-                        }
-
                         vec2 offset = vec2(float(offsetX), float(offsetY));
                         vec2 sampleUv = clamp(UV + offset * texelSize, vec2(0.0), vec2(1.0));
                         float sampleDepth = texture(uSceneDepthTexture, sampleUv).r;
@@ -394,8 +394,10 @@ namespace PlutoGE::render
                         vec3 sampleViewPos = ReconstructViewPosition(sampleUv, sampleDepth);
                         vec3 sampleNormal = normalize(texture(uSceneNormalTexture, sampleUv).xyz);
                         float sampleAo = texture(uRawAoTexture, sampleUv).r;
-                        float sampleViewDepth = -sampleViewPos.z;
-                        float depthDelta = abs(sampleViewDepth - centerViewDepth);
+
+                        // Filter along the surface, preserving depth discontinuities.
+                        vec3 viewNormal = normalize(mat3(uView) * centerNormal);
+                        float depthDelta = abs(dot(sampleViewPos - centerViewPos, viewNormal));
                         if (depthDelta > 0.35)
                         {
                             continue;
@@ -560,6 +562,8 @@ namespace PlutoGE::render
         m_ssaoShader->SetUniform("uBias", m_bias);
         m_ssaoShader->SetUniform("uIntensity", m_intensity);
         m_ssaoShader->SetUniform("uPower", m_power);
+        m_ssaoShader->SetUniform("uSampleRotation", m_temporalBlend > 0.0f
+            ? static_cast<float>(m_sampleFrame++ % 4096u) * 0.618033989f : 0.0f);
         static const auto sampleNames = MakeArrayUniformNames<kKernelSize>("uSamples");
         for (int index = 0; index < kKernelSize; ++index)
         {

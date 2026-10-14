@@ -6,31 +6,46 @@ renderer-facing API is vendor-neutral (`TemporalUpscalerOptions` and
 Vulkan backend. Builds without Streamline, unsupported adapters, and missing or
 invalid runtime modules continue through the existing full-resolution/TAA path.
 
-## SDK setup
+## Build setup
 
-1. Register the application with NVIDIA and obtain its project GUID.
-2. Download an official Streamline SDK release. Do not use unsigned or renamed
-   runtime modules: PlutoGE verifies `sl.interposer.dll` before loading it.
-3. Configure PlutoGE with:
+Every Windows build compiles DLSS in; no manual SDK setup is required.
+`PLUTO_ENABLE_STREAMLINE` defaults to `ON` on Windows (and the `msvc17`/`msvc18`
+presets set it explicitly). Streamline is Windows-only, so Linux builds compile
+without it and report DLSS as unavailable.
 
-   ```powershell
-   cmake -S . -B build `
-     -DPLUTO_ENABLE_STREAMLINE=ON `
-     -DPLUTO_STREAMLINE_SDK_ROOT=C:/SDKs/Streamline `
-     -DPLUTO_STREAMLINE_PROJECT_ID=<registered-project-guid>
-   ```
+When `PLUTO_STREAMLINE_SDK_ROOT` is empty, CMake downloads the pinned official
+Streamline SDK release (v2.12.0, SHA-256 verified) into the build tree's
+`_deps` directory. To use an existing extracted SDK instead:
 
-The SDK root must contain `include/sl.h`. A distributable SDK release should
-also contain its signed DLLs under `bin/x64`; CMake copies these beside the
-editor and runtime executables and includes them in installation packages.
-DLSS Super Resolution needs at least `sl.interposer.dll`, `sl.common.dll`,
-`sl.dlss.dll`, and `nvngx_dlss.dll`. Keep NVIDIA's accompanying license files
-with distributions.
+```powershell
+cmake --preset msvc18 -DPLUTO_STREAMLINE_SDK_ROOT=C:/SDKs/Streamline-2.12.0
+```
 
-The Windows presets keep this opt-in: `gcc` is the FSR2-only configuration and
-`gcc-nvidia` enables Streamline as well. PlutoGE disables Streamline's OTA
-plug-in loading so only the signed modules selected and staged by the build are
-loaded.
+The SDK root must contain `include/sl.h` and its signed DLLs under `bin/x64`.
+CMake copies these beside the editor and runtime executables and includes them
+in installation packages. DLSS Super Resolution needs `sl.interposer.dll`,
+`sl.common.dll`, `sl.dlss.dll`, and `nvngx_dlss.dll`. Keep NVIDIA's
+accompanying license files with distributions. Do not use unsigned or renamed
+runtime modules: PlutoGE verifies `sl.interposer.dll` before loading it.
+
+`PLUTO_STREAMLINE_PROJECT_ID` defaults to PlutoGE's registered NVIDIA project
+GUID; override it only for a separately registered application. Configure with
+`-DPLUTO_ENABLE_STREAMLINE=OFF` to build without DLSS entirely.
+
+PlutoGE disables Streamline's OTA plug-in loading so only the signed modules
+selected and staged by the build are loaded.
+
+## Runtime availability
+
+DLSS is used only when the device supports it. At Vulkan device creation
+PlutoGE loads Streamline and checks the adapter, driver, and required Vulkan
+extensions. If any check fails (non-NVIDIA or older GPU, outdated driver,
+missing modules, OpenGL backend, remote session with reduced extensions), DLSS
+stays disabled: rendering continues at full resolution with the built-in TAA,
+the viewport Quality popup shows DLSS as **Fallback** with the reason, and the
+reason is written to `PlutoGEEditor.log`. Nothing else changes, so a project can
+select DLSS and still run on any hardware. Set `PLUTOGE_DISABLE_STREAMLINE=1`
+to skip loading Streamline for diagnostics.
 
 ## Project configuration
 
@@ -43,12 +58,11 @@ RUNTIME_UPSCALER	DLSS
 RUNTIME_UPSCALER_QUALITY	Quality
 ```
 
-DLSS currently applies to Vulkan runtime rendering only. At startup, support is
-checked against the selected adapter and driver. Required device extensions are
-also checked against Vulkan enumeration: remote sessions can expose fewer
-extensions even when NVIDIA reports DLSS support. Missing extensions disable
-DLSS and are recorded in `PlutoGEEditor.log`; ordinary Vulkan rendering remains
-available. Quality mode determines the
+DLSS currently applies to Vulkan rendering only; see
+[Runtime availability](#runtime-availability) for the fallback behavior.
+Required device extensions are checked against Vulkan enumeration because
+remote sessions can expose fewer extensions even when NVIDIA reports DLSS
+support. Quality mode determines the
 internal render resolution using Streamline's optimal-settings query; UI and
 presentation remain at output resolution.
 

@@ -68,7 +68,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             continue;
         for (int x = -4; x <= 4; ++x)
         {
-            if (abs(x) > blurRadius || abs(x) + abs(y) > blurRadius)
+            if (abs(x) > blurRadius)
                 continue;
             const float2 offset = float2(x, y);
             // In reduced-resolution mode, evaluate depth/normal weights at the
@@ -86,8 +86,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             const float3 sampleWorld = reconstructWorldPosition(sampleUv, sampleDepth,
                                                                 pass.inverseViewProjection, pass.flipY,
                                                                 pass.zeroToOneDepth);
-            const float sampleViewDepth = -mul(pass.view, float4(sampleWorld, 1.0)).z;
-            const float depthDelta = abs(sampleViewDepth + centerView.z);
+            // Coplanar neighbours remain filterable even on a steeply receding floor.
+            // Distance from the receiver plane still rejects unrelated surfaces.
+            const float depthDelta = abs(dot(sampleWorld - centerWorld, centerNormal));
             if (depthDelta > 0.35)
                 continue;
             const float3 sampleNormal = decodeNormal(normalTexture.Sample(sampleUv).xyz);
@@ -117,7 +118,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         if (all(historyUv >= 0.0) && all(historyUv <= 1.0))
         {
             const float4 history = historyTexture.Sample(historyUv);
-            const float relativeDepthDelta = abs(history.g + centerView.z) / max(-centerView.z, 0.001);
+            const float previousViewDepth = -mul(pass.worldToLocal, float4(centerWorld, 1.0)).z;
+            const float relativeDepthDelta = abs(history.g - previousViewDepth) / max(previousViewDepth, 0.001);
             const float normalSimilarity = dot(decodeOctahedral(history.ba), centerNormal);
             if (relativeDepthDelta <= pass.parameters[2].x && normalSimilarity >= pass.parameters[2].y)
                 resolvedAo = lerp(currentAo, clamp(history.r, minAo, maxAo), pass.parameters[1].z);

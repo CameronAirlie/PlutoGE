@@ -185,6 +185,7 @@ namespace PlutoGE::render
                 BasicPostProcessEffect result{BasicPostProcessEffectType::SSAO};
                 result.quality = static_cast<std::uint32_t>(config.sampleCount);
                 result.parameters[0] = {config.radius, config.bias, config.intensity, config.power};
+                result.parameters[3].y = static_cast<float>(BasicSsaoEstimator::GTAO);
                 result.parameters[1] = {static_cast<float>(config.blurRadius),
                                         typed.IsAoOnly() ? 1.0f : 0.0f,
                                         config.temporalBlend,

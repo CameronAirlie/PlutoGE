@@ -62,7 +62,8 @@ struct FragmentOutput
     float4 material : SV_Target2;
     float4 motion : SV_Target3;
     float4 albedo : SV_Target4;
-    float4 debug : SV_Target5;
+    float4 indirect : SV_Target5;
+    float4 debug : SV_Target6;
 };
 
 [[vk::binding(0, 0)]]
@@ -896,7 +897,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     {
         // Retain material evaluation, alpha coverage, MRT bandwidth and motion;
         // omit all lighting. This is not a pure vertex/raster timing.
-        FragmentOutput output;
+        FragmentOutput output = (FragmentOutput)0;
         output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
         output.normal = float4(normal * 0.5 + 0.5, 1);
         output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
@@ -1134,7 +1135,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             directionalLighting=evaluateShaderGraphLighting(shaderGraph,graphState,lightDirection,
                 directionalColor.rgb*directionalDirectionIntensity.w,1.0,shadowVisibility);
     }
-    FragmentOutput output;
+    FragmentOutput output = (FragmentOutput)0;
     output.color = float4(ambient + pointLighting + directionalLighting + surfaceEmission,
                           sampledColor.a);
 #ifdef PLUTO_GLASS
@@ -1191,6 +1192,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     }
 #endif
     if (shaderGraph.header.y != 0) output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
+    // AO only attenuates the indirect contribution, never emission or direct lights.
+    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(ambient, 0.0);
     output.normal = float4(normal * 0.5 + 0.5, 1.0);
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
@@ -1221,7 +1224,7 @@ FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
             const float3 centre = iblOriginIntensity[index].xyz+iblSizeBlend[index].xyz*0.5;
             color = iblRadiance(index,centre,reflect(-normalize(cameraPositionAmbient.xyz-input.worldPosition),n),roughness);
         }
-        FragmentOutput output;
+        FragmentOutput output = (FragmentOutput)0;
         output.color = float4(color,1);
         output.normal = float4(n*0.5+0.5,1);
         output.material = float4(0,1,0,1);
@@ -1235,7 +1238,7 @@ FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
     if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;
     if (input.outlineWidth > 0.0)
     {
-        FragmentOutput output;
+        FragmentOutput output = (FragmentOutput)0;
         output.color = float4(baseColor.rgb, 1.0);
         output.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1.0);
         output.material = float4(0.0, 1.0, length(baseColor.rgb), 1.0);
@@ -1247,7 +1250,7 @@ FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
     }
     if (pointParameters.w == 10.0 && alphaMode == 0 && shaderGraph.header.x == 0)
     {
-        FragmentOutput output;
+        FragmentOutput output = (FragmentOutput)0;
         output.color = float4(0.5, 0.5, 0.5, 1);
         output.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1);
         output.material = float4(0, 1, 0, 1);
@@ -1329,5 +1332,26 @@ VertexOutput colorInstancedVertexMain(VertexInput input, uint instanceId : SV_Vu
     VertexOutput result = instancedVertexMain(input, instanceId);
     result.previousClip = 0;
     result.currentClip = 0;
+    return result;
+}
+
+// AO-only receivers do not need the albedo export. Reuse its attachment slot
+// instead of forcing an additional MRT across every opaque fragment.
+struct IndirectSurfaceOutput
+{
+    float4 color : SV_Target0;
+    float4 normal : SV_Target1;
+    float4 material : SV_Target2;
+    float2 motion : SV_Target3;
+    float4 indirect : SV_Target4;
+};
+[shader("fragment")]
+IndirectSurfaceOutput indirectMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
+{
+    const FragmentOutput surface = shadeFragment(input, frontFacing);
+    IndirectSurfaceOutput result;
+    result.color = surface.color; result.normal = surface.normal;
+    result.material = surface.material; result.motion = surface.motion.xy;
+    result.indirect = surface.indirect;
     return result;
 }

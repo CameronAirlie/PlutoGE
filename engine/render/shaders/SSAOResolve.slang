@@ -1,6 +1,7 @@
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
+#include "SSAOCommon.slang"
 
 [[vk::binding(0, 0)]]
 cbuffer Parameters : register(b0, space0)
@@ -24,50 +25,50 @@ FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
     return fullscreenVertex(id);
 }
 
-float2 encodeOctahedral(float3 normal)
+[[vk::binding(7, 0)]] Sampler2D sceneTexture : register(t7, space0);
+[[vk::binding(8, 0)]] Sampler2D indirectTexture : register(t8, space0);
+
+struct SsaoResolvedOutput
 {
-    normal /= abs(normal.x) + abs(normal.y) + abs(normal.z);
-    if (normal.z < 0.0)
-        normal.xy = (1.0 - abs(normal.yx)) *
-                    float2(normal.x >= 0.0 ? 1.0 : -1.0, normal.y >= 0.0 ? 1.0 : -1.0);
-    return normal.xy * 0.5 + 0.5;
+    float4 history : SV_Target0;
+    float4 color : SV_Target1;
+};
+SsaoResolvedOutput ssaoOutput(float2 uv, float ao, float depth, float3 normal)
+{
+    SsaoResolvedOutput output;
+    output.history = float4(ao, depth, encodeOctahedral(normal));
+    #ifndef PLUTO_SSAO_FILTER_ONLY
+    const float4 scene = sceneTexture.SampleLevel(uv,0);
+    const float3 indirect = indirectTexture.SampleLevel(uv,0).rgb;
+    output.color=ssaoComposite(scene,indirect,ao,pass.parameters[1].y>0.5);
+    #else
+    output.color=float4(0);
+    #endif
+    return output;
 }
 
-float3 decodeOctahedral(float2 encoded)
+SsaoResolvedOutput resolveSsao(float2 textureUv)
 {
-    const float2 f = encoded * 2.0 - 1.0;
-    float3 normal = float3(f, 1.0 - abs(f.x) - abs(f.y));
-    const float t = saturate(-normal.z);
-    normal.xy += float2(normal.x >= 0.0 ? -t : t, normal.y >= 0.0 ? -t : t);
-    return normalize(normal);
-}
-
-[shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
-{
+    // Integer addressing makes the exact half-texel boundaries of odd viewports
+    // independent of raster interpolation and compute floating-point rounding.
+    const int2 pixel = int2(textureUv/pass.inverseResolution);
+    textureUv = (float2(pixel)+0.5)*pass.inverseResolution;
     // Every sampled render target uses texture space. Vulkan's negative
     // fullscreen viewport means interpolated vertex UVs must be oriented for
     // raw AO and history just as they are for the geometry buffers.
-    const float2 textureUv = orientFullscreenUv(input.uv, pass.flipY);
-    const float centerDepth = depthTexture.Sample(textureUv).r;
+    const float centerDepth = depthTexture.SampleLevel(textureUv,0).r;
     if (centerDepth <= 0.000001)
-        return float4(1.0, 0.0, 0.5, 0.5);
+        return ssaoOutput(textureUv, 1.0, 0.0, float3(0,0,1));
     const float3 centerWorld = reconstructWorldPosition(textureUv, centerDepth,
                                                         pass.inverseViewProjection, pass.flipY,
                                                         pass.zeroToOneDepth);
     const float3 centerView = mul(pass.view, float4(centerWorld, 1.0)).xyz;
-    const float3 centerNormal = decodeNormal(normalTexture.Sample(textureUv).xyz);
+    const float3 centerNormal = decodeNormal(normalTexture.SampleLevel(textureUv,0).xyz);
     const int blurRadius = clamp(int(pass.parameters[1].x), 0, 4);
-    const bool halfResolution = pass.parameters[1].w > 0.5;
-    const float2 aoTexel = pass.parameters[2].zw;
-    const float2 sampleStep = halfResolution ? aoTexel : pass.inverseResolution;
-    const float2 sampleOrigin = halfResolution
-        ? (floor(textureUv / aoTexel) + 0.5) * aoTexel : textureUv;
-    // Transform the receiver plane once. Each tap needs only two dot products
-    // to measure its world-space distance, rather than a full unprojection.
-    const float4 clipPlane = mul(float4(centerNormal, -dot(centerWorld, centerNormal)),
-                                pass.inverseViewProjection);
-    const float4 clipW = mul(float4(0.0, 0.0, 0.0, 1.0), pass.inverseViewProjection);
+    const int2 rawSize = int2(round(1.0/pass.parameters[2].zw));
+    const int2 outputSize = int2(round(1.0/pass.inverseResolution));
+    const int2 rawCenter = ((pixel*2+1)*rawSize)/(outputSize*2);
+    const float3 viewNormal = mul((float3x3)pass.view, centerNormal);
     float aoSum = 0.0;
     float weightSum = 0.0;
     float minAo = 1.0;
@@ -79,23 +80,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             if (blurRadius >= 2 && abs(x) + abs(y) > blurRadius)
                 continue;
             const float2 offset = float2(x, y);
-            // In reduced-resolution mode, evaluate depth/normal weights at the
-            // same texel centers that generated the AO, rather than mixing AO
-            // from one surface with geometry from another at silhouettes.
-            const float2 sampleUv = clamp(sampleOrigin + offset * sampleStep,
-                                          sampleStep * 0.5, 1.0 - sampleStep * 0.5);
-            const float sampleDepth = depthTexture.Sample(sampleUv).r;
-            if (sampleDepth <= 0.000001)
-                continue;
-            float2 ndc = sampleUv * 2.0 - 1.0;
-            if (pass.flipY != 0) ndc.y = -ndc.y;
-            const float4 clip = float4(ndc,
-                pass.zeroToOneDepth != 0 ? sampleDepth : sampleDepth * 2.0 - 1.0, 1.0);
-            const float worldW = dot(clipW, clip);
-            const float depthDelta = abs(dot(clipPlane, clip)) / max(abs(worldW), 0.000001);
-            if (depthDelta > 0.35)
-                continue;
-            const float3 sampleNormal = decodeNormal(normalTexture.Sample(sampleUv).xyz);
+            const int2 coordinate=clamp(rawCenter+int2(x,y),int2(0),rawSize-1);
+            const float4 sample=rawAoTexture.Load(int3(coordinate,0));
+            if (sample.g<=0.0) continue;
+            const float2 sampleUv=(float2(coordinate)+0.5)/float2(rawSize);
+            const float3 samplePosition=ssaoViewPosition(sampleUv,sample.g,pass);
+            const float depthDelta=abs(dot(viewNormal,samplePosition-centerView));
+            if (depthDelta>0.35) continue;
+            const float3 sampleNormal=decodeOctahedral(sample.ba);
             float normalWeight = max(dot(centerNormal, sampleNormal), 0.0);
             normalWeight *= normalWeight;
             normalWeight *= normalWeight;
@@ -103,7 +95,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
             normalWeight *= normalWeight;
             const float weight = (1.0 / (1.0 + dot(offset, offset) * 0.7)) *
                                  (1.0 / (1.0 + depthDelta * 24.0)) * normalWeight;
-            const float sampleAo = rawAoTexture.Sample(sampleUv).r;
+            const float sampleAo = sample.r;
             aoSum += sampleAo * weight;
             weightSum += weight;
             minAo = min(minAo, sampleAo);
@@ -111,17 +103,17 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         }
     }
     const float currentAo = weightSum > 0.0001 ? aoSum / weightSum
-        : (pass.parameters[1].w > 0.5 ? 1.0 : rawAoTexture.Sample(textureUv).r);
+        : (pass.parameters[1].w > 0.5 ? 1.0 : rawAoTexture.SampleLevel(textureUv,0).r);
     if (weightSum <= 0.0001) minAo = maxAo = currentAo;
     float resolvedAo = currentAo;
     if (pass.parameters[5].w > 0.5)
     {
         const float2 orientation = float2(1.0, pass.flipY != 0 ? -1.0 : 1.0);
-        const float2 motion = motionTexture.Sample(textureUv).xy * orientation;
+        const float2 motion = motionTexture.SampleLevel(textureUv,0).xy * orientation;
         const float2 historyUv = textureUv - motion;
         if (all(historyUv >= 0.0) && all(historyUv <= 1.0))
         {
-            const float4 history = historyTexture.Sample(historyUv);
+            const float4 history = historyTexture.SampleLevel(historyUv,0);
             const float previousViewDepth = -mul(pass.worldToLocal, float4(centerWorld, 1.0)).z;
             const float relativeDepthDelta = abs(history.g - previousViewDepth) / max(previousViewDepth, 0.001);
             const float normalSimilarity = dot(decodeOctahedral(history.ba), centerNormal);
@@ -129,6 +121,18 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 resolvedAo = lerp(currentAo, clamp(history.r, minAo, maxAo), pass.parameters[1].z);
         }
     }
-    const float2 encodedNormal = encodeOctahedral(centerNormal);
-    return float4(resolvedAo, -centerView.z, encodedNormal);
+    return ssaoOutput(textureUv, resolvedAo, -centerView.z, centerNormal);
 }
+
+[shader("fragment")]
+#ifdef PLUTO_SSAO_FILTER_ONLY
+float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+{
+    return resolveSsao(orientFullscreenUv(input.uv,pass.flipY)).history;
+}
+#else
+SsaoResolvedOutput fragmentMain(FullscreenVertexOutput input)
+{
+    return resolveSsao(orientFullscreenUv(input.uv,pass.flipY));
+}
+#endif

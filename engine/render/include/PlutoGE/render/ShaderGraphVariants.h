@@ -18,6 +18,7 @@ namespace PlutoGE::render
         Color,       // colorMain
         ColorMotion, // colorMotionMain
         Coverage,    // coverageMain: graph-aware depth prepass
+        IndirectSurface, // indirectMain: indirect lighting replaces the albedo export
     };
     [[nodiscard]] std::string_view ShaderGraphVariantEntryPoint(ShaderGraphVariantStage stage) noexcept;
 

@@ -76,11 +76,15 @@ namespace PlutoGE::render
         Motion = 1u << 3u,
         History = 1u << 4u,
         Albedo = 1u << 5u,
+        Indirect = 1u << 6u,
     };
+
+    // Reference spiral remains available for controlled AO comparisons.
+    enum class BasicSsaoEstimator : std::uint8_t { Spiral, GTAO };
 
     enum class GeometryOutputLayout : std::uint8_t
     {
-        Color, ColorMotion, Surface, Diagnostics
+        Color, ColorMotion, Surface, SurfaceIndirect, SurfaceAllIndirect, Diagnostics
     };
 
     enum class BasicPostProcessStage : std::uint8_t
@@ -157,6 +161,7 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Motion | BasicPostProcessInput::History;
         case BasicPostProcessEffectType::SSAO:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Indirect;
         case BasicPostProcessEffectType::SSGI:
         case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
@@ -207,6 +212,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode instancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode fragment;
         rhi::GraphicsPipelineDescriptor::ShaderCode standardFragment;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> indirectFragments;
         rhi::GraphicsPipelineDescriptor::ShaderCode colorVertex, colorInstancedVertex;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> standardVertices, standardColorVertices;
         // Color-only and color+motion entry points, for graph and standard materials.
@@ -237,6 +243,8 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
         std::array<BasicPostProcessShaderPackage, 3> ssao;
+        rhi::GraphicsPipelineDescriptor::ShaderCode ssaoDepth;
+        BasicPostProcessShaderPackage ssaoFilter, ssaoUpsample;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 5> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
@@ -655,7 +663,7 @@ namespace PlutoGE::render
 
         // Camera composition runs on HDR color and geometry inputs before TAA.
         void SetTemporalMetadata(rhi::TextureHandle metadata) noexcept { m_temporalMetadata = metadata; }
-        void ResetTemporalHistory() noexcept { m_taaHistoryValid = false; }
+        void ResetTemporalHistory() noexcept { m_taaHistoryValid = m_ssaoHistoryValid = false; }
         [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept { return m_inverseViewProjection; }
         [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept { return m_framePreviousViewProjection; }
 
@@ -696,6 +704,7 @@ namespace PlutoGE::render
         enum class DepthResources { Full, Alpha, Opaque };
         DepthResources GeometryDepthResources(const BasicDraw &draw, bool instanced) const;
         rhi::GraphicsPipelineDescriptor::ShaderCode m_standardFragment;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_indirectFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
         // Pipeline state flags plus the specialised graph structure (0 = interpreter or standard).
         struct GeometryPipelineKey
@@ -818,6 +827,7 @@ namespace PlutoGE::render
         rhi::Texture m_materialTarget;
         rhi::Texture m_motionTarget;
         rhi::Texture m_albedoTarget;
+        rhi::Texture m_indirectTarget;
         rhi::Texture m_debugTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
@@ -911,6 +921,8 @@ namespace PlutoGE::render
         bool m_vctHistoryValid = false;
         std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};
+        rhi::GraphicsPipeline m_ssaoDepthPipeline, m_ssaoFilterPipeline, m_ssaoUpsamplePipeline;
+        rhi::Texture m_ssaoDepthPyramid;
         rhi::Texture m_ssaoRawTarget;
         std::uint32_t m_ssaoRawWidth = 0;
         std::uint32_t m_ssaoRawHeight = 0;
@@ -927,6 +939,7 @@ namespace PlutoGE::render
         bool m_exposureHistoryValid = false;
         std::uint8_t m_ssaoHistoryIndex = 0;
         bool m_ssaoHistoryValid = false;
+        glm::vec4 m_ssaoPreviousSettings{}, m_ssaoPreviousFilter{};
         glm::mat4 m_ssaoPreviousView{1.0f};
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;

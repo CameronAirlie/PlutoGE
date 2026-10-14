@@ -1,3 +1,4 @@
+#include "SsaoRenderingChecks.h"
 #include "IblRenderingChecks.h"
 #include "OrthographicUpscalerChecks.h"
 #include "CameraStackRenderingChecks.h"
@@ -50,7 +51,11 @@ namespace
 {
     std::vector<std::uint32_t> ReadSpirv(const char *name, const std::filesystem::path &directory = PLUTO_RHI_TEST_SHADER_DIR)
     {
-        std::ifstream input(directory / name, std::ios::binary | std::ios::ate);
+        auto path=directory/name;
+        if (directory==std::filesystem::path(PLUTO_RHI_TEST_SHADER_DIR))
+            if (const char *reference=std::getenv("PLUTO_TEST_SHADER_REFERENCE"); reference && std::filesystem::exists(std::filesystem::path(reference)/name))
+                path=std::filesystem::path(reference)/name;
+        std::ifstream input(path, std::ios::binary | std::ios::ate);
         if (!input)
             return {};
         const auto size = input.tellg();
@@ -128,8 +133,15 @@ int main(int argc, char **argv)
             shaders.bloom[index].vertex.spirv = ReadSpirv((std::string(bloomModules[index]) + ".vertex.spv").c_str());
             shaders.bloom[index].fragment.spirv = ReadSpirv((std::string(bloomModules[index]) + ".fragment.spv").c_str());
         }
+        shaders.indirectFragments[0].spirv = ReadSpirv("BasicLitIndirect.fragment.spv");
+        shaders.indirectFragments[1].spirv = ReadSpirv("BasicLitStandardIndirect.fragment.spv");
+        shaders.ssaoFilter.vertex.spirv=ReadSpirv("SSAOFilter.vertex.spv");
+        shaders.ssaoFilter.fragment.spirv=ReadSpirv("SSAOFilter.fragment.spv");
+        shaders.ssaoUpsample.vertex.spirv=ReadSpirv("SSAOUpsample.vertex.spv");
+        shaders.ssaoUpsample.fragment.spirv=ReadSpirv("SSAOUpsample.fragment.spv");
+        shaders.ssaoDepth.spirv = ReadSpirv("SSAODepth.compute.spv");
         constexpr std::array<const char *, 3> ssaoModules{
-            "SSAO", "SSAOResolve", "SSAOComposite"};
+            "SSAO", "SSAOResolve", "SSAOHorizon"};
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
         {
             shaders.ssao[index].vertex.spirv = ReadSpirv((std::string(ssaoModules[index]) + ".vertex.spv").c_str());
@@ -203,6 +215,11 @@ int main(int argc, char **argv)
             {
                 return device.ReadTextureRgba8(texture);
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
+        {
+            CheckSsaoRendering(renderer,device);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
@@ -556,40 +573,6 @@ int main(int argc, char **argv)
         neutralLighting.directionalIntensity = 0.0f;
         neutralLighting.shadowsEnabled = true;
         // Keep AO validation independent of unrelated shadow/statistics checks.
-        if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
-        {
-            neutralLighting.shadowsEnabled = false;
-            neutralLighting.requiredGeometryInputs = BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
-            BasicPostProcessEffect ao{BasicPostProcessEffectType::SSAO};
-            ao.quality = 32;
-            ao.parameters[0] = {1.5f, 0.02f, 3.0f, 1.0f};
-            ao.parameters[1] = {2.0f, 1.0f, 0.9f, 1.0f};
-            ao.parameters[2] = {0.02f, 0.85f, 0.0f, 0.0f};
-            for (const auto extent : {rhi::Extent2D{96, 64}, rhi::Extent2D{95, 63}})
-            {
-                renderer.Resize(extent.width, extent.height);
-                for (float halfResolution : {0.0f, 1.0f, 0.0f})
-                {
-                    ao.parameters[1].w = halfResolution;
-                    for (int frame = 0; frame < 12; ++frame)
-                    {
-                        const glm::vec3 eye(2.5f + frame * 0.01f, 1.8f, 3.0f);
-                        neutralLighting.view = glm::lookAtRH(eye, glm::vec3(0), glm::vec3(0, 1, 0));
-                        neutralLighting.cameraPosition = eye;
-                        renderer.Render(projection * neutralLighting.view, neutralLighting, draws, std::span(&ao, 1));
-                    }
-                    const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
-                    if (pixels.size() != std::size_t(extent.width) * extent.height * 4)
-                        throw std::runtime_error("SSAO changed output extent");
-                    std::size_t occluded = 0;
-                    for (std::size_t i = 0; i < pixels.size(); i += 4)
-                        if (std::to_integer<unsigned char>(pixels[i]) < 254) ++occluded;
-                    if (occluded < 10) throw std::runtime_error("SSAO lost contact occlusion during camera movement");
-                }
-            }
-            std::cout << "SSAO camera movement, full/half resolution and odd extents passed\n";
-            return 0;
-        }
         if (argc > 1 && std::string_view(argv[1]) == "--benchmark")
         {
             std::vector<BasicDraw> manyDraws(1532, BasicDraw{.mesh = &cube});

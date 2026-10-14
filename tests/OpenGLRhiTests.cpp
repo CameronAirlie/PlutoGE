@@ -1,3 +1,4 @@
+#include "SsaoRenderingChecks.h"
 #include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "CloudTransformChecks.h"
@@ -55,7 +56,10 @@ namespace
 
     std::string ReadText(const char *name)
     {
-        std::ifstream input(std::filesystem::path(PLUTO_RHI_TEST_SHADER_DIR) / name, std::ios::binary);
+        auto path=std::filesystem::path(PLUTO_RHI_TEST_SHADER_DIR)/name;
+        if (const char *reference=std::getenv("PLUTO_TEST_SHADER_REFERENCE"); reference && std::filesystem::exists(std::filesystem::path(reference)/name))
+            path=std::filesystem::path(reference)/name;
+        std::ifstream input(path, std::ios::binary);
         std::ostringstream contents;
         contents << input.rdbuf();
         return contents.str();
@@ -226,6 +230,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::MotionBlur, "MotionBlur");
         loadPostProcess(render::BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
+        shaders.indirectFragments[0].glsl = ReadText("BasicLitIndirect.fragment.glsl");
+        shaders.indirectFragments[1].glsl = ReadText("BasicLitStandardIndirect.fragment.glsl");
+        shaders.ssaoFilter.vertex.glsl=ReadText("SSAOFilter.vertex.glsl");
+        shaders.ssaoFilter.fragment.glsl=ReadText("SSAOFilter.fragment.glsl");
+        shaders.ssaoUpsample.vertex.glsl=ReadText("SSAOUpsample.vertex.glsl");
+        shaders.ssaoUpsample.fragment.glsl=ReadText("SSAOUpsample.fragment.glsl");
+        shaders.ssaoDepth.glsl = ReadText("SSAODepth.compute.glsl");
+        constexpr std::array<const char *,3> ssaoModules{"SSAO","SSAOResolve","SSAOHorizon"};
+        for (std::size_t index=0;index<ssaoModules.size();++index)
+        {
+            shaders.ssao[index].vertex.glsl = ReadText((std::string(ssaoModules[index])+".vertex.glsl").c_str());
+            shaders.ssao[index].fragment.glsl = ReadText((std::string(ssaoModules[index])+".fragment.glsl").c_str());
+        }
         constexpr std::array<const char *, 4> bloomModules{
             "BloomPrefilter", "BloomDownsample", "BloomUpsample", "BloomComposite"};
         for (std::size_t index = 0; index < bloomModules.size(); ++index)
@@ -286,6 +303,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 6;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
+        {
+            CheckSsaoRendering(basicRenderer,device);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
         {
             CheckIblRendering(device, shaders);

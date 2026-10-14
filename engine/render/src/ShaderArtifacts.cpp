@@ -120,10 +120,14 @@ namespace PlutoGE::render
             result.bloom[index] = {.vertex = Load(bloomModules[index], "vertex"),
                                    .fragment = Load(bloomModules[index], "fragment")};
         constexpr std::array<std::string_view, 3> ssaoModules{
-            "SSAO", "SSAOResolve", "SSAOComposite"};
+            "SSAO", "SSAOResolve", "SSAOHorizon"};
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
             result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
                                    .fragment = Load(ssaoModules[index], "fragment")};
+        result.indirectFragments = {Load("BasicLitIndirect", "fragment"), Load("BasicLitStandardIndirect", "fragment")};
+        result.ssaoDepth = Load("SSAODepth", "compute");
+        result.ssaoFilter = {Load("SSAOFilter", "vertex"),Load("SSAOFilter", "fragment")};
+        result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
         result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),
                             Load("OcclusionReduce", "compute"), Load("OcclusionTest", "compute")};
         constexpr std::array<std::string_view, 7> virtualCompute{

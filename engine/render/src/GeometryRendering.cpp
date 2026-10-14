@@ -16,6 +16,7 @@ namespace PlutoGE::render
             if (!variants || api != rhi::GraphicsApi::Vulkan || !draw.shaderGraphProgram) return {};
             const auto shading = layout == GeometryOutputLayout::Color ? ShaderGraphVariantStage::Color
                 : layout == GeometryOutputLayout::ColorMotion ? ShaderGraphVariantStage::ColorMotion
+                : layout == GeometryOutputLayout::SurfaceIndirect ? ShaderGraphVariantStage::IndirectSurface
                 : ShaderGraphVariantStage::Surface;
             auto code = variants->Find(*draw.shaderGraphProgram, coverage ? ShaderGraphVariantStage::Coverage : shading);
             // Coverage and shading must discard identical fragments, so a draw
@@ -39,8 +40,10 @@ namespace PlutoGE::render
         {
             ensure(m_normalTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer normals");
             ensure(m_materialTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer material");
-            ensure(m_albedoTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer albedo");
+            if (layout != GeometryOutputLayout::SurfaceIndirect)
+                ensure(m_albedoTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer albedo");
         }
+        if (layout >= GeometryOutputLayout::SurfaceIndirect) ensure(m_indirectTarget, rhi::Format::R16G16B16A16Float, "G-buffer indirect lighting");
         if (layout == GeometryOutputLayout::Diagnostics) ensure(m_debugTarget, rhi::Format::R16G16B16A16Float, "G-buffer debug");
     }
 
@@ -85,8 +88,8 @@ namespace PlutoGE::render
             ? ShaderGraphVariantCache::Code{}
             : GraphFragmentVariant(m_graphVariants.get(), m_device->GetApi(), draw, layout, depthOnly);
         const GeometryPipelineKey key{
-            static_cast<unsigned>(layout) | (unsigned(instanced) << 2) | (unsigned(standard) << 3) |
-                (unsigned(cull) << 4) | (unsigned(depthOnly) << 6) | (unsigned(prepassed) << 7) | (unsigned(depthResources) << 8),
+            static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
+                (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -134,8 +137,12 @@ namespace PlutoGE::render
             }
             else
             {
-                if (layout == GeometryOutputLayout::Surface) descriptor.colorFormats.pop_back();
+                const auto outputs = layout == GeometryOutputLayout::Surface || layout == GeometryOutputLayout::SurfaceIndirect ? 5u
+                    : layout == GeometryOutputLayout::SurfaceAllIndirect ? 6u : 7u;
+                descriptor.colorFormats.resize(outputs);
+                if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.colorFormats[4] = rhi::Format::R16G16B16A16Float;
                 if (standard) descriptor.fragmentShader = m_standardFragment;
+                if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.fragmentShader = m_indirectFragments[standard ? 1 : 0];
             }
             descriptor.depthWrite = !prepassed;
         }

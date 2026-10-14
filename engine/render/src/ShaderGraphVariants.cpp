@@ -27,6 +27,7 @@ namespace PlutoGE::render
         case ShaderGraphVariantStage::Color: return "colorMain";
         case ShaderGraphVariantStage::ColorMotion: return "colorMotionMain";
         case ShaderGraphVariantStage::Coverage: return "coverageMain";
+        case ShaderGraphVariantStage::IndirectSurface: return "indirectMain";
         }
         return "fragmentMain";
     }

@@ -192,7 +192,8 @@ void CheckShaderGraphVariantRendering(PlutoGE::render::rhi::IRenderDevice &devic
     using namespace ShaderGraphVariantTesting;
     CheckShaderGraphCodegen();
     CheckShaderGraphVariantCache();
-    const auto variants = ShaderGraphVariantCache::ForShaderPackage(PLUTO_RHI_TEST_SHADER_DIR);
+    const char *referencePackage=std::getenv("PLUTO_TEST_SHADER_REFERENCE");
+    const auto variants = ShaderGraphVariantCache::ForShaderPackage(referencePackage ? referencePackage : PLUTO_RHI_TEST_SHADER_DIR);
     if (!variants)
     {
         std::cout << "Shader graph variants unavailable (no Slang runtime or staged sources); GPU comparison skipped\n";

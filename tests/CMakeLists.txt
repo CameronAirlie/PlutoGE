@@ -886,3 +886,6 @@ endif()
 add_executable(PlutoGEHeadlessServerTests HeadlessServerTests.cpp)
 pluto_link_engine(PlutoGEHeadlessServerTests)
 add_test(NAME PlutoGEHeadlessServerTests COMMAND PlutoGEHeadlessServerTests)
+
+add_test(NAME PlutoGEVulkanSsaoTests COMMAND PlutoGEVulkanRhiTests --ssao-only)
+add_test(NAME PlutoGEOpenGLSsaoTests COMMAND PlutoGEOpenGLRhiTests --ssao-only)

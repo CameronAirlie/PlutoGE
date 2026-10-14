@@ -23,6 +23,7 @@
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "RhiSkinning.h"
 #include "IblPrefilter.h"
+#include "AmbientProbeVisibilitySummary.h"
 #include "rhi/NormalMipmaps.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -998,17 +999,32 @@ namespace PlutoGE::render
             }
         }
         if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.iblCaptures = {};
-        if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.diffuseProbeAtlas = {};
+        if (scene || !effectiveLighting.localIblEnabled)
+        {
+            effectiveLighting.diffuseProbeAtlas = {};
+            effectiveLighting.diffuseProbeHitPointRow = effectiveLighting.diffuseProbeSummaryRow = 0;
+            effectiveLighting.diffuseProbeVolumesPrepared = false;
+        }
         if (scene && effectiveLighting.localIblEnabled && scene->HasBakedProbeVolume()) {
             auto volumes=scene->GetBakedProbeVolumes();
-            if (volumes.size()>8) volumes.resize(8);
+            if (volumes.size()>PLUTO_AMBIENT_PROBE_VOLUMES) volumes.resize(PLUTO_AMBIENT_PROBE_VOLUMES);
             std::size_t count=volumes.size();
             for (auto *volume:volumes) count+=volume->irradiance.size();
             const unsigned width=static_cast<unsigned>(std::min<std::size_t>(count,1024));
             if (!m_diffuseProbeAtlas || m_diffuseProbeScene != scene || m_diffuseProbeRevision != scene->GetBakedProbeRevision()) {
                 const unsigned pages=static_cast<unsigned>((count+width-1)/width);
-                std::vector<glm::vec4> pixels(static_cast<std::size_t>(width)*pages*74);
-                const auto at=[&](std::size_t index,int row)->glm::vec4 & { return pixels[(index/width*74+row)*width+index%width]; };
+                // Keep optional acceleration within a portable 4096-row / 64 MiB
+                // ceiling. Large authored volumes retain their original atlas and
+                // exact shader fallback instead of growing without bound.
+                const bool prepareHits = pages * (PLUTO_AMBIENT_PROBE_ROWS + PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS) <= 4096;
+                const bool prepareSummary = pages * (PLUTO_AMBIENT_PROBE_ROWS + PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS + PLUTO_AMBIENT_PROBE_SUMMARY_ROWS) <= 4096;
+                m_diffuseProbeHitPointRow = prepareHits ? static_cast<int>(pages * PLUTO_AMBIENT_PROBE_ROWS) : 0;
+                m_diffuseProbeSummaryRow = prepareSummary ? static_cast<int>(pages * (PLUTO_AMBIENT_PROBE_ROWS + PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS)) : 0;
+                const unsigned atlasRows = pages * (PLUTO_AMBIENT_PROBE_ROWS +
+                    (prepareHits ? PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS : 0) +
+                    (prepareSummary ? PLUTO_AMBIENT_PROBE_SUMMARY_ROWS : 0));
+                std::vector<glm::vec4> pixels(static_cast<std::size_t>(width)*atlasRows);
+                const auto at=[&](std::size_t index,int row)->glm::vec4 & { return pixels[(index/width*PLUTO_AMBIENT_PROBE_ROWS+row)*width+index%width]; };
                 std::size_t base=volumes.size();
                 for (std::size_t v=0;v<volumes.size();++v) {
                     const auto &volume=*volumes[v];
@@ -1023,12 +1039,44 @@ namespace PlutoGE::render
                         at(base+i,0)=directional ? volume.positions[i] : glm::vec4(volume.GridToWorld((glm::vec3(x,y,z)+.5f)/glm::vec3(volume.resolution)),1);
                         for (int c=0;c<9;++c) at(base+i,1+c)=glm::vec4(directional ? volume.sphericalHarmonics[i][c] : c==0 ? volume.irradiance[i]/.282095f : glm::vec3(0),0);
                         at(base+i,1).w=normals ? 1.0f : 0.0f;
-                        for (int t=0;t<64;++t) at(base+i,10+t)=glm::vec4(directional ? volume.visibility[i][t] : glm::length(volume.size), normals ? volume.visibilityNormals[i][t] : glm::vec3(0));
+                        for (int t=0;t<PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS;++t)
+                        {
+                            const float depth = directional ? volume.visibility[i][t] : glm::length(volume.size);
+                            const glm::vec3 normal = normals ? volume.visibilityNormals[i][t] : glm::vec3(0);
+                            at(base+i,10+t)=glm::vec4(depth, normal);
+                            if (!prepareHits) continue;
+                            const glm::vec2 oct = (glm::vec2(t % 8, t / 8) + .5f) / 4.0f - 1.0f;
+                            glm::vec3 ray(oct, 1.0f - std::abs(oct.x) - std::abs(oct.y));
+                            if (ray.z < 0)
+                                ray = glm::vec3((1.0f-std::abs(oct.y))*(oct.x>=0 ? 1.0f : -1.0f),
+                                                (1.0f-std::abs(oct.x))*(oct.y>=0 ? 1.0f : -1.0f), ray.z);
+                            const glm::vec3 point = glm::normalize(ray) * depth;
+                            const std::size_t index = base+i;
+                            const std::size_t row = m_diffuseProbeHitPointRow + index/width*
+                                PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS + t;
+                            pixels[row*width + index%width] = glm::vec4(point, glm::dot(normal, point));
+                        }
+                        if (normals && prepareSummary)
+                        {
+                            const std::size_t index = base+i;
+                            const auto hit = [&](int t) {
+                                return pixels[(m_diffuseProbeHitPointRow + index/width*PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS + t)*width + index%width];
+                            };
+                            for (int y = -1; y < 8; ++y) for (int x = -1; x < 8; ++x)
+                            {
+                                const auto summary = SummarizeProbeVisibilityCell(x,y,
+                                    [&](int t) { return at(index,10+t); }, hit);
+                                const std::size_t row = m_diffuseProbeSummaryRow + index/width*PLUTO_AMBIENT_PROBE_SUMMARY_ROWS +
+                                    ((y+1)*9 + x+1)*2;
+                                pixels[row*width + index%width] = summary.plane;
+                                pixels[(row+1)*width + index%width] = summary.bounds;
+                            }
+                        }
                     }
                     base+=volume.irradiance.size();
                 }
                 rhi::TextureDescriptor descriptor;
-                descriptor.width=width; descriptor.height=pages*74;
+                descriptor.width=width; descriptor.height=atlasRows;
                 descriptor.format=rhi::Format::R32G32B32A32Float;
                 descriptor.debugName="Ambient light volumes: metadata, SH and surface visibility";
                 m_diffuseProbeAtlas=rhi::Texture(*m_device,m_device->CreateTexture(descriptor,std::as_bytes(std::span(pixels))));
@@ -1037,6 +1085,23 @@ namespace PlutoGE::render
             effectiveLighting.diffuseProbeAtlas=m_diffuseProbeAtlas.Get();
             effectiveLighting.diffuseProbeVolumeCount=static_cast<int>(volumes.size());
             effectiveLighting.diffuseProbeAtlasWidth=static_cast<int>(width);
+            effectiveLighting.diffuseProbeHitPointRow = m_diffuseProbeHitPointRow;
+            effectiveLighting.diffuseProbeSummaryRow = m_diffuseProbeSummaryRow;
+            effectiveLighting.diffuseProbeVolumesPrepared = true;
+            std::size_t base = volumes.size();
+            for (std::size_t v = 0; v < volumes.size(); ++v)
+            {
+                const auto &volume = *volumes[v];
+                auto &parameters = effectiveLighting.diffuseProbeVolumes[v];
+                parameters.origin = glm::vec4(volume.origin, 0);
+                parameters.size = glm::vec4(volume.size,
+                    volume.HasDirectionalData() && volume.visibilityNormals.size() == volume.irradiance.size() ? 1.0f : 0.0f);
+                parameters.resolutionBase = glm::vec4(glm::vec3(volume.resolution), static_cast<float>(base));
+                const auto inverseBasis = glm::inverse(volume.gridBasis);
+                for (int axis = 0; axis < 3; ++axis)
+                    parameters.worldToGridRows[axis] = glm::vec4(inverseBasis[0][axis], inverseBasis[1][axis], inverseBasis[2][axis], 0);
+                base += volume.irradiance.size();
+            }
         }
         // Retained HDR faces work independently of the original OpenGL texture.
         std::erase_if(m_iblCaptures, [](const auto &entry) { return entry.second.version.lifetime.expired(); });

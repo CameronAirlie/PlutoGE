@@ -116,6 +116,14 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^VCT")
             set(vct_dependencies ${PLUTO_VCT_SHARED_SHADERS})
         endif()
+        set(material_dependencies)
+        if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass")
+            set(material_dependencies
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
+        endif()
         set(outputs
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.glsl"
             "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl"
@@ -130,7 +138,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${VERTEX_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.vertex.spv"
         COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${SOURCE}" -entry ${FRAGMENT_ENTRY} -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.fragment.spv"
-        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        DEPENDS ${vct_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogEnvironment.slang" "${SOURCE}" ${ARGN} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTSecondaryBounce.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTProbeSampling.slang" ${material_dependencies} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceCoverage.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
         COMMENT "Compiling ${MODULE} Slang shader for OpenGL and Vulkan"
         VERBATIM)
         set_property(GLOBAL APPEND PROPERTY PLUTO_RHI_SHADER_OUTPUTS ${outputs})
@@ -302,7 +310,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     # per-graph generated code (ShaderGraphVariantCache), so the package
     # carries its sources in the layout their relative includes expect.
     file(GLOB PLUTO_RHI_SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang")
-    set(PLUTO_RHI_SHADER_SOURCE_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h")
+    set(PLUTO_RHI_SHADER_SOURCE_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
     set(PLUTO_RHI_SHADER_SOURCE_STAMP "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/.stamp")
     add_custom_command(
         OUTPUT "${PLUTO_RHI_SHADER_SOURCE_STAMP}"

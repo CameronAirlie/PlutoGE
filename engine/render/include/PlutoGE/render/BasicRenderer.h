@@ -1,4 +1,6 @@
 #pragma once
+
+#include "PlutoGE/render/AmbientProbeConfig.h"
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
@@ -424,6 +426,13 @@ namespace PlutoGE::render
         std::array<glm::vec4, 9> irradiance{};
     };
 
+    struct alignas(16) AmbientProbeVolumeParameters
+    {
+        glm::vec4 origin{}, size{}, resolutionBase{};
+        std::array<glm::vec4, 3> worldToGridRows{};
+    };
+    static_assert(sizeof(AmbientProbeVolumeParameters) == 96);
+
     struct BasicLighting
     {
         // Declare external surface-buffer consumers (for example readback tools).
@@ -443,6 +452,10 @@ namespace PlutoGE::render
         glm::vec3 diffuseProbeOrigin{0}, diffuseProbeSize{1};
         glm::ivec3 diffuseProbeResolution{0};
         int diffuseProbeVolumeCount = 0, diffuseProbeAtlasWidth = 0;
+        std::array<AmbientProbeVolumeParameters, PLUTO_AMBIENT_PROBE_VOLUMES> diffuseProbeVolumes{};
+        int diffuseProbeHitPointRow = 0, diffuseProbeSummaryRow = 0;
+        // Prepared atlases provide typed volume descriptors.
+        bool diffuseProbeVolumesPrepared = false;
         // Directional environment used by the RHI PBR path. Physical sky
         // parameters share the layout used by the sky post-process pass so
         // the background and surface lighting cannot drift apart.

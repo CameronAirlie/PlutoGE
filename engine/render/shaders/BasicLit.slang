@@ -12,6 +12,7 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(11, 1)]] Sampler2D virtualShadowAtlas : register(t11, space1);
 [[vk::binding(12, 1)]] Sampler2D virtualShadowTable : register(t12, space1);
 #include "VirtualShadowSampling.slang"
+#include "VirtualShadowTent.slang"
 
 [[vk::binding(13, 1)]] Sampler2D pointShadowAtlas : register(t13, space1);
 
@@ -21,6 +22,13 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
 
 [[vk::binding(31, 0)]] Sampler2D diffuseProbeAtlas : register(t31, space0);
+
+#include "../include/PlutoGE/render/AmbientProbeConfig.h"
+struct AmbientProbeVolumeParameters
+{
+    float4 origin, size, resolutionBase;
+    float4 worldToGridRows[3];
+};
 
 struct VertexInput
 {
@@ -92,164 +100,12 @@ cbuffer CameraParameters : register(b0, space0)
     float4 iblSettings[4];
     float4 iblIrradiance[36];
     float4 probeOrigin, probeSize, probeResolution;
+    float4 probeAtlasParameters;
+    AmbientProbeVolumeParameters probeVolumes[PLUTO_AMBIENT_PROBE_VOLUMES];
+    float4 geometryParameters;
 };
 
-float4 probeTexel(int index, int row)
-{
-    const int width = int(probeResolution.w);
-    return diffuseProbeAtlas.Load(int3(index % width, (index / width) * 74 + row, 0));
-}
-
-int2 probeVisibilityTexel(int2 texel)
-{
-    // Octahedral edges join the opposite half of the same edge.
-    if (texel.x < 0 || texel.x >= 8) {
-        texel.x = texel.x < 0 ? -texel.x-1 : 15-texel.x;
-        texel.y = 7-texel.y;
-    }
-    if (texel.y < 0 || texel.y >= 8) {
-        texel.y = texel.y < 0 ? -texel.y-1 : 15-texel.y;
-        texel.x = 7-texel.x;
-    }
-    return texel;
-}
-
-float3 probeVisibilityDirection(int2 texel)
-{
-    texel = probeVisibilityTexel(texel);
-    const float2 oct = (float2(texel) + 0.5) / 4.0 - 1.0;
-    float3 direction = float3(oct, 1.0 - abs(oct.x) - abs(oct.y));
-    if (direction.z < 0)
-        direction.xy = (1.0 - abs(oct.yx)) * float2(oct.x >= 0 ? 1 : -1, oct.y >= 0 ? 1 : -1);
-    return normalize(direction);
-}
-
-float3 probeVisibilityPoint(int index, int2 texel)
-{
-    texel = probeVisibilityTexel(texel);
-    return probeVisibilityDirection(texel) * probeTexel(index, 10 + texel.x + texel.y * 8).x;
-}
-
-float probeVisibility(int index, float3 direction, float receiverDistance, float bias)
-{
-    float2 oct = direction.xy / max(abs(direction.x) + abs(direction.y) + abs(direction.z), 0.0001);
-    if (direction.z < 0)
-        oct = (1 - abs(oct.yx)) * float2(oct.x >= 0 ? 1 : -1, oct.y >= 0 ? 1 : -1);
-    const float2 coordinate = (oct * 0.5 + 0.5) * 8 - 0.5;
-    if (probeTexel(index, 1).w > 0.5) {
-        const int2 cell = int2(floor(coordinate));
-        const float2 fraction = frac(coordinate);
-        float visibility = 0;
-        for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
-            const int2 texel = probeVisibilityTexel(cell + int2(x,y));
-            const float4 surface = probeTexel(index, 10 + texel.x + texel.y * 8);
-            const float3 hitPoint = probeVisibilityDirection(texel) * surface.x;
-            const float denominator = dot(surface.yzw, direction);
-            float depth = surface.x;
-            if (dot(surface.yzw, surface.yzw) > 0.5 && abs(denominator) > 0.00001) {
-                const float planeDepth = dot(surface.yzw, hitPoint) / denominator;
-                // A visibility texel describes a finite angular footprint, not an
-                // infinite plane. At silhouettes (stair risers, wall ends), distant
-                // plane extensions must not occlude an unrelated narrow passage.
-                const float footprint = max(surface.x * 0.5, bias);
-                if (planeDepth > 0 && length(direction * planeDepth - hitPoint) <= footprint)
-                    depth = planeDepth;
-                else {
-                    // If the receiver lies on this plane it is unoccluded even
-                    // at grazing angles, where projection spans multiple texels.
-                    const float planeSeparation = dot(surface.yzw, direction * receiverDistance - hitPoint);
-                    if (abs(planeSeparation) <= bias * 2) depth = receiverDistance + bias;
-                }
-            }
-            const float2 w = lerp(1-fraction, fraction, float2(x,y));
-            const float visible = 1-smoothstep(depth + bias, depth + bias*2, receiverDistance);
-            visibility += visible * w.x * w.y;
-        }
-        return visibility;
-    }
-    // Keep a full triangle at the map edges. Extrapolating its plane also
-    // preserves planar receivers across the octahedral map's seams.
-    const int2 cell = clamp(int2(floor(coordinate)), int2(0), int2(6));
-    const float2 fraction = coordinate - float2(cell);
-    const float3 a = probeVisibilityPoint(index, cell);
-    const float3 b = probeVisibilityPoint(index, cell + int2(1, 0));
-    const float3 c = probeVisibilityPoint(index, cell + int2(0, 1));
-    const float3 d = probeVisibilityPoint(index, cell + int2(1, 1));
-    const float3 planeNormal = fraction.x + fraction.y <= 1 ? cross(b-a, c-a) : cross(c-d, b-d);
-    const float3 planePoint = fraction.x + fraction.y <= 1 ? a : d;
-    const float denominator = dot(planeNormal, direction);
-    const float distance = abs(denominator) > 1e-8 ? dot(planeNormal, planePoint) / denominator : -1;
-    // Degenerate/discontinuous samples must not produce infinite or negative depths.
-    const float visibleDistance = distance > 0 ? distance : min(min(length(a), length(b)), min(length(c), length(d)));
-    return receiverDistance <= visibleDistance + bias ? 1 : 0;
-}
-
-// Eight cell neighbours, visibility rejection, normal weighting and normalized
-// interpolation. Invalid/occluded probes never contribute light across walls.
-float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base)
-{
-    if (any(uvw < 0) || any(uvw > 1)) return float4(0);
-    const int3 resolution = int3(res);
-    const float3 grid = uvw * res - 0.5;
-    const int3 cell = int3(floor(grid));
-    const float3 fraction = frac(grid);
-    const float basis[9] = {0.282095, 0.488603*normal.y, 0.488603*normal.z, 0.488603*normal.x,
-        1.092548*normal.x*normal.y, 1.092548*normal.y*normal.z, 0.315392*(3*normal.z*normal.z-1),
-        1.092548*normal.x*normal.z, 0.546274*(normal.x*normal.x-normal.y*normal.y)};
-    float3 irradiance = float3(0);
-    float sum = 0;
-    const float bias = min(0.002, min(size.x/res.x, min(size.y/res.y, size.z/res.z)) * 0.01);
-    for (int z = 0; z < 2; ++z) for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
-        const int3 c = clamp(cell + int3(x,y,z), int3(0), resolution - 1);
-        const int index = base + c.x + resolution.x * (c.y + resolution.y * c.z);
-        const float4 probe = probeTexel(index, 0);
-        if (probe.w < 0.5) continue;
-        // A probe on the back side of the receiver cannot illuminate its
-        // front face. In particular, a visibility hit on the wall itself is
-        // not permission to transfer lighting through that wall.
-        if (dot(receiverNormal, probe.xyz-position) < -bias) continue;
-        const float3 delta = position + receiverNormal * bias - probe.xyz;
-        const float distance = length(delta);
-        const float3 direction = delta / max(distance, 0.0001);
-        const float visibility = probeVisibility(index, direction, distance, bias);
-        if (visibility <= 0) continue;
-        const float3 w = lerp(1-fraction, fraction, float3(x,y,z));
-        const float weight = w.x*w.y*w.z * max(0.05, dot(receiverNormal, -direction)) * visibility;
-        float3 light = float3(0);
-        for (int k = 0; k < 9; ++k) light += probeTexel(index,1+k).rgb * basis[k];
-        irradiance += max(light,0.0) * weight;
-        sum += weight;
-    }
-    // Within the baked volume, missing visibility means darkness, not fallback
-    // sky lighting, which would otherwise reintroduce leaks through solid walls.
-    return float4(irradiance / max(sum,0.00001), 1);
-}
-
-float3 diffuseVolumeCoordinates(int index, float3 position)
-{
-    const float3 delta=position-probeTexel(index,0).xyz;
-    const float3 x=probeTexel(index,3).xyz, y=probeTexel(index,4).xyz, z=probeTexel(index,5).xyz;
-    // Old/manual atlas headers with no basis describe world-aligned grids.
-    const float3 local=dot(x,x)>0 ? float3(dot(x,delta),dot(y,delta),dot(z,delta)) : delta;
-    return local/probeTexel(index,1).xyz;
-}
-
-float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
-{
-    int selected = -1;
-    float finest = 1e30;
-    for (int i=0; i<int(probeOrigin.w); ++i) {
-        const float3 origin=probeTexel(i,0).xyz, size=probeTexel(i,1).xyz;
-        const float3 uvw=diffuseVolumeCoordinates(i,position);
-        if (any(uvw<0) || any(uvw>1)) continue;
-        const float3 cellSize=size/probeTexel(i,2).xyz;
-        const float spacing=max(cellSize.x,max(cellSize.y,cellSize.z));
-        if (spacing<finest) { finest=spacing; selected=i; }
-    }
-    if (selected<0) return float4(0);
-    const float4 resolution=probeTexel(selected,2);
-    return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(selected,position),probeTexel(selected,1).xyz,resolution.xyz,int(resolution.w));
-}
+#include "AmbientProbeSampling.slang"
 
 float iblWeight(int index, float3 position)
 {
@@ -700,35 +556,14 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
         float depth = coordinate.z - max(0.0000005, vsm.metrics[level].x * lerp(0.25, 1.0, slope) / vsm.metrics[level].y);
         float visibility = 0, weightSum = 0;
         const int2 nearestTexel = int2(floor(position + 0.5));
-        // Common softness-1 footprint: gather raw depths, not comparison
-        // results, so each tap retains its own receiver-plane correction.
-        // Keep the scalar path for page crossings and all other footprints.
-        if (pointParameters.w != 3.0 && all(last - first == int2(3, 3)) && all(lowPage == highPage))
+        // A resident contiguous footprint needs one raw gather per 2x2 block.
+        // Page crossings and diagnostic reference mode retain scalar addressing.
+        if (pointParameters.w != 3.0 && all(lowPage == highPage))
         {
-            const float2 gatherOrigin = float2(first + atlasOffsets[0] + 1);
-            float4 depths[4];
-            depths[0] = virtualShadowAtlas.GatherRed(gatherOrigin / vsm.pool.z);
-            depths[1] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 0)) / vsm.pool.z);
-            depths[2] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(0, 2)) / vsm.pool.z);
-            depths[3] = virtualShadowAtlas.GatherRed((gatherOrigin + float2(2, 2)) / vsm.pool.z);
-            // Gather components are (lower-left, lower-right, upper-right,
-            // upper-left) in texture coordinates: row-major indices 3,2,0,1.
-            // Unroll to keep gathers in registers and preserve scalar summation order.
-            [unroll] for (int y = 0; y < 4; ++y)
-                [unroll] for (int x = 0; x < 4; ++x)
-                {
-                    const int2 texel = first + int2(x, y);
-                    const int component = (y & 1) == 0 ? 3 - (x & 1) : (x & 1);
-                    const float storedDepth = depths[(y / 2) * 2 + x / 2][component];
-                    const float2 tapUv = (float2(texel) + 0.5) / virtualResolution(vsm, level);
-                    const float comparison = depth + dot(gradient, tapUv - coordinate.xy) <= storedDepth ? 1.0 : 0.0;
-                    const float2 tent = max(support - abs(float2(texel) - position), 0.0);
-                    const float weight = tent.x * tent.y;
-                    visibility += comparison * weight; weightSum += weight;
-                    if (all(texel == nearestTexel)) rawVisibility = comparison;
-                }
             normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
-            return visibility / max(weightSum, 0.000001);
+            return filterResidentVirtualTent(virtualShadowAtlas, vsm.pool.z,
+                virtualResolution(vsm, level), atlasOffsets[0], first, last, position,
+                coordinate.xy, gradient, depth, support, nearestTexel, rawVisibility);
         }
         const int pageBoundaryX = (lowPage.x + 1) * PLUTO_VSM_PAGE_SIZE;
         const int pageBoundaryY = (lowPage.y + 1) * PLUTO_VSM_PAGE_SIZE;
@@ -1151,25 +986,23 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     const float3 subsurfaceLighting = sampledColor.rgb * max(subsurfaceColorStrength.rgb, 0.0) *
                                       (wrappedNdotL * 0.65 + backScatter * 0.35) *
                                       directionalColor.rgb * directionalDirectionIntensity.w * subsurfaceStrength;
+    const float3 unshadowedDirectionalLighting = direct * (1.0 - subsurfaceStrength) + subsurfaceLighting;
+    const bool needsDirectionalShadow = customLighting || geometryParameters.x > 0.5 || any(unshadowedDirectionalLighting != float3(0.0));
     float shadowVisibility = 1.0;
     float rawShadowVisibility = 1.0;
     float normalizedCascade = 0.0;
     // pointParameters.w records the explicit geometry diagnostic mode.
     // Mode 2 bypasses directional receiver sampling without changing page generation.
-    if (shadowsEnabled != 0 && pointParameters.w != 2.0)
+    if (shadowsEnabled != 0 && pointParameters.w != 2.0 && needsDirectionalShadow)
     {
         // Evaluate derivatives before any per-pixel cascade-dependent work so
         // they remain continuous when a 2x2 fragment quad straddles a split.
-        const float3 shadowWorldDx = ddx(input.worldPosition);
-        const float3 shadowWorldDy = ddy(input.worldPosition);
+        const float3 shadowWorldDx = pointWorldDx;
+        const float3 shadowWorldDy = pointWorldDy;
         // Shadow bias must follow the actual receiver plane. A normal-map
         // perturbation is a lighting detail and can point the bias back into
         // the geometry, which becomes visible as acne in wider cascades.
-        float3 shadowNormal = cross(shadowWorldDx, shadowWorldDy);
-        const float shadowNormalLengthSquared = dot(shadowNormal, shadowNormal);
-        shadowNormal = shadowNormalLengthSquared > 0.000000000001
-            ? shadowNormal * rsqrt(shadowNormalLengthSquared)
-            : normalize(input.worldNormal);
+        float3 shadowNormal = pointReceiverNormal;
         if (dot(shadowNormal, input.worldNormal) < 0.0)
             shadowNormal = -shadowNormal;
         const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
@@ -1293,7 +1126,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
         ambient = lerp(ambient, capturedAmbient / max(weightSum, 0.0001), saturate(weightSum));
     }
-    float3 directionalLighting=(direct * (1.0 - subsurfaceStrength) + subsurfaceLighting) * shadowVisibility;
+    float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
     if(customLighting)
     {
         directionalLighting=float3(0.0);
@@ -1381,11 +1214,7 @@ FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
         const int index = int(input.probeDebug.y);
         float3 color = float3(1,0.025,0.025);
         if (input.probeDebug.x < 1.5 && probeOrigin.w > 0.5) {
-            const float basis[9] = {0.282095,0.488603*n.y,0.488603*n.z,0.488603*n.x,
-                1.092548*n.x*n.y,1.092548*n.y*n.z,0.315392*(3*n.z*n.z-1),
-                1.092548*n.x*n.z,0.546274*(n.x*n.x-n.y*n.y)};
-            color = float3(0);
-            for (int c = 0; c < 9; ++c) color += probeTexel(index+int(probeOrigin.w),1+c).rgb*basis[c];
+            color = evaluateProbeIrradiance(index + int(probeOrigin.w), n);
             color = max(color,0.0)/PI;
         }
         else if (input.probeDebug.x > 1.5 && input.probeDebug.x < 2.5 && iblSettings[index].x > 0.5) {

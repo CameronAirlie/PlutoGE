@@ -124,8 +124,11 @@ namespace PlutoGE::render
             std::array<glm::vec4, 4> iblOriginIntensity{}, iblSizeBlend{}, iblSettings{};
             std::array<glm::vec4, 36> iblIrradiance{};
             glm::vec4 probeOrigin{}, probeSize{}, probeResolution{};
+            glm::vec4 probeAtlasParameters{}; // Prepared hit-point row and volume descriptors present.
+            std::array<AmbientProbeVolumeParameters, PLUTO_AMBIENT_PROBE_VOLUMES> probeVolumes{};
+            glm::vec4 geometryParameters{}; // Preserve receiver shadow sampling for diagnostic outputs.
         };
-        static_assert(sizeof(BasicFrameParameters) == 5312);
+        static_assert(sizeof(BasicFrameParameters) == 6112);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -1970,6 +1973,11 @@ namespace PlutoGE::render
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
         frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
+        frameParameters.probeAtlasParameters = glm::vec4(lighting.diffuseProbeHitPointRow,
+            lighting.diffuseProbeVolumesPrepared ? 1.0f : 0.0f, lighting.diffuseProbeSummaryRow,
+            0.0f);
+        frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
+        frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};

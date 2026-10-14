@@ -300,6 +300,7 @@ namespace PlutoGE::render
       };
       std::unordered_map<const Texture *, CachedIblCapture> m_iblCaptures;
       rhi::Texture m_diffuseProbeAtlas;
+      int m_diffuseProbeHitPointRow = 0, m_diffuseProbeSummaryRow = 0;
       const scene::Scene *m_diffuseProbeScene = nullptr;
       std::uint64_t m_diffuseProbeRevision = 0;
       // One CPU-only job bounds worker count and temporary image memory.

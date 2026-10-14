@@ -48,9 +48,9 @@
 
 namespace
 {
-    std::vector<std::uint32_t> ReadSpirv(const char *name)
+    std::vector<std::uint32_t> ReadSpirv(const char *name, const std::filesystem::path &directory = PLUTO_RHI_TEST_SHADER_DIR)
     {
-        std::ifstream input(std::filesystem::path(PLUTO_RHI_TEST_SHADER_DIR) / name, std::ios::binary | std::ios::ate);
+        std::ifstream input(directory / name, std::ios::binary | std::ios::ate);
         if (!input)
             return {};
         const auto size = input.tellg();
@@ -207,7 +207,22 @@ int main(int argc, char **argv)
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
         {
-            CheckIblRendering(device, shaders);
+            auto reference = shaders;
+            if (argc > 2)
+            {
+                const std::filesystem::path directory(argv[2]);
+                reference.fragment.spirv = ReadSpirv("BasicLit.fragment.spv", directory);
+                reference.standardFragment.spirv = ReadSpirv("BasicLitStandard.fragment.spv", directory);
+                reference.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv", directory);
+                reference.compactFragments[0][0].spirv = ReadSpirv("BasicLitColor.fragment.spv", directory);
+                reference.compactFragments[0][1].spirv = ReadSpirv("BasicLitColorMotion.fragment.spv", directory);
+                reference.compactFragments[1][0].spirv = ReadSpirv("BasicLitStandardColor.fragment.spv", directory);
+                reference.compactFragments[1][1].spirv = ReadSpirv("BasicLitStandardColorMotion.fragment.spv", directory);
+                if (reference.fragment.spirv.empty() || reference.standardFragment.spirv.empty())
+                    throw std::runtime_error("Reference ambient shaders are missing");
+                shaders.standardFragment.spirv = ReadSpirv("BasicLitStandard.fragment.spv");
+            }
+            CheckIblRendering(device, shaders, argc > 2 ? &reference : nullptr);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")

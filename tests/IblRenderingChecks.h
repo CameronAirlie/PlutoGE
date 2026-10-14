@@ -10,10 +10,12 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 
 inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
-                             PlutoGE::render::BasicRendererShaderPackage shaders)
+                             PlutoGE::render::BasicRendererShaderPackage shaders,
+                             const PlutoGE::render::BasicRendererShaderPackage *referenceShaders = nullptr)
 {
     using namespace PlutoGE;
     using namespace render;
@@ -51,6 +53,14 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     shaders.virtualShadows = {};
     RhiSceneRenderer renderer;
     require(renderer.Initialize(device, shaders), "Cannot initialize IBL scene renderer");
+    std::unique_ptr<RhiSceneRenderer> reference;
+    if (referenceShaders)
+    {
+        auto package = *referenceShaders;
+        package.virtualShadows = {};
+        reference = std::make_unique<RhiSceneRenderer>();
+        require(reference->Initialize(device, package), "Cannot initialize reference IBL renderer");
+    }
     BasicLighting lighting; lighting.shadowsEnabled = false; lighting.ambientIntensity = lighting.directionalIntensity = 0;
     CameraData camera{glm::mat4(1),glm::mat4(1)};
     const auto frame = [&] {
@@ -58,6 +68,16 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
             PostProcessDebugView::None,true,&scene,std::nullopt,{},true), "IBL scene render failed");
         const auto image = device.ReadTextureRgbaFloat(renderer.GetColorTexture());
         require(image.size() == 32*32*4, "HDR readback dimensions differ");
+        if (reference)
+        {
+            require(reference->Render(32,32,camera,lighting,std::span(&command,1),{},{},{},{},
+                PostProcessDebugView::None,true,&scene,std::nullopt,{},true), "Reference IBL render failed");
+            const auto expected = device.ReadTextureRgbaFloat(reference->GetColorTexture());
+            require(expected.size() == image.size(), "Reference IBL dimensions differ");
+            for (std::size_t i = 0; i < image.size(); ++i)
+                require(std::isfinite(image[i]) && std::abs(image[i] - expected[i]) <= .001f + std::abs(expected[i]) * .0001f,
+                        "Optimized ambient lighting differs from the reference image");
+        }
         const auto center = (16*32+16)*4;
         return glm::vec3(image[center],image[center+1],image[center+2]);
     };
@@ -107,7 +127,11 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     command.probeDebug = {0,0};
     lighting.directionalIntensity = 0;
     material.SetRoughness(1);
-    require(frame().r < .01f, "Rough IBL mips leak neighbouring atlas faces");
+    const auto roughReflection = frame();
+    // GGX convolution deliberately mixes cubemap faces at high roughness.
+    require(roughReflection.r > reflection.r + .1f && roughReflection.b < reflection.b,
+            "Rough IBL convolution does not broaden the reflected lobe");
+    material.SetRoughness(.02f);
     material.SetAlphaMode(AlphaMode::Blend);
     require(frame().b > .9f, "Transparent surfaces lost local IBL");
     material.SetAlphaMode(AlphaMode::Opaque);
@@ -138,6 +162,9 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     scene.SetBakedProbeVolume(grid);
     const auto green = frame();
     require(green.g > .8f && green.r < .01f && green.b < .01f, "RHI does not sample the diffuse probe grid");
+    material.SetMetallic(1);
+    require(glm::length(frame()) < .01f, "A pure metal receives diffuse probe irradiance");
+    material.SetMetallic(0);
     // The receiver lies inside a long rotated grid, then outside its narrow
     // axis while still inside its world AABB. Lookup must use grid coordinates.
     auto *rotatedComponent=scene.GetAmbientLightVolumes().front();

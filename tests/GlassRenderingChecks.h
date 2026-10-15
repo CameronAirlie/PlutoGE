@@ -66,6 +66,66 @@ void CheckGlassRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
     const auto tinted = render(draws);
     require(tinted[0] + 20 < clear[0] && std::abs(tinted[1]-clear[1]) <= 3,
             "Glass absorption did not tint transmitted light");
+    // Smoke in front of a tinted pane must cover it; smoke behind it must
+    // remain tinted. Exercise a single emitter spanning both sides as well.
+    for (const bool instanced : {false, true})
+    {
+        BasicParticleDraw smoke;
+        smoke.parameters.values[0] = glm::vec4(1);
+        smoke.parameters.values[2].x = 1;
+        smoke.parameters.values[3] = {1, 1, 0, 0};
+        const auto addSmoke = [&](float z) {
+            if (instanced)
+                smoke.instances.push_back({{0, 0, z, 0}, {1, 0, 0, 1}, {0, 1, 0, 1}});
+            else
+                for (const auto index : indices)
+                    smoke.vertices.push_back({{vertices[index].position[0], vertices[index].position[1], z},
+                        {1, 0, 0, 1}, {vertices[index].uv[0], vertices[index].uv[1]},
+                        {0, 1, 0, 1}, {0, 0, z}});
+        };
+        const auto smokeRed = [&]() {
+            renderer.Render(glm::mat4(1), lighting, draws, {}, {}, PostProcessDebugView::None,
+                            nullptr, nullptr, true, {}, {&smoke, 1});
+            const auto pixels = readPixels(renderer.GetColorTexture());
+            return int(pixels[(renderer.GetHeight()/2 * renderer.GetWidth() + renderer.GetWidth()/2) * 4]);
+        };
+        addSmoke(.4f);
+        require(smokeRed() < 100, "Smoke behind glass lost its absorption");
+        addSmoke(.8f);
+        require(smokeRed() > 240, "Glass rendered over foreground smoke in a straddling emitter");
+        smoke.instances.clear(); smoke.vertices.clear();
+        addSmoke(.8f);
+        require(smokeRed() > 240, "Glass rendered over foreground smoke");
+        // The same billboard is in front of the left half of an angled pane
+        // and behind its right half. Center sorting cannot represent this.
+        smoke.instances.clear(); smoke.vertices.clear();
+        addSmoke(.6f);
+        draws[0].model[0].z = .4f;
+        renderer.Render(glm::mat4(1), lighting, draws, {}, {}, PostProcessDebugView::None,
+                        nullptr, nullptr, true, {}, {&smoke, 1});
+        const auto angledPixels = readPixels(renderer.GetColorTexture());
+        const auto sampleRed = [&](const auto &pixels, float x) {
+            return int(pixels[(renderer.GetHeight()/2 * renderer.GetWidth() +
+                               int(renderer.GetWidth() * x)) * 4]);
+        };
+        require(sampleRed(angledPixels, .35f) > 240, "Angled glass covered smoke in front of its visible surface");
+        require(sampleRed(angledPixels, .65f) < 100, "Smoke behind angled glass escaped absorption");
+        draws[0].model[0].z = 0;
+        // Pixels outside the pane still receive smoke once, including partial alpha.
+        for (auto &instance : smoke.instances) instance.color.a = .5f;
+        for (auto &vertex : smoke.vertices) vertex.color.a = .5f;
+        renderer.Render(glm::mat4(1), lighting, {&background, 1}, {}, {}, PostProcessDebugView::None,
+                        nullptr, nullptr, true, {}, {&smoke, 1});
+        const auto outsideReference = readPixels(renderer.GetColorTexture());
+        draws[0].model[0].x = .3f;
+        renderer.Render(glm::mat4(1), lighting, draws, {}, {}, PostProcessDebugView::None,
+                        nullptr, nullptr, true, {}, {&smoke, 1});
+        const auto outsidePane = readPixels(renderer.GetColorTexture());
+        require(std::abs(sampleRed(outsideReference, .7f) - sampleRed(outsidePane, .7f)) <= 2,
+                "Smoke outside glass coverage was missing or blended twice");
+        draws[0].model[0].x = 1;
+
+    }
     draws[0].twoSided = false;
     require(render(draws) == tinted, "Single-sided glass culled its front face");
     draws[0].twoSided = true;

@@ -120,7 +120,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^SSAO")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang")
         endif()
-        if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass")
+        if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
@@ -237,6 +237,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(GeometryDepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GeometryDepth.slang" depthVertexMain depthFragmentMain)
     pluto_add_slang_graphics_shader(GeometryDepthInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GeometryDepth.slang" depthInstancedVertexMain depthFragmentMain)
     pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
+    pluto_add_slang_graphics_shader(ParticleBoundary "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain particleBoundaryMain)
     pluto_add_slang_graphics_shader(GlassSceneCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(GlassColorCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain colorFragment)
     pluto_add_slang_graphics_shader(GlassDepthCopy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GlassSceneCopy.slang" vertexMain depthFragment)

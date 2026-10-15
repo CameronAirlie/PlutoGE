@@ -116,6 +116,8 @@ add_test(NAME PlutoGEVulkanCloudTransformTests COMMAND PlutoGEVulkanRhiTests --c
 add_test(NAME PlutoGEOpenGLCloudTransformTests COMMAND PlutoGEOpenGLRhiTests --cloud-transforms)
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
+add_test(NAME PlutoGEOpenGLGlassTests COMMAND PlutoGEOpenGLRhiTests --glass-only)
+add_test(NAME PlutoGEVulkanGlassTests COMMAND PlutoGEVulkanRhiTests --glass-only)
 add_test(NAME PlutoGEOpenGLIblTests COMMAND PlutoGEOpenGLRhiTests --ibl-only)
 add_test(NAME PlutoGEVulkanIblTests COMMAND PlutoGEVulkanRhiTests --ibl-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)

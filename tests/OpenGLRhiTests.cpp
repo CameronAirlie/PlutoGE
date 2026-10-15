@@ -182,6 +182,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.instancedVertex.glsl = ReadText("BasicLitInstanced.vertex.glsl");
         shaders.fragment.glsl = ReadText("BasicLit.fragment.glsl");
         shaders.transparentFragment.glsl = ReadText("Glass.fragment.glsl");
+        shaders.particleBoundaryFragment.glsl = ReadText("ParticleBoundary.fragment.glsl");
         shaders.glassSceneCopy.vertex.glsl = ReadText("GlassSceneCopy.vertex.glsl");
         shaders.glassSceneCopy.fragment.glsl = ReadText("GlassSceneCopy.fragment.glsl");
         shaders.glassColorCopy.vertex.glsl = ReadText("GlassColorCopy.vertex.glsl");
@@ -290,6 +291,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                              std::string_view(argv[1]) == "--particles-points-only" ||
                              std::string_view(argv[1]) == "--decals-only" ||
                              std::string_view(argv[1]) == "--transparency-only" ||
+                             std::string_view(argv[1]) == "--glass-only" ||
                              std::string_view(argv[1]) == "--opaque-batching" ||
                              std::string_view(argv[1]) == "--render-optimizations"))
                 shaders.virtualShadows = {};
@@ -313,7 +315,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             CheckIblRendering(device, shaders);
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")
+        if (argc > 1 && (std::string_view(argv[1]) == "--transparency-only" ||
+                         std::string_view(argv[1]) == "--glass-only"))
         {
             const auto read = [&](render::rhi::TextureHandle texture) {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
@@ -322,6 +325,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 return pixels;
             };
             CheckGlassRendering(basicRenderer, read);
+            if (std::string_view(argv[1]) == "--glass-only") return glGetError() == GL_NO_ERROR ? 0 : 1;
             CheckTransparencyDepth(basicRenderer, device, read);
             CheckEmissionTexture(basicRenderer, device, read);
             if (glGetError() != GL_NO_ERROR) return 1;

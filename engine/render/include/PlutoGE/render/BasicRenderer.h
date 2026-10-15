@@ -222,7 +222,7 @@ namespace PlutoGE::render
         // Optional per-graph specialisations of fragment, compactFragments[0]
         // and coverageFragments[0]. Null keeps graphs interpreted.
         std::shared_ptr<ShaderGraphVariantCache> graphVariants;
-        rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment;
+        rhi::GraphicsPipelineDescriptor::ShaderCode transparentFragment, particleBoundaryFragment;
         BasicPostProcessShaderPackage glassSceneCopy;
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
@@ -360,7 +360,7 @@ namespace PlutoGE::render
         glm::mat4 view{1};
         // Lanes: material 0-1, shape/depth 2, flipbook 3, smoke 4-6,
         // volume 7-8, local positions/ranges 9-12, colors/types 13-16,
-        // local directions 17-20, trail 21, reserved 22, viewport 23.
+        // local directions 17-20, trail 21, spot cone cosines 22, viewport / transparency clipping 23.
         std::array<glm::vec4, 24> values{};
     };
     // Matches the structured buffer in Particles.slang. One record per billboard.
@@ -945,6 +945,8 @@ namespace PlutoGE::render
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
         rhi::GraphicsPipeline m_particlePipeline;
+        rhi::GraphicsPipeline m_particleBoundaryPipeline, m_particleBoundaryTwoSidedPipeline;
+        std::array<rhi::Texture, 2> m_particleTransparencyDepth;
         rhi::GraphicsPipeline m_decalPipeline, m_decalSnapshotPipeline;
         std::vector<rhi::Buffer> m_decalParameters;
         rhi::Texture m_decalColorSnapshot, m_decalAlbedoSnapshot;

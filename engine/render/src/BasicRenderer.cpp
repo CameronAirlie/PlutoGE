@@ -671,6 +671,18 @@ namespace PlutoGE::render
                 m_transparentPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
                 transparentDescriptor.cullMode = rhi::CullMode::None;
                 m_transparentTwoSidedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
+                if (!shaders.particleBoundaryFragment.glsl.empty() || !shaders.particleBoundaryFragment.spirv.empty())
+                {
+                    auto boundary = transparentDescriptor;
+                    boundary.fragmentShader = shaders.particleBoundaryFragment;
+                    boundary.colorFormats = {rhi::Format::R32Float};
+                    boundary.blend.enabled = false;
+                    boundary.cullMode = rhi::CullMode::Back;
+                    boundary.debugName = "Particle transparent surface boundary";
+                    m_particleBoundaryPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(boundary));
+                    boundary.cullMode = rhi::CullMode::None;
+                    m_particleBoundaryTwoSidedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(boundary));
+                }
                 rhi::GraphicsPipelineDescriptor copy;
                 copy.vertexShader = shaders.glassSceneCopy.vertex;
                 copy.fragmentShader = shaders.glassSceneCopy.fragment;
@@ -731,7 +743,9 @@ namespace PlutoGE::render
                 particle.resourceBindings = {
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
                 particle.vertexLayout = {
                     sizeof(BasicParticleVertex),
                     {{0, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, position)},
@@ -1336,6 +1350,8 @@ namespace PlutoGE::render
         for (auto &target : m_ssaoHistoryTargets)
             target.Reset();
         m_particlePipeline.Reset();
+        m_particleBoundaryPipeline.Reset();
+        m_particleBoundaryTwoSidedPipeline.Reset();
         m_decalPipeline.Reset(); m_decalSnapshotPipeline.Reset();
         m_decalParameters.clear();
         m_decalColorSnapshot.Reset(); m_decalAlbedoSnapshot.Reset();
@@ -1440,6 +1456,7 @@ namespace PlutoGE::render
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
         m_glassDepthCopy.Reset();
+        for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_glassReflectionBuffer.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
@@ -1629,6 +1646,7 @@ namespace PlutoGE::render
                                              {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                               "BasicRenderer depth", true}));
         m_glassDepthCopy.Reset();
+        for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_colorTarget = std::move(newColor);
         m_outputCoverage = {};
         m_displayTarget = std::move(newDisplay);
@@ -2690,13 +2708,16 @@ namespace PlutoGE::render
         rhi::PipelineHandle boundDrawPipeline;
         const BasicMesh *boundDrawMesh = nullptr;
         rhi::BufferHandle boundMaterial;
+        bool recordingParticleBoundary = false;
         const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
             const auto pipeline = transparent
-                ? (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get())
+                ? (recordingParticleBoundary
+                    ? (draw.twoSided ? m_particleBoundaryTwoSidedPipeline.Get() : m_particleBoundaryPipeline.Get())
+                    : (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()))
                 : GeometryPipeline(draw, instanced, geometryLayout, recordingDepth,
                     depthPrepassActive && prepassEligible(draw) && !recordingDepth);
             if (boundDrawPipeline != pipeline)
@@ -3102,6 +3123,134 @@ namespace PlutoGE::render
         const bool needsOceanVolumeDepth = std::any_of(postProcessEffects.begin(), postProcessEffects.end(), [](const auto &effect)
             { return effect.type == BasicPostProcessEffectType::VolumetricFog ||
                      effect.type == BasicPostProcessEffectType::VolumetricCloud; });
+        // Reverse-depth intervals partition smoke at the rasterized surface,
+        // including large/angled panes whose center is at a different depth.
+        const bool hasParticleTransparency = !transparentDraws.empty() && std::ranges::any_of(particles,
+            [](const auto &draw) { return !draw.vertices.empty() || !draw.instances.empty(); });
+        rhi::TextureHandle particleLowerDepth, particleUpperDepth;
+        std::size_t particleBoundaryIndex = 0;
+        if (hasParticleTransparency)
+        {
+            if (!m_particleBoundaryPipeline)
+                throw std::runtime_error("Smoke/glass composition requires particle boundary shader artifacts");
+            if (!m_particleTransparencyDepth[0])
+                for (auto &texture : m_particleTransparencyDepth)
+                    texture = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {m_width, m_height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                         "Particle transparency boundary", true}));
+            particleLowerDepth = m_particleTransparencyDepth[0].Get();
+            rhi::RenderingInfo clear;
+            clear.colorAttachments = {particleLowerDepth};
+            clear.width = m_width; clear.height = m_height;
+            clear.clearDepth = false;
+            commands.BeginRendering(clear);
+            commands.EndRendering();
+        }
+        bool particlesPending = std::ranges::any_of(particles, [](const auto &draw)
+            { return !draw.vertices.empty() || !draw.instances.empty(); });
+        bool particlesPrepared = false;
+        const auto renderParticles = [&](bool finalInterval, const rhi::Scissor *region = nullptr) {
+            if (!particlesPending || !m_particlePipeline || (region && (region->width == 0 || region->height == 0)))
+                return;
+            if (!particlesPrepared)
+            {
+                particlesPrepared = true;
+                // Copy depth alongside color using the existing portable snapshot pass.
+                auto &snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height);
+                // Recreate on resize; depth is sampled independently from the depth attachment.
+                if (!m_particleDepthCopy || m_particleDepthSize.width != m_width || m_particleDepthSize.height != m_height)
+                {
+                    m_particleDepthCopy =
+                        rhi::Texture(*m_device, m_device->CreateTexture({m_width, m_height, rhi::Format::R32Float,
+                                                                         rhi::TextureUsage::ColorAttachment,
+                                                                         "Particle scene depth", true}));
+                    m_particleDepthSize = {m_width, m_height};
+                }
+                rhi::RenderingInfo copy;
+                copy.colorAttachments = {snapshot.Get(), m_particleDepthCopy.Get()};
+                copy.width = m_width;
+                copy.height = m_height;
+                commands.BeginRendering(copy);
+                commands.BindPipeline(m_glassSceneCopyPipeline.Get());
+                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+                // Storage uploads are recorded transfer commands on Vulkan and
+                // must finish before opening the rendering scope.
+                for (std::size_t index = 0; index < particles.size(); ++index)
+                {
+                    const auto &draw = particles[index];
+                    const bool instanced = !draw.instances.empty();
+                    if (draw.vertices.empty() && !instanced)
+                        continue;
+                    if (instanced && !m_particleInstancedPipeline)
+                        throw std::runtime_error("Instanced particles require the ParticlesInstanced shader artifact");
+                    while (m_particleVertices.size() <= index)
+                    {
+                        m_particleVertices.emplace_back();
+                        m_particleVertexCapacities.push_back(0);
+                        m_particleInstances.emplace_back();
+                        m_particleInstanceCapacities.push_back(0);
+                        m_particleParameters.emplace_back(
+                            *m_device, m_device->CreateBuffer({sizeof(BasicParticleParameters), rhi::BufferUsage::Uniform,
+                                                               "Particle parameters"}));
+                    }
+                    const auto size = instanced ? draw.instances.size() * sizeof(BasicParticleInstance)
+                                                : draw.vertices.size() * sizeof(BasicParticleVertex);
+                    auto &capacity = instanced ? m_particleInstanceCapacities[index] : m_particleVertexCapacities[index];
+                    auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
+                    if (capacity < size)
+                    {
+                        // Geometric growth avoids repeated reallocations while emitters fill.
+                        capacity = std::max(size, capacity + capacity / 2);
+                        buffer = rhi::Buffer(*m_device, m_device->CreateBuffer({capacity,
+                            instanced ? rhi::BufferUsage::Storage : rhi::BufferUsage::Vertex, "Particle data"}));
+                    }
+                    const auto *data = instanced ? reinterpret_cast<const std::byte *>(draw.instances.data())
+                                                 : reinterpret_cast<const std::byte *>(draw.vertices.data());
+                    m_device->UpdateBuffer(buffer.Get(), 0, {data, size});
+                    auto parameters = draw.parameters;
+                    parameters.values[23] = {1.0f / m_width, 1.0f / m_height,
+                                             m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, hasParticleTransparency ? 1.0f : 0.0f};
+                    m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
+                }
+            }
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_outputColor};
+            info.depthAttachment = m_depthTarget.Get();
+            info.width = m_width; info.height = m_height;
+            info.clearColor = info.clearDepth = false;
+            commands.BeginRendering(info);
+            if (region) commands.SetScissor(*region);
+            for (std::size_t index = 0; index < particles.size(); ++index)
+            {
+                const auto &draw = particles[index];
+                const bool instanced = !draw.instances.empty();
+                if (!instanced && draw.vertices.empty())
+                    continue;
+                const auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
+                commands.BindPipeline(instanced ? m_particleInstancedPipeline.Get() : m_particlePipeline.Get());
+                commands.BindUniformBuffer(0, m_particleParameters[index].Get());
+                commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
+                commands.BindTexture(4, particleLowerDepth ? particleLowerDepth : m_fallbackTexture.Get(), m_shadowSampler.Get());
+                commands.BindTexture(5, !finalInterval && particleUpperDepth ? particleUpperDepth : m_fallbackTexture.Get(), m_shadowSampler.Get());
+                if (instanced)
+                {
+                    commands.BindStorageBuffer(3, buffer.Get());
+                    commands.BindIndexBuffer(m_particleQuadIndices.Get());
+                    commands.DrawIndexedInstanced(6, static_cast<std::uint32_t>(draw.instances.size()));
+                }
+                else
+                {
+                    commands.BindVertexBuffer(buffer.Get());
+                    commands.Draw(static_cast<std::uint32_t>(draw.vertices.size()));
+                }
+            }
+            commands.EndRendering();
+            if (finalInterval) particlesPending = false;
+        };
         bool transparencyPending = !transparentDraws.empty();
         const auto renderTransparency = [&]()
         {
@@ -3166,7 +3315,7 @@ namespace PlutoGE::render
             damage.Reset(m_width, m_height);
             std::vector<rhi::Scissor> glassFootprints(transparentDraws.size());
             std::vector<rhi::Scissor> glassRasterFootprints(transparentDraws.size());
-            for (std::size_t index = 0; hasGlass && index < transparentDraws.size(); ++index)
+            for (std::size_t index = 0; (hasGlass || hasParticleTransparency) && index < transparentDraws.size(); ++index)
             {
                 if (transparentDraws[index].surfaceType == 1u)
                 {
@@ -3189,6 +3338,42 @@ namespace PlutoGE::render
             for (std::size_t paneIndex = 0; paneIndex < transparentDraws.size(); ++paneIndex)
             {
                 const auto &pane = transparentDraws[paneIndex];
+                if (hasParticleTransparency)
+                {
+                    if (rendering) { commands.EndRendering(); rendering = false; }
+                    particleUpperDepth = m_particleTransparencyDepth[1 - particleBoundaryIndex].Get();
+                    // Carry forward pixels outside this pane. Their particles are
+                    // deferred until a later pane covers them, or the final interval.
+                    rhi::RenderingInfo boundary;
+                    boundary.colorAttachments = {particleUpperDepth};
+                    boundary.width = m_width; boundary.height = m_height;
+                    boundary.clearDepth = false;
+                    commands.BeginRendering(boundary);
+                    commands.BindPipeline(m_glassDepthCopyPipeline.Get());
+                    commands.BindTexture(2, particleLowerDepth, m_shadowSampler.Get());
+                    commands.Draw(3);
+                    commands.EndRendering();
+                    boundary.clearColor = false;
+                    boundary.depthAttachment = m_depthTarget.Get();
+                    commands.BeginRendering(boundary);
+                    recordingParticleBoundary = true;
+                    geometryResourcesBound = false;
+                    boundDrawPipeline = {};
+                    boundDrawMesh = nullptr;
+                    commands.BindTexture(17, particleLowerDepth, m_shadowSampler.Get());
+                    recordDraw(pane, true, m_previousModels.size());
+                    recordingParticleBoundary = false;
+                    commands.EndRendering();
+                    renderParticles(false, &glassRasterFootprints[paneIndex]);
+                    particleLowerDepth = particleUpperDepth;
+                    particleBoundaryIndex = 1 - particleBoundaryIndex;
+                    geometryResourcesBound = false;
+                    boundDrawPipeline = {};
+                    boundDrawMesh = nullptr;
+                    skyTextureBound = false;
+                    damage.MarkWritten({0, 0, m_width, m_height});
+                    snapshotGroupEnd = paneIndex;
+                }
                 if (pane.surfaceType == 1u) ++m_frameStats.glassPanes;
                 if (pane.surfaceType == 1u && paneIndex >= snapshotGroupEnd)
                 {
@@ -3256,104 +3441,6 @@ namespace PlutoGE::render
             if (rendering)
                 commands.EndRendering();
         };
-        bool particlesPending = std::ranges::any_of(particles, [](const auto &draw)
-            { return !draw.vertices.empty() || !draw.instances.empty(); });
-        const auto renderParticles = [&]() {
-            if (!particlesPending || !m_particlePipeline)
-                return;
-            particlesPending = false;
-            // Copy depth alongside color using the existing portable snapshot pass.
-            auto &snapshot = AcquirePostProcessTarget(targetIndex++, m_width, m_height);
-            // Recreate on resize; depth is sampled independently from the depth attachment.
-            if (!m_particleDepthCopy || m_particleDepthSize.width != m_width || m_particleDepthSize.height != m_height)
-            {
-                m_particleDepthCopy =
-                    rhi::Texture(*m_device, m_device->CreateTexture({m_width, m_height, rhi::Format::R32Float,
-                                                                     rhi::TextureUsage::ColorAttachment,
-                                                                     "Particle scene depth", true}));
-                m_particleDepthSize = {m_width, m_height};
-            }
-            rhi::RenderingInfo copy;
-            copy.colorAttachments = {snapshot.Get(), m_particleDepthCopy.Get()};
-            copy.width = m_width;
-            copy.height = m_height;
-            commands.BeginRendering(copy);
-            commands.BindPipeline(m_glassSceneCopyPipeline.Get());
-            commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
-            commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
-            commands.Draw(3);
-            commands.EndRendering();
-            rhi::RenderingInfo info;
-            info.colorAttachments = {m_outputColor};
-            info.depthAttachment = m_depthTarget.Get();
-            info.width = m_width;
-            info.height = m_height;
-            info.clearColor = info.clearDepth = false;
-            // Storage uploads are recorded transfer commands on Vulkan and
-            // must finish before opening the rendering scope.
-            for (std::size_t index = 0; index < particles.size(); ++index)
-            {
-                const auto &draw = particles[index];
-                const bool instanced = !draw.instances.empty();
-                if (draw.vertices.empty() && !instanced)
-                    continue;
-                if (instanced && !m_particleInstancedPipeline)
-                    throw std::runtime_error("Instanced particles require the ParticlesInstanced shader artifact");
-                while (m_particleVertices.size() <= index)
-                {
-                    m_particleVertices.emplace_back();
-                    m_particleVertexCapacities.push_back(0);
-                    m_particleInstances.emplace_back();
-                    m_particleInstanceCapacities.push_back(0);
-                    m_particleParameters.emplace_back(
-                        *m_device, m_device->CreateBuffer({sizeof(BasicParticleParameters), rhi::BufferUsage::Uniform,
-                                                           "Particle parameters"}));
-                }
-                const auto size = instanced ? draw.instances.size() * sizeof(BasicParticleInstance)
-                                            : draw.vertices.size() * sizeof(BasicParticleVertex);
-                auto &capacity = instanced ? m_particleInstanceCapacities[index] : m_particleVertexCapacities[index];
-                auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
-                if (capacity < size)
-                {
-                    // Geometric growth avoids repeated reallocations while emitters fill.
-                    capacity = std::max(size, capacity + capacity / 2);
-                    buffer = rhi::Buffer(*m_device, m_device->CreateBuffer({capacity,
-                        instanced ? rhi::BufferUsage::Storage : rhi::BufferUsage::Vertex, "Particle data"}));
-                }
-                const auto *data = instanced ? reinterpret_cast<const std::byte *>(draw.instances.data())
-                                             : reinterpret_cast<const std::byte *>(draw.vertices.data());
-                m_device->UpdateBuffer(buffer.Get(), 0, {data, size});
-                auto parameters = draw.parameters;
-                parameters.values[23] = {1.0f / m_width, 1.0f / m_height,
-                                         m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0};
-                m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
-            }
-            commands.BeginRendering(info);
-            for (std::size_t index = 0; index < particles.size(); ++index)
-            {
-                const auto &draw = particles[index];
-                const bool instanced = !draw.instances.empty();
-                if (!instanced && draw.vertices.empty())
-                    continue;
-                const auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
-                commands.BindPipeline(instanced ? m_particleInstancedPipeline.Get() : m_particlePipeline.Get());
-                commands.BindUniformBuffer(0, m_particleParameters[index].Get());
-                commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
-                commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
-                if (instanced)
-                {
-                    commands.BindStorageBuffer(3, buffer.Get());
-                    commands.BindIndexBuffer(m_particleQuadIndices.Get());
-                    commands.DrawIndexedInstanced(6, static_cast<std::uint32_t>(draw.instances.size()));
-                }
-                else
-                {
-                    commands.BindVertexBuffer(buffer.Get());
-                    commands.Draw(static_cast<std::uint32_t>(draw.vertices.size()));
-                }
-            }
-            commands.EndRendering();
-        };
         const bool temporalUpscalerRequested =
             m_upscalerOptions.technology != rhi::TemporalUpscaler::None &&
             upscalerFrame && m_temporalUpscalerOutput &&
@@ -3409,8 +3496,8 @@ namespace PlutoGE::render
             if (!compositionPending)
                 return;
             compositionPending = false;
-            renderParticles();
             renderTransparency();
+            renderParticles(true);
             // Overlays append to this recording. Keep the frame's resources and
             // GPU scope alive through composition and the shared temporal resolve.
             core::CpuScope compositionScope("Camera stack composition", core::CpuCategory::Rendering);
@@ -3425,8 +3512,8 @@ namespace PlutoGE::render
                 continue;
             if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
             {
-                renderParticles();
                 renderTransparency();
+                renderParticles(true);
                 composeCameras();
             }
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
@@ -3663,8 +3750,8 @@ namespace PlutoGE::render
                 m_outputCoverage = m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get();
             }
         }
-        renderParticles();
         renderTransparency();
+        renderParticles(true);
         composeCameras();
         evaluateTemporalUpscaler();
         if (!linearOutput && m_displayPipeline && m_displayTarget)

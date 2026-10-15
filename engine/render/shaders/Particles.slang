@@ -23,6 +23,8 @@ struct VertexOutput
 };
 [[vk::binding(1, 0)]] Sampler2D uAlbedoTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D uSceneDepth : register(t2, space0);
+[[vk::binding(4, 0)]] Sampler2D uLowerTransparencyDepth : register(t4, space0);
+[[vk::binding(5, 0)]] Sampler2D uUpperTransparencyDepth : register(t5, space0);
 struct ParticleInstance
 {
     float4 centerRotation;
@@ -108,6 +110,15 @@ float viewDepth(float2 uv, float depth)
 
 [shader("fragment")] float4 fragmentMain(VertexOutput input) : SV_Target
 {
+    if (values[23].w > 0.5)
+    {
+        const float2 screenUv = input.position.xy * values[23].xy;
+        const float lower = uLowerTransparencyDepth.SampleLevel(screenUv, 0).r;
+        const float upper = uUpperTransparencyDepth.SampleLevel(screenUv, 0).r;
+        // Reverse Z: larger depths are nearer. Each fragment belongs to exactly
+        // one interval even when a billboard crosses an angled glass surface.
+        if (input.position.z <= lower || input.position.z > upper) discard;
+    }
     float mask = 1.0;
     if (uParticleRenderShape == 0 || uParticleRenderMode == 1)
     {

@@ -80,6 +80,7 @@ int main(int argc, char **argv)
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
+        shaders.particleBoundaryFragment.spirv = ReadSpirv("ParticleBoundary.fragment.spv");
         shaders.glassSceneCopy.vertex.spirv = ReadSpirv("GlassSceneCopy.vertex.spv");
         shaders.glassSceneCopy.fragment.spirv = ReadSpirv("GlassSceneCopy.fragment.spv");
         shaders.glassColorCopy.vertex.spirv = ReadSpirv("GlassColorCopy.vertex.spv");
@@ -242,10 +243,12 @@ int main(int argc, char **argv)
             CheckIblRendering(device, shaders, argc > 2 ? &reference : nullptr);
             return 0;
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--transparency-only")
+        if (argc > 1 && (std::string_view(argv[1]) == "--transparency-only" ||
+                         std::string_view(argv[1]) == "--glass-only"))
         {
             const auto read = [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); };
             CheckGlassRendering(renderer, read);
+            if (std::string_view(argv[1]) == "--glass-only") return 0;
             CheckTransparencyDepth(renderer, device, read);
             CheckEmissionTexture(renderer, device, read);
             return 0;

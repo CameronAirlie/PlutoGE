@@ -594,6 +594,7 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 - [Build your first playable game](docs/guide/first-game.md)
 - [Feature milestones](docs/FEATURE_MILESTONES.md)
 - [Editor iteration tools](docs/EDITOR_WORKFLOWS.md)
+- [Visual Fidelity Lab sample and material/lighting test guide](samples/VisualFidelityLab/README.md)
 - [Foliage, spatial cells, and tree collision](docs/FOLIAGE.md)
 - [C# scripting specification](docs/CSHARP_SCRIPTING.md)
 - [RmlUi project quick start](docs/RMLUI_QUICKSTART.md)

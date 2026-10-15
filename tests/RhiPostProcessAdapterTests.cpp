@@ -333,6 +333,7 @@ int main()
           StageFor(BasicPostProcessEffectType::TAA) < StageFor(BasicPostProcessEffectType::ToneMapping)) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::Material) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::Albedo) ||
+        !HasInput(InputsFor(BasicPostProcessEffectType::SSR), BasicPostProcessInput::EnvironmentSpecular) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::PhysicalSky), BasicPostProcessInput::Depth) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::VolumetricCloud), BasicPostProcessInput::Depth) ||
         !HasInput(InputsFor(BasicPostProcessEffectType::TAA), BasicPostProcessInput::History))

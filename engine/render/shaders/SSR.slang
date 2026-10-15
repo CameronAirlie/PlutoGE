@@ -1,12 +1,14 @@
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
+#include "EnvironmentBRDF.slang"
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 [[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
 [[vk::binding(4, 0)]] Sampler2D materialTexture : register(t4, space0);
 [[vk::binding(6, 0)]] Sampler2D reflectionTexture : register(t6, space0);
+[[vk::binding(8, 0)]] Sampler2D environmentSpecularTexture : register(t8, space0);
 [[vk::binding(7, 0)]] Sampler2D albedoTexture : register(t7, space0);
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
@@ -133,7 +135,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
                 weightSum += weight;
             }
-        return float4(scene.rgb + roughnessFade * sum / max(weightSum, 0.000001), scene.a);
+        const float3 correction = sum / max(weightSum, 0.000001);
+        return float4(max(scene.rgb + roughnessFade * correction, 0.0), scene.a);
     }
     const float3 view = normalize(pass.cameraPosition.xyz - position);
     const float ndotv = dot(normal, view);
@@ -160,6 +163,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const uint samples = 16;
     const float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
     float3 reflection = 0.0;
+    float3 totalResponse = 0.0;
+    float3 coveredResponse = 0.0;
 #if defined(PLUTO_SSR_UNROLL_RAYS)
     // Partially unroll fixed GGX samples without constant-folding the entire
     // ray generator. Keep the original sample and accumulation order.
@@ -183,6 +188,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         float3 ray = reflect(-view, halfVector);
         float ndotl = dot(normal, ray);
         if (ndotl <= 0.0) continue;
+        const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - saturate(vdoth), 5.0);
+        // BRDF * N.L / pdf, with pdf = D * N.H / (4 * V.H).
+        const float weight = smithG1(ndotv, a2) * smithG1(ndotl, a2) * vdoth /
+                             max(ndotv * cosTheta, 0.000001);
+        const float3 response = fresnel * weight;
+        // Include misses in the normalization. The finite ray set uses the
+        // same integrated material response as the sky/capture split sum.
+        totalResponse += response;
         const float4 viewRay = mul(pass.view, float4(ray, 0.0));
         const float4 clipRay = mul(pass.projection, viewRay);
         float previousTravel = 0.0;
@@ -222,12 +235,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 float3 hitNormal = decodeNormal(normalTexture.SampleLevel(rayUv, 0.0).xyz);
                 if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
                 {
-                    float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - saturate(vdoth), 5.0);
-                    // BRDF * N.L / pdf, with pdf = D * N.H / (4 * V.H).
-                    float weight = smithG1(ndotv, a2) * smithG1(ndotl, a2) * vdoth /
-                                   max(ndotv * cosTheta, 0.000001);
-                    reflection += sceneTexture.SampleLevel(rayUv, 0.0).rgb * fresnel * weight *
-                                  edgeFade(rayUv, pass.parameters[1].x);
+                    const float confidence = edgeFade(rayUv, pass.parameters[1].x);
+                    reflection += sceneTexture.SampleLevel(rayUv, 0.0).rgb * response * confidence;
+                    coveredResponse += response * confidence;
                 }
                 break;
             }
@@ -237,9 +247,15 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 #if defined(PLUTO_SSR_UNROLL_RAYS)
     }
 #endif
-    // Indirect specular adds to existing diffuse and direct lighting.
-    // Apply the artistic roughness fade once, at full resolution, so the
-    // half-resolution resolve cannot leak SSR onto fully rough receivers.
-    return float4(scene.rgb + reflection * (pass.parameters[0].x / float(samples)) *
-                  (traceOnly ? 1.0 : roughnessFade), scene.a);
+    // Store a signed lighting correction, not another additive light source.
+    // Per-channel coverage handles coloured metals and Fresnel consistently.
+    // A constant on-screen environment therefore matches the capture exactly,
+    // independent of finite GGX sample variance. Misses retain the fallback.
+    const float3 inverseResponse = 1.0 / max(totalResponse, float3(0.000001));
+    const float3 fallback = environmentSpecularTexture.SampleLevel(uv, 0.0).rgb;
+    const float3 coveredFraction = saturate(coveredResponse * inverseResponse);
+    const float3 reflected = reflection * inverseResponse * iblSpecularResponse(f0, roughness, ndotv);
+    const float3 correction = saturate(pass.parameters[0].x) * (reflected - fallback * coveredFraction);
+    if (traceOnly) return float4(correction, 0.0);
+    return float4(max(scene.rgb + roughnessFade * correction, 0.0), scene.a);
 }

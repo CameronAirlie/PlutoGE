@@ -1,0 +1,8 @@
+Color=0.15,0.55,0.8,0.85
+Metallic=0
+Roughness=0.25
+SurfaceType=Standard
+AlphaMode=Blend
+CastsShadow=false
+TwoSided=true
+ShaderGraph=engine://builtin/shadergraph/default-lit

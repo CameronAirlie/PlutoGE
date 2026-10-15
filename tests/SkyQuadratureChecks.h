@@ -60,6 +60,28 @@ void CheckSkyQuadrature(Device &device, const PlutoGE::render::BasicRendererShad
                 throw std::runtime_error("Leaving a diagnostic view changed normal rendering");
         }
     }
-    if (maximumDifference > 1) throw std::runtime_error("Precomputed sky differs from reference by more than one output code value");
+    // A black dielectric has no diffuse response. Any environment light here
+    // must be specular; the former metallic-only sky response made it black.
+    for (auto &vertex : vertices) vertex.normal = {0,0,1};
+    auto dielectricMesh = optimized.CreateMesh({vertices, indices});
+    draw.mesh = &dielectricMesh;
+    draw.baseColor = {0,0,0,1}; draw.metallic = 0; draw.roughness = .35f;
+    lighting.ambientIntensity = 0;
+    lighting.physicalSkyExposure = 8;
+    lighting.geometryDiagnosticMode = GeometryDiagnosticMode::None;
+    optimized.Render(glm::mat4(1), lighting, std::span(&draw,1));
+    const auto dielectric = readPixels(optimized.GetColorTexture(), 96, 64);
+    const std::size_t center = (32 * 96 + 48) * 4;
+    if (dielectric.size() != 96 * 64 * 4 ||
+        int(dielectric[center]) + int(dielectric[center+1]) + int(dielectric[center+2]) < 2)
+        throw std::runtime_error("Nonmetallic sky specular is missing");
+    lighting.physicalSkyEnabled = false;
+    optimized.Render(glm::mat4(1), lighting, std::span(&draw,1));
+    const auto dark = readPixels(optimized.GetColorTexture(), 96, 64);
+    if (int(dark[center]) + int(dark[center+1]) + int(dark[center+2]) > 0)
+        throw std::runtime_error("Disabled sky retained environmental specular");
+    // Finite cubemap and roughness-level interpolation add a small bounded
+    // specular approximation; the runtime analytic reference remains exact.
+    if (maximumDifference > 4) throw std::runtime_error("Precomputed sky maximum reference difference: " + std::to_string(maximumDifference) + "/255");
     std::cout << "Sky quadrature: 12 sky/material states, maximum output difference " << maximumDifference << "/255\n";
 }

@@ -37,6 +37,39 @@ graphics driver is still required at runtime.
 | Upscaling | Spatial upscaling; optional Vulkan [FSR 2](FSR2.md) and [DLSS Super Resolution](DLSS.md), subject to build flags, SDKs and hardware |
 | UI | Native runtime UI and RmlUi, with OpenGL/Vulkan rendering integrations |
 
+## Environmental lighting and reflection composition
+
+The RHI standard and shader-graph surface paths use the same split-sum GGX
+response for physical sky and captured reflection lighting. Nonmetals retain
+dielectric specular reflections. Diffuse probe grids replace diffuse irradiance
+without discarding sky specular; local captures blend diffuse and specular
+separately, retaining normalized overlap weights and box-projected reflections.
+
+Physical sky specular uses a packed 64-pixel cubemap with seven GGX roughness
+levels and 64 convolution samples. The existing diffuse quadrature occupies the
+last atlas row. The atlas regenerates when sky parameters change; unchanged
+skies reuse it. Near-mirror surfaces use the analytic sky directly. The reference
+sky diagnostic evaluates convolution directly instead of using the atlas.
+Sky atlas filtering crosses cube-face edges explicitly. Finite atlas resolution
+and convolution samples remain approximations, particularly around narrow
+atmospheric features.
+
+SSR retains environmental specular in a separate HDR surface attachment, allocated
+when SSR or surface diagnostics require it. Its trace stores a signed lighting
+correction, using per-channel hit coverage and the shared integrated material
+response. Both the full-resolution path and bilateral reduced-resolution resolve
+replace the covered fraction of sky/probe specular. Misses and screen-edge
+fades retain the fallback; diffuse light, emission and direct highlights remain.
+SSR strength is bounded to [0,1] and retains the existing roughness fade. Diffuse
+AO excludes environmental specular, so AO cannot invalidate the replaceable
+fallback. Directional specular occlusion is not supplied by diffuse AO.
+
+These changes apply to Vulkan and OpenGL RHI rendering. The retained legacy
+OpenGL lighting-pass implementation is separate. SSR still cannot discover
+occluded or off-screen geometry: local reflection captures remain necessary for
+those cases. Glass keeps its separate refraction/reflection compositor and uses
+the same filtered sky fallback.
+
 ## Directional shadow behavior
 
 New lights and lights without an explicit saved method use VSM. Saved Cascaded

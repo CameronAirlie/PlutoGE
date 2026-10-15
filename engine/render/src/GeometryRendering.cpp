@@ -44,6 +44,7 @@ namespace PlutoGE::render
                 ensure(m_albedoTarget, rhi::Format::R8G8B8A8Unorm, "G-buffer albedo");
         }
         if (layout >= GeometryOutputLayout::SurfaceIndirect) ensure(m_indirectTarget, rhi::Format::R16G16B16A16Float, "G-buffer indirect lighting");
+        if (layout >= GeometryOutputLayout::SurfaceReflections) ensure(m_environmentSpecularTarget, rhi::Format::R16G16B16A16Float, "G-buffer environmental specular");
         if (layout == GeometryOutputLayout::Diagnostics) ensure(m_debugTarget, rhi::Format::R16G16B16A16Float, "G-buffer debug");
     }
 
@@ -138,7 +139,8 @@ namespace PlutoGE::render
             else
             {
                 const auto outputs = layout == GeometryOutputLayout::Surface || layout == GeometryOutputLayout::SurfaceIndirect ? 5u
-                    : layout == GeometryOutputLayout::SurfaceAllIndirect ? 6u : 7u;
+                    : layout == GeometryOutputLayout::SurfaceAllIndirect ? 6u
+                    : layout == GeometryOutputLayout::SurfaceReflections ? 7u : 8u;
                 descriptor.colorFormats.resize(outputs);
                 if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.colorFormats[4] = rhi::Format::R16G16B16A16Float;
                 if (standard) descriptor.fragmentShader = m_standardFragment;

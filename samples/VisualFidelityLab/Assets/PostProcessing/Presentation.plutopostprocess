@@ -1,0 +1,33 @@
+PostProcessPresetVersion 1 5
+Effect "SSR" 1 7
+Parameter 0 "Intensity" "1" 0
+Parameter 0 "Max Ray Distance" "60" 0
+Parameter 0 "Thickness" "0.2" 0
+Parameter 0 "Start Offset" "0.03" 0
+Parameter 1 "Steps" "96" 0
+Parameter 1 "Binary Search Steps" "6" 0
+Parameter 0 "Edge Fade" "0.08" 0
+Effect "SSAO" 1 8
+Parameter 0 "Radius" "0.8" 0
+Parameter 0 "Bias" "0.03" 0
+Parameter 0 "Intensity" "1" 0
+Parameter 0 "Power" "1" 0
+Parameter 1 "Samples" "32" 0
+Parameter 1 "Blur Radius" "2" 0
+Parameter 3 "Half Resolution" "true" 0
+Parameter 3 "AO Only" "false" 0
+Effect "VCTGI" 0 6
+Parameter 0 "Volume Size" "100" 0
+Parameter 1 "Cascade Count" "3" 0
+Parameter 0 "Intensity" "1" 0
+Parameter 0 "Secondary Bounce" "1" 0
+Parameter 1 "Cone Count" "4" 0
+Parameter 3 "World Cache" "true" 0
+Effect "Bloom" 1 4
+Parameter 0 "Intensity" "0.08" 0
+Parameter 0 "Threshold" "2" 0
+Parameter 0 "Radius" "0.7" 0
+Parameter 1 "Iterations" "5" 0
+Effect "ToneMapping" 1 2
+Parameter 0 "Exposure" "1" 0
+Parameter 0 "Gamma" "2.2" 0

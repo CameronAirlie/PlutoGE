@@ -1,0 +1,11 @@
+Color=0.6,0.15,0.07,1
+Metallic=0
+Roughness=0.55
+SurfaceType=Standard
+AlphaMode=Opaque
+CastsShadow=true
+TwoSided=false
+ShaderGraph=engine://builtin/shadergraph/default-lit
+Subsurface=0
+SubsurfaceColor=1,0.25,0.08
+SubsurfaceRadius=1

@@ -77,6 +77,7 @@ namespace PlutoGE::render
         History = 1u << 4u,
         Albedo = 1u << 5u,
         Indirect = 1u << 6u,
+        EnvironmentSpecular = 1u << 7u,
     };
 
     // Reference spiral remains available for controlled AO comparisons.
@@ -84,7 +85,7 @@ namespace PlutoGE::render
 
     enum class GeometryOutputLayout : std::uint8_t
     {
-        Color, ColorMotion, Surface, SurfaceIndirect, SurfaceAllIndirect, Diagnostics
+        Color, ColorMotion, Surface, SurfaceIndirect, SurfaceAllIndirect, SurfaceReflections, Diagnostics
     };
 
     enum class BasicPostProcessStage : std::uint8_t
@@ -167,7 +168,7 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
-                   BasicPostProcessInput::Material | BasicPostProcessInput::Albedo;
+                   BasicPostProcessInput::Material | BasicPostProcessInput::Albedo | BasicPostProcessInput::EnvironmentSpecular;
         case BasicPostProcessEffectType::VolumetricFog:
         case BasicPostProcessEffectType::PhysicalSky:
         case BasicPostProcessEffectType::VolumetricCloud:
@@ -765,6 +766,8 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 2> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
+        std::array<glm::vec4, 7> m_skyEnvironmentParameters{};
+        bool m_skyEnvironmentValid = false;
         rhi::Texture m_glassDepthCopy;
         rhi::Buffer m_glassReflectionBuffer;
         rhi::GraphicsPipeline m_pipeline;
@@ -829,6 +832,7 @@ namespace PlutoGE::render
         rhi::Texture m_motionTarget;
         rhi::Texture m_albedoTarget;
         rhi::Texture m_indirectTarget;
+        rhi::Texture m_environmentSpecularTarget;
         rhi::Texture m_debugTarget;
         std::array<rhi::Texture, 2> m_postProcessTargets;
         // Reusing ping-pong attachments within a recorded Vulkan chain produced

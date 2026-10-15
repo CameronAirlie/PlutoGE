@@ -223,7 +223,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         compare(original, readPixels(renderer.GetColorTexture()), .01, 1,
                 "Geometry coverage/output layout changed the reference image");
         const auto &stats = renderer.GetFrameStats();
-        require(stats.geometryColorOutputs == (scenario == 5 ? 7u : scenario == 4 ? 2u : 1u),
+        require(stats.geometryColorOutputs == (scenario == 5 ? 8u : scenario == 4 ? 2u : 1u),
                 "Geometry output requirements did not follow active consumers");
         require(stats.geometryDepthDraws == 1, "Opaque coverage prepass was not recorded");
     }

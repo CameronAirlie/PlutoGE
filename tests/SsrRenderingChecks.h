@@ -11,7 +11,7 @@
 template <class ReadPixels>
 void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
                        PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = false,
-                       bool extendedTiming = false)
+                       bool extendedTiming = false, PlutoGE::render::rhi::IRenderDevice *reflectionDevice = nullptr)
 {
     using namespace PlutoGE::render;
     constexpr std::array<BasicVertex, 4> vertices = {{
@@ -23,6 +23,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
     auto mesh = renderer.CreateMesh({vertices, indices});
     BasicLighting lighting;
+    lighting.requiredGeometryInputs = BasicPostProcessInput::Normal;
     lighting.cameraPosition = {0,2,4};
     lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0,0,-1), glm::vec3(0,1,0));
     lighting.ambientIntensity = 0;
@@ -122,6 +123,77 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             measure(.6f, 1);
         }
     ssr.parameters[1].w = configuredRefinements;
+    if (auto *device = reflectionDevice ? reflectionDevice : performanceDevice)
+    {
+        constexpr std::uint32_t captureSize = 8;
+        std::vector<glm::vec4> texels(2 * captureSize * 6 * captureSize, glm::vec4(.4f,.4f,.4f,1));
+        rhi::Texture atlas(*device, device->CreateTexture(
+            {2 * captureSize, 6 * captureSize, rhi::Format::R32G32B32A32Float,
+             rhi::TextureUsage::Sampled, "SSR replacement test capture", true},
+            std::as_bytes(std::span(texels))));
+        auto capturedLighting = lighting;
+        auto &capture = capturedLighting.iblCaptures[0];
+        capture.atlas = atlas.Get(); capture.origin = {-10,-10,-10}; capture.size = {20,20,20};
+        capture.intensity = 1; capture.resolution = captureSize;
+        auto capturedDraws = draws;
+        capturedDraws[0].baseColor = {1,1,1,1};
+        capturedDraws[0].metallic = 1; capturedDraws[0].roughness = .04f;
+        capturedDraws[1].baseColor = {0,0,0,1};
+        capturedDraws[1].metallic = 1; capturedDraws[1].emission = {0,0,0};
+        // The source radiance must be independent of its own environment
+        // reflections when testing conservation against a constant capture.
+        auto unlitSource = std::make_shared<ShaderGraphProgram>();
+        unlitSource->data.header.y = 1;
+        capturedDraws[1].shaderGraphProgram = unlitSource;
+        auto replacement = ssr;
+        replacement.parameters[0].x = 1;
+        replacement.parameters[1].x = .02f;
+        for (const float fullResolution : {0.0f, 1.0f})
+        {
+            replacement.parameters[4].w = fullResolution;
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws);
+            const auto baseline = readPixels(renderer.GetColorTexture());
+            // Use the display-space diagnostic, so the mask has the same Y
+            // orientation as final scene colour on both Vulkan and OpenGL.
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, {}, {}, PostProcessDebugView::Normal);
+            const auto normals = readPixels(renderer.GetColorTexture());
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            const auto replaced = readPixels(renderer.GetColorTexture());
+            std::size_t darker = 0;
+            for (std::size_t i=0; i<baseline.size(); i+=4)
+                if (int(normals[i+1]) > 240 && int(replaced[i])+5 < int(baseline[i])) ++darker;
+            if (darker < 5) throw std::runtime_error("SSR added dark hits instead of replacing captured specular");
+            BasicPostProcessEffect ao{BasicPostProcessEffectType::SSAO};
+            ao.quality = 32; ao.parameters[0] = {1.5f,.02f,1.25f,1};
+            ao.parameters[1] = {2,0,.9f,1}; ao.parameters[2] = {.02f,.85f,0,0};
+            const std::array occludedEffects{ao, replacement};
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, occludedEffects);
+            const auto occluded = readPixels(renderer.GetColorTexture());
+            for (std::size_t i=0; i<replaced.size(); ++i)
+                if (std::abs(int(occluded[i])-int(replaced[i])) > 1)
+                    throw std::runtime_error("Diffuse AO invalidated the SSR specular fallback");
+            // Matching capture and on-screen radiance must not brighten the
+            // receiver just because both reflection sources are available.
+            capturedDraws[1].emission = {.4f,.4f,.4f};
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            const auto matching = readPixels(renderer.GetColorTexture());
+            for (std::size_t i=0; i<baseline.size(); i+=4)
+                if (int(normals[i+1]) > 240 && int(matching[i]) > int(baseline[i])+3)
+                    throw std::runtime_error("SSR double-counted matching environmental radiance: " +
+                        std::to_string(int(baseline[i])) + " -> " + std::to_string(int(matching[i])) +
+                        " at pixel " + std::to_string(i/4));
+            capturedDraws[1].emission = {0,0,0};
+            const auto distance = replacement.parameters[0].y;
+            replacement.parameters[0].y = .00001f;
+            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            const auto missed = readPixels(renderer.GetColorTexture());
+            for (std::size_t i=0; i<baseline.size(); ++i)
+                if (std::abs(int(missed[i])-int(baseline[i])) > 1)
+                    throw std::runtime_error("SSR misses changed the capture fallback");
+            replacement.parameters[0].y = distance;
+        }
+        std::cout << "SSR capture replacement and miss preservation passed\n";
+    }
     if (performanceDevice)
     {
         for (const bool fullResolution : {true, false})
@@ -178,8 +250,8 @@ void CheckSsrStageSpecialisation(PlutoGE::render::BasicRenderer &renderer,
     PlutoGE::render::BasicRenderer reference;
     if (!reference.Initialize(device, shaders) || !reference.Resize(renderer.GetWidth(), renderer.GetHeight()))
         throw std::runtime_error("Cannot initialise SSR reference renderer");
-    CheckSsrRendering(reference, [&](auto texture) { return capture(expected, texture); });
-    CheckSsrRendering(renderer, [&](auto texture) { return capture(actual, texture); });
+    CheckSsrRendering(reference, [&](auto texture) { return capture(expected, texture); }, nullptr, false, false, &device);
+    CheckSsrRendering(renderer, [&](auto texture) { return capture(actual, texture); }, nullptr, false, false, &device);
     if (expected != actual)
         throw std::runtime_error("Specialised SSR stages changed reference pixels");
 }

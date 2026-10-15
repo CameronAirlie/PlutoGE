@@ -1,4 +1,5 @@
 #include "PlutoGE/render/VctRelighting.h"
+#include "PlutoGE/render/SkyEnvironmentConfig.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "OpaqueShadowBatches.h"
 #include "CascadedShadowLayers.h"
@@ -577,7 +578,7 @@ namespace PlutoGE::render
             descriptor.fragmentShader = shaders.fragment;
             descriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R8G8B8A8Unorm,
                                        rhi::Format::R8G8B8A8Unorm, rhi::Format::R32G32Float,
-                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
+                                       rhi::Format::R8G8B8A8Unorm, rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
             descriptor.resourceBindings = {
                 {27,0,27,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
                 {28,0,28,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment},
@@ -635,7 +636,7 @@ namespace PlutoGE::render
                 m_skyQuadratureBuffer = rhi::Buffer(device, device.CreateBuffer(
                     {7 * sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
                 m_skyQuadratureTexture = rhi::Texture(device, device.CreateTexture(
-                    {14, 1, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment, "Physical sky quadrature", true}));
+                    {PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment, "Physical sky lighting atlas", true}));
             }
             auto instancedDescriptor = descriptor;
             instancedDescriptor.vertexShader = shaders.instancedVertex;
@@ -894,6 +895,7 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::Motion, 5);
                 addInput(BasicPostProcessInput::History, 6);
                 addInput(BasicPostProcessInput::Albedo, 7);
+                addInput(BasicPostProcessInput::EnvironmentSpecular, 8);
                 if (type == BasicPostProcessEffectType::TAA)
                 {
                     postDescriptor.colorFormats = {rhi::Format::R32G32B32A32Float, rhi::Format::R32Float};
@@ -1384,6 +1386,7 @@ namespace PlutoGE::render
         m_motionTarget.Reset();
         m_albedoTarget.Reset();
         m_indirectTarget.Reset();
+        m_environmentSpecularTarget.Reset();
         m_debugTarget.Reset();
         for (auto &target : m_shadowDepthTargets)
             target.Reset();
@@ -1455,6 +1458,7 @@ namespace PlutoGE::render
         for (auto &pipeline : m_ssrStagePipelines) pipeline.Reset();
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
+        m_skyEnvironmentValid = false;
         m_glassDepthCopy.Reset();
         for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_glassReflectionBuffer.Reset();
@@ -1655,6 +1659,7 @@ namespace PlutoGE::render
         m_motionTarget.Reset();
         m_albedoTarget.Reset();
         m_indirectTarget.Reset();
+        m_environmentSpecularTarget.Reset();
         m_debugTarget.Reset();
         m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
@@ -2080,20 +2085,25 @@ namespace PlutoGE::render
         if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky)
         {
             // Generate before any receiver reads. RHI transitions the render target
-            // to sampled usage on binding; no readback or cross-frame cache is needed.
+            // to sampled usage on binding. Refilter only when sky parameters change.
             ScopedGpuTiming skyTiming(commands, "RHI Sky Quadrature");
             std::array<glm::vec4, 7> parameters;
             std::copy(frameParameters.physicalSkyParameters.begin(), frameParameters.physicalSkyParameters.end(), parameters.begin());
             parameters.back() = frameParameters.physicalSkySettings;
-            m_device->UpdateBuffer(m_skyQuadratureBuffer.Get(), 0, Bytes(parameters));
-            rhi::RenderingInfo info;
-            info.colorAttachments = {m_skyQuadratureTexture.Get()};
-            info.width = 14; info.height = 1; info.clearDepth = false;
-            commands.BeginRendering(info);
-            commands.BindPipeline(m_skyQuadraturePipeline.Get());
-            commands.BindUniformBuffer(0, m_skyQuadratureBuffer.Get());
-            commands.Draw(3);
-            commands.EndRendering();
+            if (!m_skyEnvironmentValid || parameters != m_skyEnvironmentParameters)
+            {
+                m_device->UpdateBuffer(m_skyQuadratureBuffer.Get(), 0, Bytes(parameters));
+                rhi::RenderingInfo info;
+                info.colorAttachments = {m_skyQuadratureTexture.Get()};
+                info.width = PLUTO_SKY_ATLAS_WIDTH; info.height = PLUTO_SKY_ATLAS_HEIGHT; info.clearDepth = false;
+                commands.BeginRendering(info);
+                commands.BindPipeline(m_skyQuadraturePipeline.Get());
+                commands.BindUniformBuffer(0, m_skyQuadratureBuffer.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+                m_skyEnvironmentParameters = parameters;
+                m_skyEnvironmentValid = true;
+            }
         }
         if (virtualShadowsActive)
         {
@@ -2603,6 +2613,7 @@ namespace PlutoGE::render
         if (!geometryDebug && m_compactGeometry && compactAvailable &&
             !HasInput(geometryInputs, BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Albedo))
             geometryLayout = HasInput(geometryInputs, BasicPostProcessInput::Motion) ? GeometryOutputLayout::ColorMotion : GeometryOutputLayout::Color;
+        if (HasInput(geometryInputs, BasicPostProcessInput::EnvironmentSpecular) && !geometryDebug) geometryLayout = GeometryOutputLayout::SurfaceReflections;
         EnsureGeometryTargets(geometryLayout);
         renderingInfo.colorAttachments = {m_colorTarget.Get()};
         if (geometryLayout >= GeometryOutputLayout::Surface)
@@ -2611,6 +2622,7 @@ namespace PlutoGE::render
         else if (geometryLayout == GeometryOutputLayout::ColorMotion) renderingInfo.colorAttachments.push_back(m_motionTarget.Get());
         if (geometryLayout == GeometryOutputLayout::SurfaceIndirect) renderingInfo.colorAttachments.back() = m_indirectTarget.Get();
         else if (geometryLayout >= GeometryOutputLayout::SurfaceAllIndirect) renderingInfo.colorAttachments.push_back(m_indirectTarget.Get());
+        if (geometryLayout >= GeometryOutputLayout::SurfaceReflections) renderingInfo.colorAttachments.push_back(m_environmentSpecularTarget.Get());
         if (geometryDebug) renderingInfo.colorAttachments.push_back(m_debugTarget.Get());
         renderingInfo.depthAttachment = m_depthTarget.Get();
         renderingInfo.width = m_width;
@@ -2625,6 +2637,7 @@ namespace PlutoGE::render
             {0.0f, 0.0f, 0.0f, 1.0f},    // Signed, unbiased zero motion.
             {1.0f, 1.0f, 1.0f, 1.0f},    // Neutral receiver albedo.
             {0.0f, 0.0f, 0.0f, 0.0f},    // Indirect lighting.
+            {0.0f, 0.0f, 0.0f, 0.0f},    // Environmental specular (replaceable by SSR).
             {0.0f, 0.0f, 1.0f, 1.0f},    // LOD, cascade, raw and filtered shadow visibility.
         };
         if (m_transparentBackground)
@@ -2652,7 +2665,7 @@ namespace PlutoGE::render
                 !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
         };
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
-        if (!geometryDebug) renderingInfo.clearColorValues.pop_back();
+        if (!geometryDebug) renderingInfo.clearColorValues.resize(geometryLayout == GeometryOutputLayout::SurfaceReflections ? 7u : 6u);
         if (geometryLayout == GeometryOutputLayout::SurfaceIndirect)
             renderingInfo.clearColorValues = {renderingInfo.clearColorValues[0],renderingInfo.clearColorValues[1],renderingInfo.clearColorValues[2],renderingInfo.clearColorValues[3],renderingInfo.clearColorValues[5]};
         else if (geometryLayout < GeometryOutputLayout::SurfaceIndirect) renderingInfo.clearColorValues.resize(5);
@@ -3640,6 +3653,7 @@ namespace PlutoGE::render
                     commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.BindTexture(6, reflections, m_screenSampler.Get());
+                    commands.BindTexture(8, m_environmentSpecularTarget.Get(), m_screenSampler.Get());
                     commands.BindTexture(7, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.Draw(3);
                     commands.EndRendering();

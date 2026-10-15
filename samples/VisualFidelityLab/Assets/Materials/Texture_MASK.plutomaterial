@@ -1,0 +1,10 @@
+Color=0.7,0.7,0.7,1
+Metallic=0
+Roughness=0.8
+SurfaceType=Standard
+AlphaMode=Mask
+CastsShadow=true
+TwoSided=true
+ShaderGraph=engine://builtin/shadergraph/default-lit
+AlbedoTexture=project://Textures/Cutout.png
+AlphaCutoff=0.5

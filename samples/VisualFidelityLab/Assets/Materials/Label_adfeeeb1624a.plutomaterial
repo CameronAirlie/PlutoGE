@@ -1,0 +1,9 @@
+Color=1,1,1,1
+Metallic=0
+Roughness=0.5
+SurfaceType=Standard
+AlphaMode=Opaque
+CastsShadow=true
+TwoSided=false
+ShaderGraph=engine://builtin/shadergraph/default-unlit
+AlbedoTexture=project://Textures/Label_adfeeeb1624a.png

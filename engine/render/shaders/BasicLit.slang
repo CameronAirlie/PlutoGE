@@ -63,7 +63,8 @@ struct FragmentOutput
     float4 motion : SV_Target3;
     float4 albedo : SV_Target4;
     float4 indirect : SV_Target5;
-    float4 debug : SV_Target6;
+    float4 environmentSpecular : SV_Target6;
+    float4 debug : SV_Target7;
 };
 
 [[vk::binding(0, 0)]]
@@ -131,15 +132,8 @@ float3 sampleIblRoughnessLevel(int index, int face, float2 faceUV, float level)
     return iblAtlas3.SampleLevel(uv, 0).rgb;
 }
 
-float3 iblSpecularResponse(float3 f0, float roughness, float ndotv)
-{
-    // Split-sum GGX environment BRDF, paired with the GGX capture convolution.
-    const float4 r = roughness * float4(-1, -0.0275, -0.572, 0.022) +
-                                float4(1, 0.0425, 1.04, -0.04);
-    const float a004 = min(r.x * r.x, exp2(-9.28 * ndotv)) * r.x + r.y;
-    const float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
-    return max(f0 * ab.x + ab.y, 0.0);
-}
+#include "EnvironmentBRDF.slang"
+#include "EnvironmentSampling.slang"
 
 float3 iblRadiance(int index, float3 position, float3 direction, float roughness)
 {
@@ -150,26 +144,10 @@ float3 iblRadiance(int index, float3 position, float3 direction, float roughness
                                        direction.z >= 0 ? 1 : -1) * max(abs(direction), 0.000001);
     const float3 intersections = max((lo - position) / safeDirection, (hi - position) / safeDirection);
     direction = position + direction * min(intersections.x, min(intersections.y, intersections.z)) - (lo + hi) * 0.5;
-    const float3 a = abs(direction);
     float2 faceUV;
     int face;
-    if (a.x >= a.y && a.x >= a.z)
-    {
-        face = direction.x >= 0 ? 0 : 1;
-        faceUV = float2(direction.x >= 0 ? -direction.z : direction.z, -direction.y) / max(a.x, 0.000001);
-    }
-    else if (a.y >= a.z)
-    {
-        face = direction.y >= 0 ? 2 : 3;
-        faceUV = float2(direction.x, direction.y >= 0 ? direction.z : -direction.z) / max(a.y, 0.000001);
-    }
-    else
-    {
-        face = direction.z >= 0 ? 4 : 5;
-        faceUV = float2(direction.z >= 0 ? direction.x : -direction.x, -direction.y) / max(a.z, 0.000001);
-    }
+    environmentCubeCoordinate(direction, face, faceUV);
     const float lod = saturate(roughness) * iblSettings[index].z;
-    faceUV = faceUV * 0.5 + 0.5;
     const float3 radiance = lerp(sampleIblRoughnessLevel(index, face, faceUV, floor(lod)),
                                  sampleIblRoughnessLevel(index, face, faceUV, ceil(lod)), frac(lod));
     return max(radiance, 0.0) * iblOriginIntensity[index].w;
@@ -1186,6 +1164,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         }
         }
     }
+    float3 environmentSpecular = 0.0;
     float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
     if (physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0))
     {
@@ -1194,16 +1173,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
                                          pow(1.0 - ndotv, 5.0);
         const float3 environmentDiffuse = environmentIrradiance * sampledColor.rgb *
                                           (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
-        // Approximate rough environment filtering by blending radiance toward
-        // the broad convolution. Rotating a single lookup leaves sharp sky
-        // features intact even on rough surfaces. Direct lighting owns the sun.
-        const float3 filteredEnvironment = lerp(samplePhysicalSkyEnvironment(reflectionDirection, 0.0),
-                                               environmentIrradiance, materialRoughness * materialRoughness);
-        const float3 environmentSpecular = filteredEnvironment *
-                                           ambientFresnel * materialMetallic *
-                                           (1.0 - materialRoughness * 0.45);
-        ambient = (environmentDiffuse + environmentSpecular) * physicalSkySettings.z;
+        environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
+                              iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z;
+        ambient = environmentDiffuse * physicalSkySettings.z;
     }
     // Use the actual receiver plane for hemisphere rejection and ray offsets;
     // normal maps affect SH evaluation, not which side of a wall a probe is on.
@@ -1217,6 +1189,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     }
     {
         float3 capturedAmbient = float3(0);
+        float3 capturedSpecular = float3(0);
         float weightSum = 0;
         const float3 fresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
         for (int i = 0; i < 4; ++i)
@@ -1226,11 +1199,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
             {
                 const float3 diffuse = (gridIrradiance.w > 0 ? gridIrradiance.rgb : iblDiffuse(i, normal)) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
                 const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * iblSpecularResponse(f0, materialRoughness, ndotv);
-                capturedAmbient += (diffuse + specular) * weight;
+                capturedAmbient += diffuse * weight;
+                capturedSpecular += specular * weight;
             }
             weightSum += weight;
         }
         ambient = lerp(ambient, capturedAmbient / max(weightSum, 0.0001), saturate(weightSum));
+        environmentSpecular = lerp(environmentSpecular, capturedSpecular / max(weightSum, 0.0001), saturate(weightSum));
+        ambient += environmentSpecular;
     }
     float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
     if(customLighting)
@@ -1272,10 +1248,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         const float3 absorption = exp(log(clamp(attenuationColorDistance.rgb, 0.0001, 1.0)) *
                                        pathLength / max(attenuationColorDistance.w, 0.0001));
         const float3 viewFresnel = float3(dielectricFresnel(ndotv, glassParameters.z));
-        const float3 reflectionDirection = normalize(lerp(reflect(-viewDirection, normal), normal,
-                                                          materialRoughness * materialRoughness));
+        const float3 reflectionDirection = reflect(-viewDirection, normal);
         const float3 fallbackEnvironment = physicalSkySettings.x > 0.5
-            ? samplePhysicalSkyEnvironment(reflectionDirection, 0.0) * physicalSkySettings.z
+            ? samplePhysicalSkySpecular(reflectionDirection, materialRoughness) * physicalSkySettings.z
             : float3(cameraPositionAmbient.w);
         float3 environment = blendIblReflection(fallbackEnvironment, input.worldPosition, reflectionDirection, materialRoughness);
         const float4 screenReflection = traceGlassReflection(input.worldPosition, normal, viewDirection, materialRoughness);
@@ -1302,8 +1277,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     }
 #endif
     if (shaderGraph.header.y != 0) output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
-    // AO only attenuates the indirect contribution, never emission or direct lights.
-    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(ambient, 0.0);
+    // Diffuse AO must not alter the replaceable specular fallback used by SSR.
+    // Specular visibility requires its own directional occlusion model.
+    output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, 1.0);
+    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 0.0);
     output.normal = float4(normal * 0.5 + 0.5, 1.0);
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);

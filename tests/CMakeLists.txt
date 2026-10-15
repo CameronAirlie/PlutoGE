@@ -493,6 +493,10 @@ add_executable(PlutoGERenderRoadCity EXCLUDE_FROM_ALL ../tools/RenderRoadCity.cp
 target_link_libraries(PlutoGERenderRoadCity PRIVATE PlutoGE::Scene PlutoGE::Platform)
 target_compile_definitions(PlutoGERenderRoadCity PRIVATE PLUTO_CITY_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 
+add_executable(PlutoGERenderVisualLab EXCLUDE_FROM_ALL ../tools/RenderVisualLab.cpp)
+pluto_link_engine(PlutoGERenderVisualLab)
+target_compile_definitions(PlutoGERenderVisualLab PRIVATE PLUTO_LAB_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+
 add_executable(PlutoGERhiOceanTests RhiOceanTests.cpp)
 target_link_libraries(PlutoGERhiOceanTests PRIVATE PlutoGE::Scene PlutoGE::Platform)
 target_compile_definitions(PlutoGERhiOceanTests PRIVATE PLUTO_OCEAN_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")

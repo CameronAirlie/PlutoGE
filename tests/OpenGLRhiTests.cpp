@@ -593,7 +593,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 if (snapshots.is_open()) snapshots.write(reinterpret_cast<const char *>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
                 return pixels;
-            }, nullptr, true);
+            }, nullptr, true, false, &device);
             return 0;
         }
 

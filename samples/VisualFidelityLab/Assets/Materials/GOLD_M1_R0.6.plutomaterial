@@ -1,0 +1,8 @@
+Color=1,0.766,0.336,1
+Metallic=1
+Roughness=0.6
+SurfaceType=Standard
+AlphaMode=Opaque
+CastsShadow=true
+TwoSided=false
+ShaderGraph=engine://builtin/shadergraph/default-lit

@@ -14,6 +14,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include <filesystem>
 #include <fstream>
@@ -22,15 +23,15 @@
 #include <string>
 
 // Headless scene capture for content review: like PlutoGERenderVisualLab, with a configurable
-// size, and it can bake ambient light volumes into a scene copy. Particles, managed scripts,
-// physics, UI and audio do not run.
-//   PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--size WxH]
+// size, optional particle pre-simulation, and it can bake ambient light volumes into a scene
+// copy. Managed scripts, physics, UI and audio do not run.
+//   PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--size WxH]
 //   PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>
 int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
     if (argc < 5)
-        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--size WxH]\n"
+        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--size WxH]\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>");
     auto &assets = core::Engine::GetInstance().GetAssetManager();
     assets.SetProjectContext(std::filesystem::absolute(argv[1]).string());
@@ -53,11 +54,13 @@ int main(int argc, char **argv) try
         return 0;
     }
 
+    float simulateSeconds = 0;
     unsigned width = 1280, height = 800;
     for (int argument = 5; argument < argc; ++argument)
     {
         const std::string_view option(argv[argument]);
-        if (option == "--size" && argument + 1 < argc)
+        if (option == "--simulate" && argument + 1 < argc) simulateSeconds = std::stof(argv[++argument]);
+        else if (option == "--size" && argument + 1 < argc)
         {
             const std::string size(argv[++argument]);
             const auto x = size.find('x');
@@ -101,6 +104,15 @@ int main(int argc, char **argv) try
     for (auto *root : world->GetRootEntities()) visit(visit, root);
     if (!camera || draws.empty()) throw std::runtime_error("Scene has no requested camera or renderable geometry");
 
+    // Advance only particle systems; everything else stays frozen. Without a window the engine has
+    // no render device, so systems would pick GPU simulation that this path never draws; one
+    // EmitAt at the emitter selects the CPU simulation the runtime uses.
+    constexpr float step = 1.0f / 30.0f;
+    if (simulateSeconds > 0)
+        for (auto *system : world->GetParticleSystemComponents())
+            if (system->GetOwner()) system->EmitAt(system->GetOwner()->GetWorldPosition(), 1);
+    for (float elapsed = 0; elapsed < simulateSeconds; elapsed += step)
+        for (auto *system : world->GetParticleSystemComponents()) system->Update(step);
     std::cout << draws.size() << " submeshes; " << world->GetLights().size() << " lights\n";
 
     render::rhi::vulkan::VulkanDevice device;
@@ -119,6 +131,8 @@ int main(int argc, char **argv) try
     };
     for (int frame = 0; frame < 16; ++frame)
     {
+        if (simulateSeconds > 0)
+            for (auto *system : world->GetParticleSystemComponents()) system->Update(step);
         if (!renderer.Render(width, height, view, lighting, draws, draws, effects,
                              atmosphere, pixels, render::PostProcessDebugView::None, true, world.get()))
             throw std::runtime_error("Scene render failed");

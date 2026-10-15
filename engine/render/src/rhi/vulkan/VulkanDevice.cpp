@@ -1903,7 +1903,9 @@ namespace PlutoGE::render::rhi::vulkan
                                            ? m_impl.buffers.Get(m_uniformBuffers[binding.slot])
                                            : nullptr;
                         if (!buffer)
-                            throw std::logic_error("Vulkan draw has an incomplete uniform binding");
+                            throw std::logic_error("Vulkan draw has an incomplete uniform binding (slot " +
+                                                   std::to_string(binding.slot) + ", pipeline '" +
+                                                   m_pipeline->descriptor.debugName + "')");
                         dynamicOffsets[dynamicOffsetCount++] = m_uniformDynamicOffsets[binding.slot];
                         key.resources[key.resourceCount++] = buffer->size;
                     }

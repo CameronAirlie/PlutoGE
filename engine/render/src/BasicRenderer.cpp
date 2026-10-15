@@ -3374,6 +3374,11 @@ namespace PlutoGE::render
                     boundDrawPipeline = {};
                     boundDrawMesh = nullptr;
                     commands.BindTexture(17, particleLowerDepth, m_shadowSampler.Get());
+                    // The boundary pipeline shares the glass layout. Before the first pane's glass
+                    // draw nothing has bound these yet, so bind them explicitly every time.
+                    commands.BindTexture(18, m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                    commands.BindUniformBuffer(3, m_glassReflectionBuffer.Get());
+                    commands.BindTexture(32, m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     recordDraw(pane, true, m_previousModels.size());
                     recordingParticleBoundary = false;
                     commands.EndRendering();

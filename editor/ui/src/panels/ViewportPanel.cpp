@@ -3035,8 +3035,10 @@ namespace PlutoGE::ui
                 {
                     const auto &points = navigation.GetDebugWalkablePoints();
                     const float halfCell = navigation.GetSettings().cellSize * 0.5f;
-                    const std::size_t stride = std::max<std::size_t>(1, (points.size() + 9999) / 10000);
-                    for (std::size_t index = 0; index < points.size(); index += stride)
+                    // Draw every baked cell. Subsampling this row-major list
+                    // creates checkerboard gaps that look like disconnected
+                    // navigation, even on an entirely walkable surface.
+                    for (std::size_t index = 0; index < points.size(); ++index)
                     {
                         const glm::vec3 center = points[index] + glm::vec3(0.0f, 0.035f, 0.0f);
                         const auto c0 = ProjectWorldPoint(center + glm::vec3(-halfCell, 0, -halfCell), cameraData, viewportMin, viewportSize);

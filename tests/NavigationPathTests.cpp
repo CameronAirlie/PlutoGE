@@ -2,6 +2,8 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include <iostream>
 #include <stdexcept>
 using namespace PlutoGE::scene;
@@ -14,6 +16,20 @@ int main() try
     floor->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
     NavigationBakeSettings settings; settings.boundsMin = {-4, -1, -4}; settings.boundsMax = {4, 4, 4}; settings.cellSize = 1;
     NavigationSystem navigation;
+    for (float partitionX : {0.0f, 0.5f})
+    {
+        Scene partitionScene;
+        auto *partitionFloor = partitionScene.AddEntity(std::make_unique<Entity>());
+        partitionFloor->SetPosition({0, -.5f, 0});
+        partitionFloor->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
+        auto *partition = partitionScene.AddEntity(std::make_unique<Entity>());
+        partition->SetPosition({partitionX, 2, 0});
+        partition->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {.32f, 6, 3}});
+        Check(navigation.Bake(partitionScene, settings), "Thin partition bake failed");
+        const auto partitionRoute = navigation.FindPath({-3.5f, 1, .5f}, {3.5f, 1, .5f}, .2f, 1.5f);
+        Check(partitionRoute.complete && partitionRoute.points.size() > 2,
+              "Route crossed a thin partition extending above bake bounds");
+    }
     Check(navigation.Bake(scene, settings), "Open-ground bake failed");
     const glm::vec3 start{-3.5f, 1, .5f}, end{3.5f, 1, .5f};
     const auto direct = navigation.FindPath(start, end, .2f, 1.5f);
@@ -25,12 +41,37 @@ int main() try
     Check(navigation.Bake(scene, settings), "Obstacle bake failed");
     const auto detour = navigation.FindPath(start, end, .2f, 1.5f);
     Check(detour.complete && detour.points.size() > 2, "Path crossed an obstruction instead of taking a detour");
+    const auto blockedEnd = navigation.FindPath(start, {.5f, 1, .5f}, .2f, 1.5f);
+    Check(!blockedEnd.complete || (!blockedEnd.points.empty() && blockedEnd.points.back() != glm::vec3(.5f, 1, .5f)),
+          "Projected destination was replaced with a point inside the wall");
+    const auto outsideEnd = navigation.FindPath(start, {-4.2f, 1, .5f}, .2f, 1.5f);
+    Check(outsideEnd.complete && outsideEnd.points.back().x >= settings.boundsMin.x,
+          "Projected destination was replaced with a point outside the bake");
+    Check(!navigation.FindPath({.5f, 1, .5f}, end, .2f, 1.5f).complete,
+          "Start inside an obstruction produced an unchecked connection");
+    const glm::vec3 nearby{-3.4f, 1, .6f};
+    const auto shortPath = navigation.FindPath(start, nearby, .2f, 1.5f);
+    Check(shortPath.complete && shortPath.points.size() == 2 && shortPath.points.front() == start && shortPath.points.back() == nearby,
+          "Same-cell path lost its start or destination");
     auto barrier = std::make_unique<Entity>();
     barrier->SetPosition({.5f, 1, .5f});
     barrier->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {1, 2, 12}});
     scene.AddEntity(std::move(barrier));
     Check(navigation.Bake(scene, settings), "Partitioned bake failed");
     Check(!navigation.FindPath(start, end, .2f, 1.5f).complete, "Unreachable destination reported reachable");
+    auto *meshEntity = scene.AddEntity(std::make_unique<Entity>());
+    auto *mesh = meshEntity->CreateComponent<NavigationMeshComponent>(settings);
+    Check(mesh->Bake(), "Agent navigation bake failed");
+    auto *bot = scene.AddEntity(std::make_unique<Entity>());
+    bot->SetPosition(start);
+    NavAgentConfig agentSettings;
+    agentSettings.navigationMeshEntityId = meshEntity->GetID();
+    agentSettings.agentRadius = .2f;
+    agentSettings.agentHeight = 1.5f;
+    auto *agent = bot->CreateComponent<NavAgentComponent>(agentSettings);
+    Check(agent->SetDestination({-2.5f, 1, .5f}) && agent->HasPath(), "Reachable agent route failed");
+    Check(!agent->SetDestination(end) && !agent->HasPath() && agent->GetPath().empty(),
+          "Failed search created a straight-line fallback through a wall");
     navigation.Clear();
     Check(!navigation.FindPath(start, end).complete, "Cleared navigation returned stale route");
     std::cout << "PASS: direct routes, actor heights, obstacle detours, unreachable goals and invalidation\n";

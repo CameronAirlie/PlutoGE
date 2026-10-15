@@ -60,6 +60,26 @@ namespace PlutoGE::scene
                 const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
                 if (scene.Raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit))
                     cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
+
+                // Vertical samples miss thin partitions between cell centres and
+                // colliders containing the top of the bake. Probe the cell's
+                // footprint above step height, in both directions so a probe
+                // starting inside a solid still has an outside-in counterpart.
+                const glm::vec3 probeCenter = floorHit.point +
+                    glm::vec3(0.0f, std::max(0.0f, settings.maxStepHeight) + 0.05f, 0.0f);
+                const float halfCell = m_settings.cellSize * 0.5f;
+                const glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
+                for (const auto &direction : directions)
+                {
+                    PhysicsRaycastHit obstacleHit;
+                    if (scene.Raycast(probeCenter - direction * halfCell, direction,
+                                      m_settings.cellSize, obstacleHit) &&
+                        std::abs(obstacleHit.normal.y) < minimumNormalY)
+                    {
+                        cell.walkable = false;
+                        break;
+                    }
+                }
             }
         }
 
@@ -220,9 +240,16 @@ namespace PlutoGE::scene
         auto surfaceEnd = endPoint;
         surfaceStart.y = m_cells[start].height;
         surfaceEnd.y = m_cells[goal].height;
-        if (start != goal && IsSegmentWalkable(surfaceStart, surfaceEnd, agentRadius, agentHeight))
+        // Nearest-cell projection may cross a wall. Never replace a safe grid
+        // endpoint with an unchecked position inside an obstacle or outside the bake.
+        if (!IsSegmentWalkable(surfaceStart, CellPosition(start), agentRadius, agentHeight))
+            return output;
+        const bool retainEnd = IsSegmentWalkable(CellPosition(goal), surfaceEnd, agentRadius, agentHeight);
+        const glm::vec3 resolvedEnd = retainEnd ? endPoint : CellPosition(goal);
+        surfaceEnd = retainEnd ? surfaceEnd : CellPosition(goal);
+        if (IsSegmentWalkable(surfaceStart, surfaceEnd, agentRadius, agentHeight))
         {
-            output.points = {startPoint, endPoint};
+            output.points = {startPoint, resolvedEnd};
             output.complete = true;
             return output;
         }
@@ -310,8 +337,16 @@ namespace PlutoGE::scene
         }
         if (!output.points.empty())
         {
-            output.points.front() = startPoint;
-            output.points.back() = endPoint;
+            // Keep the checked cell-center connections. Replacing the centers
+            // after simplification can move a long segment through a corner.
+            if (surfaceStart.x == output.points.front().x && surfaceStart.z == output.points.front().z)
+                output.points.front() = startPoint;
+            else
+                output.points.insert(output.points.begin(), startPoint);
+            if (surfaceEnd.x == output.points.back().x && surfaceEnd.z == output.points.back().z)
+                output.points.back() = resolvedEnd;
+            else
+                output.points.push_back(resolvedEnd);
         }
         output.complete = true;
         return output;

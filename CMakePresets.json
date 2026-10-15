@@ -46,6 +46,7 @@
             "architecture": "x64",
             "toolset": "host=x64",
             "cacheVariables": {
+                "PLUTO_ENABLE_FSR2": "ON",
                 "PLUTO_ENABLE_STREAMLINE": "ON"
             },
             "condition": {

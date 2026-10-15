@@ -79,11 +79,14 @@ namespace PlutoGE::scene
         }
         auto path = navigation->FindPath(GetOwner()->GetWorldPosition(), destination, m_config.agentRadius, m_config.agentHeight);
         m_path = std::move(path.points);
-        if (m_path.size() < 2)
+        if (!path.complete || m_path.size() < 2)
         {
-            // Keep pursuit functional outside the baked area. Local avoidance and
-            // the physics sweep still prevent walking directly through colliders.
-            m_path = {GetOwner()->GetWorldPosition(), destination};
+            // A failed search is not permission to cross the obstruction that
+            // made the destination unreachable. Retry through the normal timer.
+            m_path.clear();
+            m_velocity = {};
+            m_steeringDirection = {};
+            m_avoidanceDirection = {};
         }
         m_nextPoint = 1;
         m_lastPathDestination = destination;

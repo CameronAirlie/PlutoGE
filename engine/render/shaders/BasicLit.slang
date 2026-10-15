@@ -921,9 +921,30 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     return output;
 }
 
-FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
+// Evaluate derivatives while all fragment/helper lanes are active. Implicit
+// texture LOD inside the branched material helpers can reveal primitive edges
+// on affected drivers; explicit gradients also keep alpha coverage consistent.
+struct SurfaceDerivatives
 {
-    const float4 sampledBaseColor = baseColorTexture.Sample(input.uv * uvScale);
+    float2 uvDx, uvDy, uv2Dx, uv2Dy;
+    float3 worldDx, worldDy;
+};
+[ForceInline]
+SurfaceDerivatives surfaceDerivatives(VertexOutput input)
+{
+    SurfaceDerivatives result;
+    result.uvDx = ddx(input.uv) * uvScale;
+    result.uvDy = ddy(input.uv) * uvScale;
+    result.uv2Dx = ddx(input.uv2) * uvScale;
+    result.uv2Dy = ddy(input.uv2) * uvScale;
+    result.worldDx = ddx(input.worldPosition);
+    result.worldDy = ddy(input.worldPosition);
+    return result;
+}
+
+FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDerivatives derivatives)
+{
+    const float4 sampledBaseColor = baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy);
     float4 sampledColor = sampledBaseColor * baseColor;
 
     // Coverage must remain intact for these controlled cost comparisons.
@@ -932,7 +953,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float3 normal = normalize(input.worldNormal);
     if (hasNormalTexture != 0 && !skipDetailTextures)
     {
-        float3 tangentNormal = normalTexture.Sample(input.uv * uvScale).xyz * 2.0 - 1.0;
+        float3 tangentNormal = normalTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy).xyz * 2.0 - 1.0;
         if (flipNormalY != 0)
             tangentNormal.y = -tangentNormal.y;
         const float3 tangent = normalize(input.worldTangent.xyz);
@@ -943,16 +964,18 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
         normal = -normal;
     float sampledMetallic = 1.0;
     if (hasMetallicTexture != 0 && !skipDetailTextures)
-        sampledMetallic = metallicTexture.Sample(input.uv * uvScale)[metallicChannel];
+        sampledMetallic = metallicTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)[metallicChannel];
     float sampledRoughness = 1.0;
     if (hasRoughnessTexture != 0 && !skipDetailTextures)
-        sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
+        sampledRoughness = roughnessTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)[roughnessChannel];
     float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
     // Material emission illuminates the albedo texture. An explicit graph
     // emission output can replace this textured input independently.
     float3 emissionSample = emissionParameters.x != 0
-        ? emissionTexture.Sample((emissionParameters.y == 1 ? input.uv2 : input.uv) * uvScale).rgb
+        ? emissionTexture.SampleGrad((emissionParameters.y == 1 ? input.uv2 : input.uv) * uvScale,
+            emissionParameters.y == 1 ? derivatives.uv2Dx : derivatives.uvDx,
+            emissionParameters.y == 1 ? derivatives.uv2Dy : derivatives.uvDy).rgb
         : sampledBaseColor.rgb;
     if (emissionParameters.x != 0 && emissionParameters.z != 0)
         emissionSample = emissionSample.r * emissionChannels[0].rgb * emissionChannels[0].a
@@ -1018,7 +1041,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
     // Evaluate geometry derivatives before divergent per-light/face selection.
-    float3 pointWorldDx = ddx(input.worldPosition), pointWorldDy = ddy(input.worldPosition);
+    float3 pointWorldDx = derivatives.worldDx, pointWorldDy = derivatives.worldDy;
     float3 pointReceiverNormal = cross(pointWorldDx, pointWorldDy);
     float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
@@ -1297,7 +1320,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass)
 
 // Shared by every opaque fragment entry point. Entry points call this helper
 // rather than each other: Slang cannot link an entry point that calls another.
-FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
+FragmentOutput shadeFragment(VertexOutput input, bool frontFacing, SurfaceDerivatives derivatives)
 {
     if (input.probeDebug.x > 0.5) {
         const float3 n = normalize(input.worldNormal);
@@ -1347,19 +1370,19 @@ FragmentOutput shadeFragment(VertexOutput input, bool frontFacing)
         output.debug = float4(saturate(input.objectDebug), 0, 1, 1);
         return output;
     }
-    return shadeSurface(input, false);
+    return shadeSurface(input, false, derivatives);
 }
 
 [shader("fragment")]
 FragmentOutput fragmentMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
-    return shadeFragment(input, frontFacing);
+    return shadeFragment(input, frontFacing, surfaceDerivatives(input));
 }
 
 [shader("fragment")]
 float4 transparentMain(VertexOutput input) : SV_Target0
 {
-    const float4 color = shadeSurface(input, true).color;
+    const float4 color = shadeSurface(input, true, surfaceDerivatives(input)).color;
     // RHI blending uses ONE / ONE_MINUS_SRC_ALPHA (premultiplied coverage).
     return float4(color.rgb * saturate(color.a), saturate(color.a));
 }
@@ -1368,7 +1391,7 @@ float4 transparentMain(VertexOutput input) : SV_Target0
 [shader("fragment")]
 float4 colorMain(VertexOutput input, bool frontFacing : SV_IsFrontFace) : SV_Target0
 {
-    return shadeFragment(input, frontFacing).color;
+    return shadeFragment(input, frontFacing, surfaceDerivatives(input)).color;
 }
 struct ColorMotionOutput
 {
@@ -1378,7 +1401,7 @@ struct ColorMotionOutput
 [shader("fragment")]
 ColorMotionOutput colorMotionMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
-    FragmentOutput surface = shadeFragment(input, frontFacing);
+    FragmentOutput surface = shadeFragment(input, frontFacing, surfaceDerivatives(input));
     ColorMotionOutput result;
     result.color = surface.color;
     result.motion = surface.motion.xy;
@@ -1387,6 +1410,7 @@ ColorMotionOutput colorMotionMain(VertexOutput input, bool frontFacing : SV_IsFr
 [shader("fragment")]
 void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
+    const SurfaceDerivatives derivatives = surfaceDerivatives(input);
     // Opaque coverage is the rasterized footprint: no material input, graph or
     // lighting can discard it. Vertex graphs are already applied by the vertex stage.
     if (alphaMode == 0) return;
@@ -1394,12 +1418,12 @@ void coverageMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 #ifndef PLUTO_STANDARD_MATERIAL
     if (shaderGraph.header.x != 0)
     {
-        shadeFragment(input, frontFacing);
+        shadeFragment(input, frontFacing, derivatives);
         return;
     }
 #endif
     if (alphaMode == 2 && materialTwoSided == 0 && !frontFacing) discard;
-    const float alpha = baseColorTexture.Sample(input.uv * uvScale).a * baseColor.a;
+    const float alpha = baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy).a * baseColor.a;
     float4 sampledColor = float4(0, 0, 0, alpha);
     const bool transparentPass = false;
 #include "SurfaceCoverage.slang"
@@ -1435,7 +1459,7 @@ struct IndirectSurfaceOutput
 [shader("fragment")]
 IndirectSurfaceOutput indirectMain(VertexOutput input, bool frontFacing : SV_IsFrontFace)
 {
-    const FragmentOutput surface = shadeFragment(input, frontFacing);
+    const FragmentOutput surface = shadeFragment(input, frontFacing, surfaceDerivatives(input));
     IndirectSurfaceOutput result;
     result.color = surface.color; result.normal = surface.normal;
     result.material = surface.material; result.motion = surface.motion.xy;

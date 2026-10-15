@@ -11,13 +11,22 @@ parser.add_argument('renderer', type=Path, help='Path to PlutoGERenderVisualLab 
 parser.add_argument('--view', default='Overview', help='Saved camera name; see views.json')
 parser.add_argument('--variant', choices=['Daylight','Sunset','Night','LocalOnly'], default='Daylight')
 parser.add_argument('--output', type=Path, default=root/'Captures')
+parser.add_argument('--no-depth-prepass', action='store_true', help='Capture the single-pass geometry reference')
+parser.add_argument('--no-post-processing', action='store_true', help='Capture geometry without camera post-processing')
+parser.add_argument('--no-shadows', action='store_true', help='Capture without shadow maps')
 args = parser.parse_args()
 scene = 'VisualFidelityLab' + ('' if args.variant == 'Daylight' else '_'+args.variant)
 output = args.output.resolve()/(args.variant+'_'+args.view.replace(' ','_'))
 output.parent.mkdir(parents=True,exist_ok=True)
 renderer = args.renderer.resolve()
-subprocess.run([str(renderer),str(root),str(root/'Assets/Scenes'/f'{scene}.plutoscene'),
-                str(output.with_suffix('.ppm')),args.view],cwd=renderer.parent,check=True)
+command = [str(renderer), str(root), str(root/'Assets/Scenes'/f'{scene}.plutoscene'),
+           str(output.with_suffix('.ppm')), args.view]
+for option, enabled in [('--no-depth-prepass', args.no_depth_prepass),
+                        ('--no-post-processing', args.no_post_processing),
+                        ('--no-shadows', args.no_shadows)]:
+    if enabled:
+        command.append(option)
+subprocess.run(command, cwd=renderer.parent, check=True)
 header = output.with_suffix('.ppm').read_bytes().split(b'\n',3)
 assert header[0] == b'P6' and header[2] == b'255'
 width,height = map(int,header[1].split())

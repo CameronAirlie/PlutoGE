@@ -3,7 +3,10 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 template<class Device, class Reader>
 void CheckTextureMipRendering(PlutoGE::render::BasicRenderer &renderer, Device &device, Reader readTexture, bool benchmark = false)
@@ -62,6 +65,83 @@ void CheckTextureMipRendering(PlutoGE::render::BasicRenderer &renderer, Device &
         try { rhi::Texture invalid(device, device.CreateTexture(descriptor, packed)); }
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Truncated normal mip chain accepted");
+    }
+    // Magnified textures must stay at mip zero, including pixels next to
+    // interior triangle edges. Distinct coarser mips expose undefined implicit
+    // gradients in branched material helpers as diagonal lines/speckles.
+    {
+        renderer.Resize(257, 193);
+        std::vector<BasicVertex> grid;
+        std::vector<std::uint32_t> triangles;
+        constexpr unsigned segments = 8;
+        for (unsigned y = 0; y <= segments; ++y)
+            for (unsigned x = 0; x <= segments; ++x)
+            {
+                const float u = float(x) / segments, v = float(y) / segments;
+                grid.push_back({{{u * 2 - 1, v * 2 - 1, .5f}}, {{0,0,1}}, {{u,v}}});
+            }
+        for (unsigned y = 0; y < segments; ++y)
+            for (unsigned x = 0; x < segments; ++x)
+            {
+                const auto a = y * (segments + 1) + x, b = a + segments + 1;
+                triangles.insert(triangles.end(), {a,a+1,b+1,a,b+1,b});
+            }
+        auto gridMesh = renderer.CreateMesh({grid, triangles});
+        std::vector<std::byte> texels(32 * 32 * 4);
+        for (unsigned y = 0; y < 32; ++y)
+            for (unsigned x = 0; x < 32; ++x)
+            {
+                const auto offset = (y * 32 + x) * 4;
+                const bool check = ((x / 4 + y / 4) & 1) != 0;
+                texels[offset] = std::byte(check ? 192 : 64);
+                texels[offset+1] = std::byte{128}; texels[offset+2] = std::byte{240};
+                texels[offset+3] = std::byte(check ? 255 : 0);
+            }
+        auto packed = texels;
+        for (unsigned extent = 16; extent; extent /= 2)
+            packed.resize(packed.size() + extent * extent * 4, std::byte{128});
+        rhi::TextureDescriptor descriptor{32, 32, rhi::Format::R8G8B8A8Unorm,
+            rhi::TextureUsage::Sampled, "Triangle gradient reference", false, 1, false, 1};
+        rhi::Texture baseOnly(device, device.CreateTexture(descriptor, texels));
+        descriptor.debugName = "Triangle gradient distinct mips";
+        descriptor.mipLevels = 0; descriptor.normalMap = descriptor.normalMipmapsProvided = true;
+        rhi::Texture mipmapped(device, device.CreateTexture(descriptor, packed));
+        if (readTexture(baseOnly.Get()) != readTexture(mipmapped.Get()))
+            throw std::runtime_error("Triangle gradient mip-zero upload differs from base-only texture");
+        BasicLighting surfaceLighting;
+        surfaceLighting.ambientIntensity = .3f;
+        surfaceLighting.directionalIntensity = 1;
+        surfaceLighting.directionalDirection = {-.3f,-.2f,-1};
+        surfaceLighting.cameraPosition = {0,0,3};
+        for (int scenario = 0; scenario < 6; ++scenario)
+        {
+            BasicDraw surface; surface.mesh = &gridMesh; surface.twoSided = true;
+            // Exercise both compact standard materials and the full graph path.
+            if (scenario >= 3) surface.shaderGraphProgram = std::make_shared<ShaderGraphProgram>();
+            surfaceLighting.requiredGeometryInputs = scenario >= 3
+                ? BasicPostProcessInput::Normal : BasicPostProcessInput::None;
+            surface.alphaMode = scenario % 3 == 2 ? 1 : 0;
+            const auto renderTexture = [&](rhi::TextureHandle texture) {
+                if (scenario % 3 == 1) surface.normalTexture = texture;
+                else surface.baseColorTexture = texture;
+                renderer.Render(glm::mat4(1), surfaceLighting, std::span(&surface, 1));
+                return readTexture(renderer.GetColorTexture());
+            };
+            const auto reference = renderTexture(baseOnly.Get());
+            const auto actual = renderTexture(mipmapped.Get());
+            for (unsigned y = 8; y < 185; ++y)
+                for (unsigned x = 8; x < 249; ++x)
+                    for (unsigned channel = 0; channel < 3; ++channel)
+                    {
+                        const auto pixel = (y * 257 + x) * 4 + channel;
+                        const int expected = std::to_integer<unsigned char>(reference[pixel]);
+                        const int sampled = std::to_integer<unsigned char>(actual[pixel]);
+                        if (std::abs(sampled - expected) > 1)
+                            throw std::runtime_error("Material gradients changed magnified mip selection: scenario=" +
+                                std::to_string(scenario) + " at " + std::to_string(x) + "," + std::to_string(y) +
+                                " expected=" + std::to_string(expected) + " actual=" + std::to_string(sampled));
+                    }
+        }
     }
     if (benchmark)
     {

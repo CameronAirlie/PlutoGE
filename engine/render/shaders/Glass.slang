@@ -7,7 +7,8 @@
 [shader("fragment")]
 float particleBoundaryMain(VertexOutput input) : SV_Target0
 {
-    if (baseColor.a * baseColorTexture.Sample(input.uv * uvScale).a <= 0.001) discard;
+    const SurfaceDerivatives derivatives = surfaceDerivatives(input);
+    if (baseColor.a * baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy).a <= 0.001) discard;
     uint width, height;
     glassSceneColor.GetDimensions(width, height);
     const float previous = glassSceneColor.SampleLevel(input.position.xy / float2(width, height), 0).r;

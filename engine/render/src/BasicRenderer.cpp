@@ -3630,13 +3630,13 @@ namespace PlutoGE::render
                 const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
                                          std::uint32_t width, std::uint32_t height, float mode)
                 {
-                    ScopedGpuTiming ssrStage(commands, mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace");
-                    const auto stageIndex = mode == 2.0f ? 1u : 0u;
+                    ScopedGpuTiming ssrStage(commands, mode == 3.0f ? "RHI SSR / Filter" : (mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace"));
+                    const auto stageIndex = mode == 3.0f ? 2u : (mode == 2.0f ? 1u : 0u);
                     const auto stagePipeline = mode != 0.0f && m_ssrStagePipelines[stageIndex]
                         ? m_ssrStagePipelines[stageIndex].Get() : pipeline;
                     parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
                                                 static_cast<float>(traceHeight), 0.0f};
-                    // Both stages address the same full-resolution G-buffer.
+                    // All stages address the same full-resolution G-buffer.
                     parameters.inverseResolution = {1.0f / m_postProcessWidth, 1.0f / m_postProcessHeight};
                     auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
                     m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
@@ -3662,9 +3662,11 @@ namespace PlutoGE::render
                 m_outputColor = trace;
                 if (!fullResolution)
                 {
+                    const auto filtered = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
+                    drawSsr(filtered, trace, traceWidth, traceHeight, 3.0f);
                     const auto resolved = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth,
                                                                    m_postProcessHeight).Get();
-                    drawSsr(resolved, trace, m_postProcessWidth, m_postProcessHeight, 2.0f);
+                    drawSsr(resolved, filtered, m_postProcessWidth, m_postProcessHeight, 2.0f);
                     m_outputColor = resolved;
                 }
                 continue;

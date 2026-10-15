@@ -22,10 +22,10 @@ RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	0.25
 EDITOR_FONT_SIZE	15
 EDITOR_FONT	Martian Mono
-EDITOR_CAMERA_POSITION	-7.68113	5.80504	11.818
+EDITOR_CAMERA_POSITION	-6.93164	3.89933	28.0346
 EDITOR_CAMERA_SPEED	12
 EDITOR_CAMERA_RUNTIME_UI	0
-EDITOR_CAMERA_ROTATION	13.1998	-7.42229
+EDITOR_CAMERA_ROTATION	389.759	-11.8623
 EDITOR_CAMERA_LENS	55	0.1	250
 EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/Reference.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
@@ -194,7 +194,7 @@ ASSET	project://Materials/Glass_I1.5_R0.25_T0.03.plutomaterial	254	Material
 ASSET	project://Materials/Glass_I1.5_R0.25_T0.4.plutomaterial	253	Material
 ASSET	project://Materials/Glass_I1.5_R0.6_T0.03.plutomaterial	253	Material
 ASSET	project://Materials/Glass_I1.5_R0.6_T0.4.plutomaterial	252	Material
-ASSET	project://Materials/Glass_I2_R0.04_T0.03.plutomaterial	252	Material
+ASSET	project://Materials/Glass_I2_R0.04_T0.03.plutomaterial	645	Material
 ASSET	project://Materials/Glass_I2_R0.04_T0.4.plutomaterial	251	Material
 ASSET	project://Materials/Glass_I2_R0.25_T0.03.plutomaterial	252	Material
 ASSET	project://Materials/Glass_I2_R0.25_T0.4.plutomaterial	251	Material
@@ -301,7 +301,7 @@ ASSET	project://PostProcessing/GI.plutopostprocess	989	Post Process Preset
 ASSET	project://PostProcessing/NoSSR.plutopostprocess	989	Post Process Preset
 ASSET	project://PostProcessing/Presentation.plutopostprocess	989	Post Process Preset
 ASSET	project://PostProcessing/Reference.plutopostprocess	989	Post Process Preset
-ASSET	project://Scenes/VisualFidelityLab.plutoscene	513223	Scene
+ASSET	project://Scenes/VisualFidelityLab.plutoscene	513224	Scene
 ASSET	project://Scenes/VisualFidelityLab_LocalOnly.plutoscene	408306	Scene
 ASSET	project://Scenes/VisualFidelityLab_Night.plutoscene	408304	Scene
 ASSET	project://Scenes/VisualFidelityLab_Sunset.plutoscene	408302	Scene

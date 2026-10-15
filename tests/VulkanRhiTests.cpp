@@ -77,6 +77,7 @@ int main(int argc, char **argv)
         shaders.skyQuadrature = { { .spirv = ReadSpirv("SkyQuadrature.vertex.spv") }, { .spirv = ReadSpirv("SkyQuadrature.fragment.spv") } };
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
+        shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");

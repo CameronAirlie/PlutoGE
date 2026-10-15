@@ -5513,12 +5513,12 @@ PROPERTY	FilterLightsByTags	4	false	0
 PROPERTY	RenderRuntimeUI	4	false	0
 PROPERTY	PostProcessPresetAsset	2	project://PostProcessing/Reference.plutopostprocess	0
 END_COMPONENT
-ENTITY	382	0	1	LIGHTING - VisualFidelityLab	0.000000,0.000000,0.000000	-0.300000,-35.000000,0.000000	1.000000,1.000000,1.000000
+ENTITY	382	0	1	LIGHTING - VisualFidelityLab	0.000000,0.000000,0.000000	-60.799999,-35.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	382	LightComponent	1
 PROPERTY	Color	3	1.000000,0.950000,0.880000	0
 PROPERTY	Intensity	0	6.000000	0
 PROPERTY	CastsShadows	4	true	0
-PROPERTY	Direction	3	0.573576,-0.004289,-0.819141	0
+PROPERTY	Direction	3	0.573577,-0.715056,-0.399631	0
 PROPERTY	LightType	6	1	3	Point	Directional	Spot
 PROPERTY	Static	4	true	0
 PROPERTY	Shadow Method	6	1	2	Cascaded Shadow Maps (Legacy)	Virtual Shadow Maps (Default)

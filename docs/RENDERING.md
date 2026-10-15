@@ -60,6 +60,14 @@ correction, using per-channel hit coverage and the shared integrated material
 response. Both the full-resolution path and bilateral reduced-resolution resolve
 replace the covered fraction of sky/probe specular. Misses and screen-edge
 fades retain the fallback; diffuse light, emission and direct highlights remain.
+The trace samples the view-visible GGX normal distribution, keeping ray weights
+bounded at grazing angles. The default half-resolution path filters the signed
+correction horizontally at trace resolution, then vertically while upsampling
+and compositing. Its Gaussian footprint grows with roughness (up to 16 trace
+pixels per axis); depth-plane, normal and material weights protect surface edges.
+Smooth receivers retain bilinear reconstruction. This is spatial filtering with
+stable samples, independent of TAA; it introduces no reflection history or motion
+ghosting. The internal full-resolution comparison path remains unfiltered.
 SSR strength is bounded to [0,1] and retains the existing roughness fade. Diffuse
 AO excludes environmental specular, so AO cannot invalidate the replaceable
 fallback. Directional specular occlusion is not supplied by diffuse AO.
@@ -69,6 +77,15 @@ OpenGL lighting-pass implementation is separate. SSR still cannot discover
 occluded or off-screen geometry: local reflection captures remain necessary for
 those cases. Glass keeps its separate refraction/reflection compositor and uses
 the same filtered sky fallback.
+
+## Material texture gradients
+
+Surface fragment entry points compute UV and world-position derivatives before
+material branches, alpha discard or lighting. Base colour, normal, metallic,
+roughness and emission textures use explicit gradients; depth coverage and glass
+boundaries use the same sampling convention. This avoids undefined helper-lane
+texture LOD at primitive edges, which can otherwise reveal triangulation as
+speckled diagonal lines. Mipmapping and minification filtering remain enabled.
 
 ## Directional shadow behavior
 

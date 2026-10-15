@@ -65,6 +65,7 @@ float smithG1(float cosine, float alphaSquared)
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
     float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    const float2 outputUv = uv;
     // parameters[4]: internal pass mode, trace width, trace height. Mode zero
     // remains a full-resolution reference path for rendering comparisons.
 #if defined(PLUTO_SSR_STAGE)
@@ -73,11 +74,12 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float stage = pass.parameters[4].x;
 #endif
     const bool traceOnly = stage == 1.0;
+    const bool signedOutput = traceOnly || stage == 3.0;
     // Choose an actual G-buffer pixel rather than interpolating unrelated
     // depths/normals at the centre of a 2x2 block.
-    if (traceOnly)
+    if (signedOutput)
         uv = (floor(uv / pass.inverseResolution) + 0.5) * pass.inverseResolution;
-    const float4 scene = traceOnly ? float4(0.0) : sceneTexture.SampleLevel(uv, 0.0);
+    const float4 scene = signedOutput ? float4(0.0) : sceneTexture.SampleLevel(uv, 0.0);
     const float depth = depthTexture.SampleLevel(uv, 0.0).r;
     if (depth <= 0.000001 || pass.parameters[0].x <= 0.0) return scene;
     const float3 normal = decodeNormal(normalTexture.SampleLevel(uv, 0.0).xyz);
@@ -88,27 +90,29 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (roughnessFade <= 0.0) return scene;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);
-    if (stage == 2.0)
+    if (stage == 2.0 || stage == 3.0)
     {
         const float2 traceSize = pass.parameters[4].yz;
-        const float2 pixel = uv * traceSize - 0.5;
+        // Filtering is centred on trace texels, while geometry uses the
+        // exact G-buffer pixel selected by the trace (also for odd extents).
+        const float2 pixel = (stage == 3.0 ? outputUv : uv) * traceSize - 0.5;
         const float2 base = floor(pixel);
         const float2 fraction = frac(pixel);
         float3 sum = 0.0;
         float weightSum = 0.0;
-        // Glossy receivers retain bilinear reconstruction. Rough receivers
-        // integrate neighbouring independent estimates using surface-aware
-        // weights, smoothing noise without smearing across silhouettes.
-        const bool roughFilter = roughness > 0.2;
-        // The old 4x4 footprint left most of the stochastic variance visible.
-        // Widen only the rough-surface kernel; mirror-like surfaces still use
-        // the original four taps, and the ray count remains unchanged.
-        const int filterRadius = roughness > 0.5 ? 4 : 2;
-        const int firstTap = roughFilter ? 1 - filterRadius : 0;
-        const int lastTap = roughFilter ? filterRadius : 1;
-        const float sigma = max(0.5, roughness * roughness * 4.0);
-        for (int y = firstTap; y <= lastTap; ++y)
-            for (int x = firstTap; x <= lastTap; ++x)
+        // Two separable bilateral passes provide a wide roughness-dependent
+        // footprint at linear cost. Keep signed corrections (including black
+        // reflections) and reject neighbours across geometry/material edges.
+        const bool horizontal = stage == 3.0;
+        const bool roughFilter = roughness > 0.08;
+        const float sigma = max(0.5, roughness * 8.0 + roughness * roughness * 4.0);
+        const int radius = roughFilter ? min(int(ceil(3.0 * sigma)), 16) : 0;
+        const int firstY = horizontal ? 0 : (roughFilter ? -radius : 0);
+        const int lastY = horizontal ? 0 : (roughFilter ? radius : 1);
+        const int firstX = horizontal && roughFilter ? -radius : 0;
+        const int lastX = horizontal ? (roughFilter ? radius : 0) : 1;
+        for (int y = firstY; y <= lastY; ++y)
+            for (int x = firstX; x <= lastX; ++x)
             {
                 const float2 at = (clamp(base + float2(x, y), 0.0, traceSize - 1.0) + 0.5) / traceSize;
                 const float2 surfaceUv = (floor(at / pass.inverseResolution) + 0.5) * pass.inverseResolution;
@@ -117,25 +121,25 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 const float3 tapPosition = reconstructWorldPosition(surfaceUv, tapDepth,
                     pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
                 const float3 tapNormal = decodeNormal(normalTexture.SampleLevel(surfaceUv, 0.0).xyz);
-                // Tangent-plane distance preserves sloped surfaces without
-                // leaking reflections across depth discontinuities.
                 const float planeDistance = abs(dot(tapPosition - position, normal));
                 const float depthWeight = saturate(1.0 - planeDistance / max(pass.parameters[0].z, 0.01));
                 const float normalWeight = pow(saturate(dot(normal, tapNormal)), 32.0);
                 const float2 tapMaterial = materialTexture.SampleLevel(surfaceUv, 0.0).rg;
                 const float materialWeight = saturate(1.0 - 8.0 * max(
                     abs(tapMaterial.x - metallic), abs(tapMaterial.y - material.g)));
-                const float2 bilinear = float2(x == 0 ? 1.0 - fraction.x : fraction.x,
-                                               y == 0 ? 1.0 - fraction.y : fraction.y);
-                const float2 tapOffset = float2(x, y) - fraction;
-                const float spatialWeight = roughFilter
-                    ? exp(-dot(tapOffset, tapOffset) / (2.0 * sigma * sigma))
-                    : bilinear.x * bilinear.y;
+                const float2 offset = float2(x, y) - fraction;
+                const float gaussian = exp(-(horizontal ? offset.x * offset.x : offset.y * offset.y) /
+                    (2.0 * sigma * sigma));
+                const float bilinearX = x == 0 ? 1.0 - fraction.x : fraction.x;
+                const float bilinearY = y == 0 ? 1.0 - fraction.y : fraction.y;
+                const float spatialWeight = horizontal ? (roughFilter ? gaussian : 1.0)
+                    : bilinearX * (roughFilter ? gaussian : bilinearY);
                 const float weight = spatialWeight * depthWeight * normalWeight * materialWeight;
                 sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
                 weightSum += weight;
             }
         const float3 correction = sum / max(weightSum, 0.000001);
+        if (horizontal) return float4(correction, 0.0);
         return float4(max(scene.rgb + roughnessFade * correction, 0.0), scene.a);
     }
     const float3 view = normalize(pass.cameraPosition.xyz - position);
@@ -147,7 +151,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 tangent = normalize(cross(abs(normal.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0), normal));
     const float3 bitangent = cross(normal, tangent);
     const float start = max(pass.parameters[0].w, 0.001);
-    const float distance = max(pass.parameters[0].y, start);
+    // An empty ray interval must preserve the environment exactly. Do not
+    // expand a shorter maximum distance to the start offset and invent hits.
+    if (pass.parameters[0].y <= start) return scene;
+    const float distance = pass.parameters[0].y;
     const float thickness = max(pass.parameters[0].z, 0.001);
     const float3 origin = position + normal * start;
     // Ray positions are affine in travel distance. Transform the origin once
@@ -180,18 +187,30 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 #endif
         float xi = frac((float(sample) + 0.5) / float(samples) + sampleRotation.x);
         float phi = 6.283185307 * frac(float(sample) * 0.618033989 + sampleRotation.y);
-        float cosTheta = sqrt((1.0 - xi) / (1.0 + (a2 - 1.0) * xi));
-        float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
-        float3 halfVector = tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normal * cosTheta;
-        float vdoth = dot(view, halfVector);
-        if (vdoth <= 0.0) continue;
-        float3 ray = reflect(-view, halfVector);
-        float ndotl = dot(normal, ray);
+        // Sample the GGX distribution visible from this view (VNDF).
+        // Unlike sampling the entire NDF, its BRDF/pdf weight is bounded at
+        // grazing angles, avoiding a few rays dominating a rough reflection.
+        const float3 localView = float3(dot(view, tangent), dot(view, bitangent), ndotv);
+        const float3 stretchedView = normalize(float3(alpha * localView.xy, localView.z));
+        const float lensq = dot(stretchedView.xy, stretchedView.xy);
+        const float3 t1 = lensq > 0.000001
+            ? float3(-stretchedView.y, stretchedView.x, 0.0) / sqrt(lensq) : float3(1, 0, 0);
+        const float3 t2 = cross(stretchedView, t1);
+        const float diskX = sqrt(xi) * cos(phi);
+        float diskY = sqrt(xi) * sin(phi);
+        const float blend = 0.5 * (1.0 + stretchedView.z);
+        diskY = (1.0 - blend) * sqrt(max(0.0, 1.0 - diskX * diskX)) + blend * diskY;
+        const float3 projectedNormal = diskX * t1 + diskY * t2 +
+            sqrt(max(0.0, 1.0 - diskX * diskX - diskY * diskY)) * stretchedView;
+        const float3 localHalf = normalize(float3(alpha * projectedNormal.xy, max(0.0, projectedNormal.z)));
+        const float3 halfVector = tangent * localHalf.x + bitangent * localHalf.y + normal * localHalf.z;
+        const float vdoth = saturate(dot(view, halfVector));
+        const float3 ray = reflect(-view, halfVector);
+        const float ndotl = dot(normal, ray);
         if (ndotl <= 0.0) continue;
-        const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - saturate(vdoth), 5.0);
-        // BRDF * N.L / pdf, with pdf = D * N.H / (4 * V.H).
-        const float weight = smithG1(ndotv, a2) * smithG1(ndotl, a2) * vdoth /
-                             max(ndotv * cosTheta, 0.000001);
+        const float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
+        // Visible-normal pdf cancels the view masking and half-vector factors.
+        const float weight = smithG1(ndotl, a2);
         const float3 response = fresnel * weight;
         // Include misses in the normalization. The finite ray set uses the
         // same integrated material response as the sky/capture split sum.

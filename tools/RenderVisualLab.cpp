@@ -26,8 +26,17 @@
 int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
-    if (argc < 4 || argc > 5)
-        throw std::invalid_argument("Usage: PlutoGERenderVisualLab <project-root> <scene-file> <output.ppm|--validate-only> [camera-name]");
+    if (argc < 4 || argc > 8)
+        throw std::invalid_argument("Usage: PlutoGERenderVisualLab <project-root> <scene-file> <output.ppm|--validate-only> [camera-name] [--no-depth-prepass] [--no-post-processing] [--no-shadows]");
+    bool noDepthPrepass = false, noPostProcessing = false, noShadows = false;
+    for (int argument = 5; argument < argc; ++argument)
+    {
+        const std::string_view option(argv[argument]);
+        if (option == "--no-depth-prepass") noDepthPrepass = true;
+        else if (option == "--no-post-processing") noPostProcessing = true;
+        else if (option == "--no-shadows") noShadows = true;
+        else throw std::invalid_argument("Unknown capture option");
+    }
     auto &assets = core::Engine::GetInstance().GetAssetManager();
     assets.SetProjectContext(std::filesystem::absolute(argv[1]).string());
     std::string error;
@@ -37,7 +46,11 @@ int main(int argc, char **argv) try
     std::vector<render::RenderCommand> draws;
     const auto visit = [&](auto &&self, scene::Entity *entity) -> void {
         if (!entity->IsActiveInHierarchy()) return;
-        for (auto *light : entity->GetComponents<scene::LightComponent>()) light->Update(0);
+        for (auto *light : entity->GetComponents<scene::LightComponent>())
+        {
+            if (noShadows) light->SetCastsShadows(false);
+            light->Update(0);
+        }
         if (auto *capture = entity->GetComponent<scene::IblCaptureComponent>())
         {
             if (!capture->GetCaptureTexture())
@@ -45,7 +58,7 @@ int main(int argc, char **argv) try
             capture->Update(0); // Publish the stored volume, as the runtime component update does.
         }
         if (auto *candidate = entity->GetComponent<scene::CameraComponent>(); candidate &&
-            (argc == 5 ? entity->GetName() == std::string("CAMERA - ") + argv[4] : candidate->IsMainCamera()))
+            (argc >= 5 ? entity->GetName() == std::string("CAMERA - ") + argv[4] : candidate->IsMainCamera()))
             camera = candidate;
         if (auto *component = entity->GetComponent<scene::MeshComponent>())
         {
@@ -79,14 +92,23 @@ int main(int argc, char **argv) try
     render::rhi::vulkan::VulkanDevice device;
     render::ShaderArtifactLibrary library(PLUTO_LAB_SHADER_DIR);
     render::RhiSceneRenderer renderer;
-    if (!renderer.Initialize(device, library.LoadBasicRendererPackage()))
+    auto shaders = library.LoadBasicRendererPackage();
+    if (noDepthPrepass) shaders.coverageFragments = {};
+    if (!renderer.Initialize(device, shaders))
         throw std::runtime_error("Cannot initialize scene renderer");
     constexpr unsigned width = 1280, height = 800;
     const auto view = camera->GetCameraData(width, height);
-    const auto lighting = render::BuildSceneLighting(view, world.get());
+    auto lighting = render::BuildSceneLighting(view, world.get());
+    if (noShadows)
+    {
+        lighting.shadowsEnabled = false;
+        for (auto &light : lighting.pointLights) light.castsShadows = false;
+        for (auto &light : lighting.spotLights) light.light.castsShadows = false;
+    }
     const auto atmosphere = render::BuildSceneAtmosphere(world.get(), lighting);
     std::vector<render::IPostProcessEffect *> effects;
-    for (const auto &effect : camera->GetPostProcessEffects()) effects.push_back(effect.get());
+    if (!noPostProcessing)
+        for (const auto &effect : camera->GetPostProcessEffects()) effects.push_back(effect.get());
     const auto pixels = [](const render::Texture &texture) {
         const auto bytes = std::as_bytes(texture.GetRgba8Pixels());
         return std::vector<std::byte>(bytes.begin(), bytes.end());

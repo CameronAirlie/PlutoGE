@@ -228,7 +228,7 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
-        std::array<BasicPostProcessShaderPackage, 2> ssrStages; // Trace and resolve.
+        std::array<BasicPostProcessShaderPackage, 3> ssrStages; // Trace, vertical resolve, horizontal filter.
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -763,7 +763,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
-        std::array<rhi::GraphicsPipeline, 2> m_ssrStagePipelines;
+        std::array<rhi::GraphicsPipeline, 3> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         std::array<glm::vec4, 7> m_skyEnvironmentParameters{};

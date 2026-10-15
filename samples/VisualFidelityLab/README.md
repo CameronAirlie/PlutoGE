@@ -78,3 +78,11 @@ post-process translation, and renders sixteen warm-up frames before capture.
 It also accepts `<project-root> <scene-file> --validate-only` for asset-loading
 checks. Automated captures use Vulkan; compare OpenGL in the editor through
 Project Settings > Graphics API.
+
+Capture isolation options: `--no-depth-prepass`, `--no-post-processing` and
+`--no-shadows` can be combined with any named view. They affect only the capture
+process and do not save changes to the sample assets. For example:
+
+```powershell
+python samples/VisualFidelityLab/capture.py out/build/msvc18/tests/Release/PlutoGERenderVisualLab.exe --variant Sunset --view "Texture detail" --no-depth-prepass --no-post-processing --no-shadows --output out/visual-lab-isolated
+```

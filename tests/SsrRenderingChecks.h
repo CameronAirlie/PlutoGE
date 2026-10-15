@@ -101,6 +101,31 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     if (rough.energy[0] < reference.energy[0] * 0.65 ||
         rough.energy[0] > reference.energy[0] * 1.35)
         throw std::runtime_error("Half-resolution SSR changed rough reflection energy excessively");
+    // A bright compact source on a rough plane exposes stochastic speckles.
+    // Compare normalized high-frequency variation against the unfiltered,
+    // full-resolution trace, rather than blessing a particular noise pattern.
+    const auto variation = [&](const Measurement &image) {
+        double residual = 0, energy = 0;
+        const auto width = renderer.GetWidth();
+        const auto height = renderer.GetHeight();
+        for (std::uint32_t y = 1; y + 1 < height; ++y)
+            for (std::uint32_t x = 1; x + 1 < width; ++x)
+            {
+                const auto i = y * width + x;
+                const auto center = image.red[i];
+                const auto neighbours = image.red[i-1] + image.red[i+1] +
+                    image.red[i-width] + image.red[i+width];
+                residual += std::abs(4 * center - neighbours);
+                energy += 4 * center + neighbours;
+            }
+        return residual / std::max(energy, 1.0);
+    };
+    const auto filteredVariation = variation(rough);
+    const auto referenceVariation = variation(reference);
+    std::cout << "SSR rough variation: " << filteredVariation << " filtered, "
+              << referenceVariation << " reference\n";
+    if (filteredVariation > referenceVariation * 0.8)
+        throw std::runtime_error("Rough SSR filtering failed to suppress stochastic speckles");
     ssr.parameters[4].w = 0.0f;
     // With direct and ambient lighting disabled, fully rough receivers must
     // preserve their baseline even when a bright reflected source is visible.

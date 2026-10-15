@@ -89,6 +89,7 @@ namespace PlutoGE::render
         result.shadowDepthSeed = {Load("ShadowDepthSeed", "vertex"), Load("ShadowDepthSeed", "fragment")};
         result.ssrStages[0] = {Load("SSRTrace", "vertex"), Load("SSRTrace", "fragment")};
         result.ssrStages[1] = {Load("SSRResolve", "vertex"), Load("SSRResolve", "fragment")};
+        result.ssrStages[2] = {Load("SSRFilter", "vertex"), Load("SSRFilter", "fragment")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {

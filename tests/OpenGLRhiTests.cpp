@@ -172,6 +172,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.skyQuadrature = { { .glsl = ReadText("SkyQuadrature.vertex.glsl") }, { .glsl = ReadText("SkyQuadrature.fragment.glsl") } };
         shaders.ssrStages[0] = {{.glsl = ReadText("SSRTrace.vertex.glsl")}, {.glsl = ReadText("SSRTrace.fragment.glsl")}};
         shaders.ssrStages[1] = {{.glsl = ReadText("SSRResolve.vertex.glsl")}, {.glsl = ReadText("SSRResolve.fragment.glsl")}};
+        shaders.ssrStages[2] = {{.glsl = ReadText("SSRFilter.vertex.glsl")}, {.glsl = ReadText("SSRFilter.fragment.glsl")}};
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particleInstancedVertex.glsl = ReadText("ParticlesInstanced.vertex.glsl");
@@ -598,11 +599,15 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
 
         CheckTextureMipRendering(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
-            std::vector<std::byte> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
             glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            GLint width = 0, height = 0;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+            std::vector<std::byte> pixels(width * height * 4);
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             return pixels;
         });
+        if (argc > 1 && std::string_view(argv[1]) == "--texture-mips") return 0;
         CheckShadowFiltering(basicRenderer, [&](render::rhi::TextureHandle texture)
         {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

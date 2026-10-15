@@ -242,7 +242,19 @@ static GameObject? Find(string name)
 static GameObject[] FindByTag(string tag)
 static GameObject? FindWithTag(string tag)
 static GameObject[] FindGameObjectsWithTag(string tag)
+static GameObject[] FindWithComponent<T>(bool includeInactive = false) where T : class
+static T[] FindComponents<T>(bool includeInactive = false) where T : class
+Matrix4x4 WorldMatrix { get; }
 ```
+
+`FindWithComponent<T>()` and `FindComponents<T>()` walk the active scene in hierarchy order
+for a native component wrapper or a script type. Inactive entities and disabled components are
+skipped unless `includeInactive` is true. Each call walks the whole scene, so cache the result
+on load or when the scene changes rather than calling it every frame. `WorldMatrix` is the full
+world transform, including scale, in System.Numerics layout (`Vector3.Transform(point, matrix)`).
+`ColliderComponent.TryGetWorldCorners(Span<Vector3>)` and `TryGetWorldBounds` give a collider's
+world-space box; spheres and capsules use their bounding box. Together these let scripts build
+runtime overviews, such as a minimap from colliders, without an offline bake.
 
 `GetComponent<T>()` supports every component wrapper listed below. For other class types it searches for another C# script of type `T` attached to the entity.
 
@@ -353,6 +365,10 @@ Enums:
 ### SoundEmitterComponent
 
 Properties: `Playing` (read-only), `Clip`, `Looping`, `Spatialized`, `PlayOnAwake`, `Volume`, and `Pitch`.
+
+Spatialized range: `MinDistance` (full volume within it), `MaxDistance` (silent beyond it) and
+`Rolloff` (falloff steepness in between). Set them before `PlayOneShot` to give one shared
+emitter different ranges per sound, for example loud and suppressed gunfire.
 
 Methods:
 

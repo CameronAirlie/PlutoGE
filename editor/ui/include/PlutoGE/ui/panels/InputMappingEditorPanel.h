@@ -1,17 +1,10 @@
 #pragma once
+#include "PlutoGE/ui/InputMappingDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include <string>
-#include <vector>
 
 namespace PlutoGE::ui
 {
-    struct InputMappingBinding
-    {
-        int kind = 0, key = 0, button = 0, axis = 0, gamepad = 0, mouseButton = 0, mouseAxis = 0;
-        float scale = 1.0f, deadZone = 0.15f;
-    };
-    struct InputMappingAction { std::string name; std::vector<InputMappingBinding> bindings; };
-
     class InputMappingEditorPanel : public Panel
     {
     public:
@@ -20,8 +13,17 @@ namespace PlutoGE::ui
     private:
         void Load();
         bool Save();
+        void RenderReport();
+        // Press-to-bind: the next key, mouse button or gamepad button pressed is assigned.
+        void UpdateCapture();
+
         std::string m_loadedReference;
-        std::vector<InputMappingAction> m_actions;
+        InputMappingDocument m_document;
+        std::string m_loadError;
+        std::string m_saveError;
+        char m_filter[64]{};
+        int m_captureAction = -1;
+        int m_captureBinding = -1;
         bool m_dirty = false;
     };
 }

@@ -34,6 +34,7 @@ add_library(PlutoGEAssets
     src/ParticleSystemAsset.cpp
     src/PostProcessPresetAsset.cpp
     src/Project.cpp
+    src/Json.cpp
 )
 
 add_library(PlutoGE::Assets ALIAS PlutoGEAssets)

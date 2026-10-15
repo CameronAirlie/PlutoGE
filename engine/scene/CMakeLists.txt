@@ -17,6 +17,7 @@ add_library(PlutoGEScene
     src/AssetReconciliation.cpp
     src/Scene.cpp
     src/SceneBaker.cpp
+    src/MapBake.cpp
     src/SceneSerializer.cpp
     src/UISystem.cpp
     src/NavigationSystem.cpp

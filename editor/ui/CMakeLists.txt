@@ -48,6 +48,7 @@ add_library(PlutoGEEditorUI
     src/panels/MaterialEditorPanel.cpp
     src/panels/MeshEditorPanel.cpp
     src/panels/ParticleSystemEditorPanel.cpp
+    src/InputMappingDocument.cpp
     src/panels/InputMappingEditorPanel.cpp
     src/panels/QualitySettingsPanel.cpp
     src/panels/LoadingScreenEditorPanel.cpp

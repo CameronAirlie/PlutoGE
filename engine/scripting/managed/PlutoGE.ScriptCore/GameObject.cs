@@ -118,6 +118,61 @@ public sealed class GameObject
         return FindByTag(tag);
     }
 
+    /// <summary>
+    /// Every entity in the active scene with a <typeparamref name="T"/> component, in hierarchy order.
+    /// T may be a native component wrapper or a ScriptBehaviour type. Inactive entities and
+    /// disabled components are skipped unless includeInactive is true. This walks the whole
+    /// scene: call it on load or on change, not every frame.
+    /// </summary>
+    public static GameObject[] FindWithComponent<T>(bool includeInactive = false) where T : class
+    {
+        var ids = TryNativeComponentType(typeof(T), out var nativeType)
+            ? ScriptBridge.FindEntitiesWithComponent(nativeType, includeInactive)
+            : ScriptBridge.FindEntitiesWithComponent(ScriptBridge.NativeComponentType.Script, includeInactive)
+                .Where(id => ScriptBridge.GetScript<T>(id) is not null).ToArray();
+        var result = new GameObject[ids.Length];
+        for (var index = 0; index < ids.Length; ++index) result[index] = new GameObject(ids[index]);
+        return result;
+    }
+
+    /// <summary>The <typeparamref name="T"/> component of every matching entity; see FindWithComponent.</summary>
+    public static T[] FindComponents<T>(bool includeInactive = false) where T : class
+    {
+        var objects = FindWithComponent<T>(includeInactive);
+        var components = new List<T>(objects.Length);
+        foreach (var gameObject in objects)
+            if (gameObject.GetComponent<T>() is { } component) components.Add(component);
+        return components.ToArray();
+    }
+
+    /// <summary>World transform including scale, in System.Numerics layout (use Vector3.Transform).</summary>
+    public Matrix4x4 WorldMatrix => ScriptBridge.TryGetEntityWorldMatrix(EntityId, out var matrix) ? matrix : Matrix4x4.Identity;
+
+    private static bool TryNativeComponentType(Type type, out ScriptBridge.NativeComponentType nativeType)
+    {
+        ScriptBridge.NativeComponentType? match = type switch
+        {
+            _ when type == typeof(MeshComponent) => ScriptBridge.NativeComponentType.Mesh,
+            _ when type == typeof(CameraComponent) => ScriptBridge.NativeComponentType.Camera,
+            _ when type == typeof(LightComponent) => ScriptBridge.NativeComponentType.Light,
+            _ when type == typeof(RigidbodyComponent) => ScriptBridge.NativeComponentType.Rigidbody,
+            _ when type == typeof(ColliderComponent) => ScriptBridge.NativeComponentType.Collider,
+            _ when type == typeof(AnimationComponent) => ScriptBridge.NativeComponentType.Animation,
+            _ when type == typeof(ActiveRagdollComponent) => ScriptBridge.NativeComponentType.ActiveRagdoll,
+            _ when type == typeof(CanvasComponent) => ScriptBridge.NativeComponentType.Canvas,
+            _ when type == typeof(RectTransformComponent) => ScriptBridge.NativeComponentType.RectTransform,
+            _ when type == typeof(UIImageComponent) => ScriptBridge.NativeComponentType.UIImage,
+            _ when type == typeof(UITextComponent) => ScriptBridge.NativeComponentType.UIText,
+            _ when type == typeof(UIButtonComponent) => ScriptBridge.NativeComponentType.UIButton,
+            _ when type == typeof(ParticleSystemComponent) => ScriptBridge.NativeComponentType.ParticleSystem,
+            _ when type == typeof(SoundEmitterComponent) => ScriptBridge.NativeComponentType.SoundEmitter,
+            _ when type == typeof(RmlWidgetComponent) => ScriptBridge.NativeComponentType.RmlWidget,
+            _ => null,
+        };
+        nativeType = match ?? default;
+        return match.HasValue;
+    }
+
     public bool HasComponent<T>() where T : class
     {
         return typeof(T) switch

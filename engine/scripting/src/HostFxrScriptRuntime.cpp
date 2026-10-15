@@ -180,6 +180,10 @@ namespace PlutoGE::scripting
         using get_entity_tag_count_fn = int(PLUTO_HOST_CALL *)(uint32_t);
         using get_entity_tag_fn = const char *(PLUTO_HOST_CALL *)(uint32_t, int32_t);
         using change_entity_tag_fn = int32_t(PLUTO_HOST_CALL *)(uint32_t, const char *);
+        using find_entities_with_component_fn = int32_t(PLUTO_HOST_CALL *)(int32_t, int32_t, uint32_t *, int32_t);
+        using get_entity_world_matrix_fn = int32_t(PLUTO_HOST_CALL *)(uint32_t, float *);
+        using get_sound_emitter_range_fn = float(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using set_sound_emitter_range_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t, float);
         using destroy_entity_fn = int(PLUTO_HOST_CALL *)(uint32_t);
         using get_entity_name_fn = const char *(PLUTO_HOST_CALL *)(uint32_t);
         using find_entity_by_name_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
@@ -984,9 +988,8 @@ namespace PlutoGE::scripting
             return 0;
         }
 
-        scene::Component *FindComponent(uint32_t entityId, ManagedComponentKind componentKind)
+        scene::Component *FindComponentOn(scene::Entity *entity, ManagedComponentKind componentKind)
         {
-            auto *entity = FindEntity(entityId);
             if (!entity)
             {
                 return nullptr;
@@ -1029,6 +1032,63 @@ namespace PlutoGE::scripting
             default:
                 return nullptr;
             }
+        }
+
+        scene::Component *FindComponent(uint32_t entityId, ManagedComponentKind componentKind)
+        {
+            return FindComponentOn(FindEntity(entityId), componentKind);
+        }
+
+        // Fills up to capacity ids in hierarchy order and returns the total match count, so
+        // managed code can size its buffer and retry. Inactive subtrees and disabled
+        // components are skipped unless includeInactive is set.
+        int32_t FindEntitiesWithComponent(int32_t componentKind, int32_t includeInactive, uint32_t *entityIds, int32_t capacity)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene)
+            {
+                return 0;
+            }
+
+            int32_t count = 0;
+            const auto kind = static_cast<ManagedComponentKind>(componentKind);
+            const auto visit = [&](auto &&self, scene::Entity *entity) -> void {
+                if (!entity || (includeInactive == 0 && !entity->IsActiveInHierarchy()))
+                {
+                    return;
+                }
+                const auto *component = FindComponentOn(entity, kind);
+                if (component && (includeInactive != 0 || component->IsEnabled()))
+                {
+                    if (entityIds && count < capacity)
+                    {
+                        entityIds[count] = entity->GetID();
+                    }
+                    ++count;
+                }
+                for (auto *child : entity->GetChildren())
+                {
+                    self(self, child);
+                }
+            };
+            for (auto *root : scene->GetRootEntities())
+            {
+                visit(visit, root);
+            }
+            return count;
+        }
+
+        // Column-major world transform, including scale, for building world-space bounds.
+        int32_t GetEntityWorldMatrix(uint32_t entityId, float *matrix)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity || !matrix)
+            {
+                return 0;
+            }
+            const glm::mat4 world = entity->GetWorldTransform();
+            std::memcpy(matrix, &world[0][0], sizeof(float) * 16);
+            return 1;
         }
 
         const platform::InputState &GetInputState()
@@ -2631,6 +2691,21 @@ namespace PlutoGE::scripting
             if (auto *component = FindSoundEmitter(entityId))
                 component->SetPlayOnAwake(value != 0);
         }
+        // Distance attenuation: 0 = minimum distance, 1 = maximum (silent beyond), 2 = rolloff.
+        float GetSoundEmitterRange(uint32_t entityId, int32_t property)
+        {
+            const auto *component = FindSoundEmitter(entityId);
+            if (!component) return 0.0f;
+            return property == 0 ? component->GetMinDistance() : property == 1 ? component->GetMaxDistance() : component->GetRolloff();
+        }
+        void SetSoundEmitterRange(uint32_t entityId, int32_t property, float value)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            if (!component || !std::isfinite(value)) return;
+            if (property == 0) component->SetMinDistance(value);
+            else if (property == 1) component->SetMaxDistance(value);
+            else if (property == 2) component->SetRolloff(value);
+        }
         float GetSoundEmitterVolume(uint32_t entityId)
         {
             auto *component = FindSoundEmitter(entityId);
@@ -3562,6 +3637,8 @@ namespace PlutoGE::scripting
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_camera_component_api_fn registerCameraProjectionApi = nullptr;
         register_entity_tag_api_fn registerEntityTagApi = nullptr;
+        int(PLUTO_HOST_CALL *registerComponentQueryApi)(void *, void *) = nullptr;
+        int(PLUTO_HOST_CALL *registerSoundEmitterRangeApi)(void *, void *) = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
@@ -3681,6 +3758,8 @@ namespace PlutoGE::scripting
             impl.registerCameraComponentApi = nullptr;
             impl.registerCameraProjectionApi = nullptr;
             impl.registerEntityTagApi = nullptr;
+            impl.registerComponentQueryApi = nullptr;
+            impl.registerSoundEmitterRangeApi = nullptr;
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
@@ -4040,6 +4119,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraComponentApi"), impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraProjectionApi"), impl.registerCameraProjectionApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterEntityTagApi"), impl.registerEntityTagApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterComponentQueryApi"), impl.registerComponentQueryApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSoundEmitterRangeApi"), impl.registerSoundEmitterRangeApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterLightComponentApi"), impl.registerLightComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterMeshComponentApi"), impl.registerMeshComponentApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAnimationComponentApi"), impl.registerAnimationComponentApi) &&
@@ -4460,6 +4541,24 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<change_entity_tag_fn>(&RemoveEntityTag))) == 0)
         {
             setManagedBridgeFailure("RegisterEntityTagApi");
+            return false;
+        }
+
+        if (!m_impl->registerComponentQueryApi ||
+            m_impl->registerComponentQueryApi(
+                reinterpret_cast<void *>(static_cast<find_entities_with_component_fn>(&FindEntitiesWithComponent)),
+                reinterpret_cast<void *>(static_cast<get_entity_world_matrix_fn>(&GetEntityWorldMatrix))) == 0)
+        {
+            setManagedBridgeFailure("RegisterComponentQueryApi");
+            return false;
+        }
+
+        if (!m_impl->registerSoundEmitterRangeApi ||
+            m_impl->registerSoundEmitterRangeApi(
+                reinterpret_cast<void *>(static_cast<get_sound_emitter_range_fn>(&GetSoundEmitterRange)),
+                reinterpret_cast<void *>(static_cast<set_sound_emitter_range_fn>(&SetSoundEmitterRange))) == 0)
+        {
+            setManagedBridgeFailure("RegisterSoundEmitterRangeApi");
             return false;
         }
 

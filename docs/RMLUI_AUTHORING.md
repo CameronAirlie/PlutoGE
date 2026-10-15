@@ -192,6 +192,47 @@ document.Element("portrait").SetScenePortrait(player.EntityId, attachments, ++re
 
 Give the img explicit dimensions. Update revision when appearance changes. Engine attributes are `data-preview-root`, `data-preview-attachments`, `data-preview-revision`, `data-preview-width`, `data-preview-height`; diagnostics are `data-preview-render-count` and `data-preview-rendered-revision`. The engine installs a portrait:// texture on success. Zero attachment IDs are ignored. Rendering uses visible mesh hierarchies, root-relative placement, automatic framing, neutral light and transparency, without spawning gameplay entities. Bounds: 32–1024 texture dimensions, up to four simultaneous portraits and 32 detached roots. Hidden portraits release resources. This initial path is for static/rigid hierarchies; skinning snapshots/material overlay passes are not promised.
 
+### Clipping panned or offset content
+
+RmlUi 6.1 scissors an `overflow: hidden` element only when it measures overflowing content
+(client size smaller than scroll size). Scroll size grows only rightwards and downwards, so a
+child moved to negative `left`/`top` offsets, such as a panned minimap layer, is not clipped
+and draws outside its frame. Add `clip: always` to the frame:
+
+```css
+.map-frame { position: relative; overflow: hidden; clip: always; }
+```
+
+`clip: always` costs one scissor rectangle. Rotated (transformed) children of an untransformed
+frame are still clipped by the scissor. A rounded or transformed frame uses a clip mask instead.
+
+### Tactical maps (minimaps, overview maps)
+
+`PlutoGE.ScriptCore.Gameplay` provides a game-neutral map pipeline:
+
+1. **Bake.** In the editor, **File > Bake Top-Down Map** writes `Assets/Maps/<Scene>.tga` and
+   `<Scene>.plutomap` for the open scene. Headless: `PlutoGEBakeMap <project.plutoproject> <scene>...`.
+   Solid, non-trigger box colliders become outlined obstacles; thin or flat slabs become faint
+   floors. The bake is cropped to the navigation mesh, and anything tagged `MapIgnore` is skipped.
+   Both files are registered and added to BUILD_ALWAYS_INCLUDE, because games pick them at runtime.
+   For a rendered image of the same square, run
+   `PlutoGERenderSceneShot <root> <scene> <out.tga> --top-down <scene>.plutomap`.
+2. **Load.** `MapLayout.ForScene(SceneManager.GetActiveScene().Name)` reads the layout. Maps are
+   north-up (world -Z at the top). `Normalize`/`ToWorld` convert between world and map space.
+   `ImageSourceFor(documentPath)` gives the document-relative `img src` (RmlUi resolves images
+   beside their document; a leading '/' would resolve against the working directory).
+3. **Draw.** `RmlMapView(document, "minimap", RmlMapView.ArrowMarker("Icons/map-arrow.tga"))`
+   pools markers under `<prefix>-contacts` and pans `<prefix>-layer`. Set `VisibleWorldSpan` for
+   a player-centred minimap, or leave it null for a whole-map view. Each `MapContact` adds its
+   `Style` as a class; a finite `Heading` (`MapMath.Heading(forward)`) rotates the marker, and NaN
+   leaves the facing hidden. Layers use percentages of the square frame, so frames may use dp,
+   vh or media queries. Give the frame `clip: always`.
+4. **Reveal.** `RevealTracker` keeps "event X shows subject Y to audience Z for N seconds" reveals
+   (gunfire, scans, pings) with a fade-out. Pass your game clock, and filter with your own team ids.
+
+Map visibility is presentation. Clients that already receive every transform for rendering can
+always see more than the map shows.
+
 ### World canvases, generated text, loading, and previews
 
 WorldSpaceOverlay projects entity position to a constant-screen-size camera-facing overlay, useful for nameplates and health bars. WorldSpace creates a depth-tested texture plane following the entity transform, using RectTransform size/pivot and 100 UI units per world unit. Size modes include constant screen size and distance scaling. Documents are instanced per entity; shared source assets do not share DOM instances. The current legacy OpenGL host supports render-to-texture world surfaces; the RHI path should not be assumed to support every legacy world-surface feature. World contexts keep dp ratio 1.

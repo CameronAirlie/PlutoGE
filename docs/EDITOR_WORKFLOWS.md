@@ -322,3 +322,31 @@ Use **Yaw**, **Scale** and **Surface offset** to adjust placement. Each new asse
 Placement starts at the scene root. **Parent to selection** captures the current selection as parent; **Scene root** clears it. Rotated and scaled parent transforms are handled in placement calculations. A deleted parent disables stamping until you choose another parent. Scene replacement, project changes, undo/redo scene restoration and entering play end the session.
 
 Prefab stamps retain their source and transform overrides. Preview loads mesh geometry in its authored bind pose and support colliders; scripts, lights, audio, animation controllers and procedural effects appear only on actual instances. Skinned meshes and meshes with animation clips have a static bind-pose ghost. Model files use the same surface-placement session, preferring the editable mesh beside the source while retaining importer material bindings. Import a source model first; unimported models report an error. Mesh/model stamps retain a sibling animation asset when available.
+
+## Input mappings
+
+Open a `.plutoinput` asset to edit it in the **Input Mapping** panel. The panel edits the
+JSON document in place, so fields and values it does not list survive saving. An unlisted
+key shows as "(unlisted)" and is not rewritten. A file that is not valid JSON is shown
+read-only, so it can never be overwritten with an empty mapping. Saving writes a temporary
+file and then replaces the asset; **Revert** reloads it.
+
+- **Filter** matches action names and binding labels.
+- **Listen** on a binding assigns the next key or gamepad button you press (Esc cancels).
+  Mouse buttons and axes are chosen from the lists.
+- **Duplicate Action** copies an action and its bindings.
+- **Mapping Report** lists empty or duplicate action names (the runtime resolves actions by
+  name), gamepad buttons and keys no action uses (candidates for a new action), and inputs
+  shared by several actions. Sharing is often intentional, such as a menu action on the same
+  button as a gameplay action, so it is reported rather than rejected.
+
+## Top-down maps
+
+**File > Bake Top-Down Map** turns the open scene's solid box colliders into a north-up
+outline image (`Assets/Maps/<Scene>.tga`) and a layout (`<Scene>.plutomap`). Thin or flat
+slabs become faint floors, triggers and entities tagged `MapIgnore` are skipped, and the result
+is cropped to the navigation mesh when the scene has one. Both files are registered and added
+to the build's always-include list. `PlutoGEBakeMap <project.plutoproject> <scene>...` does the
+same headlessly. `PlutoGERenderSceneShot <root> <scene> <out.tga> --top-down <scene>.plutomap`
+renders a lit orthographic image of the same square. See the RmlUi authoring guide's
+"Tactical maps" section for runtime use.

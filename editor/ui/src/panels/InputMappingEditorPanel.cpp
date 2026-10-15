@@ -3,118 +3,154 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <imgui.h>
-#include <regex>
-#include <sstream>
 
 namespace PlutoGE::ui
 {
     namespace
     {
-        constexpr const char *Kinds[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
-        constexpr const char *Buttons[] = {"A","B","X","Y","LeftBumper","RightBumper","Back","Start","Guide","LeftStick","RightStick","DpadUp","DpadRight","DpadDown","DpadLeft"};
-        constexpr const char *Axes[] = {"LeftX","LeftY","RightX","RightY","LeftTrigger","RightTrigger"};
-        constexpr const char *MouseButtons[] = {"Left","Right","Middle","Button4","Button5","Button6","Button7","Button8"};
-        constexpr const char *MouseAxes[] = {"X","Y"};
-        constexpr const char *Keys[] = {"Space","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","Escape","Enter","Tab","Backspace"};
-        constexpr int KeyValues[] = {32,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,256,257,258,259};
-
-        std::string Escape(std::string_view value)
-        {
-            std::string result;
-            for (char c : value) { if (c == '"' || c == '\\') result += '\\'; result += c; }
-            return result;
-        }
         std::string ReadFile(const std::filesystem::path &path)
         { std::ifstream in(path, std::ios::binary); return {std::istreambuf_iterator<char>(in), {}}; }
-        std::string ExtractString(const std::string &text, const char *name, std::string fallback = {})
+
+        bool ContainsInsensitive(std::string_view text, std::string_view needle)
         {
-            std::smatch match;
-            const std::regex expression(std::string("\\\"") + name + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
-            return std::regex_search(text, match, expression) ? match[1].str() : fallback;
+            if (needle.empty()) return true;
+            return std::search(text.begin(), text.end(), needle.begin(), needle.end(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            }) != text.end();
         }
-        float ExtractFloat(const std::string &text, const char *name, float fallback)
+
+        // Combo over a name table that also shows a value this editor does not list, unchanged.
+        bool NameCombo(const char *label, std::string &value, std::span<const InputNamedCode> names)
         {
-            std::smatch match;
-            const std::regex expression(std::string("\\\"") + name + "\\\"\\s*:\\s*(-?[0-9.]+)");
-            return std::regex_search(text, match, expression) ? std::stof(match[1].str()) : fallback;
+            bool changed = false;
+            const int current = FindInputName(names, value);
+            const std::string preview = current >= 0 ? value : value + " (unlisted)";
+            if (ImGui::BeginCombo(label, preview.c_str()))
+            {
+                for (int i = 0; i < static_cast<int>(names.size()); ++i)
+                    if (ImGui::Selectable(names[i].name, i == current)) { value = names[i].name; changed = true; }
+                ImGui::EndCombo();
+            }
+            return changed;
         }
-        int IndexOf(const char *const *values, int count, const std::string &value)
-        { for (int i=0;i<count;++i) if (value == values[i]) return i; return 0; }
+
+        std::string Join(const std::vector<std::string> &values)
+        {
+            std::string text;
+            for (const auto &value : values) text += (text.empty() ? "" : ", ") + value;
+            return text;
+        }
     }
 
     void InputMappingEditorPanel::Load()
     {
         auto &shell = EditorShell::GetInstance();
         m_loadedReference = shell.GetActiveInputMappingAssetReference();
-        m_actions.clear();
+        m_document = {};
+        m_loadError.clear();
+        m_saveError.clear();
+        m_captureAction = m_captureBinding = -1;
         const auto *project = shell.GetProject();
         if (!project) return;
         const std::string json = ReadFile(project->ResolveAssetReference(m_loadedReference));
-        std::regex actionRegex("\\{\\s*\\\"Name\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"\\s*,\\s*\\\"Bindings\\\"\\s*:\\s*\\[([\\s\\S]*?)\\]\\s*\\}");
-        for (auto it = std::sregex_iterator(json.begin(), json.end(), actionRegex); it != std::sregex_iterator(); ++it)
-        {
-            InputMappingAction action; action.name = (*it)[1].str();
-            const std::string bindings = (*it)[2].str();
-            std::regex bindingRegex("\\{([^{}]*)\\}");
-            for (auto bit = std::sregex_iterator(bindings.begin(), bindings.end(), bindingRegex); bit != std::sregex_iterator(); ++bit)
-            {
-                const std::string body = (*bit)[1].str();
-                InputMappingBinding binding;
-                binding.kind = IndexOf(Kinds, static_cast<int>(std::size(Kinds)), ExtractString(body, "Kind", "Key"));
-                binding.key = IndexOf(Keys, static_cast<int>(std::size(Keys)), ExtractString(body, "Key", "Space"));
-                binding.button = IndexOf(Buttons, 15, ExtractString(body, "Button", "A"));
-                binding.axis = IndexOf(Axes, 6, ExtractString(body, "Axis", "LeftX"));
-                binding.mouseButton = IndexOf(MouseButtons, static_cast<int>(std::size(MouseButtons)), ExtractString(body, "MouseButton", "Left"));
-                binding.mouseAxis = IndexOf(MouseAxes, static_cast<int>(std::size(MouseAxes)), ExtractString(body, "MouseAxis", "X"));
-                binding.gamepad = static_cast<int>(ExtractFloat(body, "Gamepad", 0));
-                binding.scale = ExtractFloat(body, "Scale", 1.0f);
-                binding.deadZone = ExtractFloat(body, "DeadZone", 0.15f);
-                action.bindings.push_back(binding);
-            }
-            m_actions.push_back(std::move(action));
-        }
+        if (!m_document.Parse(json, &m_loadError))
+            m_loadError = "Cannot edit this mapping (" + m_loadError + "). Saving is disabled so the file is not overwritten.";
         m_dirty = false;
     }
 
     bool InputMappingEditorPanel::Save()
     {
         const auto *project = EditorShell::GetInstance().GetProject();
-        if (!project) return false;
-        std::ofstream out(project->ResolveAssetReference(m_loadedReference), std::ios::binary | std::ios::trunc);
-        out << "{\n  \"Actions\": [\n";
-        for (size_t a=0;a<m_actions.size();++a)
+        if (!project || !m_loadError.empty()) return false;
+        const auto path = project->ResolveAssetReference(m_loadedReference);
+        // Write beside the target first so a failed write cannot truncate the mapping.
+        const auto temporary = std::filesystem::path(path).concat(".saving");
         {
-            const auto &action=m_actions[a];
-            out << "    {\n      \"Name\": \"" << Escape(action.name) << "\",\n      \"Bindings\": [\n";
-            for (size_t b=0;b<action.bindings.size();++b)
-            {
-                const auto &binding=action.bindings[b];
-                out << "        { \"Kind\": \"" << Kinds[binding.kind] << "\", \"Key\": \"" << Keys[binding.key]
-                    << "\", \"Button\": \"" << Buttons[binding.button] << "\", \"Axis\": \"" << Axes[binding.axis]
-                    << "\", \"MouseButton\": \"" << MouseButtons[binding.mouseButton] << "\", \"MouseAxis\": \"" << MouseAxes[binding.mouseAxis]
-                    << "\", \"Gamepad\": " << binding.gamepad << ", \"Scale\": " << binding.scale << ", \"DeadZone\": " << binding.deadZone << " }"
-                    << (b+1<action.bindings.size()?",":"") << "\n";
-            }
-            out << "      ]\n    }" << (a+1<m_actions.size()?",":"") << "\n";
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            out << m_document.Serialize();
+            if (!out) { m_saveError = "Could not write " + temporary.string(); return false; }
         }
-        out << "  ]\n}\n";
-        if (out) { m_dirty=false; return true; } return false;
+        std::error_code error;
+        std::filesystem::rename(temporary, path, error);
+        if (error) { m_saveError = "Could not replace mapping: " + error.message(); return false; }
+        m_saveError.clear();
+        m_dirty = false;
+        return true;
+    }
+
+    void InputMappingEditorPanel::UpdateCapture()
+    {
+        auto &actions = m_document.Actions();
+        if (m_captureAction < 0 || m_captureAction >= static_cast<int>(actions.size()) || m_captureBinding < 0 ||
+            m_captureBinding >= static_cast<int>(actions[m_captureAction].bindings.size()))
+        {
+            m_captureAction = m_captureBinding = -1;
+            return;
+        }
+        const auto &input = core::Engine::GetInstance().GetWindow().GetInputState();
+        auto &binding = actions[m_captureAction].bindings[m_captureBinding];
+        const auto finish = [&](InputBindingKind kind, const char *value, int gamepad) {
+            binding.kind = kind;
+            binding.value = value;
+            binding.gamepad = gamepad;
+            m_captureAction = m_captureBinding = -1;
+            m_dirty = true;
+        };
+        for (const auto &key : InputKeyNames())
+            if (key.code >= 0 && key.code < static_cast<int>(input.keys.size()) && input.keys[key.code] && !input.previousKeys[key.code])
+            {
+                // Escape cancels; bind Escape from the Key list instead.
+                if (std::string_view(key.name) == "Escape") { m_captureAction = m_captureBinding = -1; return; }
+                return finish(InputBindingKind::Key, key.name, 0);
+            }
+        for (std::size_t pad = 0; pad < input.gamepads.size(); ++pad)
+            for (const auto &button : InputGamepadButtonNames())
+                if (input.IsGamepadButtonPressed(static_cast<std::uint16_t>(pad), static_cast<std::uint16_t>(button.code)))
+                    return finish(InputBindingKind::GamepadButton, button.name, static_cast<int>(pad));
+    }
+
+    void InputMappingEditorPanel::RenderReport()
+    {
+        if (!ImGui::CollapsingHeader("Mapping Report")) return;
+        const auto invalid = m_document.FindInvalidActionNames();
+        if (!invalid.empty())
+            ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "Empty or duplicate action names: %s", Join(invalid).c_str());
+        ImGui::TextWrapped("Unused gamepad buttons (pad 0): %s", Join(m_document.FindUnusedGamepadButtons()).c_str());
+        const auto keys = m_document.FindUnusedKeys();
+        if (ImGui::TreeNode("UnusedKeys", "Unused keys (%zu)", keys.size()))
+        {
+            ImGui::TextWrapped("%s", Join(keys).c_str());
+            ImGui::TreePop();
+        }
+        const auto shared = m_document.FindSharedInputs();
+        if (ImGui::TreeNode("SharedInputs", "Inputs used by several actions (%zu)", shared.size()))
+        {
+            ImGui::TextDisabled("Often intentional, e.g. a menu action and a gameplay action on the same button.");
+            for (const auto &input : shared) ImGui::BulletText("%s: %s", input.label.c_str(), Join(input.actions).c_str());
+            ImGui::TreePop();
+        }
     }
 
     void InputMappingEditorPanel::Render()
     {
-        auto &shell=EditorShell::GetInstance();
-        const auto &reference=shell.GetActiveInputMappingAssetReference();
+        auto &shell = EditorShell::GetInstance();
+        const auto &reference = shell.GetActiveInputMappingAssetReference();
         if (reference.empty()) { ImGui::TextDisabled("No input mapping selected."); return; }
         if (reference != m_loadedReference) Load();
         ImGui::TextWrapped("Input Mapping: %s", reference.c_str());
+        if (!m_loadError.empty()) { ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "%s", m_loadError.c_str()); return; }
         ImGui::SameLine();
         if (ImGui::Button(m_dirty ? "Save *" : "Save")) Save();
+        ImGui::SameLine();
+        if (ImGui::Button("Revert")) Load();
+        if (!m_saveError.empty()) ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "%s", m_saveError.c_str());
+        UpdateCapture();
         ImGui::Separator();
-        if (ImGui::CollapsingHeader("Live Controller Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::CollapsingHeader("Live Controller Diagnostics"))
         {
             const auto &gamepads = core::Engine::GetInstance().GetWindow().GetInputState().gamepads;
             bool anyConnected = false;
@@ -128,43 +164,84 @@ namespace PlutoGE::ui
                             gamepad.axes[0], gamepad.axes[1], gamepad.axes[2],
                             gamepad.axes[3], gamepad.axes[4], gamepad.axes[5]);
                 std::string pressed = "Buttons:";
-                for (std::size_t button = 0; button < gamepad.buttons.size(); ++button)
-                    if (gamepad.buttons[button]) pressed += " " + std::to_string(button);
+                for (const auto &button : InputGamepadButtonNames())
+                    if (button.code < static_cast<int>(gamepad.buttons.size()) && gamepad.buttons[button.code]) pressed += std::string(" ") + button.name;
                 ImGui::TextUnformatted(pressed.c_str());
             }
             if (!anyConnected) ImGui::TextDisabled("No controller detected by GLFW.");
         }
+        RenderReport();
         ImGui::Separator();
-        int removeAction=-1;
-        for (int a=0;a<static_cast<int>(m_actions.size());++a)
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputTextWithHint("##filter", "Filter actions or inputs", m_filter, sizeof(m_filter));
+        ImGui::SameLine();
+        if (ImGui::Button("Add Action"))
         {
-            auto &action=m_actions[a]; ImGui::PushID(a);
-            if (ImGui::CollapsingHeader(action.name.empty()?"Unnamed Action":action.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            m_document.Actions().push_back({"NewAction", {}, assets::JsonValue::MakeObject()});
+            m_dirty = true;
+        }
+
+        auto &actions = m_document.Actions();
+        int removeAction = -1, duplicateAction = -1;
+        for (int a = 0; a < static_cast<int>(actions.size()); ++a)
+        {
+            auto &action = actions[a];
+            bool matches = ContainsInsensitive(action.name, m_filter);
+            for (const auto &binding : action.bindings) matches = matches || ContainsInsensitive(binding.Label(), m_filter);
+            if (!matches) continue;
+            ImGui::PushID(a);
+            const std::string header = (action.name.empty() ? std::string("Unnamed Action") : action.name) + "###action";
+            if (ImGui::CollapsingHeader(header.c_str()))
             {
-                char name[128]{}; strncpy_s(name, action.name.c_str(), _TRUNCATE);
-                if (ImGui::InputText("Action", name, sizeof(name))) { action.name=name; m_dirty=true; }
-                ImGui::SameLine(); if (ImGui::Button("Remove Action")) removeAction=a;
-                int removeBinding=-1;
-                for (int b=0;b<static_cast<int>(action.bindings.size());++b)
+                char name[128]{};
+                action.name.copy(name, sizeof(name) - 1);
+                if (ImGui::InputText("Action", name, sizeof(name))) { action.name = name; m_dirty = true; }
+                if (ImGui::Button("Duplicate Action")) duplicateAction = a;
+                ImGui::SameLine();
+                if (ImGui::Button("Remove Action")) removeAction = a;
+                int removeBinding = -1;
+                for (int b = 0; b < static_cast<int>(action.bindings.size()); ++b)
                 {
-                    auto &binding=action.bindings[b]; ImGui::PushID(b); ImGui::SeparatorText("Binding");
-                    if (ImGui::Combo("Device", &binding.kind, Kinds, static_cast<int>(std::size(Kinds)))) m_dirty=true;
-                    if (binding.kind==0) { if (ImGui::Combo("Key", &binding.key, Keys, static_cast<int>(std::size(Keys)))) m_dirty=true; }
-                    else if (binding.kind==1 || binding.kind==2) { if (ImGui::SliderInt("Gamepad", &binding.gamepad, 0, 15)) m_dirty=true;
-                        if (binding.kind==1) { if (ImGui::Combo("Button", &binding.button, Buttons, 15)) m_dirty=true; }
-                        else if (ImGui::Combo("Axis", &binding.axis, Axes, 6)) m_dirty=true; }
-                    else if (binding.kind==3) { if (ImGui::Combo("Mouse Button", &binding.mouseButton, MouseButtons, static_cast<int>(std::size(MouseButtons)))) m_dirty=true; }
-                    else if (binding.kind==4) { if (ImGui::Combo("Mouse Axis", &binding.mouseAxis, MouseAxes, static_cast<int>(std::size(MouseAxes)))) m_dirty=true; }
-                    if (ImGui::DragFloat("Scale", &binding.scale, .05f, -10, 10)) m_dirty=true;
-                    if (ImGui::SliderFloat("Dead Zone", &binding.deadZone, 0, .99f)) m_dirty=true;
-                    if (ImGui::Button("Remove Binding")) removeBinding=b; ImGui::PopID();
+                    auto &binding = action.bindings[b];
+                    ImGui::PushID(b);
+                    ImGui::SeparatorText(binding.Label().c_str());
+                    int kind = static_cast<int>(binding.kind);
+                    const char *kinds[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
+                    if (ImGui::Combo("Device", &kind, kinds, 5))
+                    {
+                        binding.kind = static_cast<InputBindingKind>(kind);
+                        binding.value = InputNamesFor(binding.kind)[0].name;
+                        m_dirty = true;
+                    }
+                    if (NameCombo("Input", binding.value, InputNamesFor(binding.kind))) m_dirty = true;
+                    if ((binding.kind == InputBindingKind::GamepadButton || binding.kind == InputBindingKind::GamepadAxis) &&
+                        ImGui::SliderInt("Gamepad", &binding.gamepad, 0, 15))
+                        m_dirty = true;
+                    if (ImGui::DragFloat("Scale", &binding.scale, .05f, -10, 10)) m_dirty = true;
+                    if (ImGui::SliderFloat("Dead Zone", &binding.deadZone, 0, .99f)) m_dirty = true;
+                    const bool capturing = m_captureAction == a && m_captureBinding == b;
+                    if (ImGui::Button(capturing ? "Press a key or pad button... (Esc cancels)" : "Listen"))
+                    {
+                        m_captureAction = capturing ? -1 : a;
+                        m_captureBinding = capturing ? -1 : b;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Remove Binding")) removeBinding = b;
+                    ImGui::PopID();
                 }
-                if (removeBinding>=0) { action.bindings.erase(action.bindings.begin()+removeBinding); m_dirty=true; }
-                if (ImGui::Button("Add Binding")) { action.bindings.emplace_back(); m_dirty=true; }
+                if (removeBinding >= 0) { action.bindings.erase(action.bindings.begin() + removeBinding); m_dirty = true; m_captureAction = -1; }
+                if (ImGui::Button("Add Binding")) { action.bindings.emplace_back(); m_dirty = true; }
             }
             ImGui::PopID();
         }
-        if (removeAction>=0) { m_actions.erase(m_actions.begin()+removeAction); m_dirty=true; }
-        if (ImGui::Button("Add Action")) { m_actions.push_back({"New Action", {}}); m_dirty=true; }
+        if (duplicateAction >= 0)
+        {
+            auto copy = actions[duplicateAction];
+            copy.name += "Copy";
+            actions.insert(actions.begin() + duplicateAction + 1, std::move(copy));
+            m_dirty = true;
+            m_captureAction = -1;
+        }
+        if (removeAction >= 0) { actions.erase(actions.begin() + removeAction); m_dirty = true; m_captureAction = -1; }
     }
 }

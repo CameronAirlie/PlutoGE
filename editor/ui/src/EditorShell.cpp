@@ -44,6 +44,7 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/MapBake.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
 #include "PlutoGE/ui/DebugDrawUI.h"
@@ -4440,6 +4441,25 @@ namespace PlutoGE::ui
                                           " baked lightmap(s)" +
                                           (hadProbeVolume ? " and the baked probe volume." : ".");
                         Log(ConsoleSeverity::Info, m_statusMessage);
+                    }
+                    if (ImGui::MenuItem("Bake Top-Down Map", nullptr, false, m_scene != nullptr && m_project != nullptr))
+                    {
+                        // Outline map from solid box colliders, for minimaps (Gameplay.MapLayout).
+                        const std::filesystem::path scenePath = m_scene->GetFilePath();
+                        const std::string mapName = scenePath.empty() ? std::string("Untitled") : scenePath.stem().string();
+                        const auto result = scene::BakeTopDownMap(*m_scene);
+                        scene::MapBakeOutput output;
+                        std::string bakeError;
+                        if (scene::SaveMapBake(*m_project, result, mapName, "Maps", &output, &bakeError))
+                        {
+                            m_statusMessage = "Baked map " + output.layoutReference + " (" + result.message + ").";
+                            Log(ConsoleSeverity::Info, m_statusMessage);
+                        }
+                        else
+                        {
+                            m_statusMessage = "Map bake failed: " + bakeError;
+                            Log(ConsoleSeverity::Error, m_statusMessage);
+                        }
                     }
                     ImGui::EndDisabled();
 

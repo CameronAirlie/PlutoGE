@@ -3,8 +3,15 @@ using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
 
+public enum InputDevice { KeyboardMouse, Controller }
+
 public static class Input
 {
+    /// <summary>Last device with meaningful input; idle connected pads do not select controller prompts.</summary>
+    public static InputDevice ActiveDevice => (InputDevice)ScriptBridge.GetActiveInputDevice();
+    /// <summary>Logical index of the last active controller, or -1 for keyboard/mouse.</summary>
+    public static int ActiveGamepad => ScriptBridge.GetActiveGamepad();
+    public static bool UsingController => ActiveDevice == InputDevice.Controller;
     private static InputActionMap? _actionMap;
 
     public static InputActionMap? ActionMap

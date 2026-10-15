@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
+#include <cmath>
 
 namespace PlutoGE::platform
 {
@@ -90,6 +91,38 @@ namespace PlutoGE::platform
 
     struct InputState
     {
+        // Last meaningful input, independent of controller connection state.
+        enum class Device : std::uint8_t { KeyboardMouse, Controller };
+        Device activeDevice = Device::KeyboardMouse;
+        int activeGamepad = -1;
+
+        void UpdateActiveDevice()
+        {
+            bool keyboardMouse = !textInput.empty() || !repeatedKeys.empty() ||
+                std::abs(mouseState.deltaX) >= 1.0 || std::abs(mouseState.deltaY) >= 1.0 ||
+                mouseState.scrollDeltaX != 0 || mouseState.scrollDeltaY != 0;
+            for (std::size_t i = 0; i < keys.size(); ++i)
+                keyboardMouse |= keys[i] && !previousKeys[i];
+            for (std::size_t i = 0; i < 8; ++i)
+                keyboardMouse |= mouseState.buttons[i] && !mouseState.previousButtons[i];
+            // Deliberate keyboard/mouse activity wins simultaneous samples.
+            if (keyboardMouse) { activeDevice = Device::KeyboardMouse; activeGamepad = -1; return; }
+            for (std::size_t i = 0; i < gamepads.size(); ++i)
+            {
+                const auto &pad = gamepads[i];
+                if (!pad.connected) continue;
+                bool activity = false;
+                for (std::size_t b = 0; b < pad.buttons.size(); ++b)
+                    activity |= pad.buttons[b] && !pad.previousButtons[b];
+                for (std::size_t a = 0; a < pad.axes.size(); ++a)
+                    activity |= std::isfinite(pad.axes[a]) && std::abs(pad.axes[a]) > 0.25f &&
+                        std::abs(pad.axes[a] - pad.previousAxes[a]) > 0.01f;
+                if (activity) { activeDevice = Device::Controller; activeGamepad = static_cast<int>(i); return; }
+            }
+            if (activeGamepad >= 0 && !gamepads[activeGamepad].connected)
+            { activeDevice = Device::KeyboardMouse; activeGamepad = -1; }
+        }
+
         bool escapePressed = false;
         bool quitRequested = false;
         MouseState mouseState;

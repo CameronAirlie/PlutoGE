@@ -20,6 +20,8 @@ unsafe class Program
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int Flag() => 0;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int Device() => 1;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void SetFlag(int _) { }
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static Vector3 Vector() => default;
@@ -41,8 +43,9 @@ unsafe class Program
             (nint)(delegate* unmanaged[Cdecl]<int,int>)&MousePressed,zero,vector,vector,vector,flag,flag,
             (nint)(delegate* unmanaged[Cdecl]<int,void>)&SetFlag,zero,zero,zero,
             (nint)(delegate* unmanaged[Cdecl]<int,float>)&Axis) == 1, "Input registration failed");
-        var history = (delegate* unmanaged[Cdecl]<nint,int>)Export("RegisterInputHistoryApi");
-        Require(history((nint)(delegate* unmanaged[Cdecl]<int,float>)&Previous)==1,"History registration failed");
+        var history = (delegate* unmanaged[Cdecl]<nint,nint,nint,int>)Export("RegisterInputHistoryApi");
+        Require(history((nint)(delegate* unmanaged[Cdecl]<int,float>)&Previous, (nint)(delegate* unmanaged[Cdecl]<int>)&Device, flag)==1,"History registration failed");
+        Require(Input.UsingController && Input.ActiveGamepad == 0, "Active device bridge failed");
         var map = new InputActionMap { Actions = [
             new() { Name="Throttle", Bindings=[new() { Kind=InputBindingKind.GamepadAxis, Axis=GamepadAxis.RightTrigger, Gamepad=2 }] },
             new() { Name="Move", Bindings=[new() { Kind=InputBindingKind.Key, Key=KeyCode.W }] },

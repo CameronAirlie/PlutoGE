@@ -889,3 +889,7 @@ add_test(NAME PlutoGEHeadlessServerTests COMMAND PlutoGEHeadlessServerTests)
 
 add_test(NAME PlutoGEVulkanSsaoTests COMMAND PlutoGEVulkanRhiTests --ssao-only)
 add_test(NAME PlutoGEOpenGLSsaoTests COMMAND PlutoGEOpenGLRhiTests --ssao-only)
+
+add_executable(PlutoGEGraphicsQualityProjectTests GraphicsQualityProjectTests.cpp)
+pluto_link_engine(PlutoGEGraphicsQualityProjectTests)
+add_test(NAME PlutoGEGraphicsQualityProjectTests COMMAND PlutoGEGraphicsQualityProjectTests)

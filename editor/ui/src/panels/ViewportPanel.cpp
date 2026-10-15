@@ -2422,7 +2422,7 @@ namespace PlutoGE::ui
                 int preset = quality.enabled ? 5 : 0;
                 if (quality.enabled)
                     for (int index = 0; index < 4; ++index)
-                        if (quality == render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index)))
+                        if (quality == core::Engine::GetInstance().GetRhiRenderService().GetGraphicsPreset(static_cast<render::GraphicsPreset>(index)))
                             preset = index + 1;
                 ImGui::BeginDisabled(!m_rhiRenderService->IsInitialized() ||
                     (!m_useRhiPreview && m_config.graphicsApi != render::rhi::GraphicsApi::Vulkan));
@@ -2435,7 +2435,7 @@ namespace PlutoGE::ui
                         if (ImGui::Selectable(names[index], preset == index))
                         {
                             const auto selected = index == 0 ? render::GraphicsQuality{} :
-                                render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index - 1));
+                                core::Engine::GetInstance().GetRhiRenderService().GetGraphicsPreset(static_cast<render::GraphicsPreset>(index - 1));
                             auto &engine = core::Engine::GetInstance();
                             if (!m_config.editorViewport && engine.IsRuntimeRunning())
                             {

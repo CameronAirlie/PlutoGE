@@ -1,7 +1,11 @@
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
 #include "ServerOptions.h"
 #include "ServerConsole.h"
 #include "RuntimeContent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/AssetDatabase.h"
@@ -121,6 +125,7 @@ int main(int argc, char **argv)
             if (!std::getenv(variable.name.c_str())) SetEnvironment(variable.name, variable.value);
         for (const auto &variable : options.environment) SetEnvironment(variable.name, variable.value);
         auto &engine = PlutoGE::core::Engine::GetInstance();
+        engine.GetRhiRenderService().SetGraphicsQualityPresets(project->GetManifest().graphicsQualityPresets);
         auto &assets = engine.GetAssetManager();
         assets.SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory,
                                  project->GetManifest().assetPipelineVersion);

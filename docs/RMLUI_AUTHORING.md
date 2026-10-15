@@ -233,3 +233,48 @@ strings and actions. Call Refresh during updates and Dispose on controller
 shutdown. It detects recreated elements through private data-pluto-binding-*
 markers; reserve this attribute prefix for the engine. It does not register
 native data-model expressions. See [authoring workflows](EDITOR_AUTHORING.md).
+
+## Controller menus and active input device
+
+ScriptCore owns `ControllerMenu`, `MenuEntry`, `MenuNavigation`, `MenuFrame`,
+`MenuAxisRepeat`, `MenuInputGuard`, and `MenuCapture`. Projects register their
+logical rows/columns and actions once; the engine handles selection, availability,
+slider adjustment callbacks, stick hysteresis/repeat, reveal, opening-button release
+protection, and the `controller-focus` class. Style that class alongside `:focus`.
+This is an explicit managed menu controller, not automatic DOM spatial navigation.
+
+```csharp
+var menu = new ControllerMenu(document, "menu-body");
+menu.Add(new MenuEntry("continue", 0, 0, Resume));
+menu.Add(new MenuEntry("settings", 1, 0, OpenSettings));
+menu.Back = Resume;
+menu.Open(); // Call Close when hidden; dispose the owning document on shutdown.
+// During updates, only update the currently active menu:
+menu.Update();
+```
+
+Default input is left stick/D-pad, A accept, B back, bumpers previous/next tab,
+X secondary, Y space, Start done. Projects with action remapping can pass their
+own `MenuFrame` to `Update(frame)`. Register `Adjust` for horizontal slider changes
+and `Available` for hidden/disabled entries. Text entry and game-specific dialogs
+remain project-owned. Menu capture/release policies remain explicit in gameplay.
+
+`Input.ActiveDevice` is `InputDevice.KeyboardMouse` or `InputDevice.Controller`;
+`Input.UsingController` is a convenience flag and `Input.ActiveGamepad` is the
+last active logical controller index (-1 for keyboard/mouse). Poll this state to
+refresh project-specific labels, icons, or bindings:
+
+```csharp
+prompt.Markup = Input.UsingController ? "[A] Continue" : "[Enter] Continue";
+```
+
+Cache the last presented device to avoid repeated DOM writes, and reapply after
+native document recreation. Detection runs once per window input poll before
+scripts, retains the last device while idle, ignores small stick drift, and falls
+back to keyboard/mouse on active-pad disconnect. Simultaneous deliberate
+keyboard/mouse activity wins. Controller connection alone does not switch prompts.
+`ControllerMenu.RefreshHints` applies the `controller-connected` class and
+`data-controller-hints` marker to the configured root for existing stylesheet
+compatibility; these now represent active controller usage, not connection.
+CoD uses this engine controller through a thin compatibility facade and supplies
+its remapped menu frame; its keyboard and confirmation dialogs remain game code.

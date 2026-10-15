@@ -1,5 +1,5 @@
 #pragma once
-#include "PlutoGE/render/GraphicsQuality.h"
+#include "PlutoGE/render/GraphicsQualityPresets.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
@@ -20,6 +20,14 @@ namespace PlutoGE::render
     class RhiRenderService
     {
     public:
+        bool SetGraphicsQualityPresets(const GraphicsQualityPresets &presets) noexcept
+        {
+            if (!presets.IsValid()) return false;
+            m_graphicsPresets = presets;
+            return true;
+        }
+        [[nodiscard]] const GraphicsQuality &GetGraphicsPreset(GraphicsPreset preset) const
+        { return m_graphicsPresets.Get(preset); }
         bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept;
         [[nodiscard]] const GraphicsQuality &GetGraphicsQuality() const noexcept { return m_graphicsQuality; }
         bool Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain);
@@ -73,6 +81,7 @@ namespace PlutoGE::render
         BasicMesh CreateMesh(const BasicMeshData &data);
 
     private:
+        GraphicsQualityPresets m_graphicsPresets;
         GraphicsQuality m_graphicsQuality;
         rhi::IRenderDevice *m_device = nullptr;
         rhi::ISwapchain *m_swapchain = nullptr;

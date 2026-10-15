@@ -415,6 +415,9 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int, int> _getGamepadButtonPressed;
     private static delegate* unmanaged[Cdecl]<int, float> _getGamepadAxis;
     private static delegate* unmanaged[Cdecl]<int, float> _getPreviousGamepadAxis;
+    private static delegate* unmanaged[Cdecl]<int> _getActiveInputDevice, _getActiveGamepad;
+    internal static int GetActiveInputDevice() => _getActiveInputDevice != null ? _getActiveInputDevice() : 0;
+    internal static int GetActiveGamepad() => _getActiveGamepad != null ? _getActiveGamepad() : -1;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
@@ -1372,10 +1375,13 @@ internal static unsafe partial class ScriptBridge
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterInputHistoryApi")]
-    public static int RegisterInputHistoryApi(delegate* unmanaged[Cdecl]<int, float> getPreviousGamepadAxis)
+    public static int RegisterInputHistoryApi(delegate* unmanaged[Cdecl]<int, float> getPreviousGamepadAxis,
+        delegate* unmanaged[Cdecl]<int> getActiveInputDevice, delegate* unmanaged[Cdecl]<int> getActiveGamepad)
     {
         if (getPreviousGamepadAxis == null) return 0;
         _getPreviousGamepadAxis = getPreviousGamepadAxis;
+        _getActiveInputDevice = getActiveInputDevice;
+        _getActiveGamepad = getActiveGamepad;
         return 1;
     }
 

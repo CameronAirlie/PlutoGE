@@ -3,7 +3,7 @@
 ## Architecture and implementation plan
 
 1. Separate engine quality policy from authored scenes and display controls.
-2. Define Low, Medium, High and Ultra centrally in `render::GraphicsQuality`.
+2. Define engine defaults in `render::GraphicsQuality`; let projects override the four definitions through `GraphicsQualityPresets`.
 3. Apply shadow ceilings before draw preparation and filter expensive effects before resource and GI requests.
 4. Propagate settings to main cameras, overlays and render textures; reset temporal history on changes.
 5. Expose validated scripting lookup, custom settings, readback and reset. Store player preferences in the game.
@@ -31,11 +31,56 @@ GraphicsSettings.TryGetQuality(out var current);
 GraphicsSettings.TryResetQuality(); // Restore authored quality
 ```
 
-`QualitySupported` checks bridge availability. Unsupported calls return false; invalid enums, non-finite distances and out-of-range values throw argument exceptions before crossing the bridge. Native setters also validate. Call on the script/main thread. The 16-byte ABI uses fixed-width integers, a float and explicit flags; presets originate in native code.
+`QualitySupported` checks bridge availability. Unsupported calls return false; invalid enums, non-finite distances and out-of-range values throw argument exceptions before crossing the bridge. Native setters also validate. Call on the script/main thread. The 16-byte ABI uses fixed-width integers, a float and explicit flags; presets originate in the native project definitions, falling back to engine defaults.
 
-Native hosts use `RhiRenderService::SetGraphicsQuality` with customised `GraphicsQuality::FromPreset` values. Direct scene renderers can opt in with `SetGraphicsQuality`.
+Native hosts install project definitions with
+`RhiRenderService::SetGraphicsQualityPresets`, then pass
+`GetGraphicsPreset(preset)` to `SetGraphicsQuality` to apply a project tier.
+`GraphicsQuality::FromPreset` always returns the built-in defaults, including for
+the editor reset button. Direct scene renderers can opt in with
+`SetGraphicsQuality`.
+
 
 ## Editor
+
+Open **View > Quality Settings** to edit each project's Low, Medium, High and
+Ultra definitions. Controls expose every supported quality policy field:
+
+| Control | Meaning |
+|---|---|
+| Apply tier overrides | Off uses scene settings with no tier override |
+| Resolution ceiling | 256–8192; caps cascaded directional shadow-map resolution |
+| Cascade ceiling | 1–4; caps authored cascade count |
+| Distance ceiling | 1–10000 world units; caps directional shadow distance and positive caster-distance limits |
+| Use cascaded shadows | On selects cascaded directional shadows; off preserves the authored method |
+| Ambient occlusion | Allow SSAO |
+| Global illumination | Allow SSGI and VCT GI |
+| Screen-space reflections | Allow SSR |
+| Volumetrics | Allow volumetric fog and clouds |
+| Bloom and lens flare | Allow both effects |
+| Depth of field / Motion blur | Allow the corresponding effect |
+
+An allowed effect still requires scene authoring to enable it. Effects retain
+their scene-authored strength, resolution and sample settings; this pane edits the
+existing runtime policy, not arbitrary per-effect parameters. Virtual-shadow
+budgets, local shadows, material environment reflections, display settings,
+texture residency, particles and mesh LOD remain independent.
+
+Edits mark the project dirty. Save with **File > Save Project** (Ctrl+S).
+**Reset this tier to engine defaults** restores only that tier.
+**Preview tier in Scene viewport** applies it to the Scene viewport.
+Both viewport preset selectors and managed preset lookup use project definitions.
+An already applied policy is a snapshot: reapply a tier after editing it.
+Editing definitions is disabled during Play.
+
+Project manifests serialize four `QUALITY_PRESET` records, indexed 0–3, with
+enabled, shadow resolution, cascade count, distance and the eight policy flags
+(cascaded method, AO, GI, reflections, volumetrics, bloom, DOF, motion blur).
+Missing records retain engine defaults. Invalid records reject loading with an
+error; invalid in-memory tiers reject saving before opening the manifest for
+writing. Exports copy the definitions into the runtime manifest. Editor project
+switches and standalone startup install the definitions before scripts run.
+Player-selected tier persistence remains owned by the game.
 
 Open a viewport's **Quality** popup and select **Graphics preset**: Scene settings, Low, Medium, High or Ultra. Scene settings restores authored quality; a customised runtime policy displays Custom. This control requires the RHI preview.
 
@@ -43,8 +88,8 @@ Scene and Game viewports retain independent preview selections for the editor se
 
 ## CoD
 
-`GameGraphicsSettings` binds a selector to the title and pause menus. It cycles Low, Medium, High, Ultra and saves successful selections to `%LOCALAPPDATA%/PlutoCombat/graphics.json`. First launch defaults to High. Invalid/unreadable preferences fall back to High. Atomic file replacement keeps saved preferences intact if a write fails; the active selection still applies and a warning is logged. Opening either menu applies saved settings, including direct gameplay launch.
+`GameGraphicsSettings` binds a selector to the title and pause menus. It cycles Low, Medium, High, Ultra and saves successful selections to `%LOCALAPPDATA%/PlutoCombat/settings.json`. The game migrates legacy `graphics.json` preferences. First launch defaults to High. Invalid/unreadable preferences fall back to High. Atomic file replacement keeps saved preferences intact if a write fails; the active selection still applies and a warning is logged. Opening either menu applies saved settings, including direct gameplay launch.
 
 ## Tests
 
-`PlutoGEGraphicsQualityTests` checks tier validity, ceilings, authored settings preservation, effect gates, custom overrides and reset. `PlutoGEGraphicsQualitySmokeTests` checks unsupported registration, wire layout, flag roundtrips, managed validation and reset. Build ScriptCore and the native runtime together because the scripting bridge adds a required registration export.
+`PlutoGEGraphicsQualityProjectTests` checks legacy defaults, every tier field and float roundtrips, runtime manifest preservation, runtime lookup, atomic table validation, invalid-save preservation and malformed records. `PlutoGEGraphicsQualityTests` checks tier validity, ceilings, authored settings preservation, effect gates, custom overrides and reset. `PlutoGEGraphicsQualitySmokeTests` checks unsupported registration, wire layout, flag roundtrips, managed validation and reset. Build ScriptCore and the native runtime together because the scripting bridge adds a required registration export.

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <system_error>
 #include <vector>
@@ -728,6 +729,42 @@ namespace PlutoGE::assets
                 }
                 continue;
             }
+            if (tokens[0] == "QUALITY_PRESET")
+            {
+                int index = -1, enabled = -1, resolution = 0, cascades = 0;
+                float distance = 0;
+                bool valid = tokens.size() == 14;
+                if (valid)
+                    valid = ParseInteger(tokens[1], index) && index >= 0 && index < 4 &&
+                        ParseInteger(tokens[2], enabled) && (enabled == 0 || enabled == 1) &&
+                        ParseInteger(tokens[3], resolution) && ParseInteger(tokens[4], cascades) &&
+                        !tokens[5].empty() && ParseFloat(tokens[5], distance);
+                render::GraphicsQuality quality;
+                if (valid)
+                {
+                    quality.enabled = enabled != 0;
+                    quality.shadowResolution = static_cast<std::uint32_t>(resolution);
+                    quality.shadowCascades = static_cast<std::uint32_t>(cascades);
+                    quality.shadowDistance = distance;
+                    const std::array<bool *, 8> flags{&quality.cascadedShadows, &quality.ambientOcclusion,
+                        &quality.globalIllumination, &quality.reflections, &quality.volumetrics,
+                        &quality.bloom, &quality.depthOfField, &quality.motionBlur};
+                    for (std::size_t flag = 0; flag < flags.size(); ++flag)
+                    {
+                        int value = -1;
+                        if (!ParseInteger(tokens[flag + 6], value) || (value != 0 && value != 1))
+                            valid = false;
+                        *flags[flag] = value == 1;
+                    }
+                }
+                if (!valid || !quality.IsValid())
+                {
+                    SetError(errorMessage, "Invalid QUALITY_PRESET record in project manifest.");
+                    return nullptr;
+                }
+                manifest.graphicsQualityPresets.tiers[static_cast<std::size_t>(index)] = quality;
+                continue;
+            }
             if (tokens[0] == "WINDOW_TITLE" && tokens.size() >= 2)
             {
                 manifest.windowTitle = tokens[1];
@@ -1029,6 +1066,11 @@ namespace PlutoGE::assets
             SetError(errorMessage, "Unsupported asset pipeline version; project was not written.");
             return false;
         }
+        if (!m_manifest.graphicsQualityPresets.IsValid())
+        {
+            SetError(errorMessage, "Invalid graphics quality presets; project was not written.");
+            return false;
+        }
         std::ofstream output(m_manifestPath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
@@ -1057,6 +1099,18 @@ namespace PlutoGE::assets
             output << "LOADING_TITLE\t" << EscapeText(m_manifest.loadingScreen.title) << '\n';
         output << "LOADING_ACCENT\t" << m_manifest.loadingScreen.accent.r << '\t'
                << m_manifest.loadingScreen.accent.g << '\t' << m_manifest.loadingScreen.accent.b << '\n';
+        const auto previousPrecision = output.precision();
+        output << std::setprecision(std::numeric_limits<float>::max_digits10);
+        for (std::size_t index = 0; index < m_manifest.graphicsQualityPresets.tiers.size(); ++index)
+        {
+            const auto &q = m_manifest.graphicsQualityPresets.tiers[index];
+            output << "QUALITY_PRESET\t" << index << '\t' << q.enabled << '\t'
+                << q.shadowResolution << '\t' << q.shadowCascades << '\t' << q.shadowDistance << '\t'
+                << q.cascadedShadows << '\t' << q.ambientOcclusion << '\t' << q.globalIllumination << '\t'
+                << q.reflections << '\t' << q.volumetrics << '\t' << q.bloom << '\t'
+                << q.depthOfField << '\t' << q.motionBlur << '\n';
+        }
+        output.precision(previousPrecision);
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';

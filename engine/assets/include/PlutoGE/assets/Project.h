@@ -3,6 +3,7 @@
 
 #include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
+#include "PlutoGE/render/GraphicsQualityPresets.h"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -87,6 +88,7 @@ namespace PlutoGE::assets
         std::vector<std::string> buildAlwaysInclude;
         ProjectServerSettings server;
         render::LoadingScreenStyle loadingScreen;
+        render::GraphicsQualityPresets graphicsQualityPresets;
         std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";
         int windowWidth = 1280;

@@ -1519,7 +1519,7 @@ namespace PlutoGE::scripting
         {
             if (!value || preset < -1 || preset > 3) return 0;
             const auto q = preset == -1 ? core::Engine::GetInstance().GetRhiRenderService().GetGraphicsQuality()
-                : render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(preset));
+                : core::Engine::GetInstance().GetRhiRenderService().GetGraphicsPreset(static_cast<render::GraphicsPreset>(preset));
             *value = {q.shadowResolution, q.shadowCascades, q.shadowDistance,
                 uint32_t(q.enabled) | (uint32_t(q.cascadedShadows) << 1) |
                 (uint32_t(q.ambientOcclusion) << 2) | (uint32_t(q.globalIllumination) << 3) |
@@ -2961,6 +2961,8 @@ namespace PlutoGE::scripting
         { return GetInputState().IsGamepadButtonPressed(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)) ? 1 : 0; }
         float GetGamepadAxis(int32_t packed)
         { return GetInputState().GetGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
+        int32_t GetActiveInputDevice() { return static_cast<int32_t>(GetInputState().activeDevice); }
+        int32_t GetActiveGamepad() { return GetInputState().activeGamepad; }
         float GetPreviousGamepadAxis(int32_t packed)
         { return GetInputState().GetPreviousGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
 
@@ -3573,7 +3575,7 @@ namespace PlutoGE::scripting
         int(PLUTO_HOST_CALL *registerUISettingsApi)(void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerRmlNavigationApi)(void *) = nullptr;
         register_input_api_fn registerInputApi = nullptr;
-        int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *) = nullptr;
+        int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *, void *, void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
@@ -4772,7 +4774,8 @@ namespace PlutoGE::scripting
         }
 
         if (!m_impl->registerInputHistoryApi ||
-            m_impl->registerInputHistoryApi(reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetPreviousGamepadAxis))) == 0)
+            m_impl->registerInputHistoryApi(reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetPreviousGamepadAxis)),
+                reinterpret_cast<void *>(&GetActiveInputDevice), reinterpret_cast<void *>(&GetActiveGamepad)) == 0)
         {
             setManagedBridgeFailure("RegisterInputHistoryApi");
             return false;

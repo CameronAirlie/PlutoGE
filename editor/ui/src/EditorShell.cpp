@@ -24,6 +24,7 @@
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
+#include "PlutoGE/ui/panels/QualitySettingsPanel.h"
 #include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
 #include "PlutoGE/ui/panels/RmlDocumentEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
@@ -969,6 +970,7 @@ namespace PlutoGE::ui
         auto &assetManager = m_engine.GetAssetManager();
         if (m_project)
         {
+            m_engine.GetRhiRenderService().SetGraphicsQualityPresets(m_project->GetManifest().graphicsQualityPresets);
             assetManager.SetProjectContext(m_project->GetRootDirectory().string(), m_project->GetManifest().assetDirectory, m_project->GetManifest().assetPipelineVersion);
             const bool refreshed = RefreshProjectAssets();
             m_assetRefreshPending = !refreshed && IsModelImportRunning();
@@ -977,6 +979,7 @@ namespace PlutoGE::ui
             return;
         }
 
+        m_engine.GetRhiRenderService().SetGraphicsQualityPresets({});
         assetManager.ClearProjectContext();
     }
 
@@ -3501,6 +3504,12 @@ namespace PlutoGE::ui
         particleSystemEditorPanel->Initialize();
         m_panelManager.AddPanel(particleSystemEditorPanel);
 
+        auto qualitySettingsPanel = new QualitySettingsPanel(PanelConfig{"Quality Settings", false},
+            [this](const render::GraphicsQuality &quality) {
+                if (m_editorSceneRenderService) m_editorSceneRenderService->SetGraphicsQuality(quality);
+            });
+        m_panelManager.AddPanel(qualitySettingsPanel);
+
         auto loadingScreenEditorPanel = new LoadingScreenEditorPanel(PanelConfig{"Loading Screen Editor", false});
         m_panelManager.AddPanel(loadingScreenEditorPanel);
         m_rmlDocumentEditor = new RmlDocumentEditorPanel(PanelConfig{"UI Document Editor", false});
@@ -4472,6 +4481,8 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("View"))
                 {
+                    if (ImGui::MenuItem("Quality Settings", nullptr, qualitySettingsPanel->IsOpen()))
+                        qualitySettingsPanel->SetOpen(!qualitySettingsPanel->IsOpen());
                     ImGui::MenuItem("Viewport Bookmarks", nullptr, &m_showViewportBookmarks);
                     if (ImGui::MenuItem("Editor Viewport", NULL, viewportPanel->IsOpen()))
                     {

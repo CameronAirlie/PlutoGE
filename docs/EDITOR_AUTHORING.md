@@ -179,3 +179,25 @@ output bounds. AuthoringIntegrationTests creates all templates in an isolated
 output directory, builds scripts, exercises runtime lifetimes, loads UI and
 checks extension rollback. Existing UI preview and Vulkan/OpenGL interface-scale
 suites cover renderer integration.
+
+## Controller menus and quality definitions
+
+For shared controller navigation, menu capture/release guards, remapped menu input
+and active-device prompts, see [Controller menus and active input device](RMLUI_AUTHORING.md#controller-menus-and-active-input-device).
+ScriptCore owns the menu primitives; projects register actions and provide their
+own dialog content. `Input.ActiveDevice`, `Input.UsingController` and
+`Input.ActiveGamepad` report last meaningful input, independently of connection.
+
+Open **View > Quality Settings** for project-authored Low/Medium/High/Ultra
+policies. Each tier exposes shadow resolution/cascade/distance ceilings, an option
+to use cascaded directional shadows, and the allowed post-process groups. Hover a
+control for its exact effect scope. Changes mark the project dirty; **File > Save
+Project** (Ctrl+S) persists them and builds carry the definitions into the runtime
+manifest. **Reset this tier to engine defaults** affects only the selected tier.
+
+**Preview tier in Scene viewport** applies the selected definition without changing
+player preferences. Both viewport Quality popups and
+`GraphicsSettings.TryGetPreset`/`TryApplyPreset` use the project definitions.
+Editing definitions does not replace an already applied quality policy: reselect
+or reapply the tier to update it. Editing is disabled during Play. Full policy,
+limits and persistence details are in [graphics presets](GraphicsPresets.md).

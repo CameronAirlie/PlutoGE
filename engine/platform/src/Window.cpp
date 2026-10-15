@@ -317,6 +317,7 @@ namespace PlutoGE::platform
             destination.buttons.fill(false);
             destination.axes.fill(0.0f);
         }
+        m_inputState.UpdateActiveDevice();
     }
 
     void Window::Close()

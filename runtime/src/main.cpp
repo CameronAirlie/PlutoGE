@@ -391,6 +391,7 @@ int RunRuntime(int argc, char **argv)
     }
 
     auto &engine = PlutoGE::core::Engine::GetInstance();
+    engine.GetRhiRenderService().SetGraphicsQualityPresets(project->GetManifest().graphicsQualityPresets);
     engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory, project->GetManifest().assetPipelineVersion);
     const auto catalogPath = project->GetRootDirectory() / "PlutoAssetCatalog.manifest";
     std::error_code catalogError;

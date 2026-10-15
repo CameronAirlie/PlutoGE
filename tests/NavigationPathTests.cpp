@@ -18,6 +18,42 @@ int main() try
     floor->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
     NavigationBakeSettings settings; settings.boundsMin = {-4, -1, -4}; settings.boundsMax = {4, 4, 4}; settings.cellSize = 1;
     NavigationSystem navigation;
+    {
+        Scene taggedScene;
+        auto *ground = taggedScene.AddEntity(std::make_unique<Entity>());
+        ground->SetPosition({0, -.5f, 0});
+        ground->AddTag("Ground");
+        ground->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
+        auto *obstacle = taggedScene.AddEntity(std::make_unique<Entity>());
+        obstacle->SetPosition({.5f, 1, .5f});
+        obstacle->AddTag("Wall");
+        obstacle->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {1, 2, 3}});
+        auto taggedSettings = settings;
+        taggedSettings.staticObjectsOnly = true;
+        const auto route = [&]() { return navigation.FindPath({-3.5f, 1, .5f}, {3.5f, 1, .5f}, .2f, 1.5f); };
+        taggedSettings.includeTags = {"Ground"};
+        Check(navigation.Bake(taggedScene, taggedSettings) && route().complete && route().points.size() == 2,
+              "Include filter did not ignore an unmatched wall");
+        taggedSettings.includeTags.push_back("Wall");
+        Check(navigation.Bake(taggedScene, taggedSettings) && route().complete && route().points.size() > 2,
+              "Include filter did not accept any matching tag");
+        taggedSettings.excludeTags = {"Wall"};
+        Check(navigation.Bake(taggedScene, taggedSettings) && route().complete && route().points.size() == 2,
+              "Exclude tags did not override include tags");
+        taggedSettings.includeTags.clear();
+        Check(navigation.Bake(taggedScene, taggedSettings) && route().points.size() == 2,
+              "Exclude-only filter failed");
+        taggedSettings.includeTags = {"ground"};
+        Check(!navigation.Bake(taggedScene, taggedSettings), "Tag matching was not case-sensitive");
+        NavigationMeshComponent taggedMesh;
+        taggedMesh.Deserialize({{"Include Tags", PropertyType::String, " Ground, Wall, , Ground "},
+                                {"Exclude Tags", PropertyType::String, " Wall, Ignore "}});
+        NavigationMeshComponent restored;
+        restored.Deserialize(taggedMesh.Serialize());
+        Check(restored.GetSettings().includeTags == std::vector<std::string>({"Ground", "Wall"}) &&
+              restored.GetSettings().excludeTags == std::vector<std::string>({"Wall", "Ignore"}),
+              "Tag fields did not trim, deduplicate or survive serialization");
+    }
     for (int kind = 0; kind < 3; ++kind)
     {
         Scene filterScene;

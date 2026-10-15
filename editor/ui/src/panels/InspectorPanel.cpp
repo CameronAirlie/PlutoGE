@@ -4471,6 +4471,8 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             ImGui::SeparatorText("Bake Settings (World Space)");
+                            ImGui::TextDisabled("Tags: comma-separated, case-sensitive; exclusions take priority.");
+                            ImGui::TextDisabled("Empty Include Tags accepts all tags. Filters use collider-owner tags.");
                         }
                         else if (auto *canvas = dynamic_cast<scene::CanvasComponent *>(componentPtr))
                         {

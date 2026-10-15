@@ -166,11 +166,14 @@ namespace PlutoGE::scene
         // Static-only queries reject movable rigidbodies and non-static mesh,
         // terrain or foliage components on the collider's ancestor chain.
         // Collider-only geometry without a movable rigidbody is static.
+        // Tag filters match collider-owner tags; any include matches, excludes win.
         bool Raycast(const glm::vec3 &origin,
                      const glm::vec3 &direction,
                      float maxDistance,
                      PhysicsRaycastHit &hit,
-                     EntityID ignoredEntityId = 0, bool staticObjectsOnly = false) const;
+                     EntityID ignoredEntityId = 0, bool staticObjectsOnly = false,
+                     const std::vector<std::string> &includeTags = {},
+                     const std::vector<std::string> &excludeTags = {}) const;
         // Distance is sphere-center travel to contact; ignores both entity hierarchies and triggers.
         bool SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
                          PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0, EntityID secondIgnoredEntityId = 0) const;

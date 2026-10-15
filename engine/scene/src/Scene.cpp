@@ -55,6 +55,7 @@
 #include <memory>
 #include <numeric>
 #include <sstream>
+#include <span>
 #include <unordered_set>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -1138,9 +1139,11 @@ namespace PlutoGE::scene
         {
         public:
             IgnoringRayResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId,
-                                      bool staticObjectsOnly = false)
+                                      bool staticObjectsOnly = false,
+                                      const std::vector<std::string> &includeTags = {},
+                                      const std::vector<std::string> &excludeTags = {})
                 : btCollisionWorld::ClosestRayResultCallback(from, to), m_ignoredEntityId(ignoredEntityId),
-                  m_staticObjectsOnly(staticObjectsOnly)
+                  m_staticObjectsOnly(staticObjectsOnly), m_includeTags(includeTags), m_excludeTags(excludeTags)
             {
             }
 
@@ -1153,6 +1156,10 @@ namespace PlutoGE::scene
 
                 const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
+                const auto matchesTag = [entity](const std::string &tag) { return entity && entity->HasTag(tag); };
+                if (std::any_of(m_excludeTags.begin(), m_excludeTags.end(), matchesTag) ||
+                    (!m_includeTags.empty() && !std::any_of(m_includeTags.begin(), m_includeTags.end(), matchesTag)))
+                    return false;
                 if (m_staticObjectsOnly)
                 {
                     for (auto *ancestor = entity; ancestor; ancestor = ancestor->GetParent())
@@ -1183,6 +1190,7 @@ namespace PlutoGE::scene
         private:
             EntityID m_ignoredEntityId = 0;
             bool m_staticObjectsOnly = false;
+            std::span<const std::string> m_includeTags, m_excludeTags;
         };
 
         class IgnoringConvexResultCallback final : public btCollisionWorld::ClosestConvexResultCallback
@@ -3683,7 +3691,9 @@ namespace PlutoGE::scene
                         const glm::vec3 &direction,
                         float maxDistance,
                         PhysicsRaycastHit &hit,
-                        EntityID ignoredEntityId, bool staticObjectsOnly) const
+                        EntityID ignoredEntityId, bool staticObjectsOnly,
+                        const std::vector<std::string> &includeTags,
+                        const std::vector<std::string> &excludeTags) const
     {
         hit = {};
         btVector3 from;
@@ -3693,7 +3703,7 @@ namespace PlutoGE::scene
             return false;
         }
 
-        IgnoringRayResultCallback callback(from, to, ignoredEntityId, staticObjectsOnly);
+        IgnoringRayResultCallback callback(from, to, ignoredEntityId, staticObjectsOnly, includeTags, excludeTags);
         const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
         if (useRuntimeWorld)
             m_runtimePhysicsState->world->dynamicsWorld.rayTest(from, to, callback);

@@ -50,7 +50,7 @@ namespace PlutoGE::scene
                                        settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
                 PhysicsRaycastHit floorHit;
                 auto &cell = m_cells[static_cast<size_t>(z) * m_width + x];
-                if (!scene.Raycast(origin, {0.0f, -1.0f, 0.0f}, rayLength, floorHit, 0, settings.staticObjectsOnly) || floorHit.normal.y < minimumNormalY)
+                if (!scene.Raycast(origin, {0.0f, -1.0f, 0.0f}, rayLength, floorHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags) || floorHit.normal.y < minimumNormalY)
                     continue;
 
                 cell.walkable = true;
@@ -58,7 +58,7 @@ namespace PlutoGE::scene
                 cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
                 PhysicsRaycastHit ceilingHit;
                 const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
-                if (scene.Raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit, 0, settings.staticObjectsOnly))
+                if (scene.Raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags))
                     cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
 
                 // Vertical samples miss thin partitions between cell centres and
@@ -73,7 +73,7 @@ namespace PlutoGE::scene
                 {
                     PhysicsRaycastHit obstacleHit;
                     if (scene.Raycast(probeCenter - direction * halfCell, direction,
-                                      m_settings.cellSize, obstacleHit, 0, settings.staticObjectsOnly) &&
+                                      m_settings.cellSize, obstacleHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags) &&
                         std::abs(obstacleHit.normal.y) < minimumNormalY)
                     {
                         cell.walkable = false;

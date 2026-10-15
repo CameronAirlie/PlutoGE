@@ -19,8 +19,9 @@ unsafe class Program
     static int Zero(int _) => 0;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int Flag() => 0;
+    static int activeDevice = 1;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    static int Device() => 1;
+    static int Device() => activeDevice;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void SetFlag(int _) { }
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -66,6 +67,21 @@ unsafe class Program
         mousePressed=true; Require(map.WasPressed("Attack"),"Mouse binding failed");
         Input.ActionMap=map; Require(Input.GetAction("Move"),"Global action map failed");
         Input.ActionMap=null; Require(!Input.GetAction("Move"),"Cleared action map remained active");
+        var prompts = new InputActionMap { Actions = [new() { Name = "Interact", Bindings = [
+            new() { Kind = InputBindingKind.Key, Key = KeyCode.E },
+            new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.X },
+            new() { Kind = InputBindingKind.MouseButton, MouseButton = MouseButton.Left, Scale = 0 }
+        ] }] };
+        Require(InputPrompts.Binding(prompts, "Interact", InputDevice.KeyboardMouse) == "E", "KBM prompt used controller or disabled binding");
+        Require(InputPrompts.Binding(prompts, "Interact") == "X", "Active controller prompt incorrect");
+        activeDevice = 0;
+        Require(InputPrompts.Format(prompts, "HOLD {Interact}") == "HOLD E", "Device switch left stale prompt");
+        prompts.Actions[0].Bindings[0].Key = KeyCode.F;
+        Require(InputPrompts.Binding(prompts, "Interact") == "F", "Remap left stale prompt");
+        prompts.Actions[0].Bindings.RemoveAt(0);
+        Require(InputPrompts.Binding(prompts, "Interact") == "UNBOUND", "Missing KBM binding fell back to controller");
+        Require(InputPrompts.Binding(prompts, "Missing") == "UNBOUND", "Missing action invented a binding");
+        activeDevice = 1;
         Console.WriteLine("PASS: action lookup, keyboard/mouse bindings, trigger normalization, dead zones, gamepad routing, and frame-snapshot edges");
     }
 }

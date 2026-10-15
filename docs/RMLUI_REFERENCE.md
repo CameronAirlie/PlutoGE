@@ -15,6 +15,7 @@ Inventory verified against PlutoGE's RmlUi **6.1** `Factory.cpp` and `StyleSheet
 | Filters, backdrop filters, custom shader decorators | Legacy GL3 advanced renderer; not general RHI support |
 | SVG, Lottie, Lua, browser JavaScript | Optional upstream integrations; not a guaranteed engine authoring API |
 | Native data models and data-* views | Core C++; no automatic managed-property model registration |
+| Asset-driven prompt text | InputPrompts.Binding/Format and RmlInputPrompts; data-input-prompt templates use named actions from the configured InputActionMap and Input.ActiveDevice |
 | Shared managed controller menus and active-device prompts | ScriptCore ControllerMenu/MenuNavigation/MenuFrame; Input.ActiveDevice/UsingController/ActiveGamepad; explicit entry registration, not automatic DOM navigation |
 | Managed DOM, observables, drag IDs, pan/zoom, portraits, render textures | Engine-specific; see authoring guide |
 | Managed public-property/value/action/localization bindings | RmlViewBinder; explicit IDs, Refresh/Dispose lifetime, data-pluto-binding-* recreation markers; not native data-model registration |

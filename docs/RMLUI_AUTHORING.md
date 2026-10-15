@@ -278,3 +278,34 @@ keyboard/mouse activity wins. Controller connection alone does not switch prompt
 compatibility; these now represent active controller usage, not connection.
 CoD uses this engine controller through a thin compatibility facade and supplies
 its remapped menu frame; its keyboard and confirmation dialogs remain game code.
+
+
+### Asset-driven control prompts
+
+Use `InputPrompts.Binding(map, "Interact")` for a plain binding label or
+`InputPrompts.Format(map, "HOLD {Interact}")` for a text template. By default these
+use `Input.ActiveDevice`; an explicit InputDevice argument supports previews and
+tests. Only bindings for that device are shown. Disabled zero-scale bindings are
+ignored, duplicates collapse, and absent bindings produce `UNBOUND` without
+falling back to a different device. Button names use the standard engine gamepad
+layout; this does not detect controller-brand glyphs. Labels follow the current
+in-memory map; call the project's map configuration/reload path to pick up saved
+asset edits. Escape plain results before assigning RML Markup.
+
+For RML leaves, put a stable id and `data-input-prompt` on an otherwise empty
+element, for example `<span id="use-hint" data-input-prompt="{Interact} USE"/>`.
+Create `new RmlInputPrompts(document, () => currentMap)`, call
+`LoadDocumentBindings()` once, and call `Refresh()` from the unscaled UI update.
+The loader reads the registered RML text asset, including from exported content.
+Refresh resolves the current map and device, HTML-escapes text, skips unchanged
+DOM writes and recovers after document recreation using the reserved
+`data-pluto-input-prompt` marker. Existing live template attributes are respected.
+Call LoadDocumentBindings again after adding/removing prompt elements during hot
+reload. Alternatively Bind(id, template) registers generated documents explicitly.
+These are text bindings; they do not change input routing or native keyboard
+navigation. Projects still supply their configured action map and menu frames.
+
+CoD's GameInput.Prompt/FormatPrompt/RefreshPrompts use its configured fps.plutoinput
+map, the same source used by gameplay. Menu/inventory hints, interactions,
+weapon/supply controls, spectator controls and objective instructions use action
+names instead of literal keyboard keys or controller buttons.

@@ -141,6 +141,39 @@ int main() try
     Check(agent->SetDestination({-2.5f, 1, .5f}) && agent->HasPath(), "Reachable agent route failed");
     Check(!agent->SetDestination(end) && !agent->HasPath() && agent->GetPath().empty(),
           "Failed search created a straight-line fallback through a wall");
+    // Match-sized stopping distances must not skip tight detour corners.
+    for (const float dt : {1.0f / 60, 1.0f / 20, 1.0f / 10})
+    {
+        Scene cornerScene;
+        auto *ground = cornerScene.AddEntity(std::make_unique<Entity>());
+        ground->SetPosition({0, -.5f, 0});
+        ground->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {16, 1, 16}});
+        auto *wall = cornerScene.AddEntity(std::make_unique<Entity>());
+        wall->SetPosition({0, 1.5f, 0});
+        wall->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {1, 3, 6}});
+        NavigationBakeSettings tightSettings;
+        tightSettings.boundsMin = {-6, -1, -6}; tightSettings.boundsMax = {6, 5, 6};
+        tightSettings.cellSize = .4f; tightSettings.staticObjectsOnly = true;
+        auto *nav = cornerScene.AddEntity(std::make_unique<Entity>());
+        auto *navMesh = nav->CreateComponent<NavigationMeshComponent>(tightSettings);
+        Check(navMesh->Bake(), "Corner bake failed");
+        auto *actor = cornerScene.AddEntity(std::make_unique<Entity>());
+        actor->SetPosition({-3, 1, 0});
+        ColliderComponentConfig capsule;
+        capsule.shape = ColliderShape::Capsule; capsule.radius = .3f; capsule.height = 1.5f;
+        actor->CreateComponent<ColliderComponent>(capsule);
+        actor->CreateComponent<RigidbodyComponent>(RigidbodyComponentConfig{.useGravity = true, .isKinematic = true});
+        auto config = agentSettings;
+        config.navigationMeshEntityId = nav->GetID(); config.navigateOnStart = true;
+        config.agentRadius = .5f; config.agentHeight = 2; config.stoppingDistance = .75f; config.speed = 4.8f;
+        config.destination = {3, 1, 0};
+        actor->CreateComponent<NavAgentComponent>(config);
+        cornerScene.StartRuntime();
+        for (int frame = 0; frame < static_cast<int>(20 / dt); ++frame) cornerScene.Update(dt);
+        auto displacement = actor->GetWorldPosition() - config.destination; displacement.y = 0;
+        Check(glm::length(displacement) < 1, "Agent stalled while following a tight wall detour");
+        cornerScene.StopRuntime();
+    }
     navigation.Clear();
     Check(!navigation.FindPath(start, end).complete, "Cleared navigation returned stale route");
     std::cout << "PASS: direct routes, actor heights, obstacle detours, unreachable goals and invalidation\n";

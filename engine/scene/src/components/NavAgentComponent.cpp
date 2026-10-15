@@ -249,8 +249,13 @@ namespace PlutoGE::scene
         // At low frame rates an agent can step completely across a small grid
         // waypoint. Scale the acceptance radius by this frame's travel distance
         // so it advances instead of reversing direction on the next frame.
-        const float waypointTolerance = std::max(m_config.stoppingDistance,
-                                                  std::max(0.0f, m_config.speed) * deltaTime * 1.5f);
+        // Final stopping distance must not cut intermediate corners. A large
+        // acceptance radius can skip a turn while the actor is still behind a wall.
+        const auto waypointTolerance = [&]()
+        {
+            return m_nextPoint + 1 == m_path.size()
+                ? std::max(0.05f, m_config.stoppingDistance) : 0.15f;
+        };
         const auto passedWaypoint = [&](const glm::vec3 &waypoint)
         {
             if (!m_hasPreviousPosition)
@@ -270,11 +275,11 @@ namespace PlutoGE::scene
             const glm::vec3 closestPoint = m_previousPosition + travel * along;
             glm::vec3 miss = waypoint - closestPoint;
             miss.y = 0.0f;
-            const float passageRadius = std::max(waypointTolerance, 0.75f);
+            const float passageRadius = waypointTolerance();
             return glm::dot(miss, miss) <= passageRadius * passageRadius;
         };
 
-        while (glm::length(toPoint) <= waypointTolerance || passedWaypoint(m_path[m_nextPoint]))
+        while (glm::length(toPoint) <= waypointTolerance() || passedWaypoint(m_path[m_nextPoint]))
         {
             ++m_nextPoint;
             if (!HasPath())
@@ -288,16 +293,12 @@ namespace PlutoGE::scene
 
         glm::vec3 desiredDirection = glm::dot(toPoint, toPoint) > 0.000001f ? glm::normalize(toPoint) : glm::vec3{};
         desiredDirection = ApplyLocalAvoidance(desiredDirection);
-        const float steeringBlend = std::clamp(6.0f * deltaTime, 0.0f, 1.0f);
-        if (glm::dot(m_steeringDirection, m_steeringDirection) < 0.000001f)
-            m_steeringDirection = desiredDirection;
-        else
-        {
-            m_steeringDirection = glm::mix(m_steeringDirection, desiredDirection, steeringBlend);
-            if (glm::dot(m_steeringDirection, m_steeringDirection) > 0.000001f)
-                m_steeringDirection = glm::normalize(m_steeringDirection);
-        }
-        const glm::vec3 desiredVelocity = m_steeringDirection * std::max(0.0f, m_config.speed);
+        // Heading is smoothed separately below. Smoothing the travel direction
+        // creates a turning radius that can orbit a nearby corner indefinitely.
+        m_steeringDirection = desiredDirection;
+        const float speed = std::min(std::max(0.0f, m_config.speed),
+                                     glm::length(toPoint) * std::min(4.0f, 1.0f / deltaTime));
+        const glm::vec3 desiredVelocity = m_steeringDirection * speed;
         m_velocity = glm::mix(m_velocity, desiredVelocity, std::clamp(m_config.acceleration * deltaTime, 0.0f, 1.0f));
         if (dynamicBody)
         {

@@ -4,6 +4,8 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/NavAgentComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include <iostream>
 #include <stdexcept>
 using namespace PlutoGE::scene;
@@ -16,6 +18,37 @@ int main() try
     floor->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
     NavigationBakeSettings settings; settings.boundsMin = {-4, -1, -4}; settings.boundsMax = {4, 4, 4}; settings.cellSize = 1;
     NavigationSystem navigation;
+    for (int kind = 0; kind < 3; ++kind)
+    {
+        Scene filterScene;
+        auto *ground = filterScene.AddEntity(std::make_unique<Entity>());
+        ground->SetPosition({0, -.5f, 0});
+        ground->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
+        auto *obstacle = filterScene.AddEntity(std::make_unique<Entity>());
+        obstacle->SetPosition({.5f, 1, .5f});
+        obstacle->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {1, 2, 3}});
+        if (kind < 2)
+            obstacle->CreateComponent<RigidbodyComponent>(RigidbodyComponentConfig{.isKinematic = kind == 1});
+        else
+            obstacle->CreateComponent<MeshComponent>(MeshComponentConfig{})->SetStatic(false);
+        auto filteredSettings = settings;
+        filteredSettings.staticObjectsOnly = true;
+        Check(navigation.Bake(filterScene, filteredSettings), "Static-only bake failed");
+        Check(navigation.FindPath({-3.5f, 1, .5f}, {3.5f, 1, .5f}, .2f, 1.5f).points.size() == 2,
+              "Static-only bake included a movable obstacle");
+        filteredSettings.staticObjectsOnly = false;
+        Check(navigation.Bake(filterScene, filteredSettings), "Unfiltered bake failed");
+        Check(navigation.FindPath({-3.5f, 1, .5f}, {3.5f, 1, .5f}, .2f, 1.5f).points.size() > 2,
+              "Unfiltered bake ignored a movable obstacle");
+    }
+    settings.staticObjectsOnly = true;
+    NavigationMeshComponent serializedMesh(settings);
+    NavigationMeshComponent restoredMesh;
+    restoredMesh.Deserialize(serializedMesh.Serialize());
+    bool restoredStaticOnly = false;
+    for (const auto &property : restoredMesh.Serialize())
+        if (property.name == "Static Objects Only") restoredStaticOnly = property.value == "true";
+    Check(restoredStaticOnly, "Static-only setting did not survive serialization");
     for (float partitionX : {0.0f, 0.5f})
     {
         Scene partitionScene;

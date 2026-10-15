@@ -163,11 +163,14 @@ namespace PlutoGE::scene
         // Does not step simulation or rebuild an unchanged collision world.
         void SynchronizePhysicsQueries() const { RefreshPhysicsQueryCache(); }
         std::vector<Entity *> FindEntitiesByTag(const std::string &tag) const; // Utility function to find entities by tag (can be useful for scripting and editor)
+        // Static-only queries reject movable rigidbodies and non-static mesh,
+        // terrain or foliage components on the collider's ancestor chain.
+        // Collider-only geometry without a movable rigidbody is static.
         bool Raycast(const glm::vec3 &origin,
                      const glm::vec3 &direction,
                      float maxDistance,
                      PhysicsRaycastHit &hit,
-                     EntityID ignoredEntityId = 0) const;
+                     EntityID ignoredEntityId = 0, bool staticObjectsOnly = false) const;
         // Distance is sphere-center travel to contact; ignores both entity hierarchies and triggers.
         bool SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
                          PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0, EntityID secondIgnoredEntityId = 0) const;

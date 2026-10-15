@@ -1137,8 +1137,10 @@ namespace PlutoGE::scene
         class IgnoringRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
         {
         public:
-            IgnoringRayResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId)
-                : btCollisionWorld::ClosestRayResultCallback(from, to), m_ignoredEntityId(ignoredEntityId)
+            IgnoringRayResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId,
+                                      bool staticObjectsOnly = false)
+                : btCollisionWorld::ClosestRayResultCallback(from, to), m_ignoredEntityId(ignoredEntityId),
+                  m_staticObjectsOnly(staticObjectsOnly)
             {
             }
 
@@ -1151,6 +1153,21 @@ namespace PlutoGE::scene
 
                 const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
+                if (m_staticObjectsOnly)
+                {
+                    for (auto *ancestor = entity; ancestor; ancestor = ancestor->GetParent())
+                    {
+                        const auto *body = ancestor->GetComponent<RigidbodyComponent>();
+                        if (body && (body->GetMass() > 0.0f || body->IsKinematic()))
+                            return false;
+                        if (const auto *mesh = ancestor->GetComponent<MeshComponent>(); mesh && !mesh->IsStatic())
+                            return false;
+                        if (const auto *terrain = ancestor->GetComponent<TerrainComponent>(); terrain && !terrain->IsStatic())
+                            return false;
+                        if (const auto *foliage = ancestor->GetComponent<FoliageComponent>(); foliage && !foliage->IsStatic())
+                            return false;
+                    }
+                }
                 return !IsEntityOrDescendantOf(entity, m_ignoredEntityId);
             }
 
@@ -1165,6 +1182,7 @@ namespace PlutoGE::scene
 
         private:
             EntityID m_ignoredEntityId = 0;
+            bool m_staticObjectsOnly = false;
         };
 
         class IgnoringConvexResultCallback final : public btCollisionWorld::ClosestConvexResultCallback
@@ -3665,7 +3683,7 @@ namespace PlutoGE::scene
                         const glm::vec3 &direction,
                         float maxDistance,
                         PhysicsRaycastHit &hit,
-                        EntityID ignoredEntityId) const
+                        EntityID ignoredEntityId, bool staticObjectsOnly) const
     {
         hit = {};
         btVector3 from;
@@ -3675,7 +3693,7 @@ namespace PlutoGE::scene
             return false;
         }
 
-        IgnoringRayResultCallback callback(from, to, ignoredEntityId);
+        IgnoringRayResultCallback callback(from, to, ignoredEntityId, staticObjectsOnly);
         const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
         if (useRuntimeWorld)
             m_runtimePhysicsState->world->dynamicsWorld.rayTest(from, to, callback);

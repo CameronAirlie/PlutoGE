@@ -5,7 +5,7 @@
 #include <vector>
 namespace PlutoGE::scene {
 class Scene;
-struct NavigationBakeSettings { glm::vec3 boundsMin{-50,-10,-50}; glm::vec3 boundsMax{50,20,50}; float cellSize=.5f; float maxSlopeDegrees=45; float maxStepHeight=.5f; };
+struct NavigationBakeSettings { glm::vec3 boundsMin{-50,-10,-50}; glm::vec3 boundsMax{50,20,50}; float cellSize=.5f; float maxSlopeDegrees=45; float maxStepHeight=.5f; bool staticObjectsOnly=false; };
 struct NavigationPath { std::vector<glm::vec3> points; bool complete=false; };
 class NavigationSystem {
 public:

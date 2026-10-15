@@ -36,7 +36,7 @@ namespace PlutoGE::scene
     {
         auto v = [](const glm::vec3 &p)
         { return std::to_string(p.x) + "," + std::to_string(p.y) + "," + std::to_string(p.z); };
-        return {{"Bounds Minimum", PropertyType::Vec3, v(m_settings.boundsMin)}, {"Bounds Maximum", PropertyType::Vec3, v(m_settings.boundsMax)}, {"Cell Size", PropertyType::Float, std::to_string(m_settings.cellSize)}, {"Maximum Slope", PropertyType::Float, std::to_string(m_settings.maxSlopeDegrees)}, {"Maximum Step Height", PropertyType::Float, std::to_string(m_settings.maxStepHeight)}, {"Baked", PropertyType::Bool, m_shouldHaveBake ? "true" : "false"}};
+        return {{"Bounds Minimum", PropertyType::Vec3, v(m_settings.boundsMin)}, {"Bounds Maximum", PropertyType::Vec3, v(m_settings.boundsMax)}, {"Cell Size", PropertyType::Float, std::to_string(m_settings.cellSize)}, {"Maximum Slope", PropertyType::Float, std::to_string(m_settings.maxSlopeDegrees)}, {"Maximum Step Height", PropertyType::Float, std::to_string(m_settings.maxStepHeight)}, {"Static Objects Only", PropertyType::Bool, m_settings.staticObjectsOnly ? "true" : "false"}, {"Baked", PropertyType::Bool, m_shouldHaveBake ? "true" : "false"}};
     }
     void NavigationMeshComponent::Deserialize(const std::vector<Property> &p)
     {
@@ -53,6 +53,8 @@ namespace PlutoGE::scene
                 m_settings.maxSlopeDegrees = std::stof(x.value);
             else if (x.name == "Maximum Step Height")
                 m_settings.maxStepHeight = std::stof(x.value);
+            else if (x.name == "Static Objects Only")
+                m_settings.staticObjectsOnly = x.value == "true" || x.value == "1";
             else if (x.name == "Baked")
             {
                 foundBaked = true;

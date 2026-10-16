@@ -426,7 +426,8 @@ namespace PlutoGE::ui
                << " ms (" << rhiScene.skinningUpdateCount << " updates, " << rhiScene.skinningVertexCount << " vertices)\n";
         report << "RHI translation / Skinned vertex upload: " << rhiScene.skinningUploadMs << " ms\n";
         report << "RHI GPU skinning: " << rhiScene.gpuSkinningDispatches << " dispatches / " << rhiScene.gpuSkinningVertices
-               << " vertices / " << rhiScene.gpuSkinningPaletteBytes << " palette bytes\n";
+               << " vertices / " << rhiScene.gpuSkinningPaletteBytes << " palette bytes; "
+               << rhiScene.skinnedShadowCastersOutOfReach << " shadow-only skinned casters out of reach\n";
         report << "RHI translation / Texture pixel reads: " << rhiScene.textureReadMs << " ms\n";
         report << "RHI translation / Texture creation + mipmaps: " << rhiScene.textureUploadMs
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";

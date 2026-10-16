@@ -3212,6 +3212,8 @@ namespace PlutoGE::assets
                 asset.volumeEdgeSoftness = std::max(ParseFloatValue(value, asset.volumeEdgeSoftness), 0.01f);
             else if (key == "VolumeSelfShadow")
                 asset.volumeSelfShadow = std::clamp(ParseFloatValue(value, asset.volumeSelfShadow), 0.0f, 4.0f);
+            else if (key == "VolumeConserveMass")
+                asset.volumeConserveMass = ParseBoolValue(value);
             else if (key == "CollisionEnabled")
                 asset.collisionEnabled = ParseBoolValue(value);
             else if (key == "CollisionMode")
@@ -3355,6 +3357,7 @@ namespace PlutoGE::assets
         output << "VolumeNoiseFrequency=" << asset.volumeNoiseFrequency << "\n";
         output << "VolumeEdgeSoftness=" << asset.volumeEdgeSoftness << "\n";
         output << "VolumeSelfShadow=" << asset.volumeSelfShadow << "\n";
+        output << "VolumeConserveMass=" << (asset.volumeConserveMass ? "true" : "false") << "\n";
         output << "CollisionEnabled=" << (asset.collisionEnabled ? "true" : "false") << "\n";
         output << "CollisionMode=" << ToString(asset.collisionMode) << "\n";
         output << "CollisionDampening=" << asset.collisionDampening << "\n";

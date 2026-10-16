@@ -68,6 +68,31 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     fog.parameters[3] = {1,0,0,0};
     draw.model = glm::translate(glm::mat4(1), glm::vec3(0,0,-20));
     expect(sample(true), std::exp(-1.f), "Distant fog extinction");
+    {
+        // Particles composite after fog. An opaque black billboard 20 units
+        // into the medium must show only the fog in front of it.
+        auto particleFog = fog;
+        particleFog.parameters[1].w = 1;
+        auto particleLighting = lighting;
+        particleLighting.ambientIntensity = 1;
+        BasicParticleDraw particle;
+        particle.parameters.viewProjection = projection * particleLighting.view;
+        particle.parameters.inverseProjection = glm::inverse(projection);
+        particle.parameters.view = particleLighting.view;
+        particle.parameters.values[0] = glm::vec4(1);
+        particle.parameters.values[2].x = 1;
+        particle.parameters.values[3] = {1, 1, 0, 0};
+        BasicParticleInstance instance;
+        instance.centerRotation = {0, 0, -20, 0};
+        instance.color = {0, 0, 0, 1};
+        instance.ageDensityRandomSize = {0, 1, 0, 100};
+        particle.instances.push_back(instance);
+        renderer.Render(projection * particleLighting.view, particleLighting, {}, std::span(&particleFog, 1), {},
+                        PostProcessDebugView::None, nullptr, nullptr, true, {}, std::span(&particle, 1));
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        expect(static_cast<int>(pixels[(16 * 33 + 16) * 4]) / 255.0f, 1.f - std::exp(-1.f),
+               "Particles must receive the fog between them and the camera");
+    }
     for (float detailDistance : {.25f, 2.f, 10.f, 40.f})
     {
         fog.parameters[1].z = detailDistance;

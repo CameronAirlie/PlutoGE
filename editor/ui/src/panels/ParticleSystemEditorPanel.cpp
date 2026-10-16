@@ -191,6 +191,9 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Volume Noise Frequency", &m_asset.volumeNoiseFrequency, 0.05f, 0.0001f, 100.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Volume Edge Softness", &m_asset.volumeEdgeSoftness, 0.05f, 0.01f, 8.0f, "%.2f")) m_dirty = true;
         if (ImGui::SliderFloat("Volume Self Shadow", &m_asset.volumeSelfShadow, 0.0f, 4.0f, "%.2f")) m_dirty = true;
+        if (ImGui::Checkbox("Volume Conserve Mass", &m_asset.volumeConserveMass)) m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Thin each particle as it grows so expanding smoke keeps its detail instead of becoming an opaque disc.");
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Smoke Rendering");

@@ -13,14 +13,59 @@ struct VertexOutput
     float2 uv : TEXCOORD0;
     nointerpolation float4 data : TEXCOORD1;
     nointerpolation float3 centerView : TEXCOORD2;
+    // Camera-to-particle fog: in-scattered radiance and transmittance.
+    nointerpolation float4 fog : TEXCOORD3;
 };
 [[vk::binding(0, 0)]] cbuffer ParticleParameters : register(b0, space0)
 {
     column_major float4x4 viewProjection;
     column_major float4x4 inverseProjection;
     column_major float4x4 view;
-    float4 values[24];
+    float4 values[28];
 };
+#include "FogLightingParameters.slang"
+#include "FogIntegration.slang"
+static const float PI = 3.14159265359;
+#include "PhysicalSkyEnvironment.slang"
+#include "FogEnvironment.slang"
+
+// Particles composite after the fog pass, over a background that already
+// carries fog. Attenuating a particle by the fog in front of it and adding that
+// segment's in-scattering composites exactly over it. Fog varies little across
+// one billboard, so it is integrated once per particle, unshadowed, matching
+// the fog pass's distant (unshadowed) term. values[24-27] mirror the
+// VolumetricFog effect parameters; zero density and haze disable it.
+float4 particleFog(float3 worldPosition)
+{
+    const float4 colorDensity = values[24], heightDetailScattering = values[25];
+    const float4 phaseAmbientSunOpacity = values[26], haze = values[27];
+    if (colorDensity.w <= 0.0 && haze.y <= 0.0) return float4(0, 0, 0, 1);
+    const float3 ray = worldPosition - fogCameraPositionAmbient.xyz;
+    const float distance = length(ray);
+    const float3 direction = ray / max(distance, 0.0001);
+    const float g = clamp(phaseAmbientSunOpacity.x, -0.85, 0.85);
+    const float cosine = dot(direction, normalize(-fogDirectionalDirectionIntensity.xyz));
+    const float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5));
+    const float3 medium = max(colorDensity.rgb, 0.0) * max(heightDetailScattering.w, 0.0);
+    const float3 ambient = medium * max(phaseAmbientSunOpacity.y, 0.0) *
+        fogEnvironmentLighting(fogCameraPositionAmbient.w);
+    const float3 sunlight = medium * max(phaseAmbientSunOpacity.z, 0.0) * max(fogDirectionalColor.rgb, 0.0) *
+        max(fogDirectionalDirectionIntensity.w, 0.0) * phase;
+    const float heightTransmittance = exp(-heightFogOpticalDepth(colorDensity.w, heightDetailScattering.x,
+        heightDetailScattering.y, fogCameraPositionAmbient.y, direction.y, distance));
+    const float opacity = min(1.0 - heightTransmittance, saturate(phaseAmbientSunOpacity.w));
+    float3 radiance = opacity * (ambient + sunlight);
+    float transmittance = 1.0 - opacity;
+    if (haze.y > 0.0)
+    {
+        const float hazeTransmittance = horizonHazeTransmittance(direction.y, distance, false, haze.y, haze.z, haze.w);
+        const float3 hazeLighting = horizonHazeLighting(direction, fogCameraPositionAmbient.w,
+            fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), haze.z);
+        radiance = radiance * hazeTransmittance + hazeLighting * (1.0 - hazeTransmittance);
+        transmittance *= hazeTransmittance;
+    }
+    return float4(radiance, transmittance);
+}
 [[vk::binding(1, 0)]] Sampler2D uAlbedoTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D uSceneDepth : register(t2, space0);
 [[vk::binding(4, 0)]] Sampler2D uLowerTransparencyDepth : register(t4, space0);
@@ -51,6 +96,7 @@ VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : 
     output.uv = corner + 0.5;
     output.data = particle.data;
     output.centerView = mul(view, float4(particle.centerRotation.xyz, 1)).xyz;
+    output.fog = particleFog(particle.centerRotation.xyz);
     return output;
 }
 [shader("vertex")] VertexOutput vertexMain(VertexInput input) {
@@ -60,6 +106,7 @@ VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : 
     output.uv = input.uv;
     output.data = input.data;
     output.centerView = mul(view, float4(input.center, 1)).xyz;
+    output.fog = particleFog(input.center);
     return output;
 }
 #define uInverseProjection (inverseProjection)
@@ -159,13 +206,23 @@ float viewDepth(float2 uv, float depth)
         {
             discard;
         }
-        float chord = 2.0 * sqrt(max(1.0 - radiusSquared, 0.0)) * max(input.data.w, 0.0001);
-        float edgeDensity = pow(max(1.0 - radiusSquared, 0.0), uVolumeEdgeSoftness);
         float2 noisePosition =
             volumePosition * uVolumeNoiseFrequency + float2(input.data.z * 17.0, input.data.x * 0.17);
-        float noiseValue = valueNoise(noisePosition) * 0.65 + valueNoise(noisePosition * 2.03 + 7.1) * 0.35;
+        float noiseValue = valueNoise(noisePosition) * 0.5 + valueNoise(noisePosition * 2.03 + 7.1) * 0.3 +
+                           valueNoise(noisePosition * 4.11 + 3.7) * 0.2;
+        // Erode the sphere where the noise is thin. Once the interior is
+        // dense, the silhouette carries the shape; a radial edge reads as a disc.
+        float boundary = 1.0 - uVolumeNoiseStrength * 0.5 * saturate(1.0 - noiseValue * 1.25);
+        float shapedRadiusSquared = radiusSquared / (boundary * boundary);
+        if (shapedRadiusSquared >= 1.0)
+        {
+            discard;
+        }
+        float chord = 2.0 * sqrt(1.0 - shapedRadiusSquared) * boundary * max(input.data.w, 0.0001);
+        float edgeDensity = pow(1.0 - shapedRadiusSquared, uVolumeEdgeSoftness);
         float densityNoise = lerp(1.0, clamp(noiseValue * 1.6, 0.05, 1.5), uVolumeNoiseStrength);
-        opticalDepth = max(uVolumeDensity, 0.0) * edgeDensity * densityNoise * chord;
+        // data.y scales density per particle, e.g. to conserve mass as it grows.
+        opticalDepth = max(uVolumeDensity, 0.0) * max(input.data.y, 0.0) * edgeDensity * densityNoise * chord;
         color.a = (1.0 - exp(-opticalDepth)) * color.a;
     }
     if (uSoftParticlesEnabled != 0)
@@ -223,5 +280,6 @@ float viewDepth(float2 uv, float depth)
     // Emission represents radiance carried by the participating
     // medium, so empty/transparent portions must not glow.
     float3 emissive = max(uEmission, float3(0.0)) * (values[21].x > 0.5 ? 1.0 : color.a);
-    return float4((color.rgb + emissive) * color.a, color.a);
+    const float3 premultiplied = (color.rgb + emissive) * color.a;
+    return float4(premultiplied * input.fog.a + input.fog.rgb * color.a, color.a);
 }

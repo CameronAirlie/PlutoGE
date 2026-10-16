@@ -552,6 +552,11 @@ target_link_libraries(PlutoGESceneCpuCacheTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGESceneCpuCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGESceneCpuCacheTests COMMAND PlutoGESceneCpuCacheTests)
 
+add_executable(PlutoGEDirectionalShadowReachTests DirectionalShadowReachTests.cpp)
+target_link_libraries(PlutoGEDirectionalShadowReachTests PRIVATE PlutoGE::Scene)
+target_include_directories(PlutoGEDirectionalShadowReachTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGEDirectionalShadowReachTests COMMAND PlutoGEDirectionalShadowReachTests)
+
 add_executable(PlutoGESnapshotDamageTests SnapshotDamageTests.cpp)
 target_include_directories(PlutoGESnapshotDamageTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include ${CMAKE_SOURCE_DIR}/engine/render/src)
 target_compile_features(PlutoGESnapshotDamageTests PRIVATE cxx_std_20)

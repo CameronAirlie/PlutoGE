@@ -356,7 +356,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
             BasicParticleInstance instance;
             instance.centerRotation = {-.35f + index * .3f, -.2f + frame * .2f, .6f, .3f + index * .4f};
             instance.color = {.2f, .8f - index * .2f, .3f + index * .2f, .4f};
-            instance.ageLifetimeRandomSize = {0, 1, 0, .7f};
+            instance.ageDensityRandomSize = {0, 1, 0, .7f};
             particle.instances.push_back(instance);
             constexpr std::array<glm::vec2, 4> corners{{{-.5f,-.5f}, {.5f,-.5f}, {-.5f,.5f}, {.5f,.5f}}};
             for (auto vertex : indices)
@@ -368,7 +368,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
                               (-sine * corner.x + cosine * corner.y) * .7f, 0);
                 const glm::vec3 center(instance.centerRotation);
                 expanded.vertices.push_back({center + offset, instance.color, corner + .5f,
-                                             instance.ageLifetimeRandomSize, center});
+                                             instance.ageDensityRandomSize, center});
             }
         }
         reference.Render(glm::mat4(1), lighting, {&draw,1}, {}, {}, PostProcessDebugView::None,

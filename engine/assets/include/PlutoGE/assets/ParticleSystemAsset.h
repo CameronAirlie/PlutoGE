@@ -94,6 +94,8 @@ namespace PlutoGE::assets
         float volumeNoiseFrequency = 3.0f;
         float volumeEdgeSoftness = 1.5f;
         float volumeSelfShadow = 0.75f;
+        // Thin each volume as it grows so its smoke mass stays constant.
+        bool volumeConserveMass = false;
 
         bool collisionEnabled = false;
         ParticleCollisionMode collisionMode = ParticleCollisionMode::Kill;

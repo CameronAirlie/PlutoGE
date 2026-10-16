@@ -747,13 +747,15 @@ namespace PlutoGE::render
                     {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                    {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    // Frame lighting prefix for per-particle fog (see Particles.slang).
+                    {7, 0, 7, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex}};
                 particle.vertexLayout = {
                     sizeof(BasicParticleVertex),
                     {{0, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, position)},
                      {1, rhi::Format::R32G32B32A32Float, offsetof(BasicParticleVertex, color)},
                      {2, rhi::Format::R32G32Float, offsetof(BasicParticleVertex, uv)},
-                     {3, rhi::Format::R32G32B32A32Float, offsetof(BasicParticleVertex, ageLifetimeRandomSize)},
+                     {3, rhi::Format::R32G32B32A32Float, offsetof(BasicParticleVertex, ageDensityRandomSize)},
                      {4, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, center)}}};
                 particle.debugName = "RHI particles";
                 m_particlePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(particle));
@@ -3243,6 +3245,9 @@ namespace PlutoGE::render
                     auto parameters = draw.parameters;
                     parameters.values[23] = {1.0f / m_width, 1.0f / m_height,
                                              m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, hasParticleTransparency ? 1.0f : 0.0f};
+                    // Particles composite after the fog pass, so each applies
+                    // the camera-to-particle fog that the background already has.
+                    std::copy(glassFog.begin(), glassFog.end(), parameters.values.begin() + 24);
                     m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
                 }
             }
@@ -3262,6 +3267,7 @@ namespace PlutoGE::render
                 const auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
                 commands.BindPipeline(instanced ? m_particleInstancedPipeline.Get() : m_particlePipeline.Get());
                 commands.BindUniformBuffer(0, m_particleParameters[index].Get());
+                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
                 commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
                 commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
                 commands.BindTexture(4, particleLowerDepth ? particleLowerDepth : m_fallbackTexture.Get(), m_shadowSampler.Get());

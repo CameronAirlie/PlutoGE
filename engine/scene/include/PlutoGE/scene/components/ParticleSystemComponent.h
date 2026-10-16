@@ -173,6 +173,7 @@ namespace PlutoGE::scene
         float GetVolumeNoiseFrequency() const { return m_volumeNoiseFrequency; }
         float GetVolumeEdgeSoftness() const { return m_volumeEdgeSoftness; }
         float GetVolumeSelfShadow() const { return m_volumeSelfShadow; }
+        bool GetVolumeConserveMass() const { return m_volumeConserveMass; }
         bool UsesCpuSimulation() const;
         const std::vector<ParticleCpuData> &GetCpuParticles() const { return m_cpuParticles; }
         void BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const;
@@ -264,6 +265,7 @@ namespace PlutoGE::scene
         float m_volumeNoiseFrequency = 3.0f;
         float m_volumeEdgeSoftness = 1.5f;
         float m_volumeSelfShadow = 0.75f;
+        bool m_volumeConserveMass = false;
         bool m_collisionEnabled = false;
         assets::ParticleCollisionMode m_collisionMode = assets::ParticleCollisionMode::Kill;
         float m_collisionDampening = 0.0f;

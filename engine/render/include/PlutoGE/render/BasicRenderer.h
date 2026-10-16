@@ -351,7 +351,8 @@ namespace PlutoGE::render
         glm::vec3 position{0};
         glm::vec4 color{1};
         glm::vec2 uv{0};
-        glm::vec4 ageLifetimeRandomSize{0};
+        // Age (seconds), volume density scale (1 = authored), random, world size.
+        glm::vec4 ageDensityRandomSize{0};
         glm::vec3 center{0};
     };
     struct BasicParticleParameters
@@ -361,15 +362,17 @@ namespace PlutoGE::render
         glm::mat4 view{1};
         // Lanes: material 0-1, shape/depth 2, flipbook 3, smoke 4-6,
         // volume 7-8, local positions/ranges 9-12, colors/types 13-16,
-        // local directions 17-20, trail 21, spot cone cosines 22, viewport / transparency clipping 23.
-        std::array<glm::vec4, 24> values{};
+        // local directions 17-20, trail 21, spot cone cosines 22, viewport / transparency clipping 23,
+        // volumetric fog 24-27 (the VolumetricFog effect's parameters[0-3], filled by BasicRenderer; zero disables).
+        std::array<glm::vec4, 28> values{};
     };
     // Matches the structured buffer in Particles.slang. One record per billboard.
     struct alignas(16) BasicParticleInstance
     {
         glm::vec4 centerRotation{0};
         glm::vec4 color{1};
-        glm::vec4 ageLifetimeRandomSize{0};
+        // Age (seconds), volume density scale (1 = authored), random, world size.
+        glm::vec4 ageDensityRandomSize{0};
     };
     static_assert(sizeof(BasicParticleInstance) == 48);
     struct BasicParticleDraw

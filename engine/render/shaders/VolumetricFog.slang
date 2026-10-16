@@ -9,34 +9,7 @@
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 
-// This is the prefix of BasicRenderer's frame block through the fields fog
-// consumes. Keeping fog on that existing buffer makes directional lighting and
-// cascaded shadows identical to the opaque pass without maintaining a second
-// per-frame light representation.
-[[vk::binding(7, 0)]]
-cbuffer FogLightingParameters : register(b7, space0)
-{
-    column_major float4x4 fogViewProjection;
-    float4 fogCameraPositionAmbient;
-    float4 fogDirectionalDirectionIntensity;
-    float4 fogDirectionalColor;
-    column_major float4x4 fogShadowMatrices[4];
-    uint fogShadowsEnabled;
-    uint fogShadowFlipY;
-    float fogShadowDepthScale;
-    float fogShadowDepthBias;
-    float4 fogShadowInverseResolutions[4];
-    float4 fogShadowCascadeSplits;
-    float4 fogShadowCascadeMetrics[4];
-    float4 fogShadowCascadeParameters;
-    float4 fogShadowFilterParameters;
-    float4 fogShadowFilterEdgeParameters;
-    column_major float4x4 fogView;
-    column_major float4x4 fogMotionViewProjection;
-    column_major float4x4 fogPreviousViewProjection;
-    float4 physicalSkyParameters[6];
-    float4 physicalSkySettings;
-};
+#include "FogLightingParameters.slang"
 
 [[vk::binding(8, 0)]] Sampler2D shadowTexture0 : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler2D shadowTexture1 : register(t9, space0);

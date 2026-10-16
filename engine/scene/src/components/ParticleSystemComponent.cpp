@@ -1065,6 +1065,7 @@ namespace PlutoGE::scene
         m_volumeNoiseFrequency = std::max(asset.volumeNoiseFrequency, 0.0001f);
         m_volumeEdgeSoftness = std::max(asset.volumeEdgeSoftness, 0.01f);
         m_volumeSelfShadow = std::clamp(asset.volumeSelfShadow, 0.0f, 4.0f);
+        m_volumeConserveMass = asset.volumeConserveMass;
         m_collisionEnabled = asset.collisionEnabled;
         m_collisionMode = asset.collisionMode;
         m_collisionDampening = std::clamp(asset.collisionDampening, 0.0f, 1.0f);

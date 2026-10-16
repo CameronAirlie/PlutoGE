@@ -4,6 +4,7 @@
 
 #include "BasicDrawBatching.h"
 #include "CanonicalGeometry.h"
+#include "DirectionalShadowReach.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -568,6 +569,35 @@ namespace PlutoGE::render
               std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
         // A borrowed directional VSM already contains this frame's casters.
         const bool prepareShadowCasters = (lighting.shadowsEnabled && !reuseDirectionalShadows) || localShadows;
+        // Skinned casters pay a full deformation before any shadow culling.
+        // Drop those that cannot shadow a receiver in this view. Local lights
+        // have their own reach, so any local shadow keeps the full list.
+        RenderCommandView directionalShadowCommands = shadowCommands;
+        if (prepareShadowCasters && !localShadows)
+        {
+            const float shadowDistance = std::max(lighting.shadowDistance > 0.0f
+                ? std::min(cameraData.farPlane, lighting.shadowDistance) : cameraData.farPlane, 8.0f);
+            const float casterDistance = lighting.shadowCasterDistance > 0.0f ? lighting.shadowCasterDistance : shadowDistance;
+            if (const auto reach = DirectionalShadowReach::Create(glm::vec3(glm::inverse(cameraData.view)[3]),
+                    cameraData.projection, lighting.directionalDirection, shadowDistance, casterDistance))
+            {
+                const auto outOfReach = [&](const RenderCommand &command)
+                {
+                    return command.jointMatrices && !command.jointMatrices->empty() &&
+                        !reach->Contains(command.worldBounds.center, command.worldBounds.radius);
+                };
+                const auto culled = static_cast<std::size_t>(std::ranges::count_if(shadowCommands, outOfReach));
+                if (culled != 0)
+                {
+                    m_directionalShadowCommands.clear();
+                    m_directionalShadowCommands.reserve(shadowCommands.size() - culled);
+                    for (const auto &command : shadowCommands)
+                        if (!outOfReach(command)) m_directionalShadowCommands.push_back(&command);
+                    directionalShadowCommands = m_directionalShadowCommands;
+                    m_timingStats.skinnedShadowCastersOutOfReach = culled;
+                }
+            }
+        }
         auto &pendingSkinning = m_pendingSkinning;
         auto &skinningJobs = m_skinningJobs;
         pendingSkinning.clear();
@@ -733,7 +763,7 @@ namespace PlutoGE::render
             skinningJobs.clear();
         };
         collectSkinning(commands, false);
-        if (prepareShadowCasters) collectSkinning(shadowCommands, true);
+        if (prepareShadowCasters) collectSkinning(directionalShadowCommands, true);
         flushSkinning();
 
         const auto appendDraws = [&](RenderCommandView sourceCommands,
@@ -949,7 +979,7 @@ namespace PlutoGE::render
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
         core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
         if (prepareShadowCasters)
-            appendDraws(shadowCommands, preparation.shadows, true);
+            appendDraws(directionalShadowCommands, preparation.shadows, true);
         else
             preparation.shadows = {};
         auto &shadowDraws = preparation.shadows.draws;
@@ -1576,8 +1606,13 @@ namespace PlutoGE::render
                         glm::radians(system->GetRotationSpeed()) *
                             (1 + (hash(particle->seed + 24) * 2 - 1) * system->GetRotationSpeedVariation()) *
                             particle->age;
+                    // Mass-conserving volumes thin with the cube of their growth;
+                    // optical depth through the centre then falls with its square.
+                    const float growth = particle->size > 0.0f ? size / particle->size : 1.0f;
+                    const float densityScale = system->GetVolumeConserveMass() && growth > 0.0f
+                        ? 1.0f / (growth * growth * growth) : 1.0f;
                     draw.instances.push_back({glm::vec4(particle->position, angle), color,
-                        {particle->age, particle->lifetime, hash(particle->seed), size}});
+                        {particle->age, densityScale, hash(particle->seed), size}});
                 }
                 if (system->GetTrailsEnabled())
                 {

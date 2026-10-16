@@ -59,6 +59,9 @@ namespace PlutoGE::render
         std::size_t visibleDrawCount = 0;
         std::size_t visibleInstanceCount = 0;
         std::size_t shadowCandidateCount = 0;
+        // Skinned shadow-only casters skipped (not deformed) because they cannot
+        // shadow any receiver in this view.
+        std::size_t skinnedShadowCastersOutOfReach = 0;
         std::size_t recordedGeometryDepthDrawCount = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -267,6 +270,7 @@ namespace PlutoGE::render
       };
       std::vector<PendingSkinning> m_pendingSkinning;
       std::vector<RhiSkinningJob> m_skinningJobs;
+      std::vector<const RenderCommand *> m_directionalShadowCommands;
       // A shared model can have multiple independently animated owners.
       struct SkinningCache
       {

@@ -148,6 +148,11 @@ namespace PlutoGE::render
         // base view's vertex streams and previous-frame positions for one Render.
         // Camera/depth/temporal reconstruction histories remain view-local.
         void ReuseSkinningForFrame(const RhiSceneRenderer &source);
+        // Camera-stack layers share the base view's viewpoint. The next Render
+        // samples the base view's directional VSM and skips its own directional
+        // caster preparation. Local-light shadows remain view-local.
+        void ReuseDirectionalShadowsForFrame(VirtualShadowReceivers receivers) noexcept
+        { m_reusedShadowReceivers = receivers; }
         // Scene-wide effects (oceans and particle systems) belong to the main
         // view. Secondary views disable them but keep the scene's lights.
         void SetSceneEffectsEnabled(bool enabled) noexcept
@@ -277,6 +282,7 @@ namespace PlutoGE::render
       };
       std::shared_ptr<SkinningCache> m_skinningCache = std::make_shared<SkinningCache>();
       std::optional<std::pair<std::uint64_t, std::uint64_t>> m_reusedSkinningFrame;
+      VirtualShadowReceivers m_reusedShadowReceivers;
       bool m_borrowedSkinningCache = false;
       std::uint64_t m_skinningFrame = 0;
       // Per-view material/packet aging must not follow a borrowed camera's clock.

@@ -35,6 +35,7 @@
 #include <cmath>
 #include <numeric>
 #include <tuple>
+#include <utility>
 
 namespace PlutoGE::render
 {
@@ -293,9 +294,15 @@ namespace PlutoGE::render
             return std::chrono::duration<float, std::milli>(end - start).count();
         };
         m_timingStats = {};
+        // Consumed by this Render only, including early exits.
+        const auto reusedShadowReceivers = std::exchange(m_reusedShadowReceivers, {});
+        const bool reuseDirectionalShadows = reusedShadowReceivers && lighting.shadowsEnabled &&
+            lighting.shadowMethod == ShadowMethod::Virtual && reusedShadowReceivers.MatchesLight(lighting.directionalDirection);
         if (!m_renderer || !m_device || width == 0 || height == 0)
             return false;
         m_renderer->SetTransparentBackground(m_transparentBackground);
+        if (reuseDirectionalShadows)
+            m_renderer->ReuseDirectionalShadowsForFrame(reusedShadowReceivers);
         const rhi::Extent2D outputSize{width, height};
         const bool temporalUpscalerRequested = m_upscalerOptions.technology != rhi::TemporalUpscaler::None;
         const auto upscalerSupport = temporalUpscalerRequested
@@ -559,6 +566,8 @@ namespace PlutoGE::render
             })
             : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
               std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
+        // A borrowed directional VSM already contains this frame's casters.
+        const bool prepareShadowCasters = (lighting.shadowsEnabled && !reuseDirectionalShadows) || localShadows;
         auto &pendingSkinning = m_pendingSkinning;
         auto &skinningJobs = m_skinningJobs;
         pendingSkinning.clear();
@@ -724,7 +733,7 @@ namespace PlutoGE::render
             skinningJobs.clear();
         };
         collectSkinning(commands, false);
-        if (lighting.shadowsEnabled || localShadows) collectSkinning(shadowCommands, true);
+        if (prepareShadowCasters) collectSkinning(shadowCommands, true);
         flushSkinning();
 
         const auto appendDraws = [&](RenderCommandView sourceCommands,
@@ -939,7 +948,7 @@ namespace PlutoGE::render
         const auto shadowStart = std::chrono::steady_clock::now();
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
         core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
-        if (lighting.shadowsEnabled || localShadows)
+        if (prepareShadowCasters)
             appendDraws(shadowCommands, preparation.shadows, true);
         else
             preparation.shadows = {};

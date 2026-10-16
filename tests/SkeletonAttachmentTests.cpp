@@ -169,5 +169,28 @@ int main()
     procedural.ClearAllTwoBoneIK();
     palette=procedural.GetJointMatrices(arm);
     if (glm::length(position(0)-glm::vec3(2,0,0)) > .0001f) return 1;
+
+    // Attachments publish bone poses through one combined setter. It must match
+    // the per-channel setters: edit tracking, child invalidation and no-op reuse.
+    Entity bone(EntityConfig{.name = "Combined bone"}), boneChild(EntityConfig{.name = "Bone child"});
+    bone.AddChild(&boneChild);
+    bone.SetGeneratedTransformEditTracking(true);
+    const auto childWorld = boneChild.GetWorldTransform();
+    const auto revision = bone.GetTransformRevision();
+    bone.SetLocalTransform({{1, 2, 3}, {0, 90, 0}, {1, 1, 1}});
+    using Channel = Entity::TransformEditChannel;
+    if (bone.GetGeneratedTransformEdits() != (static_cast<uint8_t>(Channel::Position) | static_cast<uint8_t>(Channel::Rotation)) ||
+        bone.GetTransformRevision() != revision + 1 || bone.GetPosition() != glm::vec3(1, 2, 3) ||
+        boneChild.GetWorldTransform() == childWorld)
+    {
+        std::cerr << "Combined local transform did not match per-channel edits\n";
+        return 1;
+    }
+    bone.SetLocalTransform({{1, 2, 3}, {0, 90, 0}, {1, 1, 1}});
+    if (bone.GetTransformRevision() != revision + 1)
+    {
+        std::cerr << "Unchanged combined local transform invalidated the hierarchy\n";
+        return 1;
+    }
     return 0;
 }

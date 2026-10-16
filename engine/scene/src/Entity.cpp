@@ -226,6 +226,24 @@ namespace PlutoGE::scene
         MarkTransformDirtyRecursive();
     }
 
+    void Entity::SetLocalTransform(const Transform &transform)
+    {
+        const bool position = m_transform.position != transform.position;
+        const bool rotation = m_transform.rotation != transform.rotation;
+        const bool scale = m_transform.scale != transform.scale;
+        if (!position && !rotation && !scale)
+        {
+            return;
+        }
+
+        if (position) RecordTransformEdit(TransformEditChannel::Position);
+        if (rotation) RecordTransformEdit(TransformEditChannel::Rotation);
+        if (scale) RecordTransformEdit(TransformEditChannel::Scale);
+        m_transform = transform;
+        m_localTransformDirty = true;
+        MarkTransformDirtyRecursive();
+    }
+
     void Entity::SetActive(bool active)
     {
         if (m_isActive == active)

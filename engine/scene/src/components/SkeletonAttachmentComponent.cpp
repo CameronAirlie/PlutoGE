@@ -289,13 +289,16 @@ namespace PlutoGE::scene
         }
 
         const auto decomposed = DecomposeTransform(localTransform);
-        constexpr float transformEpsilon = 0.00001f;
-        if (glm::any(glm::greaterThan(glm::abs(owner->GetPosition() - decomposed.position), glm::vec3(transformEpsilon))))
-            owner->SetPosition(decomposed.position);
-        if (glm::any(glm::greaterThan(glm::abs(owner->GetRotation() - decomposed.rotation), glm::vec3(transformEpsilon))))
-            owner->SetRotation(decomposed.rotation);
-        if (glm::any(glm::greaterThan(glm::abs(owner->GetScale() - decomposed.scale), glm::vec3(transformEpsilon))))
-            owner->SetScale(decomposed.scale);
+        // Keep channels within tolerance untouched, then publish once so an
+        // animated bone invalidates its subtree (colliders, meshes) one time.
+        const auto settle = [](const glm::vec3 &current, const glm::vec3 &target)
+        {
+            constexpr float transformEpsilon = 0.00001f;
+            return glm::any(glm::greaterThan(glm::abs(current - target), glm::vec3(transformEpsilon))) ? target : current;
+        };
+        owner->SetLocalTransform({settle(owner->GetPosition(), decomposed.position),
+                                  settle(owner->GetRotation(), decomposed.rotation),
+                                  settle(owner->GetScale(), decomposed.scale)});
     }
 
     std::vector<Property> SkeletonAttachmentComponent::Serialize() const

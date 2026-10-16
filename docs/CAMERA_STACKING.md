@@ -43,8 +43,14 @@ the main camera therefore casts no shadows into the world.
 
 By default, overlays use all of the scene's lights and receive shadows from
 world geometry, even though that geometry isn't drawn on the overlay. When the
-scene uses virtual shadow maps, overlays use cascaded shadows instead. Oceans,
-particle systems and the sky are left to the base camera.
+base camera uses virtual shadow maps, overlays sample the base camera's
+directional shadow maps for that frame instead of rendering their own. This
+avoids a second shadow pass. Overlay geometry, such as a weapon the base
+camera ignores, therefore receives world shadows but does not shadow itself
+from the sun. Spot-light shadows are not applied to such overlays. When the
+base camera uses cascaded shadows, or in final-output composition, overlays
+fit their own cascades. Oceans, particle systems and the sky are left to the
+base camera.
 
 Ignore tags always exclude matching lights on base, overlay and render-texture
 cameras, including tags inherited from a parent entity. Include tags affect

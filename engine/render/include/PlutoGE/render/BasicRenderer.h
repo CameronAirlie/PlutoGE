@@ -667,6 +667,12 @@ namespace PlutoGE::render
         void ResetTemporalHistory() noexcept { m_taaHistoryValid = m_ssaoHistoryValid = false; }
         [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept { return m_inverseViewProjection; }
         [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept { return m_framePreviousViewProjection; }
+        // Directional VSM recorded by the Render in progress (or the last one),
+        // empty when this frame used another method. Valid for the same recording.
+        [[nodiscard]] VirtualShadowReceivers GetDirectionalShadowReceivers() const noexcept { return m_directionalShadowReceivers; }
+        // The next Render samples these directional shadows instead of preparing
+        // its own. It records no directional casters and no local-light VSM.
+        void ReuseDirectionalShadowsForFrame(VirtualShadowReceivers receivers) noexcept { m_reusedShadowReceivers = receivers; }
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_outputColor; }
         [[nodiscard]] rhi::TextureHandle GetDepthTexture() const noexcept { return m_depthTarget.Get(); }
@@ -749,6 +755,7 @@ namespace PlutoGE::render
                                                             rhi::Format format = rhi::Format::R16G16B16A16Float);
         void EnsureShadowTargets(const BasicLighting &lighting);
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
+        VirtualShadowReceivers m_directionalShadowReceivers, m_reusedShadowReceivers;
         std::unique_ptr<OcclusionCulling> m_occlusion;
         std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
         std::uint64_t m_geometrySweepFrame = 0;

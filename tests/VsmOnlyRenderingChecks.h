@@ -342,3 +342,77 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
         throw std::runtime_error("Disabling shadows retained shadow targets");
     renderer.Resize(width, height);
 }
+
+// Camera-stack overlays own no virtual page pool. Borrowing the base view's
+// directional VSM must reproduce its receiver shadowing exactly, record no
+// shadow work of its own, and be refused for a different directional light.
+template<class ReadPixels>
+void CheckVsmReceiverReuse(PlutoGE::render::BasicRenderer &source, PlutoGE::render::rhi::IRenderDevice &device,
+                           PlutoGE::render::BasicRendererShaderPackage shaders, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    const auto width = source.GetWidth(), height = source.GetHeight();
+    source.Resize(64, 64);
+    shaders.virtualShadows = {};
+    BasicRenderer borrower;
+    if (!borrower.Initialize(device, shaders) || !borrower.Resize(64, 64))
+        throw std::runtime_error("Could not initialize the VSM borrower renderer");
+    constexpr std::array<BasicVertex, 4> vertices = {{
+        {{{-1,-1,0}}, {{0,0,1}}, {{0,0}}}, {{{1,-1,0}}, {{0,0,1}}, {{1,0}}},
+        {{{1,1,0}}, {{0,0,1}}, {{1,1}}}, {{{-1,1,0}}, {{0,0,1}}, {{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t, 6> indices{0,1,2,0,2,3};
+    auto sourceMesh = source.CreateMesh({vertices, indices});
+    auto borrowerMesh = borrower.CreateMesh({vertices, indices});
+    BasicDraw receiver, caster;
+    receiver.mesh = caster.mesh = &sourceMesh;
+    receiver.model = glm::scale(glm::mat4(1), glm::vec3(4));
+    receiver.castsShadow = false;
+    caster.model = glm::translate(glm::mat4(1), glm::vec3(0.137f, -0.219f, 2)) * glm::scale(glm::mat4(1), glm::vec3(0.75f));
+    caster.shadowBoundsCenter = {0, 0, 2};
+    caster.shadowBoundsRadius = 2;
+    BasicLighting lighting;
+    lighting.shadowsEnabled = true;
+    lighting.directionalDirection = {0, 0, -1};
+    lighting.cameraPosition = {0, 0, 4};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0,1,0));
+    const auto viewProjection = glm::perspectiveRH_ZO(glm::radians(60.0f), 1.0f, 100.0f, 0.1f) * lighting.view;
+    const std::array sourceDraws{receiver, caster};
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        source.Render(viewProjection, lighting, std::span(&sourceDraws[0], 1), {}, sourceDraws,
+                      PostProcessDebugView::DirectionalShadowMaskFiltered);
+        (void)readPixels(source.GetColorTexture());
+    }
+    const auto shadowed = readPixels(source.GetColorTexture());
+    const auto receivers = source.GetDirectionalShadowReceivers();
+    if (!receivers || !receivers.MatchesLight(lighting.directionalDirection))
+        throw std::runtime_error("Source renderer did not publish its directional VSM receivers");
+
+    BasicDraw borrowedReceiver = receiver;
+    borrowedReceiver.mesh = &borrowerMesh;
+    const auto renderBorrower = [&](const BasicLighting &borrowerLighting, bool reuse)
+    {
+        if (reuse) borrower.ReuseDirectionalShadowsForFrame(receivers);
+        borrower.Render(viewProjection, borrowerLighting, std::span(&borrowedReceiver, 1), {}, {},
+                        PostProcessDebugView::DirectionalShadowMaskFiltered);
+        return readPixels(borrower.GetColorTexture());
+    };
+    const auto reused = renderBorrower(lighting, true);
+    const auto &stats = borrower.GetFrameStats();
+    if (stats.virtualShadowsActive || stats.shadowCascadeTargets || stats.shadowInstances ||
+        stats.directionalShadowStatus.find("reused") == std::string::npos || borrower.GetDirectionalShadowReceivers())
+        throw std::runtime_error("VSM borrower recorded its own shadows or republished borrowed receivers");
+    if (reused != shadowed)
+        throw std::runtime_error("Borrowed VSM receivers changed directional shadowing");
+    // Reuse is one frame only; without it the borrower has no page pool.
+    if (renderBorrower(lighting, false) == shadowed || borrower.GetFrameStats().directionalShadowStatus.find("reused") != std::string::npos)
+        throw std::runtime_error("VSM receiver reuse leaked into a later frame");
+    auto otherLight = lighting;
+    otherLight.directionalDirection = {0.3f, 0, -1};
+    (void)renderBorrower(otherLight, true);
+    if (borrower.GetFrameStats().directionalShadowStatus.find("reused") != std::string::npos)
+        throw std::runtime_error("VSM receivers were reused for a different directional light");
+    std::cout << "VSM receiver reuse passed\n";
+    source.Resize(width, height);
+}

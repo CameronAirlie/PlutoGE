@@ -199,6 +199,23 @@ be re-measured.
 - The Scene Hierarchy panel costs 0.27 ms. That matters for editor iteration, not shipped
   builds. Cache the flattened tree between hierarchy changes.
 
+## Implementation status (2026-10-16)
+
+None of the figures above have been re-measured yet. Follow the measurement
+protocol below before closing any item.
+
+| Item | Status | Change |
+|---|---|---|
+| P0-1 | Partly done | `RenderCamera` removed from `Standoff.plutoscene`. It remains in Main, Shipment, Terminal and Foundry, and in the `Tools/Native` smoke copies. `RenderMaterial` and `RenderTexture` assets are kept. |
+| P0-2 | Done | `BasicRenderer` publishes its directional VSM receivers (`GetDirectionalShadowReceivers`). `RhiCameraStackCompositor` passes them to world-lit overlays (`ReuseDirectionalShadowsForFrame`). The overlay skips directional caster preparation, signatures, cascades and VSM recording. Reuse requires the same light direction and no `FilterLightsByTags`. Covered by `PlutoGE{Vulkan,OpenGL}VsmReceiverReuseTests`. |
+| P0-3 | Deferred | After P0-1 and P0-2, Standoff prepares shadow packets once per frame, so sharing them across views saves nothing there. Revisit for scenes with live render-texture cameras. |
+| P1-1 | Done (content) | Standoff's directional light uses `VSM Pool Pages` 576, the 24×24 tile tier. Any value from 257 to 576 allocates this tier (about 42 MB more depth and colour than the 256 tier). The dirty-page caster cost is not addressed. |
+| P1-2, P1-4, P1-5, P2-3, P3-1 | Open | These are measurement and investigation items. |
+| P1-3 | Open | Persistent per-object uniforms are an RHI change. Size it after re-measuring. |
+| P2-1 | Open | Parallel animation updates and animation LOD need a thread-safety audit of `AnimationComponent` and its scene timing hooks first. |
+| P2-2 | Partly done | Skeleton attachments now publish one combined local transform (`Entity::SetLocalTransform`), so a moving bone invalidates its subtree once instead of up to three times. Re-measure to confirm whether the head cost was caused by this or by world-transform evaluation. |
+| P3-2 | Done | The hierarchy panel collects component types for the filter combo only while the combo is open, not on every frame. |
+
 ## Measurement protocol
 
 1. Release editor, debugger detached, Standoff Hardpoint with 11 bots.

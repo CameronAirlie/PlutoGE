@@ -522,6 +522,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             });
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
+        if (argc > 1 && std::string(argv[1]) == "--vsm-reuse")
+        {
+            CheckVsmReceiverReuse(basicRenderer, device, shaders, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(64 * 64 * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
         if (argc > 1 && std::string(argv[1]) == "--vsm-only")
         {
             CheckVsmOnlyRendering(basicRenderer, [&](render::rhi::TextureHandle texture)

@@ -33,6 +33,24 @@ namespace PlutoGE::render
     };
     static_assert(sizeof(VirtualShadowParameters) == 240 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
 
+    // Read-only receiver bindings of one recorded VSM frame. A secondary view of
+    // the same scene from the same viewpoint (a camera-stack overlay) samples
+    // these instead of preparing and recording its own directional shadows.
+    struct VirtualShadowReceivers
+    {
+        rhi::TextureHandle atlas, pageTable;
+        rhi::BufferHandle parameters;
+        // Normalised directional light the clipmaps were built for. A view lit
+        // by a different light must not sample them.
+        glm::vec3 lightDirection{0.0f};
+        [[nodiscard]] explicit operator bool() const noexcept { return atlas && pageTable && parameters; }
+        [[nodiscard]] bool MatchesLight(const glm::vec3 &direction) const noexcept
+        {
+            const float length = glm::length(direction);
+            return length > 0.0f && glm::dot(direction / length, lightDirection) > 0.9999f;
+        }
+    };
+
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
     // request compaction and bounded indirect submission stay on the GPU.
@@ -63,6 +81,8 @@ namespace PlutoGE::render
         [[nodiscard]] auto Atlas() const { return m_depth.Get(); }
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
+        [[nodiscard]] VirtualShadowReceivers Receivers(const glm::vec3 &lightDirection) const
+        { return {Atlas(), PageTable(), ParameterBuffer(), lightDirection}; }
         [[nodiscard]] VirtualShadowStats GetStats() const;
         void SetMembershipCachingEnabled(bool enabled) noexcept { m_cacheMembership = enabled; }
     private:

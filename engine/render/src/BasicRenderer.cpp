@@ -25,6 +25,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace PlutoGE::render
@@ -1818,14 +1819,22 @@ namespace PlutoGE::render
 
         auto &commands = m_device->GetImmediateContext();
         const float graphTime = ShaderGraphTimeSeconds();
-        const bool virtualShadowsRequested = (lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
-            std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; });
+        // A borrowed directional VSM replaces this view's own shadow work for
+        // one frame; its atlas has no slots for this view's local lights.
+        const auto reusedShadowReceivers = std::exchange(m_reusedShadowReceivers, {});
+        const bool reuseDirectionalShadows = reusedShadowReceivers && lighting.shadowsEnabled &&
+            lighting.shadowMethod == ShadowMethod::Virtual && reusedShadowReceivers.MatchesLight(lighting.directionalDirection);
+        m_directionalShadowReceivers = {};
+        const bool virtualShadowsRequested = !reuseDirectionalShadows &&
+            ((lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
+             std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; }));
         const char *virtualShadowIssue = virtualShadowsRequested ? VirtualShadowUnavailableReason(draws, shadowDraws) : nullptr;
         bool virtualShadowsActive = virtualShadowsRequested && !virtualShadowIssue;
         const bool cascadedShadowsActive = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Cascaded;
         if (lighting.shadowsEnabled)
         {
-            m_frameStats.directionalShadowStatus = virtualShadowIssue ? virtualShadowIssue :
+            m_frameStats.directionalShadowStatus = reuseDirectionalShadows ? "Virtual shadow maps (reused from base camera)" :
+                virtualShadowIssue ? virtualShadowIssue :
                 (virtualShadowsActive ? "Virtual shadow maps" : "Cascaded shadow maps (explicit legacy selection)");
         }
         // Retain compiled pipelines and residency across temporary disablement
@@ -1935,6 +1944,14 @@ namespace PlutoGE::render
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         if (virtualShadowsRequested && !virtualShadowIssue && !virtualShadowsActive)
             m_frameStats.directionalShadowStatus = "VSM unavailable: preparation failed";
+        // Every receiver binding below samples this set: owned, borrowed or none.
+        const VirtualShadowReceivers receiverShadows = reuseDirectionalShadows ? reusedShadowReceivers
+            : virtualShadowsActive ? m_virtualShadows->Receivers(glm::normalize(lighting.directionalDirection))
+                                   : VirtualShadowReceivers{};
+        const bool directionalVirtualShadows = receiverShadows && lighting.shadowsEnabled &&
+            lighting.shadowMethod == ShadowMethod::Virtual;
+        if (directionalVirtualShadows && !reuseDirectionalShadows)
+            m_directionalShadowReceivers = receiverShadows;
         if (cascadedShadowsActive)
             EnsureShadowTargets(lighting);
         else
@@ -1995,7 +2012,7 @@ namespace PlutoGE::render
             glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
             glm::vec4(lighting.directionalColor, 1.0f),
             lighting.shadowMatrices,
-            lighting.shadowsEnabled && (virtualShadowsActive || cascadedShadowsActive) ? 1u : 0u,
+            lighting.shadowsEnabled && (receiverShadows || cascadedShadowsActive) ? 1u : 0u,
             lighting.shadowFlipY ? 1u : 0u,
             lighting.shadowDepthScale,
             lighting.shadowDepthBias,
@@ -2004,7 +2021,7 @@ namespace PlutoGE::render
             lighting.shadowCascadeMetrics,
             glm::vec4(static_cast<float>(std::clamp(lighting.shadowCascadeCount, 1u, 4u)),
                       std::max(lighting.shadowCascadeBlendDistance, 0.0f),
-                      std::max(lighting.shadowSoftness, 0.0f), virtualShadowsActive && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f),
+                      std::max(lighting.shadowSoftness, 0.0f), receiverShadows && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f),
             glm::vec4(lighting.shadowFilterEnabled ? 1.0f : 0.0f,
                       static_cast<float>(std::clamp(lighting.shadowFilterRadius, 0u, 4u)),
                       std::clamp(lighting.shadowFilterRenderScale, 0.25f, 1.0f),
@@ -2680,10 +2697,10 @@ namespace PlutoGE::render
         commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
         for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
             commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-        if (virtualShadowsActive)
+        if (receiverShadows)
         {
-            commands.BindTexture(19, m_virtualShadows->Atlas(), m_shadowSampler.Get());
-            commands.BindTexture(20, m_virtualShadows->PageTable(), m_shadowSampler.Get());
+            commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
+            commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
         }
         if (!m_geometryParameters) m_geometryParameters = std::make_unique<PersistentParameterCache>();
         m_geometryParameters->BeginFrame();
@@ -2844,11 +2861,11 @@ namespace PlutoGE::render
                                 ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                     if (!geometryResourcesBound)
                     {
-                        commands.BindUniformBuffer(1, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
+                        commands.BindUniformBuffer(1, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
                         commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
                                              m_shadowSampler.Get());
-                        commands.BindTexture(19, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                        commands.BindTexture(20, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                        commands.BindTexture(19, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                        commands.BindTexture(20, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
                     }
                     if (!geometryResourcesBound || !skyTextureBound)
                     {
@@ -3745,9 +3762,9 @@ namespace PlutoGE::render
                 }
                 if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
                 {
-                    commands.BindUniformBuffer(12, virtualShadowsActive ? m_virtualShadows->ParameterBuffer() : m_emptyVirtualShadowTable.Get());
-                    commands.BindTexture(13, virtualShadowsActive ? m_virtualShadows->Atlas() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                    commands.BindTexture(14, virtualShadowsActive ? m_virtualShadows->PageTable() : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                    commands.BindUniformBuffer(12, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
+                    commands.BindTexture(13, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                    commands.BindTexture(14, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
                     commands.BindUniformBuffer(7, m_cameraBuffer.Get());
                     const auto fallbackShadow = m_fallbackDataTexture.Get();
                     for (std::uint32_t cascade = 0; cascade < 4; ++cascade)

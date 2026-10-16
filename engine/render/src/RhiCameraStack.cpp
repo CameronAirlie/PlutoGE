@@ -9,7 +9,18 @@ namespace PlutoGE::render
 {
     namespace
     {
-        BasicLighting BuildOverlayLighting(const CameraView &view, const scene::Scene *scene)
+        // World-lit overlays share the base camera's viewpoint and world shadow
+        // casters, so they can sample its directional VSM. Tag-filtered lighting
+        // is shadowed only by the overlay's own geometry and never shares it.
+        VirtualShadowReceivers SharedOverlayShadows(const CameraView &view, const VirtualShadowReceivers &baseShadows)
+        {
+            return view.lights ? VirtualShadowReceivers{} : baseShadows;
+        }
+
+        // Without shared receivers, overlays fit cascades to their own camera;
+        // they never own a virtual page pool.
+        BasicLighting BuildOverlayLighting(const CameraView &view, const scene::Scene *scene,
+                                           const VirtualShadowReceivers &baseShadows)
         {
             auto lighting = view.lights ? BuildSceneLighting(view.cameraData, scene, *view.lights)
                                        : BuildSceneLighting(view.cameraData, scene);
@@ -24,7 +35,8 @@ namespace PlutoGE::render
                     lighting.physicalSkyParameters = effect.parameters;
                     break;
                 }
-            if (lighting.shadowMethod == ShadowMethod::Virtual)
+            if (lighting.shadowMethod == ShadowMethod::Virtual &&
+                !(baseShadows && baseShadows.MatchesLight(lighting.directionalDirection)))
                 lighting.shadowMethod = ShadowMethod::Cascaded;
             return lighting;
         }
@@ -181,16 +193,19 @@ namespace PlutoGE::render
         m_historyKeys = std::move(historyKeys);
 
         std::vector<RhiSceneRenderer *> renderers;
+        const auto baseShadows = base.GetDirectionalShadowReceivers();
         for (std::size_t index = 0; index < overlays.size(); ++index)
         {
             auto *renderer = AcquireOverlayRenderer(index);
             if (!renderer)
                 return false;
             const auto &view = overlays[index];
-            const auto lighting = BuildOverlayLighting(view, scene);
+            const auto sharedShadows = SharedOverlayShadows(view, baseShadows);
+            const auto lighting = BuildOverlayLighting(view, scene, sharedShadows);
             const auto shadows = view.shadowCommands.empty() ? view.commands : view.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
             if (skinningSource) renderer->ReuseSkinningForFrame(*skinningSource);
+            if (sharedShadows) renderer->ReuseDirectionalShadowsForFrame(sharedShadows);
             if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
                                   view.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
                                   false, scene, view.lights, {}, true, clipJitter,
@@ -301,7 +316,9 @@ namespace PlutoGE::render
             if (!renderer)
                 return false;
             const auto &layer = overlays[index];
-            const auto lighting = BuildOverlayLighting(layer, scene);
+            // Final-output composition runs after the base recording; no
+            // base shadow frame is available to share here.
+            const auto lighting = BuildOverlayLighting(layer, scene, {});
             // Begin once, append every subsequent overlay and the composite.
             const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);

@@ -62,6 +62,9 @@ namespace PlutoGE::scene
         void SetRotation(const glm::vec3 &rotation);
         void SetWorldRotation(const glm::vec3 &rotation);
         void SetScale(const glm::vec3 &scale);
+        // Sets position, rotation and scale together. Equivalent to the three
+        // setters, but invalidates the child hierarchy once instead of per channel.
+        void SetLocalTransform(const Transform &transform);
         void SetName(const std::string &name) { m_name = name; }
         void SetActive(bool active);
 

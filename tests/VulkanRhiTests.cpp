@@ -378,6 +378,11 @@ int main(int argc, char **argv)
             CheckVsmOnlyRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--vsm-reuse")
+        {
+            CheckVsmReceiverReuse(renderer, device, shaders, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")
         {
             CheckVirtualShadowPerformance(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });

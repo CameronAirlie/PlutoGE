@@ -913,22 +913,24 @@ namespace PlutoGE::ui
 
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextWithHint("##HierarchySearch", "Search entities...", m_searchBuffer.data(), m_searchBuffer.size());
-        std::set<std::string> componentTypes;
-        const auto collectTypes = [&](auto &&self, const scene::Entity *entity) -> void
-        {
-            for (const auto &bucket : entity->GetComponentBuckets())
-                for (const auto *component : bucket)
-                    if (component)
-                    {
-                        auto name = scene::SceneSerializer::GetComponentTypeName(*component);
-                        if (!name.empty()) componentTypes.insert(std::move(name));
-                    }
-            for (const auto *child : entity->GetChildren()) self(self, child);
-        };
-        for (const auto *root : scene->GetRootEntities()) collectTypes(collectTypes, root);
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::BeginCombo("##HierarchyComponent", m_componentFilter.empty() ? "All components" : m_componentFilter.c_str()))
         {
+            // Walking every component of a large scene is only worth doing
+            // while the list is visible, not on every editor frame.
+            std::set<std::string> componentTypes;
+            const auto collectTypes = [&](auto &&self, const scene::Entity *entity) -> void
+            {
+                for (const auto &bucket : entity->GetComponentBuckets())
+                    for (const auto *component : bucket)
+                        if (component)
+                        {
+                            auto name = scene::SceneSerializer::GetComponentTypeName(*component);
+                            if (!name.empty()) componentTypes.insert(std::move(name));
+                        }
+                for (const auto *child : entity->GetChildren()) self(self, child);
+            };
+            for (const auto *root : scene->GetRootEntities()) collectTypes(collectTypes, root);
             if (ImGui::Selectable("All components", m_componentFilter.empty())) m_componentFilter.clear();
             for (const auto &type : componentTypes)
                 if (ImGui::Selectable(type.c_str(), m_componentFilter == type)) m_componentFilter = type;

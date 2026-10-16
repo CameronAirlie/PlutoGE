@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Visual_Fidelity_Lab.Scripts")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6d384b3d06b2d77ff2f049ab741485063994dbe5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c7c045aa4e43c8a2d2473446739c1fbe3aba71fd")]
 [assembly: System.Reflection.AssemblyProductAttribute("Visual_Fidelity_Lab.Scripts")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Visual_Fidelity_Lab.Scripts")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

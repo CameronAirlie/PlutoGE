@@ -16,6 +16,7 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class CameraComponent;
+    class MeshComponent;
     class ScriptComponent;
     class Entity;
     struct Property;
@@ -42,6 +43,8 @@ namespace PlutoGE::ui
         void RenderEditorCameraPostProcessEditor(EditorShell::EditorViewportCamera &camera) const;
         void RenderSceneEnvironmentInspector(scene::Scene &scene) const;
         bool RenderScriptComponentEditor(scene::ScriptComponent &scriptComponent, scene::Entity &entity) const;
+        void RenderMeshComponentEditor(scene::MeshComponent &meshComponent, scene::Entity &entity);
+        void RenderSubmeshMaterialOverrides(scene::MeshComponent &meshComponent, scene::Entity &entity, int isolatedSubmeshIndex);
         void RefreshFilteredSubmeshIndices(const render::Mesh &mesh);
         void RefreshMaterialSlotUsageSummaries(const scene::MeshComponent &meshComponent);
 

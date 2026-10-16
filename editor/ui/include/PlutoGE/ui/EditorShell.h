@@ -220,6 +220,8 @@ namespace PlutoGE::ui
         bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
         bool OpenSceneFromPath(const std::filesystem::path &scenePath);
         void OpenMaterialAsset(std::string materialAssetReference);
+        // Opens a script source file in the system's default editor for its type.
+        bool OpenScriptSource(const std::filesystem::path &sourcePath);
         void OpenMeshAsset(std::string meshAssetReference);
         void OpenShaderGraphAsset(std::string shaderGraphAssetReference);
         void OpenAnimationGraphAsset(std::string animationGraphAssetReference);

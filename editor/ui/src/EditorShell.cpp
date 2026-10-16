@@ -2453,6 +2453,36 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened material: " + m_activeMaterialAssetReference);
     }
 
+    bool EditorShell::OpenScriptSource(const std::filesystem::path &sourcePath)
+    {
+        std::error_code errorCode;
+        if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath, errorCode))
+        {
+            m_statusMessage = "Script file not found: " + sourcePath.string();
+            Log(ConsoleSeverity::Error, m_statusMessage);
+            return false;
+        }
+
+#ifdef _WIN32
+        // Prefer the user's .cs association (Visual Studio, Rider, VS Code);
+        // fall back to Notepad when nothing is registered for the extension.
+        bool opened = reinterpret_cast<std::intptr_t>(ShellExecuteW(nullptr, L"open", sourcePath.c_str(), nullptr,
+                                                                    sourcePath.parent_path().c_str(), SW_SHOWNORMAL)) > 32;
+        if (!opened)
+        {
+            const std::wstring quotedPath = L"\"" + sourcePath.wstring() + L"\"";
+            opened = reinterpret_cast<std::intptr_t>(ShellExecuteW(nullptr, L"open", L"notepad.exe", quotedPath.c_str(),
+                                                                   nullptr, SW_SHOWNORMAL)) > 32;
+        }
+#else
+        std::string launchError;
+        const bool opened = LaunchExecutable("/usr/bin/xdg-open", &launchError, sourcePath.string());
+#endif
+        m_statusMessage = (opened ? "Opened script: " : "Could not open script: ") + sourcePath.string();
+        Log(opened ? ConsoleSeverity::Info : ConsoleSeverity::Error, m_statusMessage);
+        return opened;
+    }
+
     void EditorShell::OpenMeshAsset(std::string meshAssetReference)
     {
         if (meshAssetReference.empty())

@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -2300,6 +2301,28 @@ namespace PlutoGE::ui
             ImGui::EndCombo();
         }
 
+        const ScriptAssetOption *selectedSourceOption = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource);
+        if (!selectedSourceOption)
+        {
+            selectedSourceOption = FindScriptAssetOptionForClassName(builtinScriptOptions, currentSource);
+        }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!selectedSourceOption || selectedSourceOption->sourcePath.empty());
+        if (ImGui::Button("Open##ScriptSource"))
+        {
+            editorShell.OpenScriptSource(selectedSourceOption->sourcePath);
+        }
+        ImGui::EndDisabled();
+        if (selectedSourceOption && !selectedSourceOption->sourcePath.empty())
+        {
+            ImGui::SetItemTooltip("Open %s in your code editor", selectedSourceOption->sourcePath.filename().string().c_str());
+        }
+        else
+        {
+            ImGui::SetItemTooltip("No source file found for this script.");
+        }
+
         if (project)
         {
             const bool scriptAuthoringDisabled = editorShell.IsRuntimeExportProject();
@@ -2358,12 +2381,6 @@ namespace PlutoGE::ui
             {
                 ImGui::TextDisabled("Script authoring is disabled for exported runtime bundles.");
             }
-        }
-
-        const ScriptAssetOption *selectedSourceOption = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource);
-        if (!selectedSourceOption)
-        {
-            selectedSourceOption = FindScriptAssetOptionForClassName(builtinScriptOptions, currentSource);
         }
 
         const auto serializedFields = scriptComponent.GetSerializedFields();
@@ -3495,419 +3512,6 @@ namespace PlutoGE::ui
                 }
             }
 
-            // Mesh Import UI (if entity has MeshComponent)
-            if (auto *meshComponent = entity->GetComponent<PlutoGE::scene::MeshComponent>())
-            {
-                auto &engine = PlutoGE::core::Engine::GetInstance();
-                RefreshMaterialSlotUsageSummaries(*meshComponent);
-                const auto &materialSlotUsageSummaries = m_materialSlotUsageSummaries;
-
-                ImGui::Separator();
-                ImGui::Text("Static Mesh");
-                if (auto selection = meshComponent->GetMeshAssetReference();
-                    RenderProjectAssetPicker("Mesh Asset", editorShell.GetProject(), assets::ProjectAssetType::Mesh, selection,
-                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
-                    AssignMeshAsset(*meshComponent, selection, engine))
-                    editorShell.MarkSceneDirty();
-
-                if (meshComponent->GetMesh())
-                {
-                    const auto *mesh = meshComponent->GetMesh();
-                    ImGui::TextDisabled("Mesh object: %zu draw submeshes | %zu material slots",
-                                        mesh->GetSubmeshCount(),
-                                        materialSlotUsageSummaries.size());
-                    if (meshComponent->GetMeshAssetReference().empty())
-                    {
-                        ImGui::TextDisabled("Runtime mesh (not backed by an imported artifact)");
-                    }
-                    else
-                    {
-                        ImGui::TextWrapped("Artifact: %s", meshComponent->GetMeshAssetReference().c_str());
-                        ImGui::TextWrapped("Model asset ID: %s", meshComponent->GetModelAssetId().c_str());
-                        ImGui::Text("Local object ID: %llu", static_cast<unsigned long long>(meshComponent->GetModelObjectId()));
-                        const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshComponent->GetMeshAssetReference());
-                        if (!metadata.sourceAssetReference.empty())
-                        {
-                            ImGui::TextWrapped("Imported from: %s", metadata.sourceAssetReference.c_str());
-                        }
-                    }
-                }
-                else
-                {
-                    ImGui::TextDisabled("Assign a generated .plutomesh asset from the content browser.");
-                }
-
-                glm::vec3 meshPositionOffset = meshComponent->GetMeshPositionOffset();
-                glm::vec3 meshRotationOffset = meshComponent->GetMeshRotationOffset();
-                bool meshOffsetChanged = ImGui::DragFloat3("Mesh Position Offset", &meshPositionOffset.x, 0.01f);
-                meshOffsetChanged |= ImGui::DragFloat3("Mesh Rotation Offset", &meshRotationOffset.x, 0.1f);
-                if (meshOffsetChanged)
-                {
-                    meshComponent->SetMeshPositionOffset(meshPositionOffset);
-                    meshComponent->SetMeshRotationOffset(meshRotationOffset);
-                    editorShell.MarkSceneDirty();
-                }
-
-                if (meshComponent->GetMesh() &&
-                    meshComponent->GetMesh()->GetSubmeshCount() > 0 &&
-                    ImGui::CollapsingHeader("Submesh Transform Offsets"))
-                {
-                    ImGui::TextWrapped("Offsets are applied only to the selected draw submesh. "
-                                       "Skinned submeshes continue to share this entity's animation.");
-                    for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
-                    {
-                        const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
-                        const std::string label = submesh.name.empty()
-                                                      ? "Submesh " + std::to_string(submeshIndex)
-                                                      : std::to_string(submeshIndex) + " - " + submesh.name;
-                        ImGui::PushID(static_cast<int>(submeshIndex));
-                        if (ImGui::TreeNode(label.c_str()))
-                        {
-                            glm::vec3 position = meshComponent->GetSubmeshPositionOffset(submeshIndex);
-                            glm::vec3 rotation = meshComponent->GetSubmeshRotationOffset(submeshIndex);
-                            bool changed = ImGui::DragFloat3("Position", &position.x, 0.01f);
-                            changed |= ImGui::DragFloat3("Rotation", &rotation.x, 0.1f);
-                            if (changed)
-                            {
-                                meshComponent->SetSubmeshPositionOffset(submeshIndex, position);
-                                meshComponent->SetSubmeshRotationOffset(submeshIndex, rotation);
-                                editorShell.MarkSceneDirty();
-                            }
-                            if (ImGui::Button("Reset"))
-                            {
-                                meshComponent->SetSubmeshPositionOffset(submeshIndex, glm::vec3(0.0f));
-                                meshComponent->SetSubmeshRotationOffset(submeshIndex, glm::vec3(0.0f));
-                                editorShell.MarkSceneDirty();
-                            }
-                            ImGui::TreePop();
-                        }
-                        ImGui::PopID();
-                    }
-                }
-
-                ImGui::BeginDisabled(meshComponent->GetMeshAssetReference().empty());
-                if (ImGui::Button("Reset Materials To Mesh Defaults"))
-                {
-                    if (AssignMeshAsset(*meshComponent, meshComponent->GetMeshAssetReference(), engine))
-                    {
-                        editorShell.MarkSceneDirty();
-                    }
-                }
-                ImGui::EndDisabled();
-
-                const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
-                const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
-                                                    static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1 && editingIsolatedSubmesh)
-                {
-                    const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
-                    ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
-                }
-
-                ImGui::Separator();
-                if (ImGui::CollapsingHeader("Material Slots", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    std::vector<size_t> materialSlotIndices;
-                    if (editingIsolatedSubmesh)
-                    {
-                        materialSlotIndices.push_back(static_cast<size_t>(meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex)).materialIndex));
-                    }
-                    else
-                    {
-                        const size_t materialSlotCount = materialSlotUsageSummaries.size();
-                        materialSlotIndices.reserve(materialSlotCount);
-                        for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCount; ++materialSlotIndex)
-                        {
-                            materialSlotIndices.push_back(materialSlotIndex);
-                        }
-                    }
-
-                    const auto &meshDefaultMaterialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshComponent->GetMeshAssetReference());
-                    for (size_t materialSlotListIndex = 0; materialSlotListIndex < materialSlotIndices.size(); ++materialSlotListIndex)
-                    {
-                        const size_t materialSlotIndex = materialSlotIndices[materialSlotListIndex];
-                        ImGui::PushID(static_cast<int>(materialSlotIndex));
-                        ImGui::Text("Slot %zu", materialSlotIndex);
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(drop a material asset here)");
-                        static const std::string emptyUsageSummary;
-                        const std::string &slotUsageSummary = materialSlotIndex < materialSlotUsageSummaries.size()
-                                                                  ? materialSlotUsageSummaries[materialSlotIndex]
-                                                                  : emptyUsageSummary;
-                        if (!slotUsageSummary.empty())
-                        {
-                            ImGui::TextDisabled("%s", slotUsageSummary.c_str());
-                        }
-
-                        const std::string materialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(materialSlotIndex);
-                        if (auto selection = materialAssetReference;
-                            RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material,
-                                                     selection, {.noneLabel = nullptr, .emptyPreview = "Inline / Imported", .includeEngineAssets = true}) &&
-                            AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, selection, engine))
-                            editorShell.MarkSceneDirty();
-                        ImGui::BeginDisabled(materialAssetReference.empty() ||
-                                             assets::Project::IsEngineAssetReference(materialAssetReference));
-                        if (ImGui::Button("Open Material Editor"))
-                        {
-                            editorShell.OpenMaterialAsset(materialAssetReference);
-                        }
-                        ImGui::EndDisabled();
-
-                        if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
-                        {
-                            if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, *droppedMaterialReference, engine))
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-                        const bool hasMeshDefaultMaterial = materialSlotIndex < meshDefaultMaterialReferences.size() &&
-                                                            !meshDefaultMaterialReferences[materialSlotIndex].empty();
-                        ImGui::BeginDisabled(!hasMeshDefaultMaterial || materialAssetReference == meshDefaultMaterialReferences[materialSlotIndex]);
-                        if (ImGui::Button("Use Mesh Default"))
-                        {
-                            if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, meshDefaultMaterialReferences[materialSlotIndex], engine))
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-                        ImGui::EndDisabled();
-
-                        if (materialSlotListIndex + 1 < materialSlotIndices.size())
-                        {
-                            ImGui::Spacing();
-                        }
-                        ImGui::PopID();
-                    }
-                }
-
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
-                {
-                    ImGui::Separator();
-                    if (ImGui::CollapsingHeader(editingIsolatedSubmesh ? "Selected Submesh Material" : "Submesh Materials",
-                                                editingIsolatedSubmesh ? ImGuiTreeNodeFlags_DefaultOpen : 0))
-                    {
-                        const auto *inspectedMesh = meshComponent->GetMesh();
-                        if (m_inspectedSubmeshList != inspectedMesh)
-                        {
-                            m_inspectedSubmeshList = inspectedMesh;
-                            m_selectedSubmeshIndex = inspectedMesh->GetSubmeshCount() > 0 ? 0 : -1;
-                            m_submeshFilter.fill('\0');
-                            m_appliedSubmeshFilter.clear();
-                            RefreshFilteredSubmeshIndices(*inspectedMesh);
-                        }
-
-                        if (editingIsolatedSubmesh)
-                        {
-                            m_selectedSubmeshIndex = isolatedSubmeshIndex;
-                        }
-                        else
-                        {
-                            const std::string_view filter(m_submeshFilter.data());
-                            const bool filterChanged = ImGui::InputTextWithHint("##SubmeshFilter", "Filter submeshes...", m_submeshFilter.data(), m_submeshFilter.size());
-                            if (filterChanged || m_appliedSubmeshFilter != filter)
-                            {
-                                RefreshFilteredSubmeshIndices(*inspectedMesh);
-                            }
-
-                            ImGui::BeginChild("SubmeshList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
-                            ImGuiListClipper clipper;
-                            clipper.Begin(static_cast<int>(m_filteredSubmeshIndices.size()));
-                            while (clipper.Step())
-                            {
-                                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
-                                {
-                                    const auto candidateIndex = m_filteredSubmeshIndices[static_cast<std::size_t>(row)];
-                                    const auto &candidate = inspectedMesh->GetSubmesh(candidateIndex);
-                                    const std::string candidateLabel = candidate.name.empty()
-                                                                           ? "Submesh " + std::to_string(candidateIndex)
-                                                                           : candidate.name;
-                                    ImGui::PushID(static_cast<int>(candidateIndex));
-                                    if (ImGui::Selectable(candidateLabel.c_str(), m_selectedSubmeshIndex == static_cast<int>(candidateIndex)))
-                                    {
-                                        m_selectedSubmeshIndex = static_cast<int>(candidateIndex);
-                                    }
-                                    ImGui::PopID();
-                                }
-                            }
-                            ImGui::EndChild();
-                        }
-
-                        if (m_selectedSubmeshIndex >= 0 &&
-                            static_cast<std::size_t>(m_selectedSubmeshIndex) < inspectedMesh->GetSubmeshCount())
-                        {
-                            const size_t submeshIndex = static_cast<std::size_t>(m_selectedSubmeshIndex);
-                            const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
-                            auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
-
-                            ImGui::PushID(static_cast<int>(submeshIndex));
-                            const std::string submeshLabel = submesh.name.empty()
-                                                                 ? std::string("Submesh ") + std::to_string(submeshIndex)
-                                                                 : submesh.name;
-                            ImGui::SeparatorText(submeshLabel.c_str());
-                            {
-                                ImGui::Text("Material Slot: %u", submesh.materialIndex);
-                                ImGui::Text("Indices: %u", submesh.indexCount);
-
-                                if (material)
-                                {
-                                    const std::string submeshMaterialAssetReference = meshComponent->GetMaterialAssetForSubmesh(submeshIndex);
-                                    const std::string inheritedMaterialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex);
-                                    const std::string activeMaterialAssetReference = submeshMaterialAssetReference.empty() ? inheritedMaterialAssetReference : submeshMaterialAssetReference;
-                                    if (auto selection = activeMaterialAssetReference;
-                                        RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
-                                                                 {.noneLabel = nullptr,
-                                                                  .emptyPreview = submeshMaterialAssetReference.empty() ? "Inherits Material Slot" : "Inline Override",
-                                                                  .includeEngineAssets = true}) &&
-                                        AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, selection, engine))
-                                    {
-                                        editorShell.MarkSceneDirty();
-                                        material = meshComponent->GetMaterialForSubmesh(submeshIndex);
-                                    }
-                                    ImGui::BeginDisabled(activeMaterialAssetReference.empty() ||
-                                                         assets::Project::IsEngineAssetReference(activeMaterialAssetReference));
-                                    if (ImGui::Button("Open Material Editor"))
-                                    {
-                                        editorShell.OpenMaterialAsset(activeMaterialAssetReference);
-                                    }
-                                    ImGui::EndDisabled();
-
-                                    if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
-                                    {
-                                        if (AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, *droppedMaterialReference, engine))
-                                        {
-                                            editorShell.MarkSceneDirty();
-                                            material = meshComponent->GetMaterialForSubmesh(submeshIndex);
-                                        }
-                                    }
-
-                                    const bool materialUsesAssetReference =
-                                        !meshComponent->GetMaterialAssetForSubmesh(submeshIndex).empty() ||
-                                        !meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex).empty();
-                                    if (materialUsesAssetReference)
-                                    {
-                                        ImGui::TextDisabled("Using shared material asset. Make it unique to edit inline values.");
-                                        ImGui::BeginDisabled();
-                                    }
-
-                                    const auto &materialConfig = material->GetConfig();
-                                    float color[4] = {
-                                        materialConfig.color.r,
-                                        materialConfig.color.g,
-                                        materialConfig.color.b,
-                                        materialConfig.color.a,
-                                    };
-                                    if (ImGui::ColorEdit4("Color", color))
-                                    {
-                                        material->SetColor(glm::vec4(color[0], color[1], color[2], color[3]));
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    float metallic = materialConfig.metallic;
-                                    if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
-                                    {
-                                        material->SetMetallic(metallic);
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    float roughness = materialConfig.roughness;
-                                    if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.04f, 1.0f))
-                                    {
-                                        material->SetRoughness(roughness);
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    float emission[3] = {
-                                        materialConfig.emission.r,
-                                        materialConfig.emission.g,
-                                        materialConfig.emission.b,
-                                    };
-                                    if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
-                                    {
-                                        material->SetEmission(glm::vec3(
-                                            emission[0] > 0.0f ? emission[0] : 0.0f,
-                                            emission[1] > 0.0f ? emission[1] : 0.0f,
-                                            emission[2] > 0.0f ? emission[2] : 0.0f));
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    bool flipNormalY = materialConfig.flipNormalY;
-                                    if (ImGui::Checkbox("Flip Normal Y", &flipNormalY))
-                                    {
-                                        material->SetFlipNormalY(flipNormalY);
-                                        editorShell.MarkSceneDirty();
-                                    }
-
-                                    ImGui::Text("Textures: Albedo %s | Normal %s | Metallic/Roughness %s",
-                                                materialConfig.albedoTexture ? "yes" : "no",
-                                                materialConfig.normalTexture ? "yes" : "no",
-                                                materialConfig.metallicTexture || materialConfig.roughnessTexture ? "yes" : "no");
-
-                                    auto &lightmapPathBuffer = GetLightmapPathBuffer(*entity, static_cast<uint32_t>(submeshIndex));
-                                    ImGui::InputText("Lightmap Path", lightmapPathBuffer.data(), lightmapPathBuffer.size());
-                                    ImGui::SameLine();
-                                    if (ImGui::Button("...##Lightmap"))
-                                    {
-#ifdef _WIN32
-                                        OPENFILENAMEA ofn = {};
-                                        char fileName[MAX_PATH] = "";
-                                        ofn.lStructSize = sizeof(ofn);
-                                        ofn.hwndOwner = nullptr;
-                                        ofn.lpstrFilter = "Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files\0*.*\0";
-                                        ofn.lpstrFile = fileName;
-                                        ofn.nMaxFile = MAX_PATH;
-                                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                                        if (GetOpenFileNameA(&ofn))
-                                        {
-                                            strncpy_s(lightmapPathBuffer.data(), lightmapPathBuffer.size(), fileName, _TRUNCATE);
-                                        }
-#endif
-                                    }
-
-                                    ImGui::BeginDisabled(std::strlen(lightmapPathBuffer.data()) == 0);
-                                    if (ImGui::Button("Load Lightmap"))
-                                    {
-                                        auto *lightmapTexture = engine.GetTextureManager().LoadLightmapFromFile(lightmapPathBuffer.data());
-                                        material->SetLightmapTexture(lightmapTexture);
-                                    }
-                                    ImGui::EndDisabled();
-
-                                    ImGui::SameLine();
-                                    if (ImGui::Button("Clear Lightmap"))
-                                    {
-                                        material->SetLightmapTexture(nullptr);
-                                    }
-
-                                    ImGui::Text("Baked Lightmap: %s", materialConfig.lightmapTexture ? "yes" : "no");
-
-                                    if (meshComponent->IsStatic() && materialConfig.lightmapTexture && meshComponent->GetMesh() && !meshComponent->GetMesh()->HasUsableLightmapUvsForSubmesh(submeshIndex))
-                                    {
-                                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Baking is using UV0 because TEXCOORD_1 / UV2 is missing. UV2 is still preferred to avoid overlap artifacts.");
-                                    }
-
-                                    if (materialUsesAssetReference)
-                                    {
-                                        ImGui::EndDisabled();
-                                    }
-
-                                    if (ImGui::Button("Make Unique Override"))
-                                    {
-                                        auto *overrideMaterial = new render::Material(material->GetConfig());
-                                        meshComponent->SetMaterialForSubmesh(submeshIndex, overrideMaterial);
-                                        meshComponent->SetMaterialAssetForSubmesh(submeshIndex, {});
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                }
-                                else
-                                {
-                                    ImGui::Text("No material assigned.");
-                                }
-                            }
-                            ImGui::PopID();
-                        }
-                    }
-                }
-            }
-
             if (auto *animationComponent = entity->GetComponent<PlutoGE::scene::AnimationComponent>())
             {
                 ImGui::Separator();
@@ -4396,6 +4000,11 @@ namespace PlutoGE::ui
                             RenderCameraTargetTextureEditor(*cameraComponent);
 
                             RenderCameraPostProcessEditor(*cameraComponent);
+                        }
+                        else if (auto *meshComponent = dynamic_cast<scene::MeshComponent *>(componentPtr))
+                        {
+                            RenderMeshComponentEditor(*meshComponent, *entity);
+                            propertiesProvided = true;
                         }
                         else if (auto *scriptComponent = dynamic_cast<scene::ScriptComponent *>(componentPtr))
                         {
@@ -5865,6 +5474,455 @@ namespace PlutoGE::ui
         }
 
         m_appliedSubmeshFilter.assign(filter.data(), filter.size());
+    }
+
+    void InspectorPanel::RenderMeshComponentEditor(scene::MeshComponent &meshComponent, scene::Entity &entity)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        auto &engine = core::Engine::GetInstance();
+        RefreshMaterialSlotUsageSummaries(meshComponent);
+        const auto &materialSlotUsageSummaries = m_materialSlotUsageSummaries;
+
+        const auto resetMaterialsToMeshDefaults = [&]()
+        {
+            if (AssignMeshAsset(meshComponent, meshComponent.GetMeshAssetReference(), engine))
+                editorShell.MarkSceneDirty();
+        };
+
+        // Mesh (Unity's Mesh Filter): the asset, with details tucked behind a tooltip.
+        if (auto selection = meshComponent.GetMeshAssetReference();
+            RenderProjectAssetPicker("Mesh", editorShell.GetProject(), assets::ProjectAssetType::Mesh, selection,
+                                     {.noneLabel = nullptr, .includeEngineAssets = true}) &&
+            AssignMeshAsset(meshComponent, selection, engine))
+            editorShell.MarkSceneDirty();
+        const std::string meshAssetReference = meshComponent.GetMeshAssetReference();
+        const bool meshAssetEditable = !meshAssetReference.empty() && !assets::Project::IsEngineAssetReference(meshAssetReference);
+        if (ImGui::BeginPopupContextItem("MeshActions"))
+        {
+            if (ImGui::MenuItem("Open in Mesh Editor", nullptr, false, meshAssetEditable))
+                editorShell.OpenMeshAsset(meshAssetReference);
+            if (ImGui::MenuItem("Reset Materials To Mesh Defaults", nullptr, false, !meshAssetReference.empty()))
+                resetMaterialsToMeshDefaults();
+            ImGui::EndPopup();
+        }
+
+        const auto *mesh = meshComponent.GetMesh();
+        if (mesh)
+        {
+            ImGui::TextDisabled("%zu submeshes, %zu material slots", mesh->GetSubmeshCount(), materialSlotUsageSummaries.size());
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
+                if (meshAssetReference.empty())
+                {
+                    ImGui::TextUnformatted("Runtime mesh (not backed by an imported artifact)");
+                }
+                else
+                {
+                    ImGui::Text("Artifact: %s", meshAssetReference.c_str());
+                    ImGui::Text("Model asset ID: %s", meshComponent.GetModelAssetId().c_str());
+                    ImGui::Text("Local object ID: %llu", static_cast<unsigned long long>(meshComponent.GetModelObjectId()));
+                    const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshAssetReference);
+                    if (!metadata.sourceAssetReference.empty())
+                        ImGui::Text("Imported from: %s", metadata.sourceAssetReference.c_str());
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("Right-click the Mesh field to open it or reset materials.");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("Assign or drop a .plutomesh asset.");
+        }
+
+        // Rendering flags (Unity's Mesh Renderer).
+        const auto renderFlag = [&](const char *label, bool value, auto &&apply, const char *propertyName)
+        {
+            if (ImGui::Checkbox(label, &value))
+            {
+                apply(value);
+                entity.AddPrefabOverride(std::string("Component:MeshComponent:") + propertyName);
+                editorShell.MarkSceneDirty();
+            }
+        };
+        renderFlag("Static", meshComponent.IsStatic(), [&](bool value) { meshComponent.SetStatic(value); }, "Static");
+        ImGui::SetItemTooltip("Static meshes contribute to baked lighting and navigation.");
+        ImGui::SameLine();
+        renderFlag("Visible", meshComponent.IsVisible(), [&](bool value) { meshComponent.SetVisible(value); }, "Visible");
+        ImGui::SameLine();
+        renderFlag("Generated LODs", meshComponent.GetUseGeneratedLods(),
+                   [&](bool value) { meshComponent.SetUseGeneratedLods(value); }, "UseGeneratedLods");
+
+        // Materials: one row per slot, like Unity's Materials list.
+        const int isolatedSubmeshIndex = meshComponent.GetSubmeshIndex();
+        const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && mesh &&
+                                            static_cast<size_t>(isolatedSubmeshIndex) < mesh->GetSubmeshCount();
+        std::vector<size_t> materialSlotIndices;
+        if (editingIsolatedSubmesh)
+        {
+            materialSlotIndices.push_back(mesh->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex)).materialIndex);
+        }
+        else
+        {
+            for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotUsageSummaries.size(); ++materialSlotIndex)
+                materialSlotIndices.push_back(materialSlotIndex);
+        }
+
+        if (!materialSlotIndices.empty())
+        {
+            const bool materialsOpen = ImGui::TreeNodeEx("MeshMaterials", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                                         "Materials (%zu)", materialSlotIndices.size());
+            if (ImGui::BeginPopupContextItem("MaterialsActions"))
+            {
+                if (ImGui::MenuItem("Reset Materials To Mesh Defaults", nullptr, false, !meshAssetReference.empty()))
+                    resetMaterialsToMeshDefaults();
+                ImGui::EndPopup();
+            }
+            if (materialsOpen)
+            {
+                if (editingIsolatedSubmesh)
+                    ImGui::TextDisabled("Showing the slot used by submesh %d.", isolatedSubmeshIndex);
+
+                const auto &meshDefaultMaterialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshAssetReference);
+                if (ImGui::BeginTable("MaterialSlots", 3, ImGuiTableFlags_SizingFixedFit))
+                {
+                    ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed);
+                    ImGui::TableSetupColumn("Material", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Edit", ImGuiTableColumnFlags_WidthFixed);
+                    for (const size_t materialSlotIndex : materialSlotIndices)
+                    {
+                        ImGui::PushID(static_cast<int>(materialSlotIndex));
+                        ImGui::TableNextRow();
+
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("Element %zu", materialSlotIndex);
+                        if (materialSlotIndex < materialSlotUsageSummaries.size() && !materialSlotUsageSummaries[materialSlotIndex].empty())
+                            ImGui::SetItemTooltip("%s", materialSlotUsageSummaries[materialSlotIndex].c_str());
+
+                        ImGui::TableSetColumnIndex(1);
+                        const std::string materialAssetReference = meshComponent.GetMaterialAssetForMaterialSlot(materialSlotIndex);
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (auto selection = materialAssetReference;
+                            RenderProjectAssetPicker("##Material", editorShell.GetProject(), assets::ProjectAssetType::Material,
+                                                     selection, {.noneLabel = nullptr, .emptyPreview = "Inline / Imported", .includeEngineAssets = true}) &&
+                            AssignMaterialAssetToSlot(meshComponent, materialSlotIndex, selection, engine))
+                            editorShell.MarkSceneDirty();
+                        const bool hasMeshDefaultMaterial = materialSlotIndex < meshDefaultMaterialReferences.size() &&
+                                                            !meshDefaultMaterialReferences[materialSlotIndex].empty();
+                        if (ImGui::BeginPopupContextItem("SlotActions"))
+                        {
+                            if (ImGui::MenuItem("Use Mesh Default", nullptr, false,
+                                                hasMeshDefaultMaterial && materialAssetReference != meshDefaultMaterialReferences[materialSlotIndex]) &&
+                                AssignMaterialAssetToSlot(meshComponent, materialSlotIndex, meshDefaultMaterialReferences[materialSlotIndex], engine))
+                                editorShell.MarkSceneDirty();
+                            ImGui::EndPopup();
+                        }
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::BeginDisabled(materialAssetReference.empty() ||
+                                             assets::Project::IsEngineAssetReference(materialAssetReference));
+                        if (ImGui::Button("Edit"))
+                            editorShell.OpenMaterialAsset(materialAssetReference);
+                        ImGui::EndDisabled();
+                        ImGui::SetItemTooltip("Open in the Material Editor");
+
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        // Rarely needed: offsets and per-submesh overrides.
+        if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_SpanAvailWidth))
+        {
+            glm::vec3 meshPositionOffset = meshComponent.GetMeshPositionOffset();
+            glm::vec3 meshRotationOffset = meshComponent.GetMeshRotationOffset();
+            bool meshOffsetChanged = ImGui::DragFloat3("Position Offset", &meshPositionOffset.x, 0.01f);
+            meshOffsetChanged |= ImGui::DragFloat3("Rotation Offset", &meshRotationOffset.x, 0.1f);
+            if (meshOffsetChanged)
+            {
+                meshComponent.SetMeshPositionOffset(meshPositionOffset);
+                meshComponent.SetMeshRotationOffset(meshRotationOffset);
+                editorShell.MarkSceneDirty();
+            }
+
+            if (mesh && mesh->GetSubmeshCount() > 0 && ImGui::TreeNode("Submesh Offsets"))
+            {
+                ImGui::TextWrapped("Offsets are applied only to the selected draw submesh. "
+                                   "Skinned submeshes continue to share this entity's animation.");
+                for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+                {
+                    const auto &submesh = mesh->GetSubmesh(submeshIndex);
+                    const std::string label = submesh.name.empty()
+                                                  ? "Submesh " + std::to_string(submeshIndex)
+                                                  : std::to_string(submeshIndex) + " - " + submesh.name;
+                    ImGui::PushID(static_cast<int>(submeshIndex));
+                    if (ImGui::TreeNode(label.c_str()))
+                    {
+                        glm::vec3 position = meshComponent.GetSubmeshPositionOffset(submeshIndex);
+                        glm::vec3 rotation = meshComponent.GetSubmeshRotationOffset(submeshIndex);
+                        bool changed = ImGui::DragFloat3("Position", &position.x, 0.01f);
+                        changed |= ImGui::DragFloat3("Rotation", &rotation.x, 0.1f);
+                        if (changed)
+                        {
+                            meshComponent.SetSubmeshPositionOffset(submeshIndex, position);
+                            meshComponent.SetSubmeshRotationOffset(submeshIndex, rotation);
+                            editorShell.MarkSceneDirty();
+                        }
+                        if (ImGui::Button("Reset"))
+                        {
+                            meshComponent.SetSubmeshPositionOffset(submeshIndex, glm::vec3(0.0f));
+                            meshComponent.SetSubmeshRotationOffset(submeshIndex, glm::vec3(0.0f));
+                            editorShell.MarkSceneDirty();
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+
+            if (mesh && mesh->GetSubmeshCount() > 1 &&
+                ImGui::TreeNodeEx(editingIsolatedSubmesh ? "Submesh Material Override" : "Submesh Material Overrides",
+                                  editingIsolatedSubmesh ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+            {
+                RenderSubmeshMaterialOverrides(meshComponent, entity, editingIsolatedSubmesh ? isolatedSubmeshIndex : -1);
+                ImGui::TreePop();
+            }
+            ImGui::TreePop();
+        }
+    }
+
+    void InspectorPanel::RenderSubmeshMaterialOverrides(scene::MeshComponent &meshComponent, scene::Entity &entity, int isolatedSubmeshIndex)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        auto &engine = core::Engine::GetInstance();
+        const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0;
+        const auto *inspectedMesh = meshComponent.GetMesh();
+        if (m_inspectedSubmeshList != inspectedMesh)
+        {
+            m_inspectedSubmeshList = inspectedMesh;
+            m_selectedSubmeshIndex = inspectedMesh->GetSubmeshCount() > 0 ? 0 : -1;
+            m_submeshFilter.fill('\0');
+            m_appliedSubmeshFilter.clear();
+            RefreshFilteredSubmeshIndices(*inspectedMesh);
+        }
+
+        if (editingIsolatedSubmesh)
+        {
+            m_selectedSubmeshIndex = isolatedSubmeshIndex;
+        }
+        else
+        {
+            const std::string_view filter(m_submeshFilter.data());
+            const bool filterChanged = ImGui::InputTextWithHint("##SubmeshFilter", "Filter submeshes...", m_submeshFilter.data(), m_submeshFilter.size());
+            if (filterChanged || m_appliedSubmeshFilter != filter)
+            {
+                RefreshFilteredSubmeshIndices(*inspectedMesh);
+            }
+
+            ImGui::BeginChild("SubmeshList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(m_filteredSubmeshIndices.size()));
+            while (clipper.Step())
+            {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                {
+                    const auto candidateIndex = m_filteredSubmeshIndices[static_cast<std::size_t>(row)];
+                    const auto &candidate = inspectedMesh->GetSubmesh(candidateIndex);
+                    const std::string candidateLabel = candidate.name.empty()
+                                                           ? "Submesh " + std::to_string(candidateIndex)
+                                                           : candidate.name;
+                    ImGui::PushID(static_cast<int>(candidateIndex));
+                    if (ImGui::Selectable(candidateLabel.c_str(), m_selectedSubmeshIndex == static_cast<int>(candidateIndex)))
+                    {
+                        m_selectedSubmeshIndex = static_cast<int>(candidateIndex);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+        }
+
+        if (m_selectedSubmeshIndex >= 0 &&
+            static_cast<std::size_t>(m_selectedSubmeshIndex) < inspectedMesh->GetSubmeshCount())
+        {
+            const size_t submeshIndex = static_cast<std::size_t>(m_selectedSubmeshIndex);
+            const auto &submesh = meshComponent.GetMesh()->GetSubmesh(submeshIndex);
+            auto *material = meshComponent.GetMaterialForSubmesh(submeshIndex);
+
+            ImGui::PushID(static_cast<int>(submeshIndex));
+            const std::string submeshLabel = submesh.name.empty()
+                                                 ? std::string("Submesh ") + std::to_string(submeshIndex)
+                                                 : submesh.name;
+            ImGui::SeparatorText(submeshLabel.c_str());
+            {
+                ImGui::Text("Material Slot: %u", submesh.materialIndex);
+                ImGui::Text("Indices: %u", submesh.indexCount);
+
+                if (material)
+                {
+                    const std::string submeshMaterialAssetReference = meshComponent.GetMaterialAssetForSubmesh(submeshIndex);
+                    const std::string inheritedMaterialAssetReference = meshComponent.GetMaterialAssetForMaterialSlot(submesh.materialIndex);
+                    const std::string activeMaterialAssetReference = submeshMaterialAssetReference.empty() ? inheritedMaterialAssetReference : submeshMaterialAssetReference;
+                    if (auto selection = activeMaterialAssetReference;
+                        RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
+                                                 {.noneLabel = nullptr,
+                                                  .emptyPreview = submeshMaterialAssetReference.empty() ? "Inherits Material Slot" : "Inline Override",
+                                                  .includeEngineAssets = true}) &&
+                        AssignMaterialAssetToSubmesh(meshComponent, submeshIndex, selection, engine))
+                    {
+                        editorShell.MarkSceneDirty();
+                        material = meshComponent.GetMaterialForSubmesh(submeshIndex);
+                    }
+                    ImGui::BeginDisabled(activeMaterialAssetReference.empty() ||
+                                         assets::Project::IsEngineAssetReference(activeMaterialAssetReference));
+                    if (ImGui::Button("Open Material Editor"))
+                    {
+                        editorShell.OpenMaterialAsset(activeMaterialAssetReference);
+                    }
+                    ImGui::EndDisabled();
+
+                    if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
+                    {
+                        if (AssignMaterialAssetToSubmesh(meshComponent, submeshIndex, *droppedMaterialReference, engine))
+                        {
+                            editorShell.MarkSceneDirty();
+                            material = meshComponent.GetMaterialForSubmesh(submeshIndex);
+                        }
+                    }
+
+                    const bool materialUsesAssetReference =
+                        !meshComponent.GetMaterialAssetForSubmesh(submeshIndex).empty() ||
+                        !meshComponent.GetMaterialAssetForMaterialSlot(submesh.materialIndex).empty();
+                    if (materialUsesAssetReference)
+                    {
+                        ImGui::TextDisabled("Using shared material asset. Make it unique to edit inline values.");
+                        ImGui::BeginDisabled();
+                    }
+
+                    const auto &materialConfig = material->GetConfig();
+                    float color[4] = {
+                        materialConfig.color.r,
+                        materialConfig.color.g,
+                        materialConfig.color.b,
+                        materialConfig.color.a,
+                    };
+                    if (ImGui::ColorEdit4("Color", color))
+                    {
+                        material->SetColor(glm::vec4(color[0], color[1], color[2], color[3]));
+                        editorShell.MarkSceneDirty();
+                    }
+
+                    float metallic = materialConfig.metallic;
+                    if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+                    {
+                        material->SetMetallic(metallic);
+                        editorShell.MarkSceneDirty();
+                    }
+
+                    float roughness = materialConfig.roughness;
+                    if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.04f, 1.0f))
+                    {
+                        material->SetRoughness(roughness);
+                        editorShell.MarkSceneDirty();
+                    }
+
+                    float emission[3] = {
+                        materialConfig.emission.r,
+                        materialConfig.emission.g,
+                        materialConfig.emission.b,
+                    };
+                    if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
+                    {
+                        material->SetEmission(glm::vec3(
+                            emission[0] > 0.0f ? emission[0] : 0.0f,
+                            emission[1] > 0.0f ? emission[1] : 0.0f,
+                            emission[2] > 0.0f ? emission[2] : 0.0f));
+                        editorShell.MarkSceneDirty();
+                    }
+
+                    bool flipNormalY = materialConfig.flipNormalY;
+                    if (ImGui::Checkbox("Flip Normal Y", &flipNormalY))
+                    {
+                        material->SetFlipNormalY(flipNormalY);
+                        editorShell.MarkSceneDirty();
+                    }
+
+                    ImGui::Text("Textures: Albedo %s | Normal %s | Metallic/Roughness %s",
+                                materialConfig.albedoTexture ? "yes" : "no",
+                                materialConfig.normalTexture ? "yes" : "no",
+                                materialConfig.metallicTexture || materialConfig.roughnessTexture ? "yes" : "no");
+
+                    auto &lightmapPathBuffer = GetLightmapPathBuffer(entity, static_cast<uint32_t>(submeshIndex));
+                    ImGui::InputText("Lightmap Path", lightmapPathBuffer.data(), lightmapPathBuffer.size());
+                    ImGui::SameLine();
+                    if (ImGui::Button("...##Lightmap"))
+                    {
+#ifdef _WIN32
+                        OPENFILENAMEA ofn = {};
+                        char fileName[MAX_PATH] = "";
+                        ofn.lStructSize = sizeof(ofn);
+                        ofn.hwndOwner = nullptr;
+                        ofn.lpstrFilter = "Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files\0*.*\0";
+                        ofn.lpstrFile = fileName;
+                        ofn.nMaxFile = MAX_PATH;
+                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                        if (GetOpenFileNameA(&ofn))
+                        {
+                            strncpy_s(lightmapPathBuffer.data(), lightmapPathBuffer.size(), fileName, _TRUNCATE);
+                        }
+#endif
+                    }
+
+                    ImGui::BeginDisabled(std::strlen(lightmapPathBuffer.data()) == 0);
+                    if (ImGui::Button("Load Lightmap"))
+                    {
+                        auto *lightmapTexture = engine.GetTextureManager().LoadLightmapFromFile(lightmapPathBuffer.data());
+                        material->SetLightmapTexture(lightmapTexture);
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear Lightmap"))
+                    {
+                        material->SetLightmapTexture(nullptr);
+                    }
+
+                    ImGui::Text("Baked Lightmap: %s", materialConfig.lightmapTexture ? "yes" : "no");
+
+                    if (meshComponent.IsStatic() && materialConfig.lightmapTexture && meshComponent.GetMesh() && !meshComponent.GetMesh()->HasUsableLightmapUvsForSubmesh(submeshIndex))
+                    {
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Baking is using UV0 because TEXCOORD_1 / UV2 is missing. UV2 is still preferred to avoid overlap artifacts.");
+                    }
+
+                    if (materialUsesAssetReference)
+                    {
+                        ImGui::EndDisabled();
+                    }
+
+                    if (ImGui::Button("Make Unique Override"))
+                    {
+                        auto *overrideMaterial = new render::Material(material->GetConfig());
+                        meshComponent.SetMaterialForSubmesh(submeshIndex, overrideMaterial);
+                        meshComponent.SetMaterialAssetForSubmesh(submeshIndex, {});
+                        editorShell.MarkSceneDirty();
+                    }
+                }
+                else
+                {
+                    ImGui::Text("No material assigned.");
+                }
+            }
+            ImGui::PopID();
+        }
     }
 
     void InspectorPanel::RefreshMaterialSlotUsageSummaries(const scene::MeshComponent &meshComponent)

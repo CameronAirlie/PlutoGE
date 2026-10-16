@@ -776,7 +776,10 @@ namespace PlutoGE::ui
                 const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
                 if (!InstantiatePrefabIntoScene(reference, nullptr))
                 {
-                    InstantiateMeshAssetIntoScene(reference, nullptr);
+                    if (!InstantiateModelAssetIntoScene(reference, nullptr))
+                    {
+                        InstantiateMeshAssetIntoScene(reference, nullptr);
+                    }
                 }
             }
             ImGui::EndDragDropTarget();

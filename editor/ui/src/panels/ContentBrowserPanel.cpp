@@ -752,6 +752,10 @@ namespace PlutoGE::ui
             {
                 editorShell.OpenSceneFromPath(resolvedPath);
             }
+            else if (resolvedPath.extension() == ".cs")
+            {
+                editorShell.OpenScriptSource(resolvedPath);
+            }
             else if (asset.type == assets::ProjectAssetType::Material)
             {
                 editorShell.OpenMaterialAsset(asset.reference);

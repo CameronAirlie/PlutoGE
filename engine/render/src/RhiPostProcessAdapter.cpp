@@ -224,6 +224,7 @@ namespace PlutoGE::render
                 result.parameters[1] = {settings.edgeFade, settings.fresnelPower,
                                         settings.metallicBoost,
                                         static_cast<float>(settings.binarySearchSteps)};
+                result.parameters[2] = {settings.maxRoughness, 0.0f, 0.0f, 0.0f};
                 return result;
             });
         }

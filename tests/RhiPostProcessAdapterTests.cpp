@@ -300,6 +300,12 @@ int main()
     const auto ssaoPacket = AdaptPostProcessEffect(ssao);
     const auto ssgiPacket = AdaptPostProcessEffect(ssgi);
     const auto ssrPacket = AdaptPostProcessEffect(ssr);
+    // SSR's roughness cutoff is shader-visible in parameters[2].x and clamped.
+    SSREffect ssrCutoff;
+    ssrCutoff.SetParameters({PostProcessParameter{.name = "Max Roughness", .value = "0.05"}});
+    const auto ssrCutoffPacket = AdaptPostProcessEffect(ssrCutoff);
+    if (!ssrCutoffPacket || !Near(ssrCutoffPacket->parameters[2].x, 0.15f))
+        return 144;
     const auto fogPacket = AdaptPostProcessEffect(fog);
     const auto compositePacket = AdaptPostProcessEffect(composite);
     if (!ssaoPacket || !ssgiPacket || !ssrPacket || !fogPacket || !compositePacket ||
@@ -310,6 +316,7 @@ int main()
         !Near(ssaoPacket->parameters[2].y, 0.85f) ||
         ssgiPacket->type != BasicPostProcessEffectType::SSGI ||
         ssrPacket->type != BasicPostProcessEffectType::SSR ||
+        !Near(ssrPacket->parameters[2].x, 0.6f) ||
         fogPacket->type != BasicPostProcessEffectType::VolumetricFog ||
         !Near(fogPacket->parameters[3].x, 2.0f) ||
         !Near(fogPacket->parameters[3].y, 1.0f) ||

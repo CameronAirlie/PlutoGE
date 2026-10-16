@@ -86,7 +86,14 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float4 material = materialTexture.SampleLevel(uv, 0.0);
     const float metallic = saturate(material.r);
     const float roughness = clamp(material.g, 0.04, 1.0);
-    const float roughnessFade = 1.0 - roughness;
+    // Rough surfaces gain almost nothing from screen tracing: the correction
+    // is scaled by (1 - roughness) and then blurred over a wide footprint, yet
+    // every traced pixel paid for 16 rays and the widest resolve filter. Fade
+    // out below the configured cutoff and skip all stages above it. A zero
+    // cutoff (older parameter blocks) keeps tracing every surface.
+    const float maxRoughness = pass.parameters[2].x > 0.0 ? min(pass.parameters[2].x, 1.0) : 1.0;
+    const float roughnessFade = (1.0 - roughness) *
+        (maxRoughness < 1.0 ? 1.0 - smoothstep(maxRoughness - 0.15, maxRoughness, roughness) : 1.0);
     if (roughnessFade <= 0.0) return scene;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);

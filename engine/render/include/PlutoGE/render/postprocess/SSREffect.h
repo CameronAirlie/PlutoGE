@@ -23,13 +23,13 @@ namespace PlutoGE::render
         struct Settings
         {
             float intensity, maxRayDistance, thickness, startOffset, edgeFade;
-            float fresnelPower, metallicBoost;
+            float fresnelPower, metallicBoost, maxRoughness;
             int stepCount, binarySearchSteps;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_intensity, m_maxRayDistance, m_thickness, m_startOffset,
-                    m_edgeFade, m_fresnelPower, m_metallicBoost,
+                    m_edgeFade, m_fresnelPower, m_metallicBoost, m_maxRoughness,
                     m_stepCount, m_binarySearchSteps};
         }
 
@@ -46,6 +46,9 @@ namespace PlutoGE::render
         float m_edgeFade = 0.12f;
         float m_fresnelPower = 5.0f;
         float m_metallicBoost = 0.75f;
+        // Screen tracing is skipped above this roughness; rough reflections
+        // come from the environment capture. 1 traces every surface.
+        float m_maxRoughness = 0.6f;
         int m_stepCount = 48;
         int m_binarySearchSteps = 5;
     };

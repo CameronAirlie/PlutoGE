@@ -5,6 +5,7 @@
 #include "BasicDrawBatching.h"
 #include "CanonicalGeometry.h"
 #include "DirectionalShadowReach.h"
+#include "ParticleDrawOrder.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -236,6 +237,8 @@ namespace PlutoGE::render
         m_drawPreparation.reset();
         m_skinningExecutor.reset();
         m_particleDraws.clear();
+        m_orderedParticleDraws.clear();
+        m_particleInstanceKeys.clear();
         m_sortedParticles.clear();
         if (m_device && m_upscalerContextId != 0)
             m_device->ReleaseTemporalUpscalerContext(m_upscalerContextId);
@@ -1480,6 +1483,7 @@ namespace PlutoGE::render
         else
             preparation.gi = {};
         std::size_t particleDrawCount = 0;
+        m_particleInstanceKeys.clear();
         const auto acquireParticleDraw = [&]() -> BasicParticleDraw &
         {
             if (particleDrawCount == m_particleDraws.size())
@@ -1528,6 +1532,7 @@ namespace PlutoGE::render
                     continue;
                 std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
                 auto &draw = acquireParticleDraw();
+                const auto drawIndex = static_cast<std::uint32_t>(particleDrawCount - 1);
                 auto &parameters = draw.parameters;
                 parameters.viewProjection = particleViewProjection;
                 parameters.inverseProjection = inverseProjection;
@@ -1611,6 +1616,7 @@ namespace PlutoGE::render
                     const float growth = particle->size > 0.0f ? size / particle->size : 1.0f;
                     const float densityScale = system->GetVolumeConserveMass() && growth > 0.0f
                         ? 1.0f / (growth * growth * growth) : 1.0f;
+                    m_particleInstanceKeys.push_back({entry.second, drawIndex, static_cast<std::uint32_t>(draw.instances.size())});
                     draw.instances.push_back({glm::vec4(particle->position, angle), color,
                         {particle->age, densityScale, hash(particle->seed), size}});
                 }
@@ -1649,6 +1655,11 @@ namespace PlutoGE::render
                 }
             }
         }
+        // Emitters were prepared independently; blend all billboards in one
+        // back-to-front order so overlapping plumes composite correctly.
+        const auto orderedParticleDrawCount = OrderParticleDraws(
+            std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount),
+            m_particleInstanceKeys, m_orderedParticleDraws);
         if (const auto ssr = std::ranges::find_if(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::SSR; }); ssr != basicEffects.end())
         {
             m_timingStats.ssrSteps = std::clamp(ssr->quality, 8u, 128u);
@@ -1680,7 +1691,7 @@ namespace PlutoGE::render
         m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
                            useTemporalUpscaler ? &upscalerFrame : nullptr,
                            useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
-                           std::span<const BasicParticleDraw>(m_particleDraws.data(), particleDrawCount),
+                           std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount),
                            beforeTemporalResolve, linearOutput, sharedClipJitter, decals, recordingMode);
         m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&

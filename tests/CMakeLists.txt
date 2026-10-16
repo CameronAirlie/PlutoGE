@@ -557,6 +557,11 @@ target_link_libraries(PlutoGEDirectionalShadowReachTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGEDirectionalShadowReachTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGEDirectionalShadowReachTests COMMAND PlutoGEDirectionalShadowReachTests)
 
+add_executable(PlutoGEParticleDrawOrderTests ParticleDrawOrderTests.cpp)
+target_link_libraries(PlutoGEParticleDrawOrderTests PRIVATE PlutoGE::Scene)
+target_include_directories(PlutoGEParticleDrawOrderTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGEParticleDrawOrderTests COMMAND PlutoGEParticleDrawOrderTests)
+
 add_executable(PlutoGESnapshotDamageTests SnapshotDamageTests.cpp)
 target_include_directories(PlutoGESnapshotDamageTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include ${CMAKE_SOURCE_DIR}/engine/render/src)
 target_compile_features(PlutoGESnapshotDamageTests PRIVATE cxx_std_20)

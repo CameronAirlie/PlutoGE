@@ -26,6 +26,7 @@ namespace PlutoGE::render
     class RhiSkinnedShadowBounds;
     struct RhiSkinningJob;
     class RhiDrawPreparationCache;
+    struct ParticleInstanceKey;
     struct RhiSceneTimingStats
     {
         float commandTranslationMs = 0.0f;
@@ -322,7 +323,9 @@ namespace PlutoGE::render
       std::uint32_t m_pendingNormalHeight = 0;
       std::size_t m_sceneCommandCount = 0;
       std::size_t m_drawCount = 0;
-      std::vector<BasicParticleDraw> m_particleDraws;
+      // Per-emitter draws, then the same billboards in one global depth order.
+      std::vector<BasicParticleDraw> m_particleDraws, m_orderedParticleDraws;
+      std::vector<ParticleInstanceKey> m_particleInstanceKeys;
       std::vector<std::pair<const scene::ParticleCpuData *, float>> m_sortedParticles;
       RhiSceneTimingStats m_timingStats;
       std::uint64_t m_temporalFrameIndex = 0;

@@ -87,6 +87,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float maxSteerAngle    = 32.0f;
     [SerializedField] private float steerSharpness    = 5.0f;
     [SerializedField] private float highSpeedSteerFade    = 0.12f;
+    [SerializedField] private float counterSteerAuthority = 1.0f;
     [SerializedField] private bool steerFrontWheelAnchors    = true;
     [SerializedField] private float physicsSteerDirection    = -1.0f;
     [SerializedField] private Vector3 wheelSpinAxis    = new Vector3(-1.0f, 0.0f, 0.0f);
@@ -98,6 +99,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField, InputMappingAsset] private string inputMappingAsset = "";
     [SerializedField] private string groundTag    = "ground";
     [SerializedField] private bool suspensionDiagnostics = true;
+
+    // Fraction of the longitudinal grip budget the ABS-style service brake
+    // may use, reserving lateral grip for steering under braking.
+    private const float AbsPeakUsage = 0.9f;
 
     private readonly WheelState[] _wheels = new WheelState[4];
     private static readonly Dictionary<uint, VehicleTelemetry> s_telemetryByEntity = [];
@@ -239,6 +244,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         maxSteerAngle = vehicleSettings.MaxSteerAngle;
         steerSharpness = vehicleSettings.SteerSharpness;
         highSpeedSteerFade = vehicleSettings.HighSpeedSteerFade;
+        counterSteerAuthority = vehicleSettings.CounterSteerAuthority;
 
         if (_rigidbody is not null)
         {
@@ -334,6 +340,24 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var accelerationSteerReduction = Lerp(1.0f, 0.72f,
             _throttleInput * Math.Clamp(absoluteSpeed / 25.0f, 0.0f, 1.0f));
         var steerLimit = maxSteerAngle * steerRatio * accelerationSteerReduction;
+        // The speed-sensitive rack keeps high-speed steering calm, but it also
+        // capped counter-steer below the slide angle, so the driver physically
+        // could not point the front wheels down the road to catch a drift.
+        // When steering towards the front axle's direction of travel, allow
+        // lock up to that angle; ordinary cornering never reaches it.
+        if (forwardSpeed > 3.0f && MathF.Abs(_steerInput) > 0.0f && counterSteerAuthority > 0.0f)
+        {
+            var frontAxle = GetAxleCenter(frontLeftWheelAnchor, frontRightWheelAnchor, GameObject.WorldPosition);
+            var frontVelocity = _rigidbody.GetVelocityAtPoint(frontAxle);
+            var travelSteerAngle = MathF.Atan2(-Vector3.Dot(frontVelocity, Right),
+                                               MathF.Max(Vector3.Dot(frontVelocity, Forward), 0.1f)) *
+                                   180.0f / MathF.PI * -MathF.Sign(NonZero(physicsSteerDirection));
+            if (MathF.Sign(travelSteerAngle) == MathF.Sign(_steerInput))
+            {
+                steerLimit = MathF.Max(steerLimit,
+                    MathF.Min(MathF.Abs(travelSteerAngle) * counterSteerAuthority, maxSteerAngle));
+            }
+        }
         _steerAngle = Lerp(_steerAngle, _steerInput * steerLimit, 1.0f - MathF.Exp(-steerSharpness * deltaTime));
     }
 
@@ -425,6 +449,19 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var burnout = _throttleInput > 0.0f && brake > 0.0f &&
                       MathF.Abs(chassisForwardSpeed) < 8.0f;
         var drivenWheelSurfaceAcceleration = 0.0f;
+        // Static axle loads follow the centre of mass. The suspension feed-
+        // forward assumed 25% per corner, so an offset centre of mass left one
+        // axle sagging onto its bump stops (load spikes and grip jitter) while
+        // the other sat near full droop, and the brakes had no balance.
+        var centerOfMassWorld = centerOfMass?.WorldPosition ?? GameObject.WorldPosition;
+        var frontAxleDistance = Vector3.Dot(
+            GetAxleCenter(frontLeftWheelAnchor, frontRightWheelAnchor, centerOfMassWorld) - centerOfMassWorld, bodyForward);
+        var rearAxleDistance = -Vector3.Dot(
+            GetAxleCenter(rearLeftWheelAnchor, rearRightWheelAnchor, centerOfMassWorld) - centerOfMassWorld, bodyForward);
+        var wheelbase = frontAxleDistance + rearAxleDistance;
+        var frontAxleLoadShare = wheelbase > 0.1f
+            ? Math.Clamp(rearAxleDistance / wheelbase, 0.2f, 0.8f)
+            : 0.5f;
         StringBuilder? diagnostics = emitDiagnostics
             ? new StringBuilder($"[VehicleSuspension] bodyY={GameObject.WorldPosition.Y:F6} vy={_rigidbody!.Velocity.Y:F6} " +
                                 $"wx={_rigidbody.AngularVelocity.X:F6} wz={_rigidbody.AngularVelocity.Z:F6} " +
@@ -480,7 +517,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var bottomOut = MathF.Max(rawCompression - travel, 0.0f);
             var compression01 = compression / travel;
             var suspensionPointSpeed = Vector3.Dot(pointVelocity, bodyUp);
-            var cornerWeight = _rigidbody!.Mass * 9.81f * 0.25f;
+            var staticLoadShare = (wheel.Steering ? frontAxleLoadShare : 1.0f - frontAxleLoadShare) * 0.5f;
+            var cornerWeight = _rigidbody!.Mass * 9.81f * staticLoadShare;
             var springDisplacement = compression - restCompression;
             var suspensionForce = cornerWeight +
                                   springDisplacement * MathF.Max(springStrength, 0.0f) +
@@ -524,6 +562,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 MathF.Max(peakLateralSlipAngle, 0.0f) * slipTolerance,
                 MathF.Max(fullLateralSlipAngle, peakLateralSlipAngle + 0.1f) * slipTolerance,
                 lateralSlipAngle));
+            // Slip angle is meaningless at walking pace: a car crawling
+            // sideways after a spin read as a 30+ degree slide and stayed on
+            // ice. Fade the sliding curve in over the first few m/s.
+            var contactPlanarSpeed = MathF.Sqrt(lateralSpeed * lateralSpeed + forwardSpeed * forwardSpeed);
+            postPeakLateralSlip *= SmoothStep(InverseLerp(2.0f, 5.0f, contactPlanarSpeed));
             var slidingGrip = wheel.Steering
                 ? frontSlidingTyreLateralGrip
                 : slidingTyreLateralGrip;
@@ -534,9 +577,17 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var wheelLockedByHandbrake = !wheel.Steering && handbrake;
             if (wheelLockedByHandbrake)
             {
-                // Deliberately leave LateralGripRetention untouched. Once the
-                // handbrake is released, measured slip below decides whether
-                // the tyre remains broken away or begins recovering.
+                // A locked tyre is sliding, so retention must follow it down.
+                // Leaving the pre-handbrake value (normally 1) in place gave
+                // full grip the instant the lever was released, snapping the
+                // rear straight and killing the drift it had just started.
+                // After release, measured slip decides how quickly it regrips.
+                var lockedRetention = Math.Clamp(slidingGrip, 0.0f, 1.0f);
+                if (lockedRetention < wheel.LateralGripRetention)
+                {
+                    var lockBlend = 1.0f - MathF.Exp(-MathF.Max(lateralGripLossRate, 0.0f) * deltaTime);
+                    wheel.LateralGripRetention = Lerp(wheel.LateralGripRetention, lockedRetention, lockBlend);
+                }
             }
             else
             {
@@ -627,9 +678,15 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 // This preserves straight-line acceleration, avoids turning
                 // transmitted drive into unnecessary wheelspin, and removes
                 // enough rear cornering authority for throttle-on oversteer.
-                var remainingLateralRatio = MathF.Sqrt(MathF.Max(
+                // Never fall below the spinning-tyre lateral grip, though.
+                // appliedDrive is clamped to tractionLimit, so any demand
+                // above traction made usage exactly 1 and deleted all rear
+                // cornering force. In first and second gear full throttle
+                // therefore spun the car instead of holding a drift, and the
+                // SpinningTyreLateralGrip setting had no effect.
+                var remainingLateralRatio = MathF.Max(MathF.Sqrt(MathF.Max(
                     1.0f - longitudinalUsage * longitudinalUsage,
-                    0.0f));
+                    0.0f)), Math.Clamp(spinningTyreLateralGrip, 0.0f, 1.0f));
                 var appliedLateral = ClampMagnitude(
                     lateralContribution,
                     lateralLimit * remainingLateralRatio);
@@ -663,24 +720,37 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             }
             else if (brake > 0.0f && !(burnout && drivenWheel))
             {
-                // A fully locked tyre has no independent steering force. Its
-                // available friction opposes the contact patch's actual planar
-                // motion, preventing front-wheel steer from manufacturing yaw
-                // under full braking and keeping force inside one grip budget.
-                var planarVelocity = pointVelocity - bodyUp * Vector3.Dot(pointVelocity, bodyUp);
+                // ABS-style service brake: retardation acts along the wheel's
+                // rolling direction and shares one friction ellipse with
+                // cornering, held just below peak so steered tyres keep some
+                // authority. The previous fully-locked model replaced all
+                // lateral force at full pedal; with a digital brake key the
+                // car ploughed straight on at every corner entry and could
+                // not be trail-braked. Demand follows static axle load, giving
+                // a balanced bias instead of an equal split per corner.
+                var brakeAmount = Math.Clamp(brake, 0.0f, 1.0f);
                 var brakeLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(brakeGrip, 0.0f);
-                var lockedTireForce = Vector3.Zero;
-                if (planarVelocity.LengthSquared() > 0.01f)
-                {
-                    var requestedBrake = brakePower * _rigidbody.Mass * 0.25f;
-                    lockedTireForce = -Vector3.Normalize(planarVelocity) * MathF.Min(requestedBrake, brakeLimit);
-                }
-                tireForce = Vector3.Lerp(tireForce, lockedTireForce, Math.Clamp(brake, 0.0f, 1.0f));
+                var requestedBrake = brakePower * _rigidbody.Mass * staticLoadShare * brakeAmount;
+                // Fade out near standstill so braking cannot push the car
+                // backwards or chatter around zero speed.
+                var appliedBrake = MathF.Min(requestedBrake, brakeLimit * AbsPeakUsage) *
+                                   Math.Clamp(MathF.Abs(forwardSpeed) / 0.5f, 0.0f, 1.0f);
+                var brakeUsage = appliedBrake / MathF.Max(brakeLimit, 0.01f);
+                var lateralLimit = normalLoad * MathF.Max(gripLimit, 0.1f) * lateralGripRatio;
+                var lateralPart = wheelRight * Vector3.Dot(tireForce, wheelRight);
+                var longitudinalPart = tireForce - lateralPart;
+                tireForce = longitudinalPart * (1.0f - brakeAmount) +
+                            -wheelForward * MathF.Sign(forwardSpeed) * appliedBrake +
+                            ClampMagnitude(lateralPart, lateralLimit *
+                                MathF.Sqrt(MathF.Max(1.0f - brakeUsage * brakeUsage, 0.0f)));
             }
 
             if (handbrake && !wheel.Steering && MathF.Abs(forwardSpeed) > 0.1f)
             {
-                tireForce += -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brakePower * _rigidbody.Mass * 0.18f;
+                // Fade the lock-up force below 1 m/s: at full strength it
+                // reversed the wheel's direction each step and chattered.
+                tireForce += -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brakePower * _rigidbody.Mass * 0.18f *
+                             Math.Clamp(MathF.Abs(forwardSpeed), 0.0f, 1.0f);
                 // Braking and cornering share the reduced rear contact patch.
                 // Longitudinal lock-up therefore consumes lateral authority,
                 // allowing the front axle to rotate the car into oversteer.

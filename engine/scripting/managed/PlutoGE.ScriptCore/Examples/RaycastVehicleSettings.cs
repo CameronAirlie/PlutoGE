@@ -74,4 +74,7 @@ public sealed class RaycastVehicleSettings : ScriptableObject
     [SerializedField] public float MaxSteerAngle = 32.0f;
     [SerializedField] public float SteerSharpness = 5.0f;
     [SerializedField] public float HighSpeedSteerFade = 0.12f;
+    // 1 lets counter-steer reach the front axle's direction of travel even
+    // when the speed-sensitive rack would otherwise limit lock; 0 disables it.
+    [SerializedField] public float CounterSteerAuthority = 1.0f;
 }

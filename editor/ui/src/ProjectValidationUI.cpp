@@ -17,6 +17,17 @@ namespace PlutoGE::ui
             if (!project.IsInAssetDirectory(scene.GetFilePath())) return "Current external scene";
             return project.MakeAssetReference(scene.GetFilePath());
         }
+
+        // Imported objects are validated against their Library files, not the asset directory.
+        auto ResolveImportedReference(std::shared_ptr<const assets::AssetStorageMap> storage)
+        {
+            return [storage = std::move(storage)](const std::string &reference) -> std::optional<std::filesystem::path>
+            {
+                const auto *entry = storage ? storage->Find(reference) : nullptr;
+                if (!entry) return std::nullopt;
+                return entry->available ? entry->path : std::filesystem::path{};
+            };
+        }
     }
     bool EditorShell::RunProjectValidation(bool includeCurrentScene, bool headless)
     {
@@ -34,6 +45,7 @@ namespace PlutoGE::ui
         input.assetRoot = m_project->GetAssetDirectoryPath();
         input.projectRoot = m_project->GetRootDirectory();
         input.assetCatalog = m_engine.GetAssetManager().GetAssetCatalog();
+        input.resolveImportedReference = ResolveImportedReference(m_engine.GetAssetManager().GetAssetStorageMap());
         // Validation must remain useful even if the live snapshot was cleared
         // or an editor asset refresh has not completed. Read persisted identities
         // without creating metadata or changing the live asset manager.
@@ -54,6 +66,7 @@ namespace PlutoGE::ui
                 return false;
             }
             input.assetCatalog = database.GetCatalog();
+            input.resolveImportedReference = ResolveImportedReference(database.GetStorageMap());
         }
         input.prepareModelInstance = [&](const assets::StaticModelInstanceState &state, std::string *error)
             -> std::shared_ptr<const assets::AssetCatalog>
@@ -84,6 +97,7 @@ namespace PlutoGE::ui
             }
             input.assetReferences = std::move(references);
             input.assetCatalog = database.GetCatalog();
+            input.resolveImportedReference = ResolveImportedReference(database.GetStorageMap());
         }
         if (!m_project->GetManifest().scriptAssembly.empty()) input.scriptAssembly = ResolveProjectScriptAssemblyPath();
         const auto builtins = assets::Project::GetBuiltinAssetReferences();

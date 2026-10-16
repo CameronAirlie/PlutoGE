@@ -114,6 +114,13 @@ namespace PlutoGE::assets
                 if (expectedType != ProjectAssetType::Unknown && actualType != expectedType)
                 { Add("asset.type", owner, entity, line, "Asset type does not match its declared managed field: " + value); return; }
                 if (input.builtinReferences.contains(reference)) return;
+                if (const auto imported = input.resolveImportedReference ? input.resolveImportedReference(reference) : std::nullopt)
+                {
+                    std::error_code ec;
+                    if (imported->empty() || !std::filesystem::is_regular_file(*imported, ec))
+                        Add("asset.missing", owner, entity, line, "Missing imported asset: " + reference + " (reimport its source model)");
+                    return;
+                }
                 std::filesystem::path path;
                 if (reference.starts_with("project://"))
                 {

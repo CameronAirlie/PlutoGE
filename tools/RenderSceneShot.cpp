@@ -1,5 +1,7 @@
+#include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/Json.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/scene/MapBake.h"
 #include "PlutoGE/core/Engine.h"
@@ -15,6 +17,7 @@
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -43,8 +46,29 @@ int main(int argc, char **argv) try
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]");
     auto &assets = core::Engine::GetInstance().GetAssetManager();
-    assets.SetProjectContext(std::filesystem::absolute(argv[1]).string());
+    const auto projectRoot = std::filesystem::absolute(argv[1]);
+    assets.SetProjectContext(projectRoot.string());
     std::string error;
+    // Saved scenes reference assets by stable asset:// identity. Resolve them through the same
+    // read-only source-project catalog scan the runtime uses; lab scenes without a manifest still work.
+    std::unique_ptr<assets::Project> project;
+    for (const auto &entry : std::filesystem::directory_iterator(projectRoot))
+        if (entry.path().extension() == ".plutoproject" && !entry.path().stem().string().starts_with("ReviewShot-"))
+        {
+            project = assets::Project::Load(entry.path(), &error);
+            if (!project) throw std::runtime_error(error);
+            break;
+        }
+    if (project)
+    {
+        assets.SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory,
+                                 project->GetManifest().assetPipelineVersion);
+        assets::AssetDatabase database;
+        assets::AssetScanOptions scan;
+        scan.createMissingMetadata = false; scan.hashContent = false; scan.collectDependencies = false;
+        if (!database.Scan(*project, scan, &error)) throw std::runtime_error(error);
+        assets.SetAssetSnapshot(database.GetCatalog(), database.GetStorageMap());
+    }
     auto world = scene::SceneSerializer::Load(std::filesystem::absolute(argv[2]).string(), &error);
     if (!world) throw std::runtime_error(error);
 
@@ -113,7 +137,12 @@ int main(int argc, char **argv) try
         {
             auto *mesh = component->GetMesh();
             if (!mesh) throw std::runtime_error("Missing mesh: " + entity->GetName());
-            for (std::size_t index = 0; index < mesh->GetSubmeshCount(); ++index)
+            // Entities split from a model draw only their own submesh range.
+            const int first = component->GetSubmeshIndex();
+            const std::size_t begin = first >= 0 ? static_cast<std::size_t>(first) : 0;
+            const std::size_t end = first >= 0 ? std::min(mesh->GetSubmeshCount(), begin + static_cast<std::size_t>(component->GetSubmeshRangeCount()))
+                                               : mesh->GetSubmeshCount();
+            for (std::size_t index = begin; index < end; ++index)
             {
                 auto *material = component->GetMaterialForSubmesh(index);
                 if (!material && topDown) { ++skipped; continue; }
@@ -129,6 +158,34 @@ int main(int argc, char **argv) try
                 draw.previousWorldBounds = draw.worldBounds;
                 draw.isStatic = true;
                 draws.push_back(draw);
+            }
+        }
+        // Foliage is instanced at runtime; expand each instance into an ordinary draw here.
+        for (auto *foliage : entity->GetComponents<scene::FoliageComponent>())
+        {
+            if (!foliage->IsEnabled() || (topDown && !foliage->IsStatic())) continue;
+            for (std::size_t typeIndex = 0; typeIndex < foliage->GetTypeCount(); ++typeIndex)
+            {
+                const auto *type = foliage->GetType(typeIndex);
+                if (!type->mesh) { ++skipped; continue; }
+                for (std::size_t instance = 0; instance < type->instances.size(); ++instance)
+                    for (const std::size_t index : foliage->GetBakeSubmeshes(typeIndex))
+                    {
+                        auto *material = foliage->GetBakeMaterial(typeIndex, index);
+                        if (!material) { ++skipped; continue; }
+                        render::RenderCommand draw;
+                        draw.mesh = type->mesh; draw.material = material;
+                        draw.submeshIndex = static_cast<std::uint32_t>(index);
+                        draw.model = draw.previousModel = foliage->GetBakeInstanceTransform(typeIndex, instance);
+                        draw.worldBounds = type->mesh->GetSubmesh(index).bounds;
+                        draw.worldBounds.center = glm::vec3(draw.model * glm::vec4(draw.worldBounds.center, 1));
+                        draw.worldBounds.radius *= std::max({glm::length(glm::vec3(draw.model[0])),
+                            glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
+                        draw.previousWorldBounds = draw.worldBounds;
+                        draw.isStatic = true;
+                        draw.castsShadow = foliage->GetCastShadows();
+                        draws.push_back(draw);
+                    }
             }
         }
         for (auto *child : entity->GetChildren()) self(self, child);

@@ -163,6 +163,18 @@ int main()
         Require(ValidateProject(input).diagnostics.empty(), "Catalog-backed logical reference rejected");
         Require(logicalCatalog->Replace({}), "Cannot clear validation catalog");
         Require(Has(ValidateProject(input), "asset.missing"), "Missing logical object not reported");
+        // Imported model sub-objects have virtual project:// locations backed by Library files.
+        Require(logicalCatalog->Replace({{.identity={"model-owner",42}, .type=ProjectAssetType::Mesh,
+                    .ownership=AssetOwnership::Imported, .location="project://Model/Model.plutomesh"}}), "Cannot create imported catalog");
+        Require(Has(ValidateProject(input), "asset.missing"), "Imported object without storage accepted");
+        const auto libraryFile = scratch.root / "Library/Artifacts/model/Model.plutomesh";
+        Write(libraryFile, "mesh");
+        input.resolveImportedReference = [&](const std::string &reference) -> std::optional<std::filesystem::path>
+        { return reference == "project://Model/Model.plutomesh" ? std::optional(libraryFile) : std::nullopt; };
+        Require(ValidateProject(input).diagnostics.empty(), "Library-backed imported object reported missing");
+        std::filesystem::remove(libraryFile);
+        Require(Has(ValidateProject(input), "asset.missing"), "Imported object with deleted Library file accepted");
+        input.resolveImportedReference = {};
         input.currentScene.reset();
         input.assetCatalog.reset();
         const std::string terrainScene = good + "COMPONENT\t1\tTerrainComponent\t1\nPROPERTY\tHeightSamples\t2\t" +

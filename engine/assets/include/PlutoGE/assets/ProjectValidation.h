@@ -38,6 +38,10 @@ namespace PlutoGE::assets
         std::function<std::filesystem::path(const std::string &)> resolveEngineReference;
         std::optional<std::string> currentScene;
         std::shared_ptr<const AssetCatalog> assetCatalog;
+        // Imported catalog objects (model textures, meshes, materials) have virtual project://
+        // locations that never exist under assetRoot. Returns nullopt for a non-imported location,
+        // otherwise the Library file holding its bytes (empty when the storage is unavailable).
+        std::function<std::optional<std::filesystem::path>(const std::string &)> resolveImportedReference;
         // Read-only accepted-byte verification supplied by the host. Missing
         // verification rejects linked records rather than trusting current IDs.
         std::function<std::shared_ptr<const AssetCatalog>(const StaticModelInstanceState &, std::string *)> prepareModelInstance;

@@ -87,6 +87,18 @@ int main()
     if (glm::length(hand->GetPosition() - glm::vec3(3, 0, 0)) > .0001f)
     { std::cerr << "Changing the source mesh retained an invalid socket binding.\n"; return 1; }
 
+    // Humanoid aliases resolve like script bone reads: "Hand.R" follows a rig's "hand_r".
+    auto aliasConfig = meshConfig;
+    aliasConfig.skeleton.joints.push_back({.name = "hand_r", .nodeIndex = 1});
+    aliasConfig.animationNodes.push_back({.name = "hand_r"});
+    aliasConfig.animationNodes[1].localBindTransform = glm::translate(glm::mat4(1), glm::vec3(0, 2, 0));
+    PlutoGE::render::Mesh aliasMesh(aliasConfig);
+    mesh->SetMesh(&aliasMesh);
+    attachment->SetJointName("Hand.R");
+    attachment->Update(0);
+    if (attachment->GetTargetNodeIndex() != 1 || glm::length(hand->GetPosition() - glm::vec3(0, 2, 0)) > .0001f)
+    { std::cerr << "Humanoid alias socket did not follow its bone.\n"; return 1; }
+
     auto animationOwnerStorage = std::make_unique<Entity>(EntityConfig{.name = "Animated character"});
     auto *animationOwner = scene.AddEntity(std::move(animationOwnerStorage));
     auto *animation = animationOwner->CreateComponent<AnimationComponent>();

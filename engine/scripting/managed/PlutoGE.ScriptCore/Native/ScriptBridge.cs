@@ -3529,6 +3529,9 @@ internal static unsafe partial class ScriptBridge
         return text.Length != 0;
     }
 
+    internal static T? LoadScriptableObject<T>(string assetReference) where T : ScriptableObject =>
+        LoadScriptableObject(assetReference, typeof(T)) as T;
+
     private static ScriptableObject? LoadScriptableObject(string assetReference, Type expectedType)
     {
         if (string.IsNullOrWhiteSpace(assetReference) || _loadScriptableObjectAsset == null)

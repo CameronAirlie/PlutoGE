@@ -335,6 +335,37 @@ namespace
         Require(worst<5.f,"Imported arms do not follow the source pose");
     }
 
+    // A clip authored on the target rig itself: channel names are the target joint names and
+    // the source binds are the target binds. The Head channel nods the head 90 degrees.
+    glm::vec3 EvaluateSameRigHeadUp(render::Skeleton skeleton)
+    {
+        const std::vector<SourceNode> nodes = {
+            {"Hips", -1, skeleton.joints[0].localBindTransform},
+            {"Head", 0, skeleton.joints[1].localBindTransform},
+            {"LeftUpperLeg", 0, skeleton.joints[2].localBindTransform},
+            {"RightUpperLeg", 0, skeleton.joints[3].localBindTransform},
+        };
+        std::vector<glm::mat4> globals;
+        for (const auto &node : nodes)
+            globals.push_back(node.parent < 0 ? node.local : globals[static_cast<size_t>(node.parent)] * node.local);
+        render::AnimationClip clip;
+        clip.name = "Nod";
+        clip.duration = 1.0f;
+        const glm::quat nod = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        AddChannel(clip, nodes, globals, 1, render::AnimationTargetPath::Rotation, glm::vec4(nod.x, nod.y, nod.z, nod.w));
+        for (int node : {0, 2, 3})
+            AddChannel(clip, nodes, globals, node, render::AnimationTargetPath::Rotation, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        clip.channelCount = static_cast<int>(clip.channels.size());
+
+        Scene scene;
+        auto *owner = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Character"}));
+        auto *animator = owner->CreateComponent<AnimationComponent>();
+        animator->SetClipsFromImportedAnimations({clip});
+        const auto &palette = animator->GetJointMatrices(skeleton);
+        const glm::mat4 head = palette[1] * glm::inverse(skeleton.joints[1].inverseBindMatrix);
+        return glm::normalize(glm::mat3(head) * glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
     void RequireHipsPose(const glm::mat4 &hips, const char *label, float expectedHeight = 0.9f)
     {
         const std::string prefix = std::string(label) + ": ";
@@ -405,6 +436,17 @@ int main(int argc, char **argv)
             animator->Update(0.01f);
             Require(animator->GetCurrentStateIndex() == 1 && std::abs(animator->GetTime() - 0.5f) < 0.0001f,
                     "Transition offset did not start the destination at 25% (" + std::to_string(animator->GetTime()) + "s)");
+        }
+        // Same-rig clips keep driving a slot whose source override names a foreign bone
+        // (for example Chest -> spine_03 for Unreal clips on this soldier).
+        {
+            auto overridden = skeleton;
+            for (auto &mapping : overridden.humanoidBoneMappings)
+                if (mapping.bone == render::HumanoidBone::Head)
+                    mapping.sourceBoneName = "neck_02";
+            const glm::vec3 headUp = EvaluateSameRigHeadUp(overridden);
+            Require(glm::length(headUp - glm::vec3(0.0f, 0.0f, 1.0f)) < 0.001f,
+                    "Same-rig Head channel was dropped by a foreign source override");
         }
         std::cout << "Humanoid retarget basis tests passed\n";
         return 0;

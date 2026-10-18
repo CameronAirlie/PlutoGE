@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/render/SkeletonJointLookup.h"
 
 #include <algorithm>
 #include <sstream>
@@ -237,11 +238,10 @@ namespace PlutoGE::scene
             const auto &joints = mesh->GetSkeleton().joints;
             if (!m_jointName.empty())
             {
-                const auto joint = std::find_if(joints.begin(), joints.end(), [&](const auto &candidate) {
-                    return candidate.name == m_jointName;
-                });
-                m_cachedJointIndex = joint == joints.end() ? -1 : static_cast<int>(joint - joints.begin());
-                if (joint != joints.end()) m_targetNodeIndex = joint->nodeIndex;
+                // Same lookup as script bone reads and Bind: exact name first,
+                // then humanoid aliases such as "Hand.R" for "hand_r".
+                m_cachedJointIndex = render::FindSkeletonJoint(mesh->GetSkeleton(), m_jointName);
+                if (m_cachedJointIndex >= 0) m_targetNodeIndex = joints[static_cast<size_t>(m_cachedJointIndex)].nodeIndex;
             }
             else
                 m_cachedJointIndex = FindJointIndex(mesh->GetSkeleton(), m_targetNodeIndex, {});

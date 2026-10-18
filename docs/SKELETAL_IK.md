@@ -59,6 +59,9 @@ animator.ClearTwoBoneIK("SupportHand");
 animator.ClearAllTwoBoneIK();
 
 bool bound = SkeletonAttachments.Bind(gunSocket, soldierMesh, "hand.R");
+// Optional bone-space offset, e.g. converting this rig's hand frame into an item grip frame.
+bound = SkeletonAttachments.Bind(gunSocket, soldierMesh, "hand.R",
+    Vector3.Zero, Quaternion.CreateFromYawPitchRoll(0, MathF.PI / 2, 0));
 bool found = SkeletonAttachments.TryGetBoneWorldPose(soldierMesh, "hand.R",
     out var handPosition, out var handRotation);
 SkeletonAttachments.Release(gunSocket);
@@ -74,7 +77,10 @@ takes precedence over IK at full physics weight.
 `Bind` reparents an existing socket beneath the skinned mesh and replaces its
 transform with the animated bone pose. Put the weapon beneath that socket; its
 child transform supplies the grip position/rotation/scale. Rebinding selects a
-new bone immediately. `Release` removes the attachment component and retains
+new bone immediately. The offset overload sets the attachment's PositionOffset
+and RotationOffset (applied in bone space); the plain overload keeps existing
+offsets. Bone names resolve like `TryGetBoneWorldPose`: exact joint names first,
+then humanoid aliases. `Release` removes the attachment component and retains
 the socket's current parent and local pose; it does not create weapon physics.
 Bone pose reads and attachments use the same final skinning palette as rendering.
 Do not target the hand's IK from a socket attached to that same hand; solve the

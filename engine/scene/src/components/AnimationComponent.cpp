@@ -181,6 +181,16 @@ namespace PlutoGE::scene
                     return &mapping;
             }
 
+            // Clips authored on the target rig itself name the target joints directly. Map them
+            // to their own slot even when that slot's source override names a foreign bone;
+            // otherwise the override would drop the rig's own channels.
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()) &&
+                    skeleton.joints[static_cast<size_t>(mapping.targetJointIndex)].name == channel.targetName)
+                    return &mapping;
+            }
+
             if (const auto humanoidBone = render::GuessHumanoidBone(channel.targetName))
             {
                 for (const auto &mapping : skeleton.humanoidBoneMappings)

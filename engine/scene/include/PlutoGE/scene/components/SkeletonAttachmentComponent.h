@@ -32,6 +32,9 @@ namespace PlutoGE::scene
         MeshComponent *GetSourceMesh() const { return FindSourceMeshComponent(); }
         const glm::vec3 &GetPositionOffset() const { return m_positionOffset; }
         const glm::vec3 &GetRotationOffset() const { return m_rotationOffset; }
+        /// Offset in bone space applied to the bone pose; rotation is XYZ Euler degrees.
+        void SetPositionOffset(const glm::vec3 &offset) { m_positionOffset = offset; }
+        void SetRotationOffset(const glm::vec3 &degrees) { m_rotationOffset = degrees; }
 
     private:
         MeshComponent *FindSourceMeshComponent() const;

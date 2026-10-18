@@ -12,4 +12,12 @@ public abstract class ScriptableObject
     internal long NextRefreshTimestamp { get; set; }
 
     public bool IsValid => !string.IsNullOrWhiteSpace(AssetReference);
+
+    /// <summary>
+    /// Loads a data asset by reference at runtime, for example to restore an item definition
+    /// recorded in a save file. Returns null when the reference is empty, missing, or names an
+    /// asset of a different type. Each call materializes a new instance.
+    /// </summary>
+    public static T? Load<T>(string assetReference) where T : ScriptableObject =>
+        string.IsNullOrWhiteSpace(assetReference) ? null : Native.ScriptBridge.LoadScriptableObject<T>(assetReference);
 }

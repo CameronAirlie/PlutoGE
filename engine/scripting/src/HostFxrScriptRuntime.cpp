@@ -965,6 +965,16 @@ namespace PlutoGE::scripting
                 if (!attachment) attachment=socket->CreateComponent<scene::SkeletonAttachmentComponent>();
                 attachment->SetTargetNodeIndex(joint.nodeIndex);
                 attachment->SetJointName(root);
+                // A unit rotation requests a bone-space offset; a zero request keeps the
+                // socket's existing (for example editor-authored) offsets.
+                const glm::quat offsetRotation(request->rotation.w, request->rotation.x, request->rotation.y, request->rotation.z);
+                if (glm::length(offsetRotation) > 0.5f)
+                {
+                    glm::vec3 angles(0.0f);
+                    glm::extractEulerAngleXYZ(glm::mat4_cast(glm::normalize(offsetRotation)), angles.x, angles.y, angles.z);
+                    attachment->SetPositionOffset({request->position.x, request->position.y, request->position.z});
+                    attachment->SetRotationOffset(glm::degrees(angles));
+                }
                 attachment->BindSource(meshComponent, jointIndex);
                 attachment->SetEnabled(true);
                 attachment->Update(0);

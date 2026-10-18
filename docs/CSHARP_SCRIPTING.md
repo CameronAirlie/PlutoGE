@@ -532,6 +532,10 @@ public sealed class WeaponSettings : ScriptableObject
 
 `ScriptableObject` provides `AssetReference` and `IsValid`. It is data, not a component, and has no lifecycle callbacks.
 
+`ScriptableObject.Load<T>(assetReference)` materializes a data asset at runtime, for example to
+restore an item definition recorded in a save file. It returns null for empty or missing
+references and for assets of a different type; each call creates a new instance, so cache the result.
+
 ## Project files and save data
 
 Use `ProjectStorage` instead of constructing paths from the working directory.

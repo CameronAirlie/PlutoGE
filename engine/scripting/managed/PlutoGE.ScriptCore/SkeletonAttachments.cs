@@ -16,6 +16,21 @@ public static class SkeletonAttachments
         var request = new ScriptBridge.NativeSkeletalRequest { Operation = 2, Mesh = mesh.EntityId, Socket = socket.EntityId };
         return ScriptBridge.ControlSkeleton(ref request, root: bone);
     }
+    /// <summary>Binds like <see cref="Bind(GameObject, GameObject, string)"/> with a bone-space offset,
+    /// for example to convert a rig's hand frame into the frame items are authored in.</summary>
+    public static bool Bind(GameObject socket, GameObject mesh, string bone, Vector3 positionOffset, Quaternion rotationOffset)
+    {
+        ArgumentNullException.ThrowIfNull(socket);
+        ArgumentNullException.ThrowIfNull(mesh);
+        if (rotationOffset.LengthSquared() < 0.25f)
+            rotationOffset = Quaternion.Identity;
+        var request = new ScriptBridge.NativeSkeletalRequest
+        {
+            Operation = 2, Mesh = mesh.EntityId, Socket = socket.EntityId,
+            Position = ScriptBridge.NativeVector3.FromManaged(positionOffset), Rotation = ScriptBridge.NativeQuaternion.FromManaged(Quaternion.Normalize(rotationOffset))
+        };
+        return ScriptBridge.ControlSkeleton(ref request, root: bone);
+    }
     /// <summary>Stops following the bone, retaining the current parent and local pose.</summary>
     public static bool Release(GameObject socket)
     {

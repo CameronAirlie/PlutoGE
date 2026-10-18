@@ -153,6 +153,8 @@ FetchContent_Declare(
     GIT_TAG        463cf73610d911e8eff95ae345143137cf610be4
 )
 FetchContent_MakeAvailable(glfw)
+# Compile against the pinned GLFW internals to retain exact joystick-to-XInput ownership.
+target_sources(glfw PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/glfw/PlutoRumble.c")
 add_library(PlutoGE_glfw INTERFACE)
 add_library(PlutoGE::glfw ALIAS PlutoGE_glfw)
 target_link_libraries(PlutoGE_glfw INTERFACE glfw)

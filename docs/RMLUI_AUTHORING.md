@@ -350,3 +350,5 @@ CoD's GameInput.Prompt/FormatPrompt/RefreshPrompts use its configured fps.plutoi
 map, the same source used by gameplay. Menu/inventory hints, interactions,
 weapon/supply controls, spectator controls and objective instructions use action
 names instead of literal keyboard keys or controller buttons.
+
+Controller vibration is available through `Input.TrySetGamepadVibration` / `StopGamepadVibration` (Windows XInput backend; false when unavailable). Games own mixing and preferences. See [controller vibration](ControllerVibration.md) for timing, device ownership and lifecycle rules.

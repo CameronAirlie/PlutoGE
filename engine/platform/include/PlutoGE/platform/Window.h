@@ -2,6 +2,7 @@
 
 #include <string>
 #include <functional>
+#include <array>
 #include "PlutoGE/platform/InputState.h"
 
 struct GLFWwindow;
@@ -37,6 +38,8 @@ namespace PlutoGE::platform
     public:
         bool Create(const WindowConfig &config);
         void PollEvents();
+        bool SetGamepadVibration(int gamepad, float low, float high, float seconds);
+        void StopGamepadVibration();
         void Close();
         void RequestClose();
         void SetFullscreen(bool fullscreen);
@@ -74,6 +77,8 @@ namespace PlutoGE::platform
     private:
         friend void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height);
 
+        std::array<int, MaxGamepads> m_gamepadJoysticks = [] { std::array<int, MaxGamepads> ids{}; ids.fill(-1); return ids; }();
+        std::array<double, 16> m_rumbleUntil{};
         WindowConfig m_config;
         InputState m_inputState;
         GLFWwindow *m_window = nullptr;

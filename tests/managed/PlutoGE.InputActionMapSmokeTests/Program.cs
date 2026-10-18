@@ -6,6 +6,15 @@ using PlutoGE.ScriptCore;
 
 unsafe class Program
 {
+    static int vibrationPad, vibrationCalls;
+    static float vibrationLow, vibrationHigh, vibrationSeconds;
+    static bool vibrationAvailable = true;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int Vibration(int pad, float low, float high, float seconds)
+    {
+        vibrationCalls++; vibrationPad = pad; vibrationLow = low; vibrationHigh = high; vibrationSeconds = seconds;
+        return vibrationAvailable ? 1 : 0;
+    }
     static float current, previous;
     static int sampledAxis;
     static bool keyDown, keyPressed, mousePressed;
@@ -35,6 +44,21 @@ unsafe class Program
         .GetMethod(name, BindingFlags.Public | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
     static void Main()
     {
+        Require(!Input.TrySetGamepadVibration(.5f, .2f, .1f), "Absent output backend should be unavailable");
+        var vibration = (delegate* unmanaged[Cdecl]<nint,int>)Export("RegisterGamepadVibrationApi");
+        Require(vibration((nint)(delegate* unmanaged[Cdecl]<int,float,float,float,int>)&Vibration) == 1, "Vibration registration failed");
+        Require(Input.TrySetGamepadVibration(.7f, .2f, .3f, 2) && vibrationPad == 2 &&
+            vibrationLow == .7f && vibrationHigh == .2f && vibrationSeconds == .3f, "Motor values or controller routing changed");
+        int calls = vibrationCalls;
+        Require(!Input.TrySetGamepadVibration(float.NaN, 0, 1) && !Input.TrySetGamepadVibration(0, float.PositiveInfinity, 1) &&
+            !Input.TrySetGamepadVibration(0, 0, -1) && !Input.TrySetGamepadVibration(1, 1, 6) &&
+            !Input.TrySetGamepadVibration(-1, 0, 1) && !Input.TrySetGamepadVibration(0, 2, 1) &&
+            !Input.TrySetGamepadVibration(1, 1, 1, -1) && vibrationCalls == calls, "Invalid vibration reached native backend");
+        Require(Input.StopGamepadVibration(2) && vibrationPad == 2 && vibrationLow == 0 && vibrationHigh == 0 && vibrationSeconds == 0,
+            "Stop did not zero both motors on selected controller");
+        vibrationAvailable = false;
+        Require(!Input.TrySetGamepadVibration(1, 1, .1f), "Unsupported output incorrectly reported success");
+        Console.WriteLine("PASS: vibration bridge registration, motor/controller routing, argument validation, stop and unavailable backend");
         var register = (delegate* unmanaged[Cdecl]<nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,nint,int>)Export("RegisterInputApi");
         nint zero = (nint)(delegate* unmanaged[Cdecl]<int,int>)&Zero;
         nint vector = (nint)(delegate* unmanaged[Cdecl]<Vector3>)&Vector;

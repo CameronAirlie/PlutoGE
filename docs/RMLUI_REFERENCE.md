@@ -191,3 +191,5 @@ The pinned source contains individual control attributes, property parsers, temp
 - [Native models, expressions, views and controllers](https://mikke89.github.io/RmlUiDoc/pages/data_bindings.html)
 
 Keep this reference exhaustive for the pinned core registration inventory; add engine extensions and renderer support notes to the authoring guide when introducing them.
+
+Controller vibration is available through `Input.TrySetGamepadVibration` / `StopGamepadVibration` (Windows XInput backend; false when unavailable). Games own mixing and preferences. See [controller vibration](ControllerVibration.md) for timing, device ownership and lifecycle rules.

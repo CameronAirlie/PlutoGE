@@ -3047,6 +3047,8 @@ namespace PlutoGE::scripting
         float GetGamepadAxis(int32_t packed)
         { return GetInputState().GetGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
         int32_t GetActiveInputDevice() { return static_cast<int32_t>(GetInputState().activeDevice); }
+        int32_t SetGamepadVibration(int32_t pad, float low, float high, float seconds)
+        { return core::Engine::GetInstance().GetWindow().SetGamepadVibration(pad, low, high, seconds) ? 1 : 0; }
         int32_t GetActiveGamepad() { return GetInputState().activeGamepad; }
         float GetPreviousGamepadAxis(int32_t packed)
         { return GetInputState().GetPreviousGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
@@ -3677,6 +3679,7 @@ namespace PlutoGE::scripting
         int(PLUTO_HOST_CALL *registerUISettingsApi)(void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerRmlNavigationApi)(void *) = nullptr;
         register_input_api_fn registerInputApi = nullptr;
+        int(PLUTO_HOST_CALL *registerGamepadVibrationApi)(void *) = nullptr;
         int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *, void *, void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_animation_blend_api_fn registerAnimationBlendApi = nullptr;
@@ -3800,6 +3803,7 @@ namespace PlutoGE::scripting
             impl.registerUISettingsApi = nullptr;
             impl.registerRmlNavigationApi = nullptr;
             impl.registerInputApi = nullptr;
+            impl.registerGamepadVibrationApi = nullptr;
             impl.registerPhysicsApi = nullptr;
             impl.registerAnimationBlendApi = nullptr;
             impl.registerCapsuleQueryApi = nullptr;
@@ -4163,6 +4167,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterUISettingsApi"), impl.registerUISettingsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlNavigationApi"), impl.registerRmlNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterGamepadVibrationApi"), impl.registerGamepadVibrationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAnimationBlendApi"), impl.registerAnimationBlendApi) &&
@@ -4903,6 +4908,12 @@ namespace PlutoGE::scripting
             return false;
         }
 
+        if (!m_impl->registerGamepadVibrationApi ||
+            m_impl->registerGamepadVibrationApi(reinterpret_cast<void *>(&SetGamepadVibration)) == 0)
+        {
+            setManagedBridgeFailure("RegisterGamepadVibrationApi");
+            return false;
+        }
         if (!m_impl->registerInputHistoryApi ||
             m_impl->registerInputHistoryApi(reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetPreviousGamepadAxis)),
                 reinterpret_cast<void *>(&GetActiveInputDevice), reinterpret_cast<void *>(&GetActiveGamepad)) == 0)

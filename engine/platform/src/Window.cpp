@@ -3,6 +3,8 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <algorithm>
+#include <cmath>
+extern "C" int plutoSetJoystickRumble(int, unsigned short, unsigned short);
 
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -239,6 +241,27 @@ namespace PlutoGE::platform
         return true;
     }
 
+    bool Window::SetGamepadVibration(int gamepad, float low, float high, float seconds)
+    {
+        if (!m_window || gamepad < 0 || gamepad >= static_cast<int>(MaxGamepads) ||
+            !std::isfinite(low) || !std::isfinite(high) || !std::isfinite(seconds) ||
+            low < 0 || low > 1 || high < 0 || high > 1 || seconds < 0 || seconds > 5) return false;
+        const int jid = m_gamepadJoysticks[gamepad];
+        if (jid < 0) return false;
+        const bool stop = seconds == 0 || (low == 0 && high == 0);
+        if (!stop && (!m_isScriptInputEnabled || !glfwGetWindowAttrib(m_window, GLFW_FOCUSED))) return false;
+        const bool result = plutoSetJoystickRumble(jid, stop ? 0 : static_cast<unsigned short>(low * 65535),
+            stop ? 0 : static_cast<unsigned short>(high * 65535)) != 0;
+        m_rumbleUntil[jid] = result && !stop ? glfwGetTime() + seconds : 0;
+        return result;
+    }
+
+    void Window::StopGamepadVibration()
+    {
+        for (int jid = 0; jid < static_cast<int>(m_rumbleUntil.size()); ++jid)
+            if (m_rumbleUntil[jid] > 0) { plutoSetJoystickRumble(jid, 0, 0); m_rumbleUntil[jid] = 0; }
+    }
+
     void Window::PollEvents()
     {
 #ifdef _WIN32
@@ -270,6 +293,8 @@ namespace PlutoGE::platform
         // Present a compact logical list to scripts. GLFW joystick IDs are physical
         // slots and commonly contain gaps (or virtual/non-gamepad devices), so JID 0
         // is not reliably the player's first controller on Windows.
+        const auto previousJoysticks = m_gamepadJoysticks;
+        m_gamepadJoysticks.fill(-1);
         std::size_t gamepadIndex = 0;
         for (int joystick = GLFW_JOYSTICK_1;
              joystick <= GLFW_JOYSTICK_LAST && gamepadIndex < m_inputState.gamepads.size();
@@ -279,6 +304,7 @@ namespace PlutoGE::platform
             if (!glfwJoystickIsGamepad(joystick) || !glfwGetGamepadState(joystick, &state))
                 continue;
 
+            m_gamepadJoysticks[gamepadIndex] = joystick;
             auto &destination = m_inputState.gamepads[gamepadIndex++];
             destination.connected = true;
             for (std::size_t button = 0; button < destination.buttons.size(); ++button)
@@ -301,6 +327,7 @@ namespace PlutoGE::platform
             const unsigned char *buttons = glfwGetJoystickButtons(joystick, &buttonCount);
             const float *axes = glfwGetJoystickAxes(joystick, &axisCount);
             if ((!buttons || buttonCount == 0) && (!axes || axisCount == 0)) continue;
+            m_gamepadJoysticks[gamepadIndex] = joystick;
             auto &destination = m_inputState.gamepads[gamepadIndex++];
             destination.connected = true;
             destination.buttons.fill(false);
@@ -317,11 +344,17 @@ namespace PlutoGE::platform
             destination.buttons.fill(false);
             destination.axes.fill(0.0f);
         }
+        if (previousJoysticks != m_gamepadJoysticks) StopGamepadVibration();
+        for (int jid = 0; jid < static_cast<int>(m_rumbleUntil.size()); ++jid)
+            if (m_rumbleUntil[jid] > 0 && (glfwGetTime() >= m_rumbleUntil[jid] ||
+                !m_isScriptInputEnabled || !glfwGetWindowAttrib(m_window, GLFW_FOCUSED)))
+            { plutoSetJoystickRumble(jid, 0, 0); m_rumbleUntil[jid] = 0; }
         m_inputState.UpdateActiveDevice();
     }
 
     void Window::Close()
     {
+        StopGamepadVibration();
         if (m_window)
         {
             glfwDestroyWindow(m_window);
@@ -531,6 +564,7 @@ namespace PlutoGE::platform
         }
 
         m_isScriptInputEnabled = enabled;
+        if (!enabled) StopGamepadVibration();
         if (!enabled)
         {
             m_inputState.ClearKeyStates();

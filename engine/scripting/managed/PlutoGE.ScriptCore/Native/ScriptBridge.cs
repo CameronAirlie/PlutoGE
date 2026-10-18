@@ -443,6 +443,9 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int, float> _getPreviousGamepadAxis;
     private static delegate* unmanaged[Cdecl]<int> _getActiveInputDevice, _getActiveGamepad;
     internal static int GetActiveInputDevice() => _getActiveInputDevice != null ? _getActiveInputDevice() : 0;
+    private static delegate* unmanaged[Cdecl]<int, float, float, float, int> _setGamepadVibration;
+    internal static bool SetGamepadVibration(int pad, float low, float high, float seconds) =>
+        _setGamepadVibration != null && _setGamepadVibration(pad, low, high, seconds) != 0;
     internal static int GetActiveGamepad() => _getActiveGamepad != null ? _getActiveGamepad() : -1;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
@@ -1398,6 +1401,14 @@ internal static unsafe partial class ScriptBridge
         _setRmlWidgetSource = setRmlWidgetSource;
         _getRmlWidgetVisible = getRmlWidgetVisible;
         _setRmlWidgetVisible = setRmlWidgetVisible;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterGamepadVibrationApi")]
+    public static int RegisterGamepadVibrationApi(delegate* unmanaged[Cdecl]<int, float, float, float, int> setVibration)
+    {
+        if (setVibration == null) return 0;
+        _setGamepadVibration = setVibration;
         return 1;
     }
 

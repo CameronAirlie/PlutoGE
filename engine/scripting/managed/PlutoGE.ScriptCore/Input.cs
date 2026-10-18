@@ -25,6 +25,16 @@ public static class Input
     public static bool GetAction(string action) => _actionMap?.IsDown(action) ?? false;
     public static bool GetActionPressed(string action) => _actionMap?.WasPressed(action) ?? false;
 
+    /// <summary>Timed two-motor output (0..1, up to 5 seconds). Zero duration stops. False when unavailable.</summary>
+    public static bool TrySetGamepadVibration(float lowFrequency, float highFrequency, float seconds, int gamepad = 0)
+    {
+        if (!float.IsFinite(lowFrequency) || lowFrequency < 0 || lowFrequency > 1 ||
+            !float.IsFinite(highFrequency) || highFrequency < 0 || highFrequency > 1 ||
+            !float.IsFinite(seconds) || seconds < 0 || seconds > 5 || gamepad < 0) return false;
+        return ScriptBridge.SetGamepadVibration(gamepad, lowFrequency, highFrequency, seconds);
+    }
+    public static bool StopGamepadVibration(int gamepad = 0) => TrySetGamepadVibration(0, 0, 0, gamepad);
+
     public static bool IsGamepadConnected(int gamepad = 0) => ScriptBridge.GetGamepadConnected(gamepad);
     public static bool IsGamepadButtonDown(GamepadButton button, int gamepad = 0) => ScriptBridge.GetGamepadButtonDown(gamepad, (int)button);
     public static bool IsGamepadButtonPressed(GamepadButton button, int gamepad = 0) => ScriptBridge.GetGamepadButtonPressed(gamepad, (int)button);

@@ -29,6 +29,8 @@ float3 ssaoViewPosition(float2 textureUv, float depth, PostProcessParameterBlock
 }
 
 // AO is visibility of indirect illumination, not a multiplier on direct light.
+// Include additive lighting composites since geometry (SSGI/VCTGI) along with
+// geometry's diffuse ambient; the original scene retains direct/emissive light.
 float4 ssaoComposite(float4 scene, float3 indirect, float ao, bool diagnostic)
 {
     return diagnostic ? float4(ao.xxx,1.0)

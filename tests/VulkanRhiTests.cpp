@@ -115,6 +115,7 @@ int main(int argc, char **argv)
             shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
         };
         loadPostProcess(BasicPostProcessEffectType::TAA, "TAA");
+        loadPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         shaders.volumetricTrace[0].vertex.spirv = ReadSpirv("VolumetricFogTrace.vertex.spv");

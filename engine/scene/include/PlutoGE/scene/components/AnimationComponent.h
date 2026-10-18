@@ -28,6 +28,17 @@ namespace PlutoGE::scene
         std::vector<glm::vec3> sourceBindScales;
         std::vector<int> sourceParentIndices;
         std::vector<uint8_t> sourceNodesPresent;
+        // Linear part of each source node's parent bind transform, used to
+        // express local translation deltas in the source skeleton frame.
+        std::vector<glm::mat3> sourceParentBindBases;
+        // Axis-permutation rotation (x, y, z, w) from the source rig's
+        // character frame to the target's, e.g. Z-up FBX onto Y-up glTF.
+        glm::vec4 sourceToTargetBasis{0.0f, 0.0f, 0.0f, 1.0f};
+        // Swing alignment from target reference segments to the source reference pose,
+        // expressed in target skeleton space. Cached once per rig/clip, identity when unknown.
+        std::vector<glm::vec4> referencePoseCorrections;
+        // Source node mapped to Hips, used to find root-motion ancestors.
+        int sourceHipsNodeIndex = -1;
     };
 
     class AnimationComponent : public TypedComponent<AnimationComponent>
@@ -73,6 +84,8 @@ namespace PlutoGE::scene
             float duration = 0.15f;
             bool hasExitTime = false;
             float exitTime = 0.9f;
+            // Normalized time at which the destination state starts playing.
+            float offset = 0.0f;
             std::vector<AnimationCondition> conditions;
         };
 
@@ -177,12 +190,22 @@ namespace PlutoGE::scene
         void SetSpeed(float speed) { m_speed = speed; }
         float GetTime() const { return m_time; }
         void SetTime(float time);
+        // Seek the visible graph state as well as the clip. Commits an active transition
+        // to its destination; preserves playing/speed and invalidates the evaluated pose.
+        void Seek(float time, bool preserveTransition = false);
         // Editor-only clip inspection bypasses graph states and layers so an
         // externally controlled playhead maps directly to the current clip.
         void SetEditorPreviewMode(bool enabled);
         float GetCurrentClipDuration() const;
         float GetPoseUpdateRate() const { return m_poseUpdateRate; }
         void SetPoseUpdateRate(float updatesPerSecond) { m_poseUpdateRate = std::max(0.0f, updatesPerSecond); }
+        // Root-motion rigs (for example Unreal's root bone) carry locomotion,
+        // turns and jump/fall trajectories on the unmapped root above the hips.
+        // A controller-driven character holds those ancestors at their bind
+        // pose, so the body is posed relative to the root and the controller
+        // owns translation and facing.
+        bool IsStrippingRootMotion() const { return m_stripRootMotion; }
+        void SetStripRootMotion(bool strip);
 
         const std::vector<AnimationState> &GetGraphStates() const { return m_states; }
         std::vector<AnimationState> &GetGraphStates() { return m_states; }
@@ -208,6 +231,7 @@ namespace PlutoGE::scene
         void SetInt(std::string_view parameterName, int value);
         int GetInt(std::string_view parameterName) const;
         bool PlayState(std::string_view stateName);
+        bool CrossFadeState(std::string_view stateName, float duration, float startTime = 0.0f);
         const std::vector<AnimationLayer> &GetLayers() const { return m_layers; }
 
         // Enables a lightweight, constraint-based skeletal ragdoll. The current
@@ -259,6 +283,7 @@ namespace PlutoGE::scene
         bool IsTransitionReadyAtTime(const AnimationTransition &transition, const AnimationState &state, float stateTime) const;
         void ConsumeTransitionTriggers(const AnimationTransition &transition);
         void StartTransition(int sourceStateIndex, const AnimationTransition &transition);
+        float TransitionStartTime(const AnimationTransition &transition, const std::vector<AnimationState> &states) const;
         float AdvanceClipTime(int clipIndex, float time, float deltaTime, float speed, bool looping, bool *finished = nullptr) const;
         float AdvanceStateTime(const AnimationState &state, float time, float deltaTime, float speedMultiplier = 1.0f, bool *finished = nullptr) const;
         float GetClipDuration(int clipIndex) const;
@@ -319,6 +344,7 @@ namespace PlutoGE::scene
         bool m_playing = false;
         bool m_looping = true;
         bool m_autoplay = true;
+        bool m_stripRootMotion = false;
         bool m_startedAutoplay = false;
         bool m_graphStarted = false;
         bool m_jointMatricesDirty = true;

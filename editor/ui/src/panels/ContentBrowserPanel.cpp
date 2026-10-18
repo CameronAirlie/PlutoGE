@@ -695,21 +695,30 @@ namespace PlutoGE::ui
                                   std::string *extractedReference,
                                   std::string *errorMessage)
         {
-            const auto sourcePath = project.ResolveAssetReference(object.reference);
-            if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
+            auto &engine = core::Engine::GetInstance();
+            auto &assetManager = engine.GetAssetManager();
+            // Imported locations are virtual in pipeline v3; their bytes live in Library.
+            const std::filesystem::path sourcePath = assetManager.ResolveAssetPath(object.reference);
+            std::error_code sourceError;
+            if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath, sourceError))
             {
                 if (errorMessage) *errorMessage = "Imported object is missing: " + object.reference;
                 return false;
             }
 
             const auto destinationDirectory = GetCreateDirectory(project, selectedFolder, {});
-            const auto destinationPath = MakeUniqueAssetPath(destinationDirectory, sourcePath, object.name);
+            const auto catalog = assetManager.GetAssetCatalog();
+            if (!catalog)
+            {
+                if (errorMessage) *errorMessage = "The asset catalog is unavailable; refresh project assets before extracting.";
+                return false;
+            }
+            const auto destinationReference = assetimport::FindAvailableModelExtractionReference(project, *catalog,
+                MakeUniqueAssetPath(destinationDirectory, sourcePath, object.name));
             assetimport::ModelObjectExtractionResult result;
             if (!assetimport::ModelObjectExtractionService{}.Extract(project, object.reference,
-                    project.MakeAssetReference(destinationPath), result, errorMessage,
+                    destinationReference, result, errorMessage,
                     object.type == assets::ProjectAssetType::Material)) return false;
-            auto &engine = core::Engine::GetInstance();
-            auto &assetManager = engine.GetAssetManager();
             std::string oldLogicalReference;
             if (const auto previousCatalog = assetManager.GetAssetCatalog())
                 if (const auto identity = previousCatalog->FindIdentityByLocation(object.reference))
@@ -3233,6 +3242,11 @@ namespace PlutoGE::ui
             }
             else if (asset.type == assets::ProjectAssetType::Model)
             {
+                if (m_modelExtractionReference != asset.reference)
+                {
+                    m_modelExtractionReference = asset.reference;
+                    m_modelExtractionStatus.clear();
+                }
                 assets::ModelAsset model;
                 std::string modelError;
                 const bool imported = assets::LoadModelSourcePackage(*project, asset.reference, model, &modelError);
@@ -3268,11 +3282,18 @@ namespace PlutoGE::ui
                         EditorShell::GetInstance().RefreshProjectAssets();
                         m_assetCacheDirty = true;
                         if (extractedCount > 0) editorShell.MarkProjectDirty();
-                        if (!firstError.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, firstError);
+                        m_modelExtractionStatus = "Extracted " + std::to_string(extractedCount) + " of " +
+                            std::to_string(model.objects.size()) + " objects to Assets/" + m_selectedFolder + ".";
+                        if (!firstError.empty())
+                        {
+                            m_modelExtractionStatus += " " + firstError;
+                            editorShell.Log(EditorShell::ConsoleSeverity::Error, firstError);
+                        }
                         editorShell.Log(EditorShell::ConsoleSeverity::Info,
                                         "Extracted " + std::to_string(extractedCount) + " model sub-assets.");
                     }
 
+                    if (!m_modelExtractionStatus.empty()) ImGui::TextWrapped("%s", m_modelExtractionStatus.c_str());
                     if (ImGui::BeginTable("ModelSubAssets", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
                     {
                         ImGui::TableSetupColumn("Name");

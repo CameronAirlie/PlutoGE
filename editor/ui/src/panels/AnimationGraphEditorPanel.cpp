@@ -814,6 +814,12 @@ namespace PlutoGE::ui
                     {
                         m_dirty = true;
                     }
+                    if (ImGui::DragFloat("Offset", &transition.offset, 0.005f, 0.0f, 1.0f, "%.3f"))
+                    {
+                        m_dirty = true;
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Normalized time at which the destination state starts.");
                     DrawConditionEditor(m_graph, transition, m_dirty);
                     if (ImGui::Button("Delete Transition"))
                     {

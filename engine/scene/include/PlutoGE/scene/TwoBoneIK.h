@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/SkeletonJointLookup.h"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -21,13 +22,9 @@ namespace PlutoGE::scene
             !std::isfinite(target.weight) || !std::isfinite(target.rotationWeight) ||
             !std::isfinite(target.rotation.x) || !std::isfinite(target.rotation.y) ||
             !std::isfinite(target.rotation.z) || !std::isfinite(target.rotation.w)) return false;
-        int root = -1, middle = -1, tip = -1;
-        for (int i = 0; i < static_cast<int>(skeleton.joints.size()); ++i)
-        {
-            if (skeleton.joints[i].name == target.root) root = i;
-            if (skeleton.joints[i].name == target.middle) middle = i;
-            if (skeleton.joints[i].name == target.tip) tip = i;
-        }
+        const int root = render::FindSkeletonJoint(skeleton, target.root);
+        const int middle = render::FindSkeletonJoint(skeleton, target.middle);
+        const int tip = render::FindSkeletonJoint(skeleton, target.tip);
         if (root < 0 || middle < 0 || tip < 0 || root == middle || middle == tip || root == tip ||
             skeleton.joints[middle].parentJointIndex != root || skeleton.joints[tip].parentJointIndex != middle) return false;
         std::vector<glm::mat4> pose(palette.size());

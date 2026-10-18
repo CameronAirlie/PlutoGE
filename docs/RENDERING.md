@@ -39,6 +39,11 @@ graphics driver is still required at runtime.
 
 ## Environmental lighting and reflection composition
 
+RHI SSAO attenuates diffuse indirect lighting, including light added by SSGI
+and VCTGI before the AO stage. Direct lighting, emission and environmental
+specular remain unchanged. A scene without diffuse indirect lighting can show
+occlusion in **AO only** while its lit scene remains unchanged.
+
 The RHI standard and shader-graph surface paths use the same split-sum GGX
 response for physical sky and captured reflection lighting. Nonmetals retain
 dielectric specular reflections. Diffuse probe grids replace diffuse irradiance

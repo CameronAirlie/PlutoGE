@@ -177,6 +177,10 @@ namespace PlutoGE::scene
         // Distance is sphere-center travel to contact; ignores both entity hierarchies and triggers.
         bool SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
                          PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0, EntityID secondIgnoredEntityId = 0) const;
+        // Upright capsule, total height including caps. Zero displacement tests overlap;
+        // otherwise reports the first contact (including an initial overlap). Ignores triggers.
+        bool QueryCapsule(const glm::vec3 &center, const glm::vec3 &displacement, float radius, float height,
+                          PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0) const;
         void RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
                           EntityID ignoredEntityId,
                           std::vector<PhysicsRaycastHit> &hits,

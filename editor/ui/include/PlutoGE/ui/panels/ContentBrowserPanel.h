@@ -104,6 +104,8 @@ namespace PlutoGE::ui
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
         std::string m_selectedFolder;
+        std::string m_modelExtractionReference;
+        std::string m_modelExtractionStatus;
         std::string m_modelSettingsReference;
         assetimport::MeshImportOptions m_modelSettingsDraft{true, true, true};
         assetimport::MeshImportOptions m_modelSettingsCommitted{true, true, true};

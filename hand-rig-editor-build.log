@@ -1,0 +1,57 @@
+MSBuild version 17.14.60+43b635718 for .NET Framework
+
+  Checking File Globs
+  LinearMath.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\bullet3-build\src\LinearMath\Release\LinearMath.lib
+  zlibstatic.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\assimp-build\contrib\zlib\Release\zlibstatic.lib
+  PlutoGEMath.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\math\Release\PlutoGEMath.lib
+  PlutoGE_glad.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\third_party\Release\PlutoGE_glad.lib
+  BulletDynamics.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\bullet3-build\src\BulletDynamics\Release\BulletDynamics.lib
+  1>
+  Scanning sources for module dependencies...
+  alsoft.fmt.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\openal_soft-build\fmt-11.2.0\alsoft.fmt.dir\Release\alsoft.fmt.lib
+  meshoptimizer.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\meshoptimizer-build\Release\meshoptimizer.lib
+  1>
+  BulletCollision.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\bullet3-build\src\BulletCollision\Release\BulletCollision.lib
+  glfw.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\glfw-build\src\Release\glfw3.lib
+  volk.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\volk-build\Release\volk.lib
+  imguizmo.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\imguizmo-build\Release\imguizmo.lib
+  freetype.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\freetype-build\Release\freetype.lib
+  PlutoGEContent.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\platform\Release\PlutoGEContent.lib
+  PlutoGEPlatform.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\platform\Release\PlutoGEPlatform.lib
+  Scanning sources for module dependencies...
+  PlutoGE_fsr2.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\third_party\Release\PlutoGE_fsr2.lib
+  assimp.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\assimp-build\lib\Release\assimp-vc143-mt.lib
+  alsoft.common.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\openal_soft-build\Release\alsoft.common.lib
+  PlutoGE_imgui.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\third_party\Release\PlutoGE_imgui.lib
+  Scanning sources for module dependencies...
+  rmlui_core.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\Release\rmlui.lib
+  alsoft.core-modules.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\openal_soft-build\alsoft.core-modules.dir\Release\alsoft.core-modules.lib
+  PlutoGEImport.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\import\Release\PlutoGEImport.lib
+  PlutoGE_rmlui.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\third_party\Release\PlutoGE_rmlui.lib
+  Scanning sources for module dependencies...
+  OpenAL.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\_deps\openal_soft-build\Release\OpenAL32.dll
+  PlutoGEAudio.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\audio\Release\PlutoGEAudio.lib
+  PlutoGEScene.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\scene\Release\PlutoGEScene.lib
+  PlutoGEScripting.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\scripting\Release\PlutoGEScripting.lib
+  PlutoGEAssets.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\assets\Release\PlutoGEAssets.lib
+  PlutoGERender.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\render\Release\PlutoGERender.lib
+  PlutoGECore.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\core\Release\PlutoGECore.lib
+  PlutoGEAssetImport.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\engine\asset_import\Release\PlutoGEAssetImport.lib
+  IKInspector.cpp
+  AnimationClipEditorPanel.cpp
+  ContentBrowserPanel.cpp
+  AnimationGraphEditorPanel.cpp
+  SurfacePlacement.cpp
+  InspectorPanel.cpp
+  ViewportPanel.cpp
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared\minwindef.h(130,9): warning C4005: 'APIENTRY': macro redefinition [C:\Users\cam\dev\PlutoGE\out\build\msvc17\editor\ui\PlutoGEEditorUI.vcxproj]
+  (compiling source file '../../../../../editor/ui/src/panels/ContentBrowserPanel.cpp')
+      C:\Users\cam\dev\PlutoGE\third_party\glad\include\glad\glad.h(32,9):
+      see previous definition of 'APIENTRY'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared\minwindef.h(130,9): warning C4005: 'APIENTRY': macro redefinition [C:\Users\cam\dev\PlutoGE\out\build\msvc17\editor\ui\PlutoGEEditorUI.vcxproj]
+  (compiling source file '../../../../../editor/ui/src/panels/InspectorPanel.cpp')
+      C:\Users\cam\dev\PlutoGE\third_party\glad\include\glad\glad.h(32,9):
+      see previous definition of 'APIENTRY'
+  
+  PlutoGEEditorUI.vcxproj -> C:\Users\cam\dev\PlutoGE\out\build\msvc17\editor\ui\Release\PlutoGEEditorUI.lib

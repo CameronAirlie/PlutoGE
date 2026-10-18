@@ -1689,6 +1689,47 @@ Connections: {
             Require(assets::SerializeAssetReference(extracted3.identity, authored3) &&
                 std::find(remapped3.begin(), remapped3.end(), authored3) != remapped3.end(), "Library rebuild lost authored remap");
         }
+        // Match the browser's Extract All sequence with Library-only model objects.
+        {
+            Scratch extractionScratch;
+            auto extractionProject = assets::Project::Create(extractionScratch.root / "Extraction.plutoproject", "Extraction", &error);
+            Require(static_cast<bool>(extractionProject), error);
+            Write(extractionScratch.root / "Assets/Robot.fbx", fixture);
+            assetimport::ModelImportResult imported;
+            Require(service.Import(*extractionProject, {.sourceReference="project://Robot.fbx"}, imported, &error), error);
+            assets::AssetManager reader;
+            reader.SetProjectContext(extractionProject->GetRootDirectory().string(), extractionProject->GetManifest().assetDirectory, 3);
+            reader.SetAssetSnapshot(imported.catalog, imported.storage);
+            const auto objects = imported.catalog->GetObjects();
+            std::size_t count = 0;
+            for (const auto &object : objects)
+            {
+                if (object.ownership != assets::AssetOwnership::Imported ||
+                    (object.type != assets::ProjectAssetType::Mesh && object.type != assets::ProjectAssetType::Material &&
+                     object.type != assets::ProjectAssetType::Texture && object.type != assets::ProjectAssetType::Animation &&
+                     object.type != assets::ProjectAssetType::AnimationClip)) continue;
+                const auto physical = std::filesystem::path(reader.ResolveAssetPath(object.location));
+                Require(!std::filesystem::is_regular_file(extractionProject->ResolveAssetReference(object.location)) &&
+                    std::filesystem::is_regular_file(physical), "Library object needs storage-aware resolution: " + object.location);
+                assetimport::ModelObjectExtractionResult copy;
+                const auto requested = extractionProject->ResolveAssetReference(object.location);
+                const auto destination = assetimport::FindAvailableModelExtractionReference(
+                    *extractionProject, *reader.GetAssetCatalog(), requested);
+                Require(destination != object.location, "Extraction reused a virtual imported name");
+                const auto unchanged = Snapshot(extractionScratch.root / "Assets");
+                Require(!assetimport::ModelObjectExtractionService{}.Extract(*extractionProject, object.location,
+                    object.location, copy, &error) && Snapshot(extractionScratch.root / "Assets") == unchanged,
+                    "Reserved-name extraction changed project files");
+                if (!assetimport::ModelObjectExtractionService{}.Extract(*extractionProject, object.location, destination, copy, &error,
+                    object.type == assets::ProjectAssetType::Material))
+                    throw std::runtime_error("Extract All Library object " + object.location + " -> " + destination + ": " + error);
+                Require(std::filesystem::is_regular_file(extractionProject->ResolveAssetReference(copy.projectReference)),
+                    "Extracted object is not visible in Assets");
+                reader.SetAssetSnapshot(copy.catalog, copy.storage);
+                ++count;
+            }
+            Require(count >= 2, "Extract All did not cover mesh and material");
+        }
         // Recover sources independently after losing a multi-model Library.
         {
             Scratch recovery;

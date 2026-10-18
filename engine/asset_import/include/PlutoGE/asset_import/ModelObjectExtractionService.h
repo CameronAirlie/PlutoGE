@@ -10,6 +10,11 @@
 
 namespace PlutoGE::assetimport
 {
+    // Find an unused authored destination, including virtual imported names and companion files.
+    // This only chooses a name; Extract revalidates it under the project writer lock.
+    std::string FindAvailableModelExtractionReference(const assets::Project &project,
+        const assets::AssetCatalog &catalog, const std::filesystem::path &requested);
+
     struct ModelObjectExtractionResult
     {
         std::string projectReference;

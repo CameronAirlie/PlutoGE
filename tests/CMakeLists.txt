@@ -20,6 +20,13 @@ function(pluto_link_engine target)
     endif()
 endfunction()
 
+add_executable(PlutoGECapsuleQueryTests CapsuleQueryTests.cpp)
+pluto_link_engine(PlutoGECapsuleQueryTests)
+add_test(NAME PlutoGECapsuleQueryTests COMMAND PlutoGECapsuleQueryTests)
+add_executable(PlutoGEAnimationSeekTests AnimationSeekTests.cpp)
+pluto_link_engine(PlutoGEAnimationSeekTests)
+add_test(NAME PlutoGEAnimationSeekTests COMMAND PlutoGEAnimationSeekTests)
+
 if (MSVC)
     # Test executables are never distributed. FASTLINK PDBs reference the
     # object files instead of copying their debug info, which keeps relinking
@@ -638,6 +645,12 @@ endif()
 add_executable(PlutoGEIKComponentTests IKComponentTests.cpp)
 pluto_link_engine(PlutoGEIKComponentTests)
 add_test(NAME PlutoGEIKComponentTests COMMAND PlutoGEIKComponentTests)
+add_executable(PlutoGEHumanoidRetargetBasisTests HumanoidRetargetBasisTests.cpp)
+pluto_link_engine(PlutoGEHumanoidRetargetBasisTests)
+add_test(NAME PlutoGEHumanoidRetargetBasisTests COMMAND PlutoGEHumanoidRetargetBasisTests)
+add_executable(PlutoGEAnimationBlendSpaceTests AnimationBlendSpaceTests.cpp)
+pluto_link_engine(PlutoGEAnimationBlendSpaceTests)
+add_test(NAME PlutoGEAnimationBlendSpaceTests COMMAND PlutoGEAnimationBlendSpaceTests)
 
 add_executable(PlutoGEViewportOverlayLayoutTests ViewportOverlayLayoutTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportOverlayLayout.cpp)

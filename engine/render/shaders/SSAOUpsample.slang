@@ -8,6 +8,7 @@
 [[vk::binding(3,0)]] Sampler2D normalTexture : register(t3,space0);
 [[vk::binding(6,0)]] Sampler2D historyTexture : register(t6,space0);
 [[vk::binding(8,0)]] Sampler2D indirectTexture : register(t8,space0);
+[[vk::binding(9,0)]] Sampler2D geometrySceneTexture : register(t9,space0);
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id:SV_VertexID) { return fullscreenVertex(id); }
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input):SV_Target
@@ -47,6 +48,7 @@ float4 fragmentMain(FullscreenVertexOutput input):SV_Target
         if (weights>0.0001) ao=sum/weights;
     }
     const float4 scene=sceneTexture.SampleLevel(uv,0);
-    const float3 indirect=indirectTexture.SampleLevel(uv,0).rgb;
+    const float3 indirect=indirectTexture.SampleLevel(uv,0).rgb +
+        max(scene.rgb-geometrySceneTexture.SampleLevel(uv,0).rgb,0.0);
     return ssaoComposite(scene,indirect,ao,pass.parameters[1].y>0.5);
 }

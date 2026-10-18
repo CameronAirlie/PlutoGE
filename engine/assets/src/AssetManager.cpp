@@ -2253,6 +2253,7 @@ namespace PlutoGE::assets
                     .duration = ParseFloatOr(fields[3], 0.15f),
                     .hasExitTime = ParseBoolOr(fields[4], false),
                     .exitTime = ParseFloatOr(fields[5], 0.9f),
+                    .offset = fields.size() >= 7 ? std::clamp(ParseFloatOr(fields[6], 0.0f), 0.0f, 1.0f) : 0.0f,
                 });
                 transitionIndexById[graph.transitions.back().id] = graph.transitions.size() - 1;
             }
@@ -2448,7 +2449,8 @@ namespace PlutoGE::assets
                    << transition.toStateId << '|'
                    << transition.duration << '|'
                    << (transition.hasExitTime ? "1" : "0") << '|'
-                   << transition.exitTime << "\n";
+                   << transition.exitTime << '|'
+                   << std::clamp(transition.offset, 0.0f, 1.0f) << "\n";
             for (const auto &condition : transition.conditions)
             {
                 output << "Condition=" << transition.id << '|'

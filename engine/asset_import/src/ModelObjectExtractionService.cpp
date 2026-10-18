@@ -39,6 +39,28 @@ namespace PlutoGE::assetimport
         }
     }
 
+    std::string FindAvailableModelExtractionReference(const assets::Project &project,
+        const assets::AssetCatalog &catalog, const std::filesystem::path &requested)
+    {
+        const auto referenceFor = [&](const std::filesystem::path &path)
+        {
+            const auto relative = path.lexically_normal().lexically_relative(project.GetAssetDirectoryPath().lexically_normal());
+            if (relative.empty() || relative.has_root_path() || *relative.begin() == "..") return std::string{};
+            return std::string(assets::Project::kProjectAssetScheme) + relative.generic_string();
+        };
+        if (referenceFor(requested).empty()) return {};
+        auto candidate = requested;
+        for (unsigned int suffix = 1;
+            !Absent(candidate) || !Absent(assets::GetAssetMetadataPath(candidate)) ||
+            !Absent(std::filesystem::path(candidate).concat(".materials")) ||
+            catalog.FindIdentityByLocation(referenceFor(candidate)).has_value(); ++suffix)
+        {
+            candidate = requested.parent_path() /
+                (requested.stem().string() + "_" + std::to_string(suffix) + requested.extension().string());
+        }
+        return referenceFor(candidate);
+    }
+
     bool ModelObjectExtractionService::Extract(assets::Project &project, const std::string &sourceReference,
                                         const std::string &destinationReference, ModelObjectExtractionResult &result,
                                         std::string *errorMessage, bool useMaterialForModel,
@@ -69,6 +91,8 @@ namespace PlutoGE::assetimport
             assets::AssetDatabase database;
             if (!database.Scan(project, errorMessage)) return false;
             auto catalog = database.GetCatalog();
+            if (catalog->FindIdentityByLocation(destinationReference))
+                return Fail(errorMessage, "Extraction destination is reserved by an existing asset; choose a different name.");
             assets::AssetReference identity;
             if (sourceReference.starts_with("asset://"))
             {

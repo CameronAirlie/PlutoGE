@@ -36,10 +36,15 @@ inline void CheckSsaoRendering(PlutoGE::render::BasicRenderer &renderer,
     BasicPostProcessEffect ao{BasicPostProcessEffectType::SSAO};
     ao.quality=32; ao.parameters[0]={1.5f,.02f,1.25f,1};
     ao.parameters[1]={2,1,.9f,1}; ao.parameters[2]={.02f,.85f,0,0};
-    const auto render = [&](const BasicDraw &draw, bool enabled=true) {
+    BasicPostProcessEffect gi{BasicPostProcessEffectType::SSGI};
+    gi.quality=8; gi.parameters[0]={1,.5f,0,0};
+    const auto render = [&](const BasicDraw &draw, bool enabled=true, bool withGi=false) {
         std::array<BasicDraw,2> draws{draw,postDraw};
+        const std::array effects{gi,ao};
+        const auto stack=withGi ? std::span<const BasicPostProcessEffect>(effects).first(enabled ? 2 : 1)
+            : enabled ? std::span<const BasicPostProcessEffect>(&ao,1) : std::span<const BasicPostProcessEffect>{};
         renderer.Render(projection*lighting.view,lighting,draw.mesh==&corner ? std::span<const BasicDraw>(draws) : std::span<const BasicDraw>(&draw,1),
-            enabled ? std::span(&ao,1) : std::span<const BasicPostProcessEffect>{}, {},
+            stack, {},
             PostProcessDebugView::None,nullptr,nullptr,true,{},{},{},true);
         return device.ReadTextureRgbaFloat(renderer.GetColorTexture());
     };
@@ -104,14 +109,32 @@ inline void CheckSsaoRendering(PlutoGE::render::BasicRenderer &renderer,
         for (std::size_t i=0;i<image.size();i+=4) minimum=std::min(minimum,image[i]);
         if (minimum<=.97f) std::cerr<<"AO plane estimator="<<estimator<<" radius="<<blur<<" width="<<extent.width<<" half="<<half<<" minimum="<<minimum<<"\n";
         require(minimum>.97f,"SSAO self-occluded a coplanar receiver");
+        // Verify scene composition as well as the AO diagnostic. A valid AO
+        // texture alone cannot detect a missing indirect-lighting attachment.
+        ao.parameters[1].y=0;
+        draw.mesh=&corner;
+        const auto ambientReference=render(draw,false), ambientAo=render(draw);
+        std::size_t darkened=0;
+        for (std::size_t i=0;i<ambientReference.size();i+=4)
+            darkened += ambientReference[i]-ambientAo[i]>.01f;
+        require(darkened>10,"SSAO did not attenuate ambient scene lighting");
         // Direct lighting and emission bypass the indirect AO attenuation.
         ao.parameters[1].y=0; lighting.ambientIntensity=0; lighting.directionalIntensity=1;
         draw.mesh=&corner; draw.emission={.3f,.2f,.1f};
         postDraw.emission=draw.emission;
         const auto reference=render(draw,false), withAo=render(draw);
-        postDraw.emission={0,0,0};
         for (std::size_t i=0;i<reference.size();++i)
             require(std::isfinite(withAo[i]) && std::abs(reference[i]-withAo[i])<.003f,"SSAO attenuated direct light or emission");
+        // GI adds indirect light after geometry, even with no ambient source.
+        const auto giReference=render(draw,false,true), giAo=render(draw,true,true);
+        darkened=0;
+        for (std::size_t i=0;i<giReference.size();i+=4)
+        {
+            darkened += giReference[i]-giAo[i]>.01f;
+            require(giAo[i]>=reference[i]-.003f,"SSAO attenuated the direct/emissive base beneath GI");
+        }
+        require(darkened>10,"SSAO did not attenuate post-process GI");
+        postDraw.emission={0,0,0};
     }
     }
     std::cout<<"SSAO estimators, motion, resolution switching, planar receivers and direct/emissive preservation passed\n";

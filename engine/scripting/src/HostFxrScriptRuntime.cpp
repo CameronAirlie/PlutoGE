@@ -21,6 +21,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/render/SkeletonJointLookup.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -135,6 +136,8 @@ namespace PlutoGE::scripting
         using register_rml_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_animation_blend_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_capsule_query_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -947,10 +950,8 @@ namespace PlutoGE::scripting
                 return attachment && socket->RemoveComponent(attachment) ? 1 : 0;
             }
             if (!mesh || !root) return 0;
-            int jointIndex = -1;
             const auto &skeleton = mesh->GetSkeleton();
-            for (int i=0; i<static_cast<int>(skeleton.joints.size()); ++i)
-                if (skeleton.joints[i].name == root) { jointIndex=i; break; }
+            const int jointIndex = render::FindSkeletonJoint(skeleton, root);
             if (jointIndex < 0) return 0;
             const auto &joint = skeleton.joints[jointIndex];
             if (request->operation == 2)
@@ -1980,7 +1981,7 @@ namespace PlutoGE::scripting
         void SetAnimationTime(uint32_t entityId, float value)
         {
             if (auto *component = FindAnimation(entityId))
-                component->SetTime(value);
+                component->Seek(value);
         }
         void AnimationPlay(uint32_t entityId)
         {
@@ -2031,6 +2032,15 @@ namespace PlutoGE::scripting
             {
                 component->ResetTrigger(name);
             }
+        }
+        int32_t AnimationCrossFadeState(uint32_t entityId, const char *name, float duration, float startTime)
+        {
+            auto *component = FindAnimation(entityId);
+            return component && name && component->CrossFadeState(name, duration, startTime) ? 1 : 0;
+        }
+        void SeekBlendedAnimation(uint32_t entityId, float time)
+        {
+            if (auto *component = FindAnimation(entityId)) component->Seek(time, true);
         }
         void AnimationPlayState(uint32_t entityId, const char *name)
         {
@@ -3212,6 +3222,21 @@ namespace PlutoGE::scripting
             return 1;
         }
 
+        int32_t PhysicsQueryCapsule(NativeVector3 center, NativeVector3 displacement, float radius, float height,
+                                    uint32_t ignoredEntityId, NativeRaycastHit *nativeHit)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene || !nativeHit) return 0;
+            scene::PhysicsRaycastHit hit;
+            if (!scene->QueryCapsule({center.x, center.y, center.z}, {displacement.x, displacement.y, displacement.z},
+                                     radius, height, hit, ignoredEntityId)) return 0;
+            nativeHit->entityId = hit.entityId;
+            nativeHit->point = {hit.point.x, hit.point.y, hit.point.z};
+            nativeHit->normal = {hit.normal.x, hit.normal.y, hit.normal.z};
+            nativeHit->distance = hit.distance;
+            return 1;
+        }
+
         NativeVector3 PhysicsMoveKinematic(uint32_t entityId, NativeVector3 displacement, float skinWidth)
         {
             if (!IsFiniteVector3(displacement) || !std::isfinite(skinWidth))
@@ -3654,6 +3679,8 @@ namespace PlutoGE::scripting
         register_input_api_fn registerInputApi = nullptr;
         int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *, void *, void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
+        register_animation_blend_api_fn registerAnimationBlendApi = nullptr;
+        register_capsule_query_api_fn registerCapsuleQueryApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
@@ -3774,6 +3801,8 @@ namespace PlutoGE::scripting
             impl.registerRmlNavigationApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
+            impl.registerAnimationBlendApi = nullptr;
+            impl.registerCapsuleQueryApi = nullptr;
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
             impl.registerSurfaceResponseApi = nullptr;
@@ -4136,6 +4165,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAnimationBlendApi"), impl.registerAnimationBlendApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterCapsuleQueryApi"), impl.registerCapsuleQueryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
@@ -4888,6 +4919,20 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<spawn_decal_fn>(&SpawnDecal))) == 0)
         {
             setManagedBridgeFailure("RegisterPhysicsApi");
+            return false;
+        }
+
+        if (!m_impl->registerAnimationBlendApi || m_impl->registerAnimationBlendApi(
+                reinterpret_cast<void *>(&AnimationCrossFadeState), reinterpret_cast<void *>(&SeekBlendedAnimation)) == 0)
+        {
+            setManagedBridgeFailure("RegisterAnimationBlendApi");
+            return false;
+        }
+
+        if (!m_impl->registerCapsuleQueryApi || m_impl->registerCapsuleQueryApi(
+                reinterpret_cast<void *>(&PhysicsQueryCapsule)) == 0)
+        {
+            setManagedBridgeFailure("RegisterCapsuleQueryApi");
             return false;
         }
 

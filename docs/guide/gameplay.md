@@ -1,6 +1,6 @@
 # Gameplay and physics
 
-[Manual](../README.md) · Previous: [World building](world-building.md) · Next: [Presentation](presentation.md)
+[Manual](../README.md) Â· Previous: [World building](world-building.md) Â· Next: [Presentation](presentation.md)
 
 ## Behaviours and serialized settings
 
@@ -246,11 +246,44 @@ Use `Play("clip name")` for named clip playback and check its boolean result;
 `PlayState` selects a graph state. Do not restart the same clip every frame.
 `Playing`, `Looping`, `Speed`, and `Time` support direct playback control.
 
+A transition's **Offset** (0â€“1) starts the destination state part-way through its
+reference clip. Use it to skip anticipation or airborne lead-in, for example
+entering a landing clip at its impact frame. Loops in a blend space share one
+normalized phase, so author loops with matching foot timing (or the same number of
+cycles) and keep idle clips in their own state; blending a long idle into a
+walk/run blend space slows the shared cycle.
+
+For a controller-timed action, `AnimationComponent.CrossFadeState(name, seconds,
+startTime)` blends into a graph state at an absolute clip time. During that blend,
+use `SeekBlended(time)` to synchronize the destination pose without completing the
+transition. Transition weight advances with frame time even at playback speed zero.
+Assigning `Time` retains its immediate-seek behavior and commits the destination.
+Crossfades start playback; invalid state names return false without changing playback.
+
+Humanoid retargeting compares each rig's character frame (hips, head and legs) and
+corrects axis conventions automatically, so Z-up Unreal/FBX clips drive Y-up glTF
+or Blender characters. Clips whose root bone carries root motion (Unreal's
+`root`: travel, turns, jump and fall trajectories) should enable **Strip Root
+Motion** on the Animation component; the body is then posed relative to that
+root while a controller owns the character's position and facing. Set the Hips mapping's translation
+scale to the target/source leg-length ratio to keep feet planted.
+
+Mapped limbs also align their reference segment directions automatically, so A-pose
+and T-pose rigs follow the same animation posture without per-model arm offsets.
+The correction is cached at runtime and keeps target bone lengths and manual offsets.
+See [automatic reference-pose alignment](../HUMANOID_RETARGETING.md) for its data
+requirements, fallback behavior and validation.
+
 Add named Footstep markers in the Clip Editor. Override `OnAnimationEvent` on a
 script attached to the animated entity, check `Name`, and dispatch a sound or
 surface response. Markers carry string, float, and integer parameters and fire
 when playback crosses their time, including loop boundaries. This keeps sounds
 synchronized with animation instead of a separate approximate timer.
+
+Managed bone pose queries, IK chains and authored IK validation share skeletal name
+resolution. Exact names win; otherwise core humanoid aliases use the mesh's saved rig
+mapping. Common Blender, Unreal and Mixamo finger aliases also resolve across namespaces,
+with left/right identity preserved and ambiguous fallback matches rejected.
 
 For a hand-held prop, author a Skeleton Attachment with a joint name/node target
 and adjust the prop's local offset. Test across several poses; a static child
@@ -273,3 +306,24 @@ blend value implements a complete stand-up state machine.
 
 See [ragdoll authoring and managed controls](../RAGDOLLS.md) for generated bone
 shapes, motor settings, impulses, and current constraints.
+
+
+## Capsule clearance queries and animation-driven traversal
+
+`Physics.QueryCapsule(center, displacement, radius, height, ignoredEntity, out hit)` tests an upright,
+world-space capsule without moving an entity. Height includes the caps. A zero displacement tests
+penetration; a nonzero displacement includes initial overlap and sweeps to the destination. The result
+reports center travel to the first collision, ignores triggers and the ignored entity hierarchy, and
+uses the current scene physics query world. Managed invalid dimensions/nonfinite inputs throw. Rebuild
+native hosts and ScriptCore together when adding this API to a project.
+
+For animation-driven actions, validate the full route before taking movement ownership and sweep each
+increment again during execution. Keep a single movement authority, preserve the collider, and resume
+gravity from the last verified position if a route becomes blocked. The ThirdPersonProject sample's
+`Character/Traversal` module implements contextual mantles, climbs and airborne catches on this basis.
+
+Setting managed `AnimationComponent.Time` now seeks the graph state as well as its clip, so a paused
+or externally driven graph retains the requested pose on subsequent updates. Seeking an active
+transition commits its destination, preserves playing/speed, and invalidates the evaluated pose.
+This differs from native `SetTime`, which remains the internal clip-clock helper. Use native `Seek`
+when driving a graph explicitly.

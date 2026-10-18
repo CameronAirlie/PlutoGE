@@ -217,6 +217,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
         };
         loadPostProcess(render::BasicPostProcessEffectType::TAA, "TAA");
+        loadPostProcess(render::BasicPostProcessEffectType::SSGI, "SSGI");
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         shaders.volumetricTrace[0].vertex.glsl = ReadText("VolumetricFogTrace.vertex.glsl");

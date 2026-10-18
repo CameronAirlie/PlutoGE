@@ -10,6 +10,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -194,6 +195,104 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
+        // Align reference segment directions rather than copying bone Euler angles: local
+        // axes, roll, proportions and intermediary twist joints differ between DCC rigs.
+        void ResolveReferencePoseCorrections(const std::vector<render::AnimationChannel> &channels,
+            AnimationRetargetClipCache &cache, const render::Skeleton &skeleton,
+            const std::vector<glm::mat4> &targetBind)
+        {
+            using Bone = render::HumanoidBone;
+            std::array<int, render::kHumanoidBoneCount> source, target;
+            source.fill(-1); target.fill(-1);
+            cache.referencePoseCorrections.assign(skeleton.joints.size(), glm::vec4(0, 0, 0, 1));
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+                if (static_cast<size_t>(mapping.bone) < target.size() && mapping.targetJointIndex >= 0 &&
+                    mapping.targetJointIndex < static_cast<int>(targetBind.size()))
+                    target[static_cast<size_t>(mapping.bone)] = mapping.targetJointIndex;
+            for (size_t i = 0; i < channels.size(); ++i)
+            {
+                const int mapping = cache.mappingBindings[i];
+                const int node = channels[i].nodeIndex;
+                if (mapping < 0 || node < 0 || node >= static_cast<int>(cache.sourceNodesPresent.size()) ||
+                    !channels[i].hasSourceGlobalBindTransform || !channels[i].hasSourceLocalBindTransform) continue;
+                const auto bone = static_cast<size_t>(skeleton.humanoidBoneMappings[static_cast<size_t>(mapping)].bone);
+                if (bone < source.size()) source[bone] = node;
+            }
+            const glm::quat basis(cache.sourceToTargetBasis.w, cache.sourceToTargetBasis.x,
+                                  cache.sourceToTargetBasis.y, cache.sourceToTargetBasis.z);
+            const auto descendant = [](int child, int parent, const auto &parentOf, size_t count)
+            {
+                for (size_t depth = 0; depth < count && child >= 0 && child < static_cast<int>(count); ++depth)
+                {
+                    child = parentOf(child);
+                    if (child == parent) return true;
+                }
+                return false;
+            };
+            const auto align = [&](Bone bone, std::initializer_list<Bone> endpoints)
+            {
+                const int sj = source[static_cast<size_t>(bone)], tj = target[static_cast<size_t>(bone)];
+                if (sj < 0 || tj < 0) return;
+                for (const Bone endpoint : endpoints)
+                {
+                    const int se = source[static_cast<size_t>(endpoint)], te = target[static_cast<size_t>(endpoint)];
+                    if (se < 0 || te < 0 ||
+                        !descendant(se, sj, [&](int i) { return cache.sourceParentIndices[static_cast<size_t>(i)]; }, cache.sourceParentIndices.size()) ||
+                        !descendant(te, tj, [&](int i) { return skeleton.joints[static_cast<size_t>(i)].parentJointIndex; }, skeleton.joints.size())) continue;
+                    glm::vec3 from = glm::vec3(targetBind[static_cast<size_t>(te)][3] - targetBind[static_cast<size_t>(tj)][3]);
+                    glm::vec3 to = basis * glm::vec3(cache.sourceGlobalBindTransforms[static_cast<size_t>(se)][3] -
+                                                  cache.sourceGlobalBindTransforms[static_cast<size_t>(sj)][3]);
+                    const auto usable = [](glm::vec3 v)
+                    { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) && glm::dot(v, v) > 1e-10f; };
+                    if (!usable(from) || !usable(to)) continue;
+                    from = glm::normalize(from); to = glm::normalize(to);
+                    const float cosine = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+                    glm::quat swing;
+                    if (cosine < -0.99999f)
+                    {
+                        // The shortest arc is ambiguous at 180 degrees; choose a stable
+                        // perpendicular axis rather than normalizing a zero quaternion.
+                        const glm::vec3 axis = glm::normalize(glm::cross(from,
+                            std::abs(from.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+                        swing = glm::angleAxis(glm::radians(180.0f), axis);
+                    }
+                    else
+                    {
+                        const glm::vec3 axis = glm::cross(from, to);
+                        swing = glm::normalize(glm::quat(1 + cosine, axis.x, axis.y, axis.z));
+                    }
+                    cache.referencePoseCorrections[static_cast<size_t>(tj)] = {swing.x, swing.y, swing.z, swing.w};
+                    return;
+                }
+            };
+            align(Bone::Spine, {Bone::Chest, Bone::UpperChest, Bone::Neck});
+            align(Bone::Chest, {Bone::UpperChest, Bone::Neck});
+            align(Bone::UpperChest, {Bone::Neck, Bone::Head});
+            align(Bone::Neck, {Bone::Head});
+            align(Bone::LeftShoulder, {Bone::LeftUpperArm});
+            align(Bone::RightShoulder, {Bone::RightUpperArm});
+            align(Bone::LeftUpperArm, {Bone::LeftLowerArm});
+            align(Bone::RightUpperArm, {Bone::RightLowerArm});
+            align(Bone::LeftLowerArm, {Bone::LeftHand});
+            align(Bone::RightLowerArm, {Bone::RightHand});
+            align(Bone::LeftUpperLeg, {Bone::LeftLowerLeg});
+            align(Bone::RightUpperLeg, {Bone::RightLowerLeg});
+            align(Bone::LeftLowerLeg, {Bone::LeftFoot});
+            align(Bone::RightLowerLeg, {Bone::RightFoot});
+            align(Bone::LeftFoot, {Bone::LeftToes});
+            align(Bone::RightFoot, {Bone::RightToes});
+            // Terminal orientations must follow the aligned chain instead of restoring
+            // the old wrist/head/toe frame and introducing a kink at its final joint.
+            for (const auto [end, parent] : {std::pair{Bone::LeftHand, Bone::LeftLowerArm},
+                {Bone::RightHand, Bone::RightLowerArm}, {Bone::Head, Bone::Neck},
+                {Bone::LeftToes, Bone::LeftFoot}, {Bone::RightToes, Bone::RightFoot}})
+            {
+                const int e = target[static_cast<size_t>(end)], p = target[static_cast<size_t>(parent)];
+                if (e >= 0 && p >= 0 && source[static_cast<size_t>(end)] >= 0)
+                    cache.referencePoseCorrections[static_cast<size_t>(e)] = cache.referencePoseCorrections[static_cast<size_t>(p)];
+            }
+        }
+
         bool IsReservedRetargetJoint(int jointIndex, const render::Skeleton &skeleton)
         {
             if (jointIndex < 0 || jointIndex >= static_cast<int>(skeleton.joints.size()))
@@ -219,6 +318,111 @@ namespace PlutoGE::scene
                 }
             }
             return false;
+        }
+
+        // Builds a rig's character frame (columns: left, up, forward) from
+        // humanoid landmark positions in its skeleton space.
+        template <typename PositionFn>
+        bool ResolveCharacterFrame(PositionFn position, glm::mat3 &frame)
+        {
+            using render::HumanoidBone;
+            glm::vec3 hips, top, left, right;
+            if (!position(HumanoidBone::Hips, hips))
+                return false;
+            if (!position(HumanoidBone::Head, top) && !position(HumanoidBone::Neck, top) &&
+                !position(HumanoidBone::UpperChest, top))
+                return false;
+            if (!(position(HumanoidBone::LeftUpperLeg, left) && position(HumanoidBone::RightUpperLeg, right)) &&
+                !(position(HumanoidBone::LeftUpperArm, left) && position(HumanoidBone::RightUpperArm, right)))
+                return false;
+
+            glm::vec3 up = top - hips;
+            if (glm::length(up) < 0.0001f)
+                return false;
+            up = glm::normalize(up);
+            glm::vec3 side = left - right;
+            side -= up * glm::dot(side, up);
+            if (glm::length(side) < 0.0001f)
+                return false;
+            side = glm::normalize(side);
+            frame = glm::mat3(side, up, glm::cross(side, up));
+            return true;
+        }
+
+        // DCC exports disagree on world axes: Unreal FBX is Z-up while glTF is
+        // Y-up. Global rotation deltas and hips translation only transfer once
+        // both rigs share a frame, so compare the landmark frames and snap the
+        // difference to the nearest axis permutation. Pose differences such as
+        // a leaning rest pose therefore cannot leak in, and rigs whose frames
+        // already agree resolve to identity.
+        glm::vec4 ResolveRetargetBasis(const std::vector<render::AnimationChannel> &channels,
+                                       const AnimationRetargetClipCache &cache,
+                                       const render::Skeleton &skeleton,
+                                       const std::vector<glm::mat4> &targetGlobalBindTransforms)
+        {
+            constexpr glm::vec4 identity{0.0f, 0.0f, 0.0f, 1.0f};
+            std::array<int, render::kHumanoidBoneCount> sourceNodes{};
+            sourceNodes.fill(-1);
+            for (size_t channelIndex = 0; channelIndex < channels.size() && channelIndex < cache.mappingBindings.size(); ++channelIndex)
+            {
+                const int mappingIndex = cache.mappingBindings[channelIndex];
+                const int nodeIndex = channels[channelIndex].nodeIndex;
+                if (mappingIndex < 0 || mappingIndex >= static_cast<int>(skeleton.humanoidBoneMappings.size()) ||
+                    nodeIndex < 0 || nodeIndex >= static_cast<int>(cache.sourceNodesPresent.size()) ||
+                    !cache.sourceNodesPresent[static_cast<size_t>(nodeIndex)])
+                    continue;
+                sourceNodes[static_cast<size_t>(skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)].bone)] = nodeIndex;
+            }
+
+            const auto sourcePosition = [&](render::HumanoidBone bone, glm::vec3 &position)
+            {
+                const int nodeIndex = sourceNodes[static_cast<size_t>(bone)];
+                if (nodeIndex < 0)
+                    return false;
+                position = glm::vec3(cache.sourceGlobalBindTransforms[static_cast<size_t>(nodeIndex)][3]);
+                return true;
+            };
+            const auto targetPosition = [&](render::HumanoidBone bone, glm::vec3 &position)
+            {
+                for (const auto &mapping : skeleton.humanoidBoneMappings)
+                {
+                    if (mapping.bone == bone && mapping.targetJointIndex >= 0 &&
+                        mapping.targetJointIndex < static_cast<int>(targetGlobalBindTransforms.size()))
+                    {
+                        position = glm::vec3(targetGlobalBindTransforms[static_cast<size_t>(mapping.targetJointIndex)][3]);
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            glm::mat3 sourceFrame(1.0f);
+            glm::mat3 targetFrame(1.0f);
+            if (!ResolveCharacterFrame(sourcePosition, sourceFrame) || !ResolveCharacterFrame(targetPosition, targetFrame))
+                return identity;
+
+            const glm::mat3 basis = targetFrame * glm::transpose(sourceFrame);
+            glm::mat3 snapped(0.0f);
+            std::array<bool, 3> usedAxes{};
+            for (int column = 0; column < 3; ++column)
+            {
+                int axis = 0;
+                for (int row = 1; row < 3; ++row)
+                {
+                    if (std::abs(basis[column][row]) > std::abs(basis[column][axis]))
+                        axis = row;
+                }
+                // Reject frames more than ~45 degrees from any axis mapping.
+                if (usedAxes[static_cast<size_t>(axis)] || std::abs(basis[column][axis]) < 0.7f)
+                    return identity;
+                usedAxes[static_cast<size_t>(axis)] = true;
+                snapped[column][axis] = basis[column][axis] > 0.0f ? 1.0f : -1.0f;
+            }
+            if (glm::determinant(snapped) <= 0.0f)
+                return identity;
+
+            const glm::quat rotation = glm::normalize(glm::quat_cast(snapped));
+            return glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
         }
 
         int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
@@ -532,7 +736,8 @@ namespace PlutoGE::scene
             const std::vector<glm::vec4> &targetBindRotations,
             const std::vector<glm::vec3> &targetBindScales,
             const std::vector<glm::mat4> &targetGlobalBindTransforms,
-            const std::vector<glm::vec4> &targetGlobalBindRotations)
+            const std::vector<glm::vec4> &targetGlobalBindRotations,
+            bool stripRootMotion)
         {
             struct RetargetScratch
             {
@@ -574,12 +779,25 @@ namespace PlutoGE::scene
 
             const auto &clip = clips[static_cast<size_t>(clipIndex)];
             const int sourceNodeCount = static_cast<int>(cache.sourceLocalBindTransforms.size());
+            const glm::quat sourceToTarget(cache.sourceToTargetBasis.w, cache.sourceToTargetBasis.x,
+                                           cache.sourceToTargetBasis.y, cache.sourceToTargetBasis.z);
 
             auto &sourceLocalTransforms = scratch.sourceLocalTransforms;
             SampleCachedSourceLocalTransforms(
                 clip, time, cache, sourceLocalTransforms,
                 scratch.sourceTranslations, scratch.sourceRotations,
                 scratch.sourceScales, scratch.sourceAnimatedLocals);
+            if (stripRootMotion && cache.sourceHipsNodeIndex >= 0 && cache.sourceHipsNodeIndex < sourceNodeCount)
+            {
+                // Hold every ancestor of the hips at bind so root translation and
+                // rotation never reach the retargeted body.
+                int ancestor = cache.sourceParentIndices[static_cast<size_t>(cache.sourceHipsNodeIndex)];
+                for (int guard = 0; ancestor >= 0 && ancestor < sourceNodeCount && guard < sourceNodeCount; ++guard)
+                {
+                    sourceLocalTransforms[static_cast<size_t>(ancestor)] = cache.sourceLocalBindTransforms[static_cast<size_t>(ancestor)];
+                    ancestor = cache.sourceParentIndices[static_cast<size_t>(ancestor)];
+                }
+            }
 
             auto &sourceGlobalTransforms = scratch.sourceGlobalTransforms;
             auto &sourceEvaluationState = scratch.sourceEvaluationState;
@@ -671,7 +889,23 @@ namespace PlutoGE::scene
                 switch (channel.path)
                 {
                 case render::AnimationTargetPath::Translation:
-                    if (applyBindRelativeRetarget)
+                    if (applyBindRelativeRetarget && channel.nodeIndex >= 0 && channel.nodeIndex < sourceNodeCount &&
+                        static_cast<size_t>(channel.nodeIndex) < cache.sourceParentBindBases.size())
+                    {
+                        // Source and target parents rarely share axes (a
+                        // Z-up armature root versus a Y-up hips parent), so
+                        // carry the delta through skeleton space instead of
+                        // adding source-local components to target-local ones.
+                        const glm::vec3 sourceDelta = cache.sourceParentBindBases[static_cast<size_t>(channel.nodeIndex)] *
+                                                      (glm::vec3(sample) - sourceBindTranslation);
+                        const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
+                        const glm::mat3 targetParentBasis = parentIndex >= 0 && parentIndex < static_cast<int>(targetGlobalBindTransforms.size())
+                                                                ? glm::mat3(targetGlobalBindTransforms[static_cast<size_t>(parentIndex)])
+                                                                : glm::mat3(1.0f);
+                        translations[jointIndex] += glm::inverse(targetParentBasis) * (sourceToTarget * sourceDelta) *
+                                                    mapping->translationScale;
+                    }
+                    else if (applyBindRelativeRetarget)
                     {
                         translations[jointIndex] += (glm::vec3(sample) - sourceBindTranslation) * mapping->translationScale;
                     }
@@ -701,8 +935,11 @@ namespace PlutoGE::scene
                                                          targetGlobalBindRotation.y,
                                                          targetGlobalBindRotation.z);
                         const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
-                        const glm::quat sourceGlobalDelta = glm::normalize(sourceGlobalAnimated * glm::inverse(sourceGlobalBind));
-                        desiredTargetGlobalRotations[jointIndex] = glm::normalize(sourceGlobalDelta * targetGlobalBind * correction);
+                        const glm::quat sourceGlobalDelta = glm::normalize(
+                            sourceToTarget * sourceGlobalAnimated * glm::inverse(sourceGlobalBind) * glm::inverse(sourceToTarget));
+                        const auto &alignment = cache.referencePoseCorrections[jointIndex];
+                        const glm::quat referenceSwing(alignment.w, alignment.x, alignment.y, alignment.z);
+                        desiredTargetGlobalRotations[jointIndex] = glm::normalize(sourceGlobalDelta * referenceSwing * targetGlobalBind * correction);
                         hasDesiredTargetGlobalRotation[jointIndex] = 1;
                         break;
                     }
@@ -748,11 +985,12 @@ namespace PlutoGE::scene
             // crouches and landings bend the legs upward around a fixed pelvis.
             // Fold the source hips' global vertical delta into the target hips
             // when Copy Translation is enabled. Horizontal root motion remains
-            // stripped so controller-driven characters cannot drift.
+            // stripped so controller-driven characters cannot drift. Rigs that
+            // strip root motion pose the hips relative to the held root instead.
             int hipsMappingIndex = -1;
             int targetHipsJointIndex = -1;
             float hipsTranslationScale = 1.0f;
-            for (size_t mappingIndex = 0; mappingIndex < skeleton.humanoidBoneMappings.size(); ++mappingIndex)
+            for (size_t mappingIndex = 0; !stripRootMotion && mappingIndex < skeleton.humanoidBoneMappings.size(); ++mappingIndex)
             {
                 const auto &mapping = skeleton.humanoidBoneMappings[mappingIndex];
                 if (mapping.bone == render::HumanoidBone::Hips && mapping.copyTranslation &&
@@ -803,7 +1041,8 @@ namespace PlutoGE::scene
                 const glm::mat3 parentBasis(parentGlobalBind);
                 const glm::vec3 currentLocalDelta = translations[targetIndex] - targetBindTranslations[targetIndex];
                 glm::vec3 currentGlobalDelta = parentBasis * currentLocalDelta;
-                currentGlobalDelta.y = (sourceAnimatedGlobalTranslation.y - sourceBindGlobalTranslation.y) * hipsTranslationScale;
+                currentGlobalDelta.y = (sourceToTarget * (sourceAnimatedGlobalTranslation - sourceBindGlobalTranslation)).y *
+                                       hipsTranslationScale;
                 translations[targetIndex] = targetBindTranslations[targetIndex] + glm::inverse(parentBasis) * currentGlobalDelta;
                 animatedLocals[targetIndex] = 1;
             }
@@ -1186,6 +1425,7 @@ namespace PlutoGE::scene
             {"Looping", PropertyType::Bool, m_looping ? "true" : "false"},
             {"Autoplay", PropertyType::Bool, m_autoplay ? "true" : "false"},
             {"PoseUpdateRate", PropertyType::Float, std::to_string(m_poseUpdateRate)},
+            {"StripRootMotion", PropertyType::Bool, m_stripRootMotion ? "true" : "false"},
             {"RagdollEnabled", PropertyType::Bool, m_ragdollEnabled ? "true" : "false"},
             {"RagdollWeight", PropertyType::Float, std::to_string(m_ragdollWeight)},
             {"ClipCount", PropertyType::Int, std::to_string(m_clips.size())},
@@ -1223,6 +1463,7 @@ namespace PlutoGE::scene
                     properties.push_back({transitionPrefix + "Duration", PropertyType::Float, std::to_string(transition.duration)});
                     properties.push_back({transitionPrefix + "HasExitTime", PropertyType::Bool, transition.hasExitTime ? "true" : "false"});
                     properties.push_back({transitionPrefix + "ExitTime", PropertyType::Float, std::to_string(transition.exitTime)});
+                    properties.push_back({transitionPrefix + "Offset", PropertyType::Float, std::to_string(transition.offset)});
                     properties.push_back({transitionPrefix + "ConditionCount", PropertyType::Int, std::to_string(transition.conditions.size())});
                     for (size_t conditionIndex = 0; conditionIndex < transition.conditions.size(); ++conditionIndex)
                     {
@@ -1323,6 +1564,10 @@ namespace PlutoGE::scene
             else if (property.name == "PoseUpdateRate")
             {
                 m_poseUpdateRate = std::clamp(ParseFloatSafe(property.value), 0.0f, 240.0f);
+            }
+            else if (property.name == "StripRootMotion" || property.name == "StripRootVerticalMotion")
+            {
+                SetStripRootMotion(ParseBool(property.value));
             }
             else if (property.name == "RagdollEnabled")
             {
@@ -1442,6 +1687,10 @@ namespace PlutoGE::scene
                     else if (transitionField == "ExitTime")
                     {
                         transition.exitTime = ParseFloatSafe(property.value, 0.9f);
+                    }
+                    else if (transitionField == "Offset")
+                    {
+                        transition.offset = std::clamp(ParseFloatSafe(property.value, 0.0f), 0.0f, 1.0f);
                     }
                     else if (transitionField == "ConditionCount")
                     {
@@ -1791,6 +2040,40 @@ namespace PlutoGE::scene
         m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
     }
 
+    void AnimationComponent::Seek(float time, bool preserveTransition)
+    {
+        if (!std::isfinite(time)) return;
+        if (m_states.empty()) { SetTime(time); return; }
+        if (m_transition.active && preserveTransition)
+        {
+            const auto &state = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
+            const float duration = GetClipDuration(state.clipIndex);
+            m_transition.destinationTime = duration <= 0 ? 0 : state.loop
+                ? std::fmod(std::fmod(time, duration) + duration, duration)
+                : std::clamp(time, 0.0f, duration);
+            m_currentClipIndex = state.clipIndex;
+            m_time = m_transition.destinationTime;
+            m_jointMatricesDirty = m_nodeMatricesDirty = true;
+            return;
+        }
+        if (m_transition.active)
+        {
+            m_graphCurrentStateIndex = m_transition.destinationStateIndex;
+            m_transition = {};
+        }
+        ClampGraph();
+        const auto &state = m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
+        m_currentClipIndex = state.clipIndex;
+        const float duration = GetCurrentClipDuration();
+        m_graphStateTime = duration <= 0 ? 0 : state.loop
+            ? std::fmod(std::fmod(time, duration) + duration, duration)
+            : std::clamp(time, 0.0f, duration);
+        m_time = m_graphStateTime;
+        m_graphStarted = true;
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
+    }
+
     void AnimationComponent::SetEditorPreviewMode(bool enabled)
     {
         if (m_editorPreviewMode == enabled) return;
@@ -2070,6 +2353,7 @@ namespace PlutoGE::scene
                         transition.duration = assetTransition.duration;
                         transition.hasExitTime = assetTransition.hasExitTime;
                         transition.exitTime = assetTransition.exitTime;
+                        transition.offset = assetTransition.offset;
                         for (const auto &condition : assetTransition.conditions)
                             transition.conditions.push_back(AnimationCondition{
                                 .parameterName = condition.parameterName,
@@ -2111,6 +2395,7 @@ namespace PlutoGE::scene
             transition.duration = assetTransition.duration;
             transition.hasExitTime = assetTransition.hasExitTime;
             transition.exitTime = assetTransition.exitTime;
+            transition.offset = assetTransition.offset;
             transition.conditions.reserve(assetTransition.conditions.size());
             for (const auto &assetCondition : assetTransition.conditions)
             {
@@ -2230,7 +2515,13 @@ namespace PlutoGE::scene
         if (points.size() == 1)
             return {{points.front().clipIndex, 1.0f}};
 
+        // Collinear (1D) blend spaces: a sample point lies on every segment that
+        // spans it, including non-adjacent ones (Walk-Sprint passes through Run).
+        // Break near-ties towards the shortest segment so the adjacent pair wins;
+        // otherwise rounding just past a point flips between it and a mix of its
+        // neighbours.
         float bestDistanceSquared = std::numeric_limits<float>::max();
+        float bestLengthSquared = std::numeric_limits<float>::max();
         size_t bestFirst = 0;
         size_t bestSecond = 1;
         float bestT = 0.0f;
@@ -2252,9 +2543,11 @@ namespace PlutoGE::scene
                 const float dx = x - closestX;
                 const float dy = y - closestY;
                 const float distanceSquared = dx * dx + dy * dy;
-                if (distanceSquared < bestDistanceSquared)
+                const bool tied = std::abs(distanceSquared - bestDistanceSquared) <= epsilon * epsilon;
+                if ((!tied && distanceSquared < bestDistanceSquared) || (tied && lengthSquared < bestLengthSquared))
                 {
                     bestDistanceSquared = distanceSquared;
+                    bestLengthSquared = lengthSquared;
                     bestFirst = first;
                     bestSecond = second;
                     bestT = t;
@@ -2441,6 +2734,26 @@ namespace PlutoGE::scene
         }
     }
 
+    float AnimationComponent::TransitionStartTime(const AnimationTransition &transition,
+                                                  const std::vector<AnimationState> &states) const
+    {
+        // State time is measured against the state's reference clip, which is
+        // also how blend spaces derive their shared phase.
+        if (transition.offset <= 0.0f || transition.destinationStateIndex < 0 ||
+            transition.destinationStateIndex >= static_cast<int>(states.size()))
+            return 0.0f;
+        const float duration = GetClipDuration(states[static_cast<size_t>(transition.destinationStateIndex)].clipIndex);
+        return std::clamp(transition.offset, 0.0f, 1.0f) * std::max(0.0f, duration);
+    }
+
+    void AnimationComponent::SetStripRootMotion(bool strip)
+    {
+        if (m_stripRootMotion == strip)
+            return;
+        m_stripRootMotion = strip;
+        m_jointMatricesDirty = true;
+    }
+
     void AnimationComponent::StartTransition(int sourceStateIndex, const AnimationTransition &transition)
     {
         if (sourceStateIndex < 0 || sourceStateIndex >= static_cast<int>(m_states.size()))
@@ -2452,7 +2765,7 @@ namespace PlutoGE::scene
         m_transition.sourceStateIndex = sourceStateIndex;
         m_transition.destinationStateIndex = transition.destinationStateIndex;
         m_transition.sourceTime = m_graphStateTime;
-        m_transition.destinationTime = 0.0f;
+        m_transition.destinationTime = TransitionStartTime(transition, m_states);
         m_transition.elapsed = 0.0f;
         m_transition.duration = std::max(0.0f, transition.duration);
         ConsumeTransitionTriggers(transition);
@@ -2460,7 +2773,7 @@ namespace PlutoGE::scene
         if (m_transition.duration <= 0.0f)
         {
             m_graphCurrentStateIndex = m_transition.destinationStateIndex;
-            m_graphStateTime = 0.0f;
+            m_graphStateTime = m_transition.destinationTime;
             m_transition = {};
         }
     }
@@ -2626,14 +2939,14 @@ namespace PlutoGE::scene
         layer.graphTransitionSourceStateIndex = sourceStateIndex;
         layer.graphTransitionDestinationStateIndex = transition.destinationStateIndex;
         layer.graphTransitionSourceTime = layer.graphStateTime;
-        layer.graphTransitionDestinationTime = 0.0f;
+        layer.graphTransitionDestinationTime = TransitionStartTime(transition, layer.graphStates);
         layer.graphTransitionElapsed = 0.0f;
         layer.graphTransitionDuration = std::max(0.0f, transition.duration);
         ConsumeTransitionTriggers(transition);
         if (layer.graphTransitionDuration <= 0.0f)
         {
             layer.graphCurrentStateIndex = transition.destinationStateIndex;
-            layer.graphStateTime = 0.0f;
+            layer.graphStateTime = layer.graphTransitionDestinationTime;
             layer.graphTransitionActive = false;
         }
     }
@@ -2918,6 +3231,29 @@ namespace PlutoGE::scene
     {
         const int index = FindParameterIndex(parameterName);
         return index >= 0 ? m_parameters[static_cast<size_t>(index)].intValue : 0;
+    }
+
+    bool AnimationComponent::CrossFadeState(std::string_view stateName, float duration, float startTime)
+    {
+        const int destination = FindStateIndex(stateName);
+        if (destination < 0 || !std::isfinite(duration) || duration < 0 || !std::isfinite(startTime))
+            return false;
+        Play();
+        ClampGraph();
+        // Commit a previous transition before replacing its destination. State indices and
+        // clocks remain valid when actions interrupt another graph transition.
+        if (m_transition.active)
+        {
+            m_graphCurrentStateIndex = m_transition.destinationStateIndex;
+            m_graphStateTime = m_transition.destinationTime;
+            m_transition = {};
+        }
+        AnimationTransition transition;
+        transition.destinationStateIndex = destination;
+        transition.duration = duration;
+        StartTransition(m_graphCurrentStateIndex, transition);
+        Seek(startTime, true);
+        return true;
     }
 
     bool AnimationComponent::PlayState(std::string_view stateName)
@@ -3387,6 +3723,10 @@ namespace PlutoGE::scene
         {
             hashCombine(signature, std::hash<std::string>{}(joint.name));
             hashCombine(signature, static_cast<std::size_t>(joint.parentJointIndex + 1));
+            // Bind edits change automatic reference-pose alignment, not just bone bindings.
+            for (int column = 0; column < 4; ++column)
+                for (int row = 0; row < 4; ++row)
+                    hashCombine(signature, std::hash<float>{}(joint.localBindTransform[column][row]));
         }
         for (const auto &mapping : skeleton.humanoidBoneMappings)
         {
@@ -3466,6 +3806,7 @@ namespace PlutoGE::scene
             cache.sourceBindScales.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(1.0f));
             cache.sourceParentIndices.assign(static_cast<size_t>(sourceNodeCount), -1);
             cache.sourceNodesPresent.assign(static_cast<size_t>(sourceNodeCount), 0);
+            cache.sourceParentBindBases.assign(static_cast<size_t>(sourceNodeCount), glm::mat3(1.0f));
             for (const auto &channel : channels)
             {
                 cache.jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
@@ -3492,6 +3833,23 @@ namespace PlutoGE::scene
                 glm::vec3 ignoredScale;
                 DecomposeTransform(cache.sourceGlobalBindTransforms[nodeIndex], ignoredTranslation,
                                    cache.sourceGlobalBindRotations[nodeIndex], ignoredScale);
+                if (cache.sourceNodesPresent[nodeIndex])
+                {
+                    cache.sourceParentBindBases[nodeIndex] = glm::mat3(
+                        cache.sourceGlobalBindTransforms[nodeIndex] * cache.sourceInverseLocalBindTransforms[nodeIndex]);
+                }
+            }
+            cache.sourceToTargetBasis = ResolveRetargetBasis(channels, cache, skeleton, m_targetGlobalBindTransforms);
+            ResolveReferencePoseCorrections(channels, cache, skeleton, m_targetGlobalBindTransforms);
+            for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+            {
+                const int mappingIndex = cache.mappingBindings[channelIndex];
+                if (mappingIndex >= 0 && skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)].bone == render::HumanoidBone::Hips &&
+                    channels[channelIndex].nodeIndex >= 0)
+                {
+                    cache.sourceHipsNodeIndex = channels[channelIndex].nodeIndex;
+                    break;
+                }
             }
         }
     }
@@ -3527,7 +3885,7 @@ namespace PlutoGE::scene
                 m_clips, clipIndex, time, skeleton,
                 validBindings ? m_retargetClipCaches[static_cast<size_t>(clipIndex)] : emptyCache,
                 m_targetBindTranslations, m_targetBindRotations, m_targetBindScales,
-                m_targetGlobalBindTransforms, m_targetGlobalBindRotations);
+                m_targetGlobalBindTransforms, m_targetGlobalBindRotations, m_stripRootMotion);
         };
         auto sampleState = [&](const AnimationState &state, float time)
         {

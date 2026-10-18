@@ -552,6 +552,8 @@ int main(int argc, char **argv)
             state.clipReference = "project://Walk.plutoclip";
             state.blendSpacePoints.push_back({.clipReference="project://Walk.plutoclip"});
             graph.states.push_back(state);
+            graph.transitions.push_back({.id=1, .fromStateId=1, .toStateId=1, .offset=0.375f,
+                                         .conditions={{.parameterName="Grounded"}}});
             graph.layers.push_back({.id=1, .name="Layer", .graphReference="project://Base.plutoanimgraph", .clipReference="project://Walk.plutoclip"});
             Require(nativeWriter.SaveAnimationGraphAsset("project://Output.plutoanimgraph", graph, &error), error);
             Require(graph.states.front().clipReference == "project://Walk.plutoclip", "Graph writer mutated caller state");
@@ -572,6 +574,8 @@ int main(int argc, char **argv)
             Require(graphLoaded && savedGraph.states.front().clipReference == logicalClip &&
                 savedGraph.states.front().blendSpacePoints.front().clipReference == logicalClip &&
                 savedGraph.layers.front().graphReference == logicalGraph, "Graph dependencies did not retain identities");
+            Require(savedGraph.transitions.size() == 1 && std::abs(savedGraph.transitions.front().offset - 0.375f) < 0.0001f &&
+                savedGraph.transitions.front().conditions.size() == 1, "Graph transition offset did not round-trip");
             CookOptions nativeCook;
             nativeCook.includeUnreferencedAssets = false;
             nativeCook.alwaysInclude = {"project://Output.plutoanim", "project://Output.plutoanimgraph", "project://Output.plutomaterial", "project://Output.plutomesh", "project://Output.plutoshadergraph"};

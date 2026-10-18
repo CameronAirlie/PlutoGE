@@ -42,6 +42,24 @@ public static class Physics
         return RaycastTagged(origin, direction, maxDistance, tag, ignoredEntity?.EntityId ?? 0, out hit);
     }
 
+    /// <summary>Tests an upright capsule against solid colliders, ignoring triggers and the ignored entity hierarchy.
+    /// Height includes both caps. With zero displacement this tests penetration; otherwise it also sweeps
+    /// to the destination and reports center travel to the first contact. Does not move any entity.</summary>
+    public static bool QueryCapsule(Vector3 center, Vector3 displacement, float radius, float height,
+                                    GameObject? ignoredEntity, out RaycastHit hit)
+    {
+        if (!float.IsFinite(radius) || !float.IsFinite(height) || radius <= 0 || height < 2 * radius ||
+            !Finite(center) || !Finite(displacement))
+            throw new ArgumentOutOfRangeException(nameof(radius), "Capsule dimensions and positions must be finite, with height >= diameter > 0.");
+        hit = default;
+        if (!ScriptBridge.PhysicsQueryCapsule(center, displacement, radius, height, ignoredEntity?.EntityId ?? 0, out var native))
+            return false;
+        hit = new RaycastHit(native.EntityId, native.Point.ToManaged(), native.Normal.ToManaged(), native.Distance);
+        return true;
+    }
+
+    private static bool Finite(Vector3 value) => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
     public static Vector3 MoveKinematic(GameObject gameObject, Vector3 displacement, float skinWidth = 0.02f)
     {
         return gameObject.IsValid

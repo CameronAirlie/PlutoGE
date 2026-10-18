@@ -50,6 +50,16 @@ textures available during import, especially when a model references separate
 image files. Project-owned generated assets use `project://`; built-in primitives
 use references such as `engine://builtin/mesh/cube`.
 
+To create editable copies of a model's mesh, materials, and textures, select the
+source model in the Content Browser and use **Extract All** in its inspector.
+The **Extract to** line identifies the destination folder under Assets; the result
+below the button reports the extracted count and any failure. Imported products
+can live only in Library, so they need not exist beside the source model before
+extraction. Individual objects also provide **Extract** or **Extract & Use**.
+Extraction names also avoid imported objects reserved in Library, even if no
+corresponding file exists under Assets. Extracting beside the source may therefore
+produce names such as `skeleton_1.plutomesh` or `M_skeleton_0_1.plutomaterial`.
+
 **Example: import a crate.** Place one imported crate beside the first-game Player.
 Check its scale, orientation, pivot, material assignments, and texture appearance.
 Give it a Box collider sized to the actual crate. Only duplicate or prefab it

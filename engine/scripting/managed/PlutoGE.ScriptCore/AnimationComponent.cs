@@ -43,6 +43,8 @@ public sealed class AnimationComponent : ComponentReference
         set => ScriptBridge.SetAnimationSpeed(EntityId, value);
     }
 
+    /// <summary>Seeks the visible clip and graph state together. Seeking commits an active transition
+    /// to its destination and preserves playback speed/playing state.</summary>
     public float Time
     {
         get => ScriptBridge.GetAnimationTime(EntityId);
@@ -105,6 +107,22 @@ public sealed class AnimationComponent : ComponentReference
     public void Stop()
     {
         ScriptBridge.AnimationStop(EntityId);
+    }
+
+    /// <summary>Blends from the current graph state into a named state at an absolute clip time.</summary>
+    public bool CrossFadeState(string stateName, float duration, float startTime = 0)
+    {
+        ArgumentNullException.ThrowIfNull(stateName);
+        if (!float.IsFinite(duration) || duration < 0) throw new ArgumentOutOfRangeException(nameof(duration));
+        if (!float.IsFinite(startTime)) throw new ArgumentOutOfRangeException(nameof(startTime));
+        return ScriptBridge.AnimationCrossFadeState(EntityId, stateName, duration, startTime);
+    }
+
+    /// <summary>Sets destination clip time without completing an active crossfade.</summary>
+    public void SeekBlended(float time)
+    {
+        if (!float.IsFinite(time)) throw new ArgumentOutOfRangeException(nameof(time));
+        ScriptBridge.SeekBlendedAnimation(EntityId, time);
     }
 
     public void PlayState(string stateName)

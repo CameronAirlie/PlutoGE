@@ -50,6 +50,9 @@ namespace PlutoGE::assets
         float duration = 0.15f;
         bool hasExitTime = false;
         float exitTime = 0.9f;
+        // Normalized time at which the destination state starts playing, for
+        // example skipping the airborne lead-in of a landing clip.
+        float offset = 0.0f;
         std::vector<AnimationGraphCondition> conditions;
     };
 

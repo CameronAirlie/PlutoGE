@@ -16,9 +16,7 @@ namespace PlutoGE::scene
     {
         int FindJoint(const render::Skeleton &skeleton, const std::string &name)
         {
-            for (int i = 0; i < static_cast<int>(skeleton.joints.size()); ++i)
-                if (skeleton.joints[i].name == name) return i;
-            return -1;
+            return render::FindSkeletonJoint(skeleton, name);
         }
         std::string Number(float value)
         {

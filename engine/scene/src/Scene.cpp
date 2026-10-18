@@ -3792,6 +3792,83 @@ namespace PlutoGE::scene
         return true;
     }
 
+    bool Scene::QueryCapsule(const glm::vec3 &center, const glm::vec3 &displacement, float radius, float height,
+                             PhysicsRaycastHit &hit, EntityID ignoredEntityId) const
+    {
+        hit = {};
+        if (!std::isfinite(radius) || !std::isfinite(height) || radius <= 0 || height < radius * 2 ||
+            !std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) ||
+            !std::isfinite(displacement.x) || !std::isfinite(displacement.y) || !std::isfinite(displacement.z))
+            return false;
+        auto &world = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world
+            ? static_cast<btCollisionWorld &>(m_runtimePhysicsState->world->dynamicsWorld)
+            : GetPhysicsQueryCache().world->collisionWorld;
+        btCapsuleShape shape(radius, height - radius * 2);
+        btTransform from, to;
+        from.setIdentity();
+        from.setOrigin(ToBullet(center));
+        to = from;
+        to.setOrigin(ToBullet(center + displacement));
+        btCollisionObject probe;
+        probe.setCollisionShape(&shape);
+        probe.setWorldTransform(from);
+        class Contact final : public btCollisionWorld::ContactResultCallback
+        {
+        public:
+            Contact(EntityID ignored, const btCollisionObject *probe) : ignored(ignored), probe(probe) {}
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!ContactResultCallback::needsCollision(proxy)) return false;
+                const auto *object = static_cast<const btCollisionObject *>(proxy->m_clientObject);
+                return object && object->hasContactResponse() &&
+                    !IsEntityOrDescendantOf(static_cast<const Entity *>(object->getUserPointer()), ignored);
+            }
+            btScalar addSingleResult(btManifoldPoint &point, const btCollisionObjectWrapper *a, int, int,
+                                     const btCollisionObjectWrapper *b, int, int) override
+            {
+                if (point.getDistance() >= -0.0001f) return 0;
+                const bool probeIsA = a->getCollisionObject() == probe;
+                const auto *other = probeIsA ? b->getCollisionObject() : a->getCollisionObject();
+                const auto *entity = static_cast<const Entity *>(other->getUserPointer());
+                hit.entityId = entity ? entity->GetID() : 0;
+                hit.point = FromBullet(probeIsA ? point.getPositionWorldOnB() : point.getPositionWorldOnA());
+                hit.normal = FromBullet(probeIsA ? point.m_normalWorldOnB : -point.m_normalWorldOnB);
+                found = true;
+                return 0;
+            }
+            EntityID ignored;
+            const btCollisionObject *probe;
+            bool found = false;
+            PhysicsRaycastHit hit{};
+        } contact(ignoredEntityId, &probe);
+        world.contactTest(&probe, contact);
+        if (contact.found) { hit = contact.hit; return true; }
+        const float distance = glm::length(displacement);
+        if (distance <= 0.00001f) return false;
+        class Sweep final : public btCollisionWorld::ClosestConvexResultCallback
+        {
+        public:
+            Sweep(const btVector3 &a, const btVector3 &b, EntityID ignored)
+                : ClosestConvexResultCallback(a, b), ignored(ignored) {}
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!ClosestConvexResultCallback::needsCollision(proxy)) return false;
+                const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
+                return object && object->hasContactResponse() &&
+                    !IsEntityOrDescendantOf(static_cast<const Entity *>(object->getUserPointer()), ignored);
+            }
+            EntityID ignored;
+        } sweep(from.getOrigin(), to.getOrigin(), ignoredEntityId);
+        world.convexSweepTest(&shape, from, to, sweep);
+        if (!sweep.hasHit()) return false;
+        const auto *entity = static_cast<const Entity *>(sweep.m_hitCollisionObject->getUserPointer());
+        hit.entityId = entity ? entity->GetID() : 0;
+        hit.point = FromBullet(sweep.m_hitPointWorld);
+        hit.normal = NormalizeRaycastNormal(sweep.m_hitNormalWorld);
+        hit.distance = distance * sweep.m_closestHitFraction;
+        return true;
+    }
+
     void Scene::RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
                              EntityID ignoredEntityId,
                              std::vector<PhysicsRaycastHit> &hits,

@@ -27,6 +27,7 @@ FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
 
 [[vk::binding(7, 0)]] Sampler2D sceneTexture : register(t7, space0);
 [[vk::binding(8, 0)]] Sampler2D indirectTexture : register(t8, space0);
+[[vk::binding(9, 0)]] Sampler2D geometrySceneTexture : register(t9, space0);
 
 struct SsaoResolvedOutput
 {
@@ -39,7 +40,8 @@ SsaoResolvedOutput ssaoOutput(float2 uv, float ao, float depth, float3 normal)
     output.history = float4(ao, depth, encodeOctahedral(normal));
     #ifndef PLUTO_SSAO_FILTER_ONLY
     const float4 scene = sceneTexture.SampleLevel(uv,0);
-    const float3 indirect = indirectTexture.SampleLevel(uv,0).rgb;
+    const float3 indirect = indirectTexture.SampleLevel(uv,0).rgb +
+        max(scene.rgb - geometrySceneTexture.SampleLevel(uv,0).rgb, 0.0);
     output.color=ssaoComposite(scene,indirect,ao,pass.parameters[1].y>0.5);
     #else
     output.color=float4(0);

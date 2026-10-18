@@ -11,6 +11,32 @@ namespace PlutoGE.ScriptCore.Native;
 
 internal static unsafe partial class ScriptBridge
 {
+    private static delegate* unmanaged[Cdecl]<uint, byte*, float, float, int> _animationCrossFade;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _seekBlendedAnimation;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterAnimationBlendApi")]
+    public static int RegisterAnimationBlendApi(
+        delegate* unmanaged[Cdecl]<uint, byte*, float, float, int> crossFade,
+        delegate* unmanaged[Cdecl]<uint, float, void> seek)
+    {
+        if (crossFade == null || seek == null) return 0;
+        _animationCrossFade = crossFade;
+        _seekBlendedAnimation = seek;
+        return 1;
+    }
+
+    internal static bool AnimationCrossFadeState(uint entityId, string name, float duration, float startTime)
+    {
+        if (_animationCrossFade == null || name.Contains('\0')) return false;
+        byte[] bytes = Encoding.UTF8.GetBytes(name + "\0");
+        fixed (byte* pointer = bytes) return _animationCrossFade(entityId, pointer, duration, startTime) != 0;
+    }
+    internal static void SeekBlendedAnimation(uint entityId, float time)
+    {
+        if (_seekBlendedAnimation == null) throw new NotSupportedException("Animation blending requires a matching native host.");
+        _seekBlendedAnimation(entityId, time);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativeDebugDrawRequest
     {
@@ -422,6 +448,7 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> _physicsMoveKinematic;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, float, uint, NativeRaycastHit*, int> _physicsQueryCapsule;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, nint, NativeVector3, float, float, uint> _spawnDecal;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> _navigationProjectPoint;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> _navigationFindPath;
@@ -1460,6 +1487,15 @@ internal static unsafe partial class ScriptBridge
         _physicsMoveKinematic = moveKinematic;
         _spawnDecal = spawnDecal;
         _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterCapsuleQueryApi")]
+    public static int RegisterCapsuleQueryApi(
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, float, uint, NativeRaycastHit*, int> queryCapsule)
+    {
+        if (queryCapsule == null) { SetError("Capsule query registration received a null function pointer."); return 0; }
+        _physicsQueryCapsule = queryCapsule;
         return 1;
     }
 
@@ -2985,6 +3021,17 @@ internal static unsafe partial class ScriptBridge
         {
             Marshal.FreeCoTaskMem(tagPtr);
         }
+    }
+
+    internal static bool PhysicsQueryCapsule(Vector3 center, Vector3 displacement, float radius, float height,
+                                             uint ignoredEntityId, out NativeRaycastHit hit)
+    {
+        if (_physicsQueryCapsule == null)
+            throw new InvalidOperationException("Capsule queries require a matching native host and ScriptCore build.");
+        hit = default;
+        fixed (NativeRaycastHit* result = &hit)
+            return _physicsQueryCapsule(NativeVector3.FromManaged(center), NativeVector3.FromManaged(displacement),
+                                         radius, height, ignoredEntityId, result) != 0;
     }
 
     internal static Vector3 PhysicsMoveKinematic(uint entityId, Vector3 displacement, float skinWidth)

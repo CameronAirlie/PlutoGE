@@ -1,3 +1,4 @@
+#include "PlutoGE/render/SkeletonJointLookup.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -17,6 +18,25 @@ int main()
 {
     try
     {
+        {
+            render::Skeleton imported;
+            for (const char *name : {"mixamorig:LeftArm", "mixamorig:LeftForeArm", "mixamorig:LeftHand",
+                "mixamorig:LeftHandMiddle1", "mixamorig:LeftHandIndex1", "mixamorig:LeftHandRing1"})
+                imported.joints.push_back({.name=name});
+            imported.humanoidBoneMappings = {
+                {.bone=render::HumanoidBone::LeftUpperArm,.targetJointIndex=0},
+                {.bone=render::HumanoidBone::LeftLowerArm,.targetJointIndex=1},
+                {.bone=render::HumanoidBone::LeftHand,.targetJointIndex=2}};
+            Require(render::FindSkeletonJoint(imported,"UpperArm.L")==0,"Mapped upper arm alias failed");
+            Require(render::FindSkeletonJoint(imported,"LowerArm.L")==1,"Mapped lower arm alias failed");
+            Require(render::FindSkeletonJoint(imported,"Hand.L")==2,"Mapped wrist alias failed");
+            Require(render::FindSkeletonJoint(imported,"Middle1.L")==3,"Middle finger alias failed");
+            Require(render::FindSkeletonJoint(imported,"index_01_l")==4,"Unreal finger alias failed");
+            Require(render::FindSkeletonJoint(imported,"Ring1.R")==-1,"Finger alias crossed sides");
+            imported.joints.push_back({.name="other:LeftHandMiddle1"});
+            Require(render::FindSkeletonJoint(imported,"Middle1.L")==-1,"Ambiguous finger alias accepted");
+            Require(render::FindSkeletonJoint(imported,"mixamorig:LeftHandMiddle1")==3,"Exact finger name lost priority");
+        }
         render::MeshConfig config;
         config.skeleton.joints.resize(3); config.animationNodes.resize(3);
         for (int i=0; i<3; ++i)

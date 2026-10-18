@@ -3814,6 +3814,7 @@ namespace PlutoGE::ui
                                         graphChanged |= ImGui::DragFloat("Blend Duration", &transition.duration, 0.01f, 0.0f, 10.0f);
                                         graphChanged |= ImGui::Checkbox("Has Exit Time", &transition.hasExitTime);
                                         graphChanged |= ImGui::DragFloat("Exit Time", &transition.exitTime, 0.01f, 0.0f, 10.0f);
+                                        graphChanged |= ImGui::DragFloat("Offset", &transition.offset, 0.005f, 0.0f, 1.0f, "%.3f");
 
                                         if (ImGui::Button("Add Condition") && !parameters.empty())
                                         {

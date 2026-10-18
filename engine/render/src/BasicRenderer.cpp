@@ -1091,6 +1091,7 @@ namespace PlutoGE::render
                 {
                     ssaoDescriptor.resourceBindings.push_back({7, 0, 7, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     ssaoDescriptor.resourceBindings.push_back({8, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    ssaoDescriptor.resourceBindings.push_back({9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     ssaoDescriptor.resourceBindings.push_back(
                         {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     ssaoDescriptor.resourceBindings.push_back(
@@ -4904,6 +4905,7 @@ namespace PlutoGE::render
         commands.BindTexture(6,m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(),m_screenSampler.Get());
         commands.BindTexture(7,source,m_screenSampler.Get());
         commands.BindTexture(8,m_indirectTarget.Get(),m_screenSampler.Get());
+        commands.BindTexture(9,m_colorTarget.Get(),m_screenSampler.Get());
         commands.Draw(3); commands.EndRendering();
         commands.EndGpuScope();
         if (reducedResolution)
@@ -4919,6 +4921,7 @@ namespace PlutoGE::render
             commands.BindTexture(3,m_normalTarget.Get(),m_screenSampler.Get());
             commands.BindTexture(6,resolvedHistory.Get(),m_screenSampler.Get());
             commands.BindTexture(8,m_indirectTarget.Get(),m_screenSampler.Get());
+            commands.BindTexture(9,m_colorTarget.Get(),m_screenSampler.Get());
             commands.Draw(3); commands.EndRendering();
             commands.EndGpuScope();
         }

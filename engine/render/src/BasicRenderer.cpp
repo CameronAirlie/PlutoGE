@@ -1509,16 +1509,16 @@ namespace PlutoGE::render
         return mesh;
     }
 
-    std::shared_ptr<RhiGpuSkinningSource> BasicRenderer::CreateGpuSkinningSource(std::span<const MeshVertexData> vertices)
+    std::shared_ptr<RhiGpuSkinningSource> BasicRenderer::CreateGpuSkinningSource(const Mesh &mesh)
     {
         if (!m_gpuSkinning) throw std::logic_error("GPU skinning is unavailable");
-        return m_gpuSkinning->CreateSource(vertices);
+        return m_gpuSkinning->CreateSource(mesh.GetMeshData().vertices, BuildSkinningLodLayout(mesh));
     }
 
     BasicMesh BasicRenderer::CreateGpuSkinnedMesh(std::shared_ptr<const RhiGpuSkinningSource> source,
-                                                 std::span<const std::uint32_t> indices,
                                                  std::span<const ShadowGeometryCluster> bounds)
     {
+        const std::span<const std::uint32_t> indices = source ? std::span(source->layout.indices) : std::span<const std::uint32_t>{};
         if (!m_gpuSkinning || !source || indices.empty() || bounds.empty())
             throw std::invalid_argument("GPU skinned mesh requires source geometry and bounds");
         BasicMesh mesh;
@@ -1534,8 +1534,8 @@ namespace PlutoGE::render
         return mesh;
     }
 
-    void BasicRenderer::UpdateGpuSkinnedMesh(BasicMesh &mesh, std::span<const glm::mat4> current,
-                                            std::span<const glm::mat4> previous, bool geometryChanged,
+    void BasicRenderer::UpdateGpuSkinnedMesh(BasicMesh &mesh, std::span<const glm::mat4> palette, std::uint32_t firstVertex,
+                                            std::uint32_t endVertex, bool hasHistory, bool geometryChanged,
                                             std::span<const ShadowGeometryCluster> bounds)
     {
         if (!m_gpuSkinning || !mesh.m_gpuSkinningState || bounds.size() != mesh.m_shadowClusters.size())
@@ -1543,7 +1543,7 @@ namespace PlutoGE::render
         for (std::size_t i = 0; i < bounds.size(); ++i)
             if (bounds[i].firstIndex != mesh.m_shadowClusters[i].firstIndex || bounds[i].indexCount != mesh.m_shadowClusters[i].indexCount)
                 throw std::invalid_argument("GPU shadow bounds must preserve topology");
-        m_gpuSkinning->Queue(*mesh.m_gpuSkinningState,current,previous);
+        m_gpuSkinning->Queue(*mesh.m_gpuSkinningState,palette,firstVertex,endVertex,hasHistory);
         if (geometryChanged)
         {
             mesh.m_revision = m_nextMeshRevision++;
@@ -1848,30 +1848,30 @@ namespace PlutoGE::render
         const auto beginFrameStart = std::chrono::steady_clock::now();
         if (recordingMode == RecordingMode::Begin)
             commands.BeginFrame(m_submissionLabel);
-        bool skinningScope = false;
-        const auto deformMeshes = [&](std::span<const BasicDraw> list)
+        m_gpuSkinningDispatches.clear();
+        const auto collectDeformations = [&](std::span<const BasicDraw> list)
         {
             for (const auto &draw : list)
             {
                 if (!draw.mesh || !draw.mesh->m_gpuSkinningState || !draw.mesh->m_gpuSkinningState->pending) continue;
                 if (!m_gpuSkinning) throw std::logic_error("Queued GPU skinning requires its compute pipeline");
-                if (!skinningScope)
-                {
-                    commands.BeginGpuScope("RHI GPU skinning");
-                    commands.ShaderMemoryBarrier();
-                    skinningScope = true;
-                }
-                m_gpuSkinning->Record(*draw.mesh->m_gpuSkinningState, draw.mesh->m_vertexBuffer.Get());
-                ++m_frameStats.gpuSkinningDispatches;
-                m_frameStats.gpuSkinningVertices += draw.mesh->m_gpuSkinningState->source->vertexCount;
-                m_frameStats.gpuSkinningPaletteBytes += draw.mesh->m_gpuSkinningState->matrices.size() * sizeof(glm::mat4);
+                const auto &state = *draw.mesh->m_gpuSkinningState;
+                // Submeshes share one state; count its work once.
+                if (std::ranges::any_of(m_gpuSkinningDispatches, [&](const auto &queued) { return queued.state == &state; })) continue;
+                m_gpuSkinningDispatches.push_back({draw.mesh->m_gpuSkinningState.get(), draw.mesh->m_vertexBuffer.Get()});
+                m_frameStats.gpuSkinningVertices += state.endVertex - state.firstVertex;
+                m_frameStats.gpuSkinningPaletteBytes += state.paletteRows.size() * sizeof(glm::vec4);
             }
         };
-        deformMeshes(draws);
-        deformMeshes(shadowDraws);
-        deformMeshes(giDraws);
-        if (skinningScope)
+        collectDeformations(draws);
+        collectDeformations(shadowDraws);
+        collectDeformations(giDraws);
+        if (!m_gpuSkinningDispatches.empty())
         {
+            commands.BeginGpuScope("RHI GPU skinning");
+            commands.ShaderMemoryBarrier();
+            m_gpuSkinning->BeginFrame();
+            m_frameStats.gpuSkinningDispatches += m_gpuSkinning->Record(m_gpuSkinningDispatches);
             commands.ShaderMemoryBarrier();
             commands.EndGpuScope();
         }

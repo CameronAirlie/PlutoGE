@@ -12,9 +12,10 @@ at LOD0–3 (35%, 55%, and 72% fewer triangles in the additional levels).
 Vertices, skin influences, rig, material slots and LOD0 indices remain intact.
 LODs use existing projected-radius thresholds (260 / 150 / 80 pixels).
 Simplification protects borders and considers normals, UVs and joint weights.
-Submeshes exceeding the simplifier attribute limit retain LOD0 conservatively.
-These index-only LODs reduce rasterization work, but retain the full skinning
-vertex stream. They do not promise a corresponding reduction in CPU skinning.
+Joints that never meet share simplifier attribute slots, so dense rigs get LODs;
+only rigs that still exceed the attribute budget retain LOD0. GPU skinning
+deforms only the vertex prefix the drawn LODs read, so these index-only LODs now
+also reduce skinning work. See `animated-character-performance.md`.
 
 ## Asset preparation
 

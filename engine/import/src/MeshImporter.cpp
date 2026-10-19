@@ -1,6 +1,8 @@
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/import/MeshImporter.h"
+#include "SimplificationSeamLocks.h"
+#include "SkinWeightAttributeSlots.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -171,7 +173,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 37;
+        constexpr uint32_t kCookedMeshCacheVersion = 38;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -1978,7 +1980,7 @@ namespace PlutoGE::assetimport
                     localIndices.push_back(it->second);
                 }
                 uint32_t previousIndexCount = submesh.indexCount;
-                // Joint IDs are categorical. Use one weight attribute per joint
+                // Joint IDs are categorical. Use weight attributes per joint
                 // instead of interpolating the four packed joint indices.
                 std::vector<int> joints;
                 for (const auto global : globalByLocal)
@@ -1987,10 +1989,15 @@ namespace PlutoGE::assetimport
                             joints.push_back(meshData.vertices[global].joints[influence]);
                 std::sort(joints.begin(), joints.end());
                 joints.erase(std::unique(joints.begin(), joints.end()), joints.end());
-                // meshoptimizer supports 32 attributes. Keep complex rigs at
-                // LOD0 rather than silently dropping deformation constraints.
-                if (joints.size() > 27) return;
-                const size_t attributeCount = 5 + joints.size();
+                // meshoptimizer supports 32 attributes; normals and UVs use 5.
+                // Joints that never share a vertex neighbourhood share a slot.
+                // Rigs that still exceed the budget stay at LOD0 rather than
+                // silently dropping deformation constraints.
+                constexpr uint32_t kMaxJointAttributeSlots = 27;
+                const auto jointSlots = AssignSkinWeightAttributeSlots(
+                    meshData.vertices, globalByLocal, localIndices, joints, kMaxJointAttributeSlots);
+                if (!jointSlots) return;
+                const size_t attributeCount = 5 + jointSlots->slotCount;
                 std::vector<float> attributes(globalByLocal.size() * attributeCount, 0.0f);
                 std::vector<float> attributeWeights(attributeCount, 1.0f);
                 attributeWeights[0] = attributeWeights[1] = attributeWeights[2] = 0.5f;
@@ -2002,8 +2009,29 @@ namespace PlutoGE::assetimport
                     std::copy(vertex.uv.begin(), vertex.uv.end(), values + 3);
                     for (size_t influence = 0; influence < 4; ++influence)
                         if (vertex.weights[influence] > 0)
-                            values[5 + (std::lower_bound(joints.begin(), joints.end(), vertex.joints[influence]) - joints.begin())] += vertex.weights[influence];
+                            values[5 + jointSlots->slotByJoint[static_cast<size_t>(
+                                std::lower_bound(joints.begin(), joints.end(), vertex.joints[influence]) - joints.begin())]] += vertex.weights[influence];
                 }
+                // Conservative first. A submesh it cannot reduce at all is
+                // usually seam-locked, and retries permissively with tearing
+                // seams protected; see BuildTearingSeamLocks.
+                std::vector<unsigned char> seamLocks;
+                bool permissive = false;
+                std::vector<unsigned int> simplified(submesh.indexCount);
+                const auto simplify = [&](uint32_t targetIndexCount, float error)
+                {
+                    return meshopt_simplifyWithAttributes(
+                        simplified.data(),
+                        localIndices.data(),
+                        submesh.indexCount,
+                        localPositions.front().data(),
+                        localPositions.size(),
+                        sizeof(localPositions.front()),
+                        attributes.data(), attributeCount * sizeof(float),
+                        attributeWeights.data(), attributeCount, permissive ? seamLocks.data() : nullptr,
+                        targetIndexCount,
+                        error, meshopt_SimplifyLockBorder | (permissive ? meshopt_SimplifyPermissive : 0u));
+                };
                 for (const auto &lodTarget : kLodTargets)
                 {
                     const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * lodTarget.targetRatio));
@@ -2012,18 +2040,13 @@ namespace PlutoGE::assetimport
                         continue;
                     }
 
-                    std::vector<unsigned int> simplified(submesh.indexCount);
-                    const size_t simplifiedIndexCount = meshopt_simplifyWithAttributes(
-                        simplified.data(),
-                        localIndices.data(),
-                        submesh.indexCount,
-                        localPositions.front().data(),
-                        localPositions.size(),
-                        sizeof(localPositions.front()),
-                        attributes.data(), attributeCount * sizeof(float),
-                        attributeWeights.data(), attributeCount, nullptr,
-                        targetIndexCount,
-                        lodTarget.error, meshopt_SimplifyLockBorder);
+                    size_t simplifiedIndexCount = simplify(targetIndexCount, lodTarget.error);
+                    if (!permissive && pending.lods.empty() && simplifiedIndexCount >= submesh.indexCount)
+                    {
+                        seamLocks = BuildTearingSeamLocks(meshData.vertices, globalByLocal, localPositions);
+                        permissive = true;
+                        simplifiedIndexCount = simplify(targetIndexCount, lodTarget.error);
+                    }
 
                     const uint32_t alignedSimplifiedIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(simplifiedIndexCount));
                     if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= previousIndexCount)

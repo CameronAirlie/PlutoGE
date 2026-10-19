@@ -938,6 +938,7 @@ namespace PlutoGE::scene
             {"ModelObjectId", PropertyType::String, std::to_string(m_modelObjectId)},
             {"MeshAssetReference", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
+            {"MinShadowLod", PropertyType::Int, std::to_string(m_minShadowLod)},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
             {"PivotOffset", PropertyType::Vec3, SerializeVec3(m_pivotOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
@@ -1091,6 +1092,10 @@ namespace PlutoGE::scene
             else if (property.name == "UseGeneratedLods")
             {
                 useGeneratedLods = property.value == "true" || property.value == "1";
+            }
+            else if (property.name == "MinShadowLod")
+            {
+                m_minShadowLod = std::clamp(std::stoi(property.value), 0, MaxMinShadowLod);
             }
             else if (property.name == "GeneratedLightmapUvSubmeshes")
             {
@@ -1661,6 +1666,7 @@ namespace PlutoGE::scene
                 command.jointMatrices = jointMatrices;
                 command.skinningPoseChanged = skinningPoseChanged;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
+                command.minShadowLodIndex = static_cast<uint32_t>(m_minShadowLod);
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 

@@ -1573,7 +1573,7 @@ namespace PlutoGE::scene
             }
             else if (property.name == "PoseUpdateRate")
             {
-                m_poseUpdateRate = std::clamp(ParseFloatSafe(property.value), 0.0f, 240.0f);
+                SetPoseUpdateRate(ParseFloatSafe(property.value));
             }
             else if (property.name == "StripRootMotion" || property.name == "StripRootVerticalMotion")
             {
@@ -2756,6 +2756,18 @@ namespace PlutoGE::scene
             return 0.0f;
         const float duration = GetClipDuration(states[static_cast<size_t>(transition.destinationStateIndex)].clipIndex);
         return std::clamp(transition.offset, 0.0f, 1.0f) * std::max(0.0f, duration);
+    }
+
+    void AnimationComponent::SetPoseUpdateRate(float updatesPerSecond)
+    {
+        const float rate = std::isfinite(updatesPerSecond) ? std::clamp(updatesPerSecond, 0.0f, MaxPoseUpdateRate) : 0.0f;
+        if (rate == m_poseUpdateRate)
+            return;
+        m_poseUpdateRate = rate;
+        // Golden-ratio phases spread consecutive entity IDs evenly over the interval.
+        const auto *owner = GetOwner();
+        const double phase = owner ? std::fmod(static_cast<double>(owner->GetID()) * 0.6180339887498949, 1.0) : 0.0;
+        m_poseUpdateAccumulator = rate > 0.0f ? static_cast<float>(phase) / rate : 0.0f;
     }
 
     void AnimationComponent::SetStripRootMotion(bool strip)

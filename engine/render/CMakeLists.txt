@@ -30,6 +30,7 @@ add_library(PlutoGERender
     src/RmlLoadingDocument.cpp
     src/RhiSkinning.cpp
     src/RhiGpuSkinning.cpp
+    src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiCameraStack.cpp
     src/RhiRenderTextureRenderer.cpp

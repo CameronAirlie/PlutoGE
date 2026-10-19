@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -59,4 +60,15 @@ namespace PlutoGE::render
         }
     };
 
+    // Shadow caster LOD shared by every shadow backend. A caster is never more
+    // detailed than its visible geometry, honours the producer's shadow floor
+    // and any backend floor, and is clamped to the submesh's coarsest LOD.
+    inline uint32_t SelectShadowCasterLod(const RenderCommand &command, uint32_t backendLodFloor = 0)
+    {
+        const uint32_t requested = std::max({command.lodIndex, command.minShadowLodIndex, backendLodFloor});
+        if (!command.mesh)
+            return requested;
+        const auto lodCount = static_cast<uint32_t>(command.mesh->GetSubmeshLodCount(command.submeshIndex));
+        return std::min(requested, lodCount > 0 ? lodCount - 1 : 0u);
+    }
 }

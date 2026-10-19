@@ -43,6 +43,17 @@ public sealed class AnimationComponent : ComponentReference
         set => ScriptBridge.SetAnimationSpeed(EntityId, value);
     }
 
+    /// <summary>
+    /// Pose samples per second (0 samples every frame, at most 240). Playback still consumes real
+    /// time, and IK and attachments still follow the held pose every frame. Ragdolls ignore it.
+    /// Use a lower rate for distant or off-screen characters.
+    /// </summary>
+    public float PoseUpdateRate
+    {
+        get => ScriptBridge.GetAnimationPoseUpdateRate(EntityId);
+        set => ScriptBridge.SetAnimationPoseUpdateRate(EntityId, value);
+    }
+
     /// <summary>Seeks the visible clip and graph state together. Seeking commits an active transition
     /// to its destination and preserves playback speed/playing state.</summary>
     public float Time

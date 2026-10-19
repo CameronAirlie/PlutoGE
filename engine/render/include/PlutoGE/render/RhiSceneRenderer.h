@@ -256,6 +256,12 @@ namespace PlutoGE::render
           std::uint64_t queuedFrame = 0;
           std::uint64_t contentRevision = 0;
           std::uint64_t historyEpoch = 0;
+          // Finest LOD level any draw of this pose needs this frame, and the
+          // GPU layout prefix (with its finest fully deformed level) last written.
+          std::uint32_t requiredLevel = 0;
+          std::uint32_t deformedVertexCount = 0;
+          std::uint32_t deformedLevel = 0;
+          std::uint64_t growthFrame = 0;
           bool wasMoving = false;
           glm::vec3 boundsCenter{0};
           glm::vec3 boundsExtents{-1};
@@ -270,6 +276,8 @@ namespace PlutoGE::render
           std::size_t jobIndex;
       };
       std::vector<PendingSkinning> m_pendingSkinning;
+      // Entries deformed earlier this frame that a later list or view needs at a finer LOD.
+      std::vector<SkinnedMesh *> m_skinningGrowth;
       std::vector<RhiSkinningJob> m_skinningJobs;
       std::vector<const RenderCommand *> m_directionalShadowCommands;
       // A shared model can have multiple independently animated owners.

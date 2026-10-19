@@ -37,6 +37,28 @@ internal static unsafe partial class ScriptBridge
         _seekBlendedAnimation(entityId, time);
     }
 
+    private static delegate* unmanaged[Cdecl]<uint, float> _getAnimationPoseUpdateRate;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setAnimationPoseUpdateRate;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterAnimationPoseRateApi")]
+    public static int RegisterAnimationPoseRateApi(
+        delegate* unmanaged[Cdecl]<uint, float> getRate,
+        delegate* unmanaged[Cdecl]<uint, float, void> setRate)
+    {
+        if (getRate == null || setRate == null) return 0;
+        _getAnimationPoseUpdateRate = getRate;
+        _setAnimationPoseUpdateRate = setRate;
+        return 1;
+    }
+
+    internal static float GetAnimationPoseUpdateRate(uint entityId) =>
+        _getAnimationPoseUpdateRate == null ? 0 : _getAnimationPoseUpdateRate(entityId);
+    internal static void SetAnimationPoseUpdateRate(uint entityId, float updatesPerSecond)
+    {
+        if (_setAnimationPoseUpdateRate == null) throw new NotSupportedException("Pose update rates require a matching native host.");
+        _setAnimationPoseUpdateRate(entityId, updatesPerSecond);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativeDebugDrawRequest
     {

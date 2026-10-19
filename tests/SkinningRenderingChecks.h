@@ -80,9 +80,11 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     require(glm::distance(centroid(moved,1),greenBefore)<.01f,"Shared model mixed two actors' poses");
     require(renderer.GetTimingStats().skinningUpdateCount==1,"Unchanged actor was deformed again");
     const bool gpu = !shaders.skinning.glsl.empty() || !shaders.skinning.spirv.empty();
+    // One joint uploads one palette of three affine float4 rows; history is
+    // read from the previous output instead of a second palette.
     if (gpu)
         require(renderer.GetTimingStats().gpuSkinningDispatches == 1 && renderer.GetTimingStats().skinningDeformationMs == 0 &&
-                renderer.GetTimingStats().skinningUploadMs == 0 && renderer.GetTimingStats().gpuSkinningPaletteBytes == 128,
+                renderer.GetTimingStats().skinningUploadMs == 0 && renderer.GetTimingStats().gpuSkinningPaletteBytes == 48,
                 "GPU skinning fell back to CPU deformation or uploaded vertex streams");
     require(renderer.GetTimingStats().shadowCascadeUpdateCount>0,"Bone movement failed to invalidate shadow cache");
     const auto motion=readPixels(renderer.GetMotionTexture());
@@ -222,7 +224,44 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         require(stats.occlusion.rejected == (x == 0 ? 1u : 0u), "Animated bounds did not track current pose visibility");
     }
     light.occlusionMode = OcclusionMode::Off;
-    std::cout << "PASS skinning: deformation, motion, current-pose occlusion and visibility transitions\n";
+    // A coarse LOD deforms only the layout prefix it reads. Returning to LOD0
+    // must deform the remaining slots although the pose has not changed.
+    if (gpu)
+    {
+        auto lodConfig = config;
+        lodConfig.data.vertices.resize(100, config.data.vertices.front()); // Stream-only vertices.
+        lodConfig.data.indices = {0,1,2,0,2,3, 0,1,2};
+        lodConfig.submeshes = {{.indexOffset=0,.indexCount=6}};
+        lodConfig.submeshes[0].lods = {{0,6}, {6,3}};
+        Mesh lodMesh(lodConfig);
+        RenderCommand lodActor = a;
+        lodActor.mesh = &lodMesh; lodActor.lodIndex = 1;
+        std::array lodCommands{lodActor};
+        poseA[0] = glm::mat4(1);
+        const auto redPixels = [](const auto &pixels) {
+            unsigned count = 0;
+            for (std::size_t i = 0; i < pixels.size(); i += 4) count += int(pixels[i]) > 100 && int(pixels[i+1]) < 30;
+            return count;
+        };
+        require(renderer.Render(128,128,camera,light,lodCommands,{}), "Coarse skinned LOD render failed");
+        require(renderer.GetTimingStats().gpuSkinningVertices == 3, "Coarse LOD deformed vertices it never draws");
+        const auto coarse = redPixels(readPixels(renderer.GetColorTexture()));
+        lodCommands[0].lodIndex = 0;
+        // A view sharing the coarse frame deforms only the slots it skipped.
+        RhiSceneRenderer closeUp;
+        require(closeUp.Initialize(device,shaders),"Close-up renderer initialization failed");
+        closeUp.ReuseSkinningForFrame(renderer);
+        require(closeUp.Render(128,128,camera,light,lodCommands,{}), "Close-up skinned LOD render failed");
+        require(closeUp.GetTimingStats().gpuSkinningVertices == 97, "Shared frame repeated or skipped LOD growth");
+        require(redPixels(readPixels(closeUp.GetColorTexture())) > coarse + 100, "Shared frame drew the coarse LOD up close");
+        closeUp.Shutdown();
+        require(renderer.Render(128,128,camera,light,lodCommands,{}), "Full skinned LOD render failed");
+        // The close-up already completed this pose's stream: nothing to redo.
+        require(renderer.GetTimingStats().gpuSkinningVertices == 0, "Unchanged pose repeated a completed deformation");
+        require(redPixels(readPixels(renderer.GetColorTexture())) > coarse + 100, "Finer LOD drew stale or missing vertices");
+        renderer.InvalidateAssetCache();
+    }
+    std::cout << "PASS skinning: deformation, motion, LOD-prefix deformation, current-pose occlusion and visibility transitions\n";
     // Representative vertex count, four influences and reusable in-place
     // history. Log timings rather than enforcing a machine-dependent limit.
     std::vector<MeshVertexData> workload(73683, config.data.vertices[0]);

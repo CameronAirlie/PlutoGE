@@ -273,20 +273,9 @@ namespace
                a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexCount;
     }
 
-    std::size_t ClampShadowLodIndex(const PlutoGE::render::RenderCommand &command, std::size_t lodIndex)
-    {
-        if (!command.mesh)
-        {
-            return lodIndex;
-        }
-
-        const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
-        return lodCount > 0 ? std::min(lodIndex, lodCount - 1) : 0;
-    }
-
     std::size_t SelectDefaultShadowLod(const PlutoGE::render::RenderCommand &command)
     {
-        return ClampShadowLodIndex(command, std::max<std::size_t>(command.lodIndex, command.minShadowLodIndex));
+        return PlutoGE::render::SelectShadowCasterLod(command);
     }
 
     std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command,
@@ -294,16 +283,11 @@ namespace
                                            int /*cascadeCount*/,
                                            int shadowResolution)
     {
-        // Never make a shadow draw more detailed than the LOD already selected
-        // for visible scene geometry. All cascades must use the same caster LOD,
-        // otherwise the silhouette changes at cascade boundaries and stationary
-        // shadows appear to wiggle as the camera moves across those boundaries.
-        const std::size_t sceneLod = command.lodIndex;
-        const std::size_t resolutionLodFloor = shadowResolution <= 1024 ? 1u : 0u;
-        const std::size_t automaticShadowLod = resolutionLodFloor;
-        return ClampShadowLodIndex(command, std::max<std::size_t>(
-                                                std::max<std::size_t>(sceneLod, automaticShadowLod),
-                                                command.minShadowLodIndex));
+        // All cascades must use the same caster LOD, otherwise the silhouette
+        // changes at cascade boundaries and stationary shadows appear to wiggle
+        // as the camera moves across those boundaries.
+        const uint32_t resolutionLodFloor = shadowResolution <= 1024 ? 1u : 0u;
+        return PlutoGE::render::SelectShadowCasterLod(command, resolutionLodFloor);
     }
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)

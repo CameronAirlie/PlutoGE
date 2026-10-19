@@ -5557,6 +5557,16 @@ namespace PlutoGE::ui
         ImGui::SameLine();
         renderFlag("Generated LODs", meshComponent.GetUseGeneratedLods(),
                    [&](bool value) { meshComponent.SetUseGeneratedLods(value); }, "UseGeneratedLods");
+        int minShadowLod = meshComponent.GetMinShadowLod();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+        if (ImGui::SliderInt("Min Shadow LOD", &minShadowLod, 0, scene::MeshComponent::MaxMinShadowLod))
+        {
+            meshComponent.SetMinShadowLod(minShadowLod);
+            entity.AddPrefabOverride("Component:MeshComponent:MinShadowLod");
+            editorShell.MarkSceneDirty();
+        }
+        ImGui::SetItemTooltip("Coarsest-first floor for shadow casters, clamped to the mesh's LOD count.\n"
+                              "Use 1 on dense skinned characters to cut shadow-page rendering.");
 
         // Materials: one row per slot, like Unity's Materials list.
         const int isolatedSubmeshIndex = meshComponent.GetSubmeshIndex();

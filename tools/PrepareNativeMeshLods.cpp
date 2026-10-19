@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/import/MeshImporter.h"
+#include "SkinningLodLayout.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -7,14 +8,51 @@
 #include <stdexcept>
 #include <string_view>
 
+namespace
+{
+    // Triangles per LOD level, the submeshes that have generated LODs, and the
+    // vertices GPU skinning deforms while no draw is finer than each level.
+    void Report(const PlutoGE::render::Mesh &mesh)
+    {
+        std::size_t levels = 1, withLods = 0;
+        for (size_t i = 0; i < mesh.GetSubmeshCount(); ++i)
+        {
+            levels = std::max(levels, mesh.GetSubmeshLodCount(i));
+            withLods += mesh.GetSubmeshLodCount(i) > 1;
+        }
+        const auto layout = PlutoGE::render::BuildSkinningLodLayout(mesh);
+        for (size_t lod = 0; lod < levels; ++lod)
+        {
+            size_t triangles = 0;
+            for (size_t i = 0; i < mesh.GetSubmeshCount(); ++i)
+                triangles += mesh.GetSubmeshLodRange(i, std::min(lod, mesh.GetSubmeshLodCount(i) - 1)).indexCount / 3;
+            std::cout << "LOD" << lod << ": " << triangles << " triangles, "
+                      << layout.VertexCount(static_cast<std::uint32_t>(lod)) << " skinned vertices\n";
+        }
+        std::cout << withLods << " of " << mesh.GetSubmeshCount() << " submeshes have generated LODs; "
+                  << mesh.GetVertexCount() << " vertices, " << mesh.GetSkeleton().joints.size() << " joints\n";
+    }
+}
+
 // Offline, non-destructive preparation: project-root input-reference output-path [--flip-v].
 // UV conversion is explicit because already-correct native meshes must not be flipped.
+// project-root input-reference --report prints an existing asset's LODs without writing.
 int main(int argc, char **argv)
 {
     try
     {
+        if (argc == 4 && std::string_view(argv[3]) == "--report")
+        {
+            PlutoGE::assets::AssetManager manager;
+            manager.SetProjectContext(argv[1]);
+            const auto *mesh = manager.LoadMeshAsset(argv[2]);
+            if (!mesh) throw std::runtime_error("Could not load native mesh");
+            Report(*mesh);
+            return 0;
+        }
         if (argc < 4 || argc > 5 || (argc == 5 && std::string_view(argv[4]) != "--flip-v"))
-            throw std::invalid_argument("Usage: PrepareNativeMeshLods project-root input-reference output-path [--flip-v]");
+            throw std::invalid_argument(
+                "Usage: PrepareNativeMeshLods project-root input-reference (output-path [--flip-v] | --report)");
         PlutoGE::assets::AssetManager manager;
         manager.SetProjectContext(argv[1]);
         if (std::filesystem::exists(argv[3]))
@@ -51,15 +89,7 @@ int main(int argc, char **argv)
         std::string error;
         if (!manager.SaveMeshAsset(argv[3], config, manager.GetMeshAssetMaterialReferences(argv[2]), &error, metadata))
             throw std::runtime_error(error);
-        for (size_t lod = 0; lod < 4; ++lod)
-        {
-            size_t triangles = 0;
-            for (const auto &submesh : config.submeshes)
-                triangles += submesh.lods[std::min(lod, submesh.lods.size() - 1)].indexCount / 3;
-            std::cout << "LOD" << lod << ": " << triangles << " triangles\n";
-        }
-        std::cout << "Preserved " << config.data.vertices.size() << " vertices, " << config.skeleton.joints.size()
-                  << " joints and " << config.submeshes.size() << " material submeshes\n";
+        Report(PlutoGE::render::Mesh(config));
     }
     catch (const std::exception &error)
     {

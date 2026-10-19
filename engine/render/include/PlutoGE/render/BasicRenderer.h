@@ -34,7 +34,8 @@ namespace PlutoGE::render
     class RhiGpuSkinning;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
-    struct MeshVertexData;
+    struct RhiGpuSkinningDispatch;
+    class Mesh;
     class PostProcessResourcePool;
     class PersistentParameterCache;
     class MaterialPreparationCache;
@@ -614,11 +615,16 @@ namespace PlutoGE::render
         void Shutdown();
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
         [[nodiscard]] bool SupportsGpuSkinning() const noexcept { return m_gpuSkinning != nullptr; }
-        std::shared_ptr<RhiGpuSkinningSource> CreateGpuSkinningSource(std::span<const MeshVertexData>);
-        BasicMesh CreateGpuSkinnedMesh(std::shared_ptr<const RhiGpuSkinningSource>, std::span<const std::uint32_t> indices,
-                                       std::span<const ShadowGeometryCluster> bounds);
-        void UpdateGpuSkinnedMesh(BasicMesh &, std::span<const glm::mat4> current, std::span<const glm::mat4> previous,
-                                  bool geometryChanged, std::span<const ShadowGeometryCluster> bounds);
+        // Orders the mesh's vertices coarsest-LOD-first so distant actors can
+        // deform only the prefix their drawn LODs reference.
+        std::shared_ptr<RhiGpuSkinningSource> CreateGpuSkinningSource(const Mesh &);
+        // Draws use the source's layout-ordered index buffer.
+        BasicMesh CreateGpuSkinnedMesh(std::shared_ptr<const RhiGpuSkinningSource>, std::span<const ShadowGeometryCluster> bounds);
+        // Deforms layout slots [firstVertex, endVertex). hasHistory means the
+        // mesh still holds this actor's previous-frame deformation for all of
+        // those slots; otherwise motion history restarts at the current pose.
+        void UpdateGpuSkinnedMesh(BasicMesh &, std::span<const glm::mat4> palette, std::uint32_t firstVertex, std::uint32_t endVertex,
+                                  bool hasHistory, bool geometryChanged, std::span<const ShadowGeometryCluster> bounds);
         // Stage CPU-deformed vertices; upload after BeginFrame, before any pass
         // reads the buffer. Topology and index buffers remain unchanged.
         // Supplied clusters must conservatively bound the updated vertices and
@@ -761,6 +767,7 @@ namespace PlutoGE::render
         VirtualShadowReceivers m_directionalShadowReceivers, m_reusedShadowReceivers;
         std::unique_ptr<OcclusionCulling> m_occlusion;
         std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
+        std::vector<RhiGpuSkinningDispatch> m_gpuSkinningDispatches;
         std::uint64_t m_geometrySweepFrame = 0;
         VirtualShadowShaders m_virtualShadowShaders;
         rhi::Texture m_emptyVirtualShadowPageTable;

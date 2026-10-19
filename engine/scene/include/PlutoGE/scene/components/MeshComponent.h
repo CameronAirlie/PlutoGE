@@ -92,6 +92,22 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         bool IsVisible() const { return m_visible; }
+        // Coarsest-first floor for this mesh's shadow casters. Casters never
+        // exceed the visible LOD's detail; a floor of 1 lets dense skinned
+        // characters render simplified shadows at every distance.
+        static constexpr int MaxMinShadowLod = 8;
+        void SetMinShadowLod(int lodIndex)
+        {
+            lodIndex = std::clamp(lodIndex, 0, MaxMinShadowLod);
+            if (m_minShadowLod == lodIndex)
+            {
+                return;
+            }
+
+            m_minShadowLod = lodIndex;
+            MarkRenderCommandsDirty();
+        }
+        int GetMinShadowLod() const { return m_minShadowLod; }
         void SetSubmeshIndex(int submeshIndex)
         {
             if (m_submeshIndex == submeshIndex)
@@ -305,6 +321,7 @@ namespace PlutoGE::scene
         int m_submeshCount = 1;
         bool m_visible = true;
         bool m_useGeneratedLods = false;
+        int m_minShadowLod = 0;
         bool m_hasAnimatedNodeSubmeshes = false;
         std::uint64_t m_lastSubmittedJointPoseRevision = 0;
         bool m_hasSubmittedJointPoseRevision = false;

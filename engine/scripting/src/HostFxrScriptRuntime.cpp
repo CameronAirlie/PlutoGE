@@ -137,6 +137,7 @@ namespace PlutoGE::scripting
         using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_animation_blend_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_animation_pose_rate_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_capsule_query_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -2052,6 +2053,15 @@ namespace PlutoGE::scripting
         {
             if (auto *component = FindAnimation(entityId)) component->Seek(time, true);
         }
+        float GetAnimationPoseUpdateRate(uint32_t entityId)
+        {
+            const auto *component = FindAnimation(entityId);
+            return component ? component->GetPoseUpdateRate() : 0.0f;
+        }
+        void SetAnimationPoseUpdateRate(uint32_t entityId, float updatesPerSecond)
+        {
+            if (auto *component = FindAnimation(entityId)) component->SetPoseUpdateRate(updatesPerSecond);
+        }
         void AnimationPlayState(uint32_t entityId, const char *name)
         {
             if (auto *component = FindAnimation(entityId); component && name)
@@ -3693,6 +3703,7 @@ namespace PlutoGE::scripting
         int(PLUTO_HOST_CALL *registerInputHistoryApi)(void *, void *, void *) = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_animation_blend_api_fn registerAnimationBlendApi = nullptr;
+        register_animation_pose_rate_api_fn registerAnimationPoseRateApi = nullptr;
         register_capsule_query_api_fn registerCapsuleQueryApi = nullptr;
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
@@ -3816,6 +3827,7 @@ namespace PlutoGE::scripting
             impl.registerGamepadVibrationApi = nullptr;
             impl.registerPhysicsApi = nullptr;
             impl.registerAnimationBlendApi = nullptr;
+            impl.registerAnimationPoseRateApi = nullptr;
             impl.registerCapsuleQueryApi = nullptr;
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
@@ -4181,6 +4193,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputHistoryApi"), impl.registerInputHistoryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAnimationBlendApi"), impl.registerAnimationBlendApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAnimationPoseRateApi"), impl.registerAnimationPoseRateApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCapsuleQueryApi"), impl.registerCapsuleQueryApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
@@ -4947,6 +4960,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&AnimationCrossFadeState), reinterpret_cast<void *>(&SeekBlendedAnimation)) == 0)
         {
             setManagedBridgeFailure("RegisterAnimationBlendApi");
+            return false;
+        }
+
+        if (!m_impl->registerAnimationPoseRateApi || m_impl->registerAnimationPoseRateApi(
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetAnimationPoseUpdateRate)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetAnimationPoseUpdateRate))) == 0)
+        {
+            setManagedBridgeFailure("RegisterAnimationPoseRateApi");
             return false;
         }
 

@@ -24,6 +24,8 @@
 #include "RhiDrawPreparationCache.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "RhiSkinning.h"
+#include "RhiGpuSkinning.h"
+#include "SkinningLodLayout.h"
 #include "IblPrefilter.h"
 #include "AmbientProbeVisibilitySummary.h"
 #include "rhi/NormalMipmaps.h"
@@ -615,7 +617,36 @@ namespace PlutoGE::render
                 const auto &source = command.mesh->GetMeshData();
                 if (source.vertices.empty() || source.indices.empty()) continue;
                 auto &entry = m_skinnedMeshes[command.mesh][command.jointMatrices];
-                if (entry.lastFrame == m_skinningFrame || entry.queuedFrame == m_skinningFrame) continue;
+                // A pose deforms once per frame, for the finest LOD any of its
+                // visible or shadow draws selects. Out-of-range submeshes draw
+                // the whole index buffer.
+                const std::uint32_t level = command.submeshIndex < command.mesh->GetSubmeshCount()
+                    ? (shadowOnly ? SelectShadowCasterLod(command) : command.lodIndex) : 0u;
+                if (entry.lastFrame == m_skinningFrame)
+                {
+                    // Already deformed this frame by an earlier list or by a
+                    // view sharing this frame. A finer LOD deforms only the
+                    // layout slots that deformation skipped.
+                    if (entry.gpuSource && entry.mesh.IsValid() &&
+                        entry.gpuSource->layout.VertexCount(level) > entry.deformedVertexCount)
+                    {
+                        if (entry.growthFrame != m_skinningFrame)
+                        {
+                            entry.growthFrame = m_skinningFrame;
+                            entry.requiredLevel = level;
+                            m_skinningGrowth.push_back(&entry);
+                        }
+                        else
+                            entry.requiredLevel = std::min(entry.requiredLevel, level);
+                    }
+                    continue;
+                }
+                if (entry.queuedFrame == m_skinningFrame)
+                {
+                    entry.requiredLevel = std::min(entry.requiredLevel, level);
+                    continue;
+                }
+                entry.requiredLevel = level;
                 entry.lifetime = command.mesh->GetLifetimeToken();
                 const bool topologyChanged = entry.sourceVertexCount != source.vertices.size() || entry.mesh.GetIndexCount() != source.indices.size() ||
                     entry.contentRevision != command.mesh->GetContentRevision();
@@ -639,7 +670,7 @@ namespace PlutoGE::render
                     entry.shadowBounds = cached.bounds;
                     if (m_renderer->SupportsGpuSkinning())
                     {
-                        if (!cached.gpuSource) cached.gpuSource = m_renderer->CreateGpuSkinningSource(source.vertices);
+                        if (!cached.gpuSource) cached.gpuSource = m_renderer->CreateGpuSkinningSource(*command.mesh);
                         entry.gpuSource = cached.gpuSource;
                     }
                     entry.shadowClusters.clear();
@@ -660,6 +691,19 @@ namespace PlutoGE::render
         };
         const auto flushSkinning = [&]
         {
+            // Newly covered slots hold an older pose, so their history restarts;
+            // slots already deformed this frame keep theirs.
+            for (auto *entry : m_skinningGrowth)
+            {
+                const auto end = entry->gpuSource->layout.VertexCount(entry->requiredLevel);
+                if (end <= entry->deformedVertexCount) continue;
+                m_renderer->UpdateGpuSkinnedMesh(entry->mesh, entry->pose, entry->deformedVertexCount, end, false, false,
+                                                 entry->shadowClusters);
+                m_timingStats.skinningVertexCount += end - entry->deformedVertexCount;
+                entry->deformedVertexCount = end;
+                entry->deformedLevel = entry->gpuSource->layout.FinestLevelWithin(end);
+            }
+            m_skinningGrowth.clear();
             if (pendingSkinning.empty()) return;
             const auto start = std::chrono::steady_clock::now();
             if (!skinningJobs.empty())
@@ -689,7 +733,13 @@ namespace PlutoGE::render
                 auto &entry = *pending.entry;
                 if (entry.gpuSource)
                 {
-                    if (pending.upload)
+                    const auto &layout = entry.gpuSource->layout;
+                    const bool recreate = !entry.mesh.IsValid() || pending.topologyChanged;
+                    const auto vertexCount = layout.VertexCount(entry.requiredLevel);
+                    // Slots beyond the last deformed prefix hold an older pose:
+                    // deform them even when the pose is unchanged.
+                    const bool grows = recreate || vertexCount > entry.deformedVertexCount;
+                    if (pending.upload || grows)
                     {
                         core::CpuScope gpuScope("Skeletal GPU preparation", core::CpuCategory::Rendering);
                         entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
@@ -697,20 +747,22 @@ namespace PlutoGE::render
                         entry.boundsCenter = bounds.center;
                         entry.boundsExtents = bounds.extents;
                         entry.boundsRadius = glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))) ? glm::length(bounds.extents) : -1;
-                        if (!entry.mesh.IsValid() || pending.topologyChanged)
+                        if (recreate)
                         {
-                            entry.mesh = m_renderer->CreateGpuSkinnedMesh(entry.gpuSource, pending.mesh->GetMeshData().indices, entry.shadowClusters);
+                            entry.mesh = m_renderer->CreateGpuSkinnedMesh(entry.gpuSource, entry.shadowClusters);
                             ++m_timingStats.meshUploadCount;
                         }
-                        const auto previous = pending.hasHistory && !pending.topologyChanged ? std::span<const glm::mat4>(entry.pose) : std::span<const glm::mat4>(*pending.pose);
-                        // A changed palette size also resets history.
-                        m_renderer->UpdateGpuSkinnedMesh(entry.mesh, *pending.pose,
-                            previous.size() == pending.pose->size() ? previous : std::span<const glm::mat4>(*pending.pose),
-                            pending.changed, entry.shadowClusters);
+                        // History lives in the output itself; newly covered slots
+                        // and a changed palette size restart it at this pose.
+                        const bool hasHistory = pending.hasHistory && !grows && entry.pose.size() == pending.pose->size();
+                        m_renderer->UpdateGpuSkinnedMesh(entry.mesh, *pending.pose, 0, vertexCount, hasHistory,
+                                                         pending.changed, entry.shadowClusters);
+                        entry.deformedVertexCount = vertexCount;
+                        entry.deformedLevel = layout.FinestLevelWithin(vertexCount);
                         if (pending.changed)
                         {
                             ++m_timingStats.skinningUpdateCount;
-                            m_timingStats.skinningVertexCount += pending.mesh->GetMeshData().vertices.size();
+                            m_timingStats.skinningVertexCount += vertexCount;
                         }
                     }
                     const bool movingHistory = pending.changed && pending.hasHistory && !pending.topologyChanged &&
@@ -822,7 +874,11 @@ namespace PlutoGE::render
                 }
                 const bool emissiveGi = giOnly && command.lodIndex != 0 && command.material &&
                     glm::any(glm::greaterThan(command.material->ReadConfig().emission, glm::vec3(0.0f)));
-                if (const auto *shared = preparation.FindRetained(command, revision, emissiveGi, m_preparationFrame))
+                // Small emissive submeshes must not disappear from the GI source
+                // when the camera selects simplified geometry. Shadow lists use
+                // the shared caster policy, which may be coarser than the view.
+                std::uint32_t drawLod = emissiveGi ? 0u : shadowOnly ? SelectShadowCasterLod(command) : command.lodIndex;
+                if (const auto *shared = preparation.FindRetained(command, revision, drawLod, emissiveGi, m_preparationFrame))
                 {
                     entry = *shared;
                     if (patch) destination[i] = entry.draw; else destination.push_back(entry.draw);
@@ -839,6 +895,9 @@ namespace PlutoGE::render
                     deformed = &entry;
                     if (!entry.mesh.IsValid()) continue;
                     renderMesh = &entry.mesh;
+                    // Never read layout slots the last partial deformation skipped.
+                    if (entry.gpuSource && command.submeshIndex < command.mesh->GetSubmeshCount())
+                        drawLod = std::max(drawLod, MinimumSkinnedDrawLod(*command.mesh, command.submeshIndex, entry.deformedLevel));
                 }
                 else
                 {
@@ -880,9 +939,7 @@ namespace PlutoGE::render
                 std::uint32_t indexCount = static_cast<std::uint32_t>(command.mesh->GetMeshData().indices.size());
                 if (command.submeshIndex < command.mesh->GetSubmeshCount())
                 {
-                    // Small emissive submeshes must not disappear from the GI
-                    // source when the camera selects simplified geometry.
-                    const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, emissiveGi ? 0u : command.lodIndex);
+                    const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, drawLod);
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
                 }
@@ -931,7 +988,7 @@ namespace PlutoGE::render
                                                  ? command.mesh->GetSubmeshLodCount(command.submeshIndex)
                                                  : 1u;
                 draw.normalizedLod = lodCount > 1
-                                         ? static_cast<float>(command.lodIndex) /
+                                         ? static_cast<float>(drawLod) /
                                                static_cast<float>(lodCount - 1)
                                          : 0.0f;
                 // Scene imports commonly leave rigid architectural submeshes marked non-static.
@@ -951,7 +1008,7 @@ namespace PlutoGE::render
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
                 entry.Store(command, revision, &draw);
-                preparation.Retain(entry, emissiveGi, m_preparationFrame);
+                preparation.Retain(entry, drawLod, emissiveGi, m_preparationFrame);
                 if (patch) destination[i] = std::move(draw); else destination.push_back(std::move(draw));
                 ++m_timingStats.rebuiltDrawPackets;
             }

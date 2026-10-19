@@ -197,8 +197,12 @@ namespace PlutoGE::scene
         // externally controlled playhead maps directly to the current clip.
         void SetEditorPreviewMode(bool enabled);
         float GetCurrentClipDuration() const;
+        // Pose samples per second; zero samples every frame. Ragdolls ignore it.
+        static constexpr float MaxPoseUpdateRate = 240.0f;
         float GetPoseUpdateRate() const { return m_poseUpdateRate; }
-        void SetPoseUpdateRate(float updatesPerSecond) { m_poseUpdateRate = std::max(0.0f, updatesPerSecond); }
+        // A rate change starts at a stable per-entity phase so a crowd moving
+        // into the same rate does not resample on the same frame.
+        void SetPoseUpdateRate(float updatesPerSecond);
         // Root-motion rigs (for example Unreal's root bone) carry locomotion,
         // turns and jump/fall trajectories on the unmapped root above the hips.
         // A controller-driven character holds those ancestors at their bind

@@ -14,7 +14,10 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorPreferences.h"
+#include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/ui/EditorWidgets.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ConsolePanel.h"
@@ -3585,6 +3588,8 @@ namespace PlutoGE::ui
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         std::string projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
+        enum class ProjectSettingsPage { General, Display, Rendering, Editor, Scripting, Build, Server };
+        ProjectSettingsPage projectSettingsPage = ProjectSettingsPage::General;
         bool shouldOpenBakeSceneCustomPopup = false;
 
         auto loadProjectSettingsDraft = [&]()
@@ -4738,9 +4743,10 @@ namespace PlutoGE::ui
             RenderGroundPlacement();
             RenderEditorPreferences(&m_showPreferences);
 
+            const std::string projectSettingsTitle = std::string(icons::Settings) + "  Project Settings###ProjectSettings";
             if (shouldOpenProjectSettingsPopup)
             {
-                ImGui::OpenPopup("Project Settings");
+                ImGui::OpenPopup(projectSettingsTitle.c_str());
                 shouldOpenProjectSettingsPopup = false;
             }
 
@@ -4748,16 +4754,24 @@ namespace PlutoGE::ui
             // Explicitly override saved viewport placement: the GLFW backend does
             // not handle native window creation failure before using its handle.
             const auto *settingsViewport = ImGui::GetMainViewport();
+            const ImVec2 settingsMaxSize((std::max)(1.0f, settingsViewport->WorkSize.x - 32.0f),
+                                         (std::max)(1.0f, settingsViewport->WorkSize.y - 32.0f));
             ImGui::SetNextWindowViewport(settingsViewport->ID);
             ImGui::SetNextWindowPos(settingsViewport->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
-                ImVec2((std::max)(1.0f, settingsViewport->WorkSize.x - 32.0f),
-                       (std::max)(1.0f, settingsViewport->WorkSize.y - 32.0f)));
-            if (ImGui::BeginPopupModal("Project Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            ImGui::SetNextWindowSize(ImVec2((std::min)(960.0f, settingsMaxSize.x), (std::min)(680.0f, settingsMaxSize.y)), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSizeConstraints(ImVec2((std::min)(640.0f, settingsMaxSize.x), (std::min)(420.0f, settingsMaxSize.y)), settingsMaxSize);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            const bool projectSettingsVisible = ImGui::BeginPopupModal(projectSettingsTitle.c_str(), nullptr,
+                                                                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                                                                          ImGuiWindowFlags_NoScrollbar);
+            ImGui::PopStyleVar();
+            if (projectSettingsVisible)
             {
                 if (!m_project)
                 {
+                    ImGui::SetCursorPos(ImVec2(28.0f, ImGui::GetCursorPosY() + 22.0f));
                     ImGui::TextUnformatted("No project loaded.");
+                    ImGui::SetCursorPosX(28.0f);
                     if (ImGui::Button("Close"))
                     {
                         ImGui::CloseCurrentPopup();
@@ -4770,207 +4784,413 @@ namespace PlutoGE::ui
                     projectWindowWidth = (std::max)(projectWindowWidth, 64);
                     projectWindowHeight = (std::max)(projectWindowHeight, 64);
 
-                    ImGui::InputText("Project Name", projectNameBuffer.data(), projectNameBuffer.size());
-                    ImGui::InputText("Window Title", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
-                    (void)RenderProjectAssetPicker("Loading Screen", m_project.get(), assets::ProjectAssetType::LoadingScreen,
-                                                   projectLoadingScreen, {.noneLabel = "Engine default", .includeEngineAssets = true});
-                    ImGui::InputInt("Window Width", &projectWindowWidth);
-                    ImGui::InputInt("Window Height", &projectWindowHeight);
-                    ImGui::Checkbox("VSync", &projectVSyncEnabled);
-                    const char *graphicsApiLabel = projectGraphicsApi == render::rhi::GraphicsApi::Vulkan
-                                                       ? "Vulkan"
-                                                       : "OpenGL";
-                    if (ImGui::BeginCombo("Graphics API", graphicsApiLabel))
-                    {
-                        constexpr std::array<const char *, 2> graphicsApiLabels = {"OpenGL", "Vulkan"};
-                        for (int apiIndex = 0; apiIndex < static_cast<int>(graphicsApiLabels.size()); ++apiIndex)
-                        {
-                            const auto api = static_cast<render::rhi::GraphicsApi>(apiIndex);
-                            const bool selected = projectGraphicsApi == api;
-                            if (ImGui::Selectable(graphicsApiLabels[apiIndex], selected))
-                                projectGraphicsApi = api;
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    if (projectGraphicsApi == render::rhi::GraphicsApi::Vulkan)
-                    {
-                        ImGui::TextDisabled("The project backend is authoritative; editor presentation is handled by the active compositor backend.");
-                    }
-                    const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial ? "Spatial"
-                                                        : projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ? "DLSS"
-                                                        : projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2 ? "FSR 2"
-                                                                                                                      : "None";
-                    if (ImGui::BeginCombo("Viewport / Runtime Upscaler", runtimeUpscalerLabel))
-                    {
-                        constexpr std::array<const char *, 4> upscalerLabels = {"None", "Spatial", "DLSS", "FSR 2"};
-                        for (int modeIndex = 0; modeIndex < static_cast<int>(upscalerLabels.size()); ++modeIndex)
-                        {
-                            const auto mode = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
-                            const bool selected = projectRuntimeUpscaler == mode;
-                            if (ImGui::Selectable(upscalerLabels[modeIndex], selected))
-                                projectRuntimeUpscaler = mode;
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    ImGui::TextDisabled("Saved temporal settings apply to the Editor Viewport, Game Viewport, and runtime.");
-                    if ((projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
-                         projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2) &&
-                        projectGraphicsApi != render::rhi::GraphicsApi::Vulkan)
-                    {
-                        ImGui::TextWrapped("Temporal upscaling requires the Vulkan graphics API.");
-                    }
-                    ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
-                    ImGui::SliderFloat("Runtime Render Scale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
-                    ImGui::EndDisabled();
-                    ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial &&
-                                         projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Fsr2);
-                    ImGui::SliderFloat("Upscale Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
-                    ImGui::EndDisabled();
-                    if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
-                        projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2)
-                    {
-                        constexpr std::array<const char *, 5> qualityLabels = {
-                            "Performance", "Balanced", "Quality", "Ultra Performance", "DLAA"};
-                        const auto qualityIndex = static_cast<std::size_t>(
-                            std::clamp(static_cast<int>(projectRuntimeUpscalerQuality), 0, 4));
-                        if (ImGui::BeginCombo("Temporal Upscaler Quality", qualityLabels[qualityIndex]))
-                        {
-                            for (std::size_t index = 0; index < qualityLabels.size(); ++index)
-                            {
-                                const bool selected = qualityIndex == index;
-                                if (ImGui::Selectable(qualityLabels[index], selected))
-                                    projectRuntimeUpscalerQuality = static_cast<render::rhi::UpscalerQuality>(index);
-                                if (selected)
-                                    ImGui::SetItemDefaultFocus();
-                            }
-                            ImGui::EndCombo();
-                        }
-                        if (projectRuntimeUpscalerQuality == render::rhi::UpscalerQuality::UltraPerformance)
-                            ImGui::TextWrapped("Ultra Performance is a 3x reconstruction mode intended for very high output resolutions. Use Quality or Balanced for docked editor viewports.");
-                    }
-                    if (ImGui::SliderFloat("Editor Font Size", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
-                    {
-                        m_panelManager.SetEditorFontSize(projectEditorFontSize);
-                    }
-                    constexpr std::array<const char *, 3> editorFonts = {"Martian Mono", "Georama", "ImGui Default"};
-                    if (ImGui::BeginCombo("Editor Font", projectEditorFont.c_str()))
-                    {
-                        for (const char *fontName : editorFonts)
-                        {
-                            const bool selected = projectEditorFont == fontName;
-                            if (ImGui::Selectable(fontName, selected))
-                            {
-                                projectEditorFont = fontName;
-                                m_panelManager.SetEditorFont(projectEditorFont);
-                            }
-                            if (selected)
-                            {
-                                ImGui::SetItemDefaultFocus();
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
-                    ImGui::InputText("Script Assembly", projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size());
-                    ImGui::SameLine();
-                    if (ImGui::Button("...##ScriptAssembly"))
-                    {
-#ifdef _WIN32
-                        OPENFILENAMEA ofn = {};
-                        char fileName[MAX_PATH] = "";
-                        ofn.lStructSize = sizeof(ofn);
-                        ofn.hwndOwner = nullptr;
-                        ofn.lpstrFilter = "Managed Assemblies\0*.dll\0All Files\0*.*\0";
-                        ofn.lpstrFile = fileName;
-                        ofn.nMaxFile = MAX_PATH;
-                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                        if (GetOpenFileNameA(&ofn))
-                        {
-                            strncpy_s(projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size(), fileName, _TRUNCATE);
-                        }
-#endif
-                    }
+                    const float footerHeight = ImGui::GetFrameHeight() + 28.0f;
+                    const float bodyHeight = (std::max)(1.0f, ImGui::GetContentRegionAvail().y - footerHeight);
 
-                    ImGui::Separator();
-                    ImGui::Text("Manifest: %s", m_project->GetManifestPath().string().c_str());
-                    ImGui::Text("Asset Directory: %s", manifest.assetDirectory.c_str());
-                    (void)RenderProjectAssetPicker("Startup Scene", m_project.get(), assets::ProjectAssetType::Scene,
-                                                   projectStartupScene, {.noneLabel = "<none>", .includeEngineAssets = true});
-                    ImGui::TextWrapped("The startup scene is used when opening the project and launching the runtime. Saving another scene does not change it.");
-
-                    ImGui::Separator();
-                    ImGui::Checkbox("Build used assets only", &projectBuildUsedAssetsOnly);
-                    ImGui::TextWrapped("Builds validate and package the startup scene, loading screen, scripts and their dependencies. Add content loaded dynamically by scripts below. Validate Project still checks all assets.");
-                    ImGui::TextUnformatted("Always include in builds");
-                    std::array<assets::ProjectAssetType, static_cast<std::size_t>(assets::ProjectAssetType::Count)> buildAssetTypes;
-                    for (std::size_t i = 0; i < buildAssetTypes.size(); ++i)
-                        buildAssetTypes[i] = static_cast<assets::ProjectAssetType>(i);
-                    ImGui::BeginChild("Build included assets", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders);
-                    for (std::size_t i = 0; i < projectBuildAlwaysInclude.size();)
+                    // Sidebar, matching the Preferences window.
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, GetEditorColor(EditorColor::Background));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 14.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
+                    ImGui::BeginChild("##ProjectSettingsNav", ImVec2(210.0f, bodyHeight), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::TextMuted));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+                    ImGui::TextUnformatted("PROJECT");
+                    ImGui::PopStyleColor();
+                    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+                    const auto nav = [&](const char *icon, const char *label, ProjectSettingsPage page)
                     {
-                        ImGui::PushID(static_cast<int>(i));
-                        (void)RenderProjectAssetPicker("Asset", m_project.get(), buildAssetTypes,
-                            projectBuildAlwaysInclude[i], {.noneLabel = "<select asset>"});
-                        ImGui::SameLine();
-                        const bool remove = ImGui::SmallButton("Remove");
-                        ImGui::PopID();
-                        if (remove) projectBuildAlwaysInclude.erase(projectBuildAlwaysInclude.begin() + i);
-                        else ++i;
-                    }
+                        if (widgets::NavItem(icon, label, projectSettingsPage == page))
+                            projectSettingsPage = page;
+                    };
+                    nav(icons::Settings, "General", ProjectSettingsPage::General);
+                    nav(icons::RmlDocumentAsset, "Display", ProjectSettingsPage::Display);
+                    nav(icons::Quality, "Rendering", ProjectSettingsPage::Rendering);
+                    nav(icons::Font, "Editor", ProjectSettingsPage::Editor);
+                    nav(icons::ScriptAsset, "Scripting", ProjectSettingsPage::Scripting);
+                    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::TextMuted));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+                    ImGui::TextUnformatted("DEPLOYMENT");
+                    ImGui::PopStyleColor();
+                    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+                    nav(icons::PrefabAsset, "Build", ProjectSettingsPage::Build);
+                    nav(icons::Space, "Dedicated Server", ProjectSettingsPage::Server);
                     ImGui::EndChild();
-                    if (ImGui::Button("Add included asset")) projectBuildAlwaysInclude.emplace_back();
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor();
 
-                    ImGui::Separator();
-                    ImGui::TextUnformatted("Dedicated Server");
-                    (void)RenderProjectAssetPicker("Server Startup Scene", m_project.get(), assets::ProjectAssetType::Scene,
-                        projectServer.startupScene, {.noneLabel = "<select simulation scene>", .includeEngineAssets = true});
-                    const auto serverText = [](const char *label, std::string &value)
+                    ImGui::SameLine(0.0f, 0.0f);
+                    const ImVec2 dividerTop = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(dividerTop, ImVec2(dividerTop.x, dividerTop.y + bodyHeight),
+                                                        GetEditorColorU32(EditorColor::Border));
+
+                    const auto mutedText = [](const char *text)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::TextMuted));
+                        ImGui::TextWrapped("%s", text);
+                        ImGui::PopStyleColor();
+                    };
+                    const auto warningText = [](const char *text)
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::Warning));
+                        ImGui::TextWrapped("%s", text);
+                        ImGui::PopStyleColor();
+                    };
+                    const auto textField = [](const char *id, std::string &value)
                     {
                         std::vector<char> buffer((std::max)(value.size() + 1, std::size_t(4096)), '\0');
                         std::copy(value.begin(), value.end(), buffer.begin());
-                        if (ImGui::InputText(label, buffer.data(), buffer.size())) value = buffer.data();
+                        if (ImGui::InputText(id, buffer.data(), buffer.size())) value = buffer.data();
                     };
-                    serverText("Server Output Executable", projectServer.outputExecutable);
-                    ImGui::TextWrapped("Relative output paths use the project directory. Build and Run starts the exported console application; Ctrl+C stops it.");
-                    ImGui::SliderInt("Server Tick Rate", &projectServer.tickRate, 10, 240, "%d Hz");
-                    ImGui::TextWrapped("Only allowed simulation scripts run, including on spawned prefabs. Include session, bots and gameplay scripts; leave out player input, menus and cameras.");
-                    ImGui::BeginChild("Server scripts", ImVec2(0, 150), ImGuiChildFlags_Borders);
-                    for (std::size_t i = 0; i < projectServer.scripts.size();)
-                    {
-                        ImGui::PushID(static_cast<int>(i));
-                        auto &script = projectServer.scripts[i];
-                        if (ImGui::BeginCombo("Script", script.empty() ? "<select script>" : script.c_str()))
-                        {
-                            const auto scriptClasses = m_engine.GetScriptEngine().GetClassNames();
-                            for (const auto &name : scriptClasses)
-                                if (ImGui::Selectable(name.c_str(), script == name)) script = name;
-                            ImGui::EndCombo();
-                        }
-                        ImGui::SameLine();
-                        const bool remove = ImGui::SmallButton("Remove");
-                        ImGui::PopID();
-                        if (remove) projectServer.scripts.erase(projectServer.scripts.begin() + i); else ++i;
-                    }
-                    ImGui::EndChild();
-                    if (ImGui::Button("Add server script")) projectServer.scripts.emplace_back();
-                    ImGui::TextWrapped("Application environment defaults (for example port, match mode or bot count). The deployment environment or --env NAME=VALUE overrides these values. Values are stored in the project and package; use deployment settings for secrets.");
-                    ImGui::BeginChild("Server environment", ImVec2(0, 150), ImGuiChildFlags_Borders);
-                    for (std::size_t i = 0; i < projectServer.environment.size();)
-                    {
-                        ImGui::PushID(static_cast<int>(i));
-                        serverText("Name", projectServer.environment[i].name);
-                        serverText("Value", projectServer.environment[i].value);
-                        const bool remove = ImGui::SmallButton("Remove variable");
-                        ImGui::PopID();
-                        if (remove) projectServer.environment.erase(projectServer.environment.begin() + i); else ++i;
-                    }
-                    ImGui::EndChild();
-                    if (ImGui::Button("Add server variable")) projectServer.environment.emplace_back();
+                    // Value column of a list row: the control fills the space left of a trailing remove button.
+                    const auto listControlWidth = [] { return -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x); };
 
-                    if (ImGui::Button("Save"))
+                    // Page content.
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28.0f, 22.0f));
+                    ImGui::BeginChild("##ProjectSettingsPage", ImVec2(0.0f, bodyHeight), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::PopStyleVar();
+                    switch (projectSettingsPage)
+                    {
+                    case ProjectSettingsPage::General:
+                    {
+                        widgets::PageTitle("General", "Identity and entry point of the project.");
+                        widgets::SectionHeading("Project");
+                        widgets::BeginCard("##ProjectCard");
+                        if (widgets::BeginSettingsTable("##ProjectTable"))
+                        {
+                            widgets::SettingsRow("Project name");
+                            ImGui::InputText("##ProjectName", projectNameBuffer.data(), projectNameBuffer.size());
+                            widgets::SettingsRow("Startup scene", "Used when opening the project and launching the runtime. Saving another scene does not change it.");
+                            (void)RenderProjectAssetPicker("##StartupScene", m_project.get(), assets::ProjectAssetType::Scene,
+                                                           projectStartupScene, {.noneLabel = "<none>", .includeEngineAssets = true});
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Location");
+                        widgets::BeginCard("##LocationCard");
+                        if (widgets::BeginSettingsTable("##LocationTable"))
+                        {
+                            widgets::SettingsRow("Manifest");
+                            mutedText(m_project->GetManifestPath().string().c_str());
+                            widgets::SettingsRow("Asset directory");
+                            mutedText(manifest.assetDirectory.c_str());
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+                        break;
+                    }
+                    case ProjectSettingsPage::Display:
+                    {
+                        widgets::PageTitle("Display", "How the game window looks when the runtime starts.");
+                        widgets::SectionHeading("Window");
+                        widgets::BeginCard("##WindowCard");
+                        if (widgets::BeginSettingsTable("##WindowTable"))
+                        {
+                            widgets::SettingsRow("Window title");
+                            ImGui::InputText("##WindowTitle", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
+                            widgets::SettingsRow("Resolution", "Initial window size in pixels.");
+                            const float halfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                            ImGui::SetNextItemWidth(halfWidth);
+                            ImGui::InputInt("##WindowWidth", &projectWindowWidth, 0);
+                            ImGui::SameLine();
+                            ImGui::SetNextItemWidth(-FLT_MIN);
+                            ImGui::InputInt("##WindowHeight", &projectWindowHeight, 0);
+                            widgets::SettingsRow("VSync", "Synchronise presentation with the display refresh rate. Also applies to the editor.");
+                            widgets::ToggleSwitch("##VSync", &projectVSyncEnabled);
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Loading");
+                        widgets::BeginCard("##LoadingCard");
+                        if (widgets::BeginSettingsTable("##LoadingTable"))
+                        {
+                            widgets::SettingsRow("Loading screen", "Shown while scenes load.");
+                            (void)RenderProjectAssetPicker("##LoadingScreen", m_project.get(), assets::ProjectAssetType::LoadingScreen,
+                                                           projectLoadingScreen, {.noneLabel = "Engine default", .includeEngineAssets = true});
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+                        break;
+                    }
+                    case ProjectSettingsPage::Rendering:
+                    {
+                        widgets::PageTitle("Rendering", "Graphics backend and upscaling. Saved temporal settings apply to the Editor Viewport, Game Viewport and runtime.");
+                        widgets::SectionHeading("Graphics API");
+                        widgets::BeginCard("##ApiCard");
+                        if (widgets::BeginSettingsTable("##ApiTable"))
+                        {
+                            widgets::SettingsRow("Backend", "The project backend is authoritative; changing it restarts rendering after saving.");
+                            constexpr std::array<const char *, 2> graphicsApiLabels = {"OpenGL", "Vulkan"};
+                            int apiIndex = static_cast<int>(projectGraphicsApi);
+                            if (widgets::SegmentedControl("##GraphicsApi", &apiIndex, graphicsApiLabels))
+                                projectGraphicsApi = static_cast<render::rhi::GraphicsApi>(apiIndex);
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Upscaling");
+                        widgets::BeginCard("##UpscalingCard");
+                        if (widgets::BeginSettingsTable("##UpscalingTable"))
+                        {
+                            const bool temporal = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Dlss ||
+                                                  projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Fsr2;
+                            widgets::SettingsRow("Upscaler", "Applies to the viewports and the runtime.");
+                            constexpr std::array<const char *, 4> upscalerLabels = {"None", "Spatial", "DLSS", "FSR 2"};
+                            int modeIndex = static_cast<int>(projectRuntimeUpscaler);
+                            if (widgets::SegmentedControl("##Upscaler", &modeIndex, upscalerLabels))
+                                projectRuntimeUpscaler = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
+                            if (temporal && projectGraphicsApi != render::rhi::GraphicsApi::Vulkan)
+                                warningText("Temporal upscaling requires the Vulkan graphics API.");
+
+                            widgets::SettingsRow("Render scale", "Internal resolution for the spatial upscaler.");
+                            ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
+                            ImGui::SliderFloat("##RenderScale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
+                            ImGui::EndDisabled();
+
+                            widgets::SettingsRow("Sharpness", "Used by the spatial and FSR 2 upscalers.");
+                            ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial &&
+                                                 projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Fsr2);
+                            ImGui::SliderFloat("##Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
+                            ImGui::EndDisabled();
+
+                            widgets::SettingsRow("Temporal quality", "Reconstruction ratio for DLSS and FSR 2.");
+                            ImGui::BeginDisabled(!temporal);
+                            constexpr std::array<const char *, 5> qualityLabels = {
+                                "Performance", "Balanced", "Quality", "Ultra Performance", "DLAA"};
+                            const auto qualityIndex = static_cast<std::size_t>(
+                                std::clamp(static_cast<int>(projectRuntimeUpscalerQuality), 0, 4));
+                            if (ImGui::BeginCombo("##TemporalQuality", qualityLabels[qualityIndex]))
+                            {
+                                for (std::size_t index = 0; index < qualityLabels.size(); ++index)
+                                {
+                                    const bool selected = qualityIndex == index;
+                                    if (ImGui::Selectable(qualityLabels[index], selected))
+                                        projectRuntimeUpscalerQuality = static_cast<render::rhi::UpscalerQuality>(index);
+                                    if (selected)
+                                        ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::EndDisabled();
+                            if (temporal && projectRuntimeUpscalerQuality == render::rhi::UpscalerQuality::UltraPerformance)
+                                warningText("Ultra Performance is a 3x mode for very high output resolutions. Use Quality or Balanced for docked editor viewports.");
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+                        break;
+                    }
+                    case ProjectSettingsPage::Editor:
+                    {
+                        widgets::PageTitle("Editor", "Editor text settings stored with this project. Changes preview immediately; Cancel reverts them.");
+                        widgets::SectionHeading("Text");
+                        widgets::BeginCard("##EditorTextCard");
+                        if (widgets::BeginSettingsTable("##EditorTextTable"))
+                        {
+                            widgets::SettingsRow("Font");
+                            constexpr std::array<const char *, 3> editorFonts = {"Martian Mono", "Georama", "ImGui Default"};
+                            if (ImGui::BeginCombo("##EditorFont", projectEditorFont.c_str()))
+                            {
+                                for (const char *fontName : editorFonts)
+                                {
+                                    const bool selected = projectEditorFont == fontName;
+                                    if (ImGui::Selectable(fontName, selected))
+                                    {
+                                        projectEditorFont = fontName;
+                                        m_panelManager.SetEditorFont(projectEditorFont);
+                                    }
+                                    if (selected)
+                                        ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            widgets::SettingsRow("Font size");
+                            if (ImGui::SliderFloat("##EditorFontSize", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
+                                m_panelManager.SetEditorFontSize(projectEditorFontSize);
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+                        mutedText("Theme, colours and spacing are per user: see Edit > Preferences.");
+                        break;
+                    }
+                    case ProjectSettingsPage::Scripting:
+                    {
+                        widgets::PageTitle("Scripting", "Managed code loaded by the editor and runtime.");
+                        widgets::SectionHeading("Assembly");
+                        widgets::BeginCard("##ScriptingCard");
+                        if (widgets::BeginSettingsTable("##ScriptingTable"))
+                        {
+                            widgets::SettingsRow("Script assembly", "Leave empty to use the assembly built from the project's scripts.");
+                            ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
+                            ImGui::InputText("##ScriptAssembly", projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size());
+                            ImGui::SameLine();
+                            if (widgets::IconButton("##BrowseScriptAssembly", icons::Folder, "Browse for a managed assembly"))
+                            {
+#ifdef _WIN32
+                                OPENFILENAMEA ofn = {};
+                                char fileName[MAX_PATH] = "";
+                                ofn.lStructSize = sizeof(ofn);
+                                ofn.hwndOwner = nullptr;
+                                ofn.lpstrFilter = "Managed Assemblies\0*.dll\0All Files\0*.*\0";
+                                ofn.lpstrFile = fileName;
+                                ofn.nMaxFile = MAX_PATH;
+                                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                                if (GetOpenFileNameA(&ofn))
+                                {
+                                    strncpy_s(projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size(), fileName, _TRUNCATE);
+                                }
+#endif
+                            }
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+                        break;
+                    }
+                    case ProjectSettingsPage::Build:
+                    {
+                        widgets::PageTitle("Build", "What gets packaged when you build the project. Project Validation still checks all assets.");
+                        widgets::SectionHeading("Packaging");
+                        widgets::BeginCard("##PackagingCard");
+                        if (widgets::BeginSettingsTable("##PackagingTable"))
+                        {
+                            widgets::SettingsRow("Build used assets only",
+                                                 "Package only the startup scene, loading screen, scripts and their dependencies.");
+                            widgets::ToggleSwitch("##BuildUsedAssetsOnly", &projectBuildUsedAssetsOnly);
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Always include", "Content loaded dynamically by scripts, which dependency scanning cannot find.");
+                        widgets::BeginCard("##IncludeCard");
+                        std::array<assets::ProjectAssetType, static_cast<std::size_t>(assets::ProjectAssetType::Count)> buildAssetTypes;
+                        for (std::size_t i = 0; i < buildAssetTypes.size(); ++i)
+                            buildAssetTypes[i] = static_cast<assets::ProjectAssetType>(i);
+                        if (projectBuildAlwaysInclude.empty())
+                            mutedText("No extra assets.");
+                        for (std::size_t i = 0; i < projectBuildAlwaysInclude.size();)
+                        {
+                            ImGui::PushID(static_cast<int>(i));
+                            ImGui::SetNextItemWidth(listControlWidth());
+                            (void)RenderProjectAssetPicker("##Asset", m_project.get(), buildAssetTypes,
+                                                           projectBuildAlwaysInclude[i], {.noneLabel = "<select asset>"});
+                            ImGui::SameLine();
+                            const bool remove = widgets::IconButton("##Remove", icons::Trash, "Remove");
+                            ImGui::PopID();
+                            if (remove) projectBuildAlwaysInclude.erase(projectBuildAlwaysInclude.begin() + i);
+                            else ++i;
+                        }
+                        if (ImGui::Button((std::string(icons::Plus) + "  Add asset").c_str())) projectBuildAlwaysInclude.emplace_back();
+                        widgets::EndCard();
+                        break;
+                    }
+                    case ProjectSettingsPage::Server:
+                    {
+                        widgets::PageTitle("Dedicated Server", "Headless simulation build. Use Build > Dedicated Server to export and run it.");
+                        widgets::SectionHeading("Server");
+                        widgets::BeginCard("##ServerCard");
+                        if (widgets::BeginSettingsTable("##ServerTable"))
+                        {
+                            widgets::SettingsRow("Startup scene", "Simulation scene the server loads.");
+                            (void)RenderProjectAssetPicker("##ServerStartupScene", m_project.get(), assets::ProjectAssetType::Scene,
+                                                           projectServer.startupScene,
+                                                           {.noneLabel = "<select simulation scene>", .includeEngineAssets = true});
+                            widgets::SettingsRow("Output executable",
+                                                 "Relative paths use the project directory. Build and Run starts the console application; Ctrl+C stops it.");
+                            textField("##ServerOutput", projectServer.outputExecutable);
+                            widgets::SettingsRow("Tick rate");
+                            ImGui::SliderInt("##ServerTickRate", &projectServer.tickRate, 10, 240, "%d Hz");
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Allowed scripts",
+                                                "Only these simulation scripts run, including on spawned prefabs. Include session, bots and gameplay scripts; leave out player input, menus and cameras.");
+                        widgets::BeginCard("##ServerScriptsCard");
+                        if (projectServer.scripts.empty())
+                            mutedText("No scripts allowed yet.");
+                        for (std::size_t i = 0; i < projectServer.scripts.size();)
+                        {
+                            ImGui::PushID(static_cast<int>(i));
+                            auto &script = projectServer.scripts[i];
+                            ImGui::SetNextItemWidth(listControlWidth());
+                            if (ImGui::BeginCombo("##Script", script.empty() ? "<select script>" : script.c_str()))
+                            {
+                                const auto scriptClasses = m_engine.GetScriptEngine().GetClassNames();
+                                for (const auto &name : scriptClasses)
+                                    if (ImGui::Selectable(name.c_str(), script == name)) script = name;
+                                ImGui::EndCombo();
+                            }
+                            ImGui::SameLine();
+                            const bool remove = widgets::IconButton("##Remove", icons::Trash, "Remove");
+                            ImGui::PopID();
+                            if (remove) projectServer.scripts.erase(projectServer.scripts.begin() + i); else ++i;
+                        }
+                        if (ImGui::Button((std::string(icons::Plus) + "  Add script").c_str())) projectServer.scripts.emplace_back();
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Environment",
+                                                "Defaults such as port, match mode or bot count. The deployment environment or --env NAME=VALUE overrides them. Values are stored in the project and package; keep secrets in deployment settings.");
+                        widgets::BeginCard("##ServerEnvironmentCard");
+                        if (projectServer.environment.empty())
+                            mutedText("No variables.");
+                        else
+                        {
+                            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f, 3.0f));
+                            if (ImGui::BeginTable("##ServerEnvironment", 3, ImGuiTableFlags_SizingStretchProp))
+                            {
+                                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+                                ImGui::TableSetupColumn("##Remove", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+                                ImGui::TableHeadersRow();
+                                for (std::size_t i = 0; i < projectServer.environment.size();)
+                                {
+                                    ImGui::PushID(static_cast<int>(i));
+                                    ImGui::TableNextRow();
+                                    ImGui::TableSetColumnIndex(0);
+                                    ImGui::SetNextItemWidth(-FLT_MIN);
+                                    textField("##Name", projectServer.environment[i].name);
+                                    ImGui::TableSetColumnIndex(1);
+                                    ImGui::SetNextItemWidth(-FLT_MIN);
+                                    textField("##Value", projectServer.environment[i].value);
+                                    ImGui::TableSetColumnIndex(2);
+                                    const bool remove = widgets::IconButton("##Remove", icons::Trash, "Remove variable");
+                                    ImGui::PopID();
+                                    if (remove) projectServer.environment.erase(projectServer.environment.begin() + i); else ++i;
+                                }
+                                ImGui::EndTable();
+                            }
+                            ImGui::PopStyleVar();
+                        }
+                        if (ImGui::Button((std::string(icons::Plus) + "  Add variable").c_str())) projectServer.environment.emplace_back();
+                        widgets::EndCard();
+                        break;
+                    }
+                    }
+                    ImGui::EndChild();
+
+                    // Footer.
+                    const ImVec2 footerTop = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(footerTop, ImVec2(footerTop.x + ImGui::GetContentRegionAvail().x, footerTop.y),
+                                                        GetEditorColorU32(EditorColor::Border));
+                    const ImGuiStyle &footerStyle = ImGui::GetStyle();
+                    const float saveWidth = ImGui::CalcTextSize("Save").x + footerStyle.FramePadding.x * 2.0f + 24.0f;
+                    const float cancelWidth = ImGui::CalcTextSize("Cancel").x + footerStyle.FramePadding.x * 2.0f + 16.0f;
+                    ImGui::SetCursorPos(ImVec2(28.0f, ImGui::GetCursorPosY() + 14.0f));
+                    ImGui::AlignTextToFramePadding();
+                    mutedText("Changes apply when you save.");
+                    ImGui::SameLine(ImGui::GetWindowWidth() - 28.0f - saveWidth - cancelWidth - footerStyle.ItemSpacing.x);
+                    if (ImGui::Button("Cancel", ImVec2(cancelWidth, 0.0f)))
+                    {
+                        m_panelManager.SetEditorFontSize(manifest.editorFontSize);
+                        m_panelManager.SetEditorFont(manifest.editorFont);
+                        projectEditorFontSize = manifest.editorFontSize;
+                        projectEditorFont = manifest.editorFont;
+                        projectGraphicsApi = manifest.graphicsApi;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (widgets::PrimaryButton("Save", ImVec2(saveWidth, 0.0f)))
                     {
                         const bool graphicsApiChanged = projectGraphicsApi != m_engine.GetConfig().graphicsApi;
                         manifest.name = projectNameBuffer.data();
@@ -5018,16 +5238,6 @@ namespace PlutoGE::ui
                             }
                             ImGui::CloseCurrentPopup();
                         }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel"))
-                    {
-                        m_panelManager.SetEditorFontSize(manifest.editorFontSize);
-                        m_panelManager.SetEditorFont(manifest.editorFont);
-                        projectEditorFontSize = manifest.editorFontSize;
-                        projectEditorFont = manifest.editorFont;
-                        projectGraphicsApi = manifest.graphicsApi;
-                        ImGui::CloseCurrentPopup();
                     }
 
                     ImGui::EndPopup();

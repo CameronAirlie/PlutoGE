@@ -14,6 +14,7 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ConsolePanel.h"
@@ -4340,6 +4341,8 @@ namespace PlutoGE::ui
                         saveScene();
                     else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false))
                         saveSceneAs();
+                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Comma, false))
+                        m_showPreferences = true;
                 }
 
                 if (ImGui::BeginMenu("File"))
@@ -4529,6 +4532,9 @@ namespace PlutoGE::ui
                         Redo();
                     }
                     ImGui::EndDisabled();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Preferences...", "Ctrl+,"))
+                        m_showPreferences = true;
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("View"))
@@ -4575,6 +4581,14 @@ namespace PlutoGE::ui
                         profilerPanel->SetOpen(!profilerPanel->IsOpen());
                     }
                     ImGui::Separator();
+                    if (ImGui::BeginMenu("Theme"))
+                    {
+                        RenderEditorThemeMenu();
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Customize..."))
+                            m_showPreferences = true;
+                        ImGui::EndMenu();
+                    }
                     if (ImGui::MenuItem("Reset Layout"))
                     {
                         for (Panel *panel : {static_cast<Panel *>(viewportPanel), static_cast<Panel *>(viewportPanel2),
@@ -4704,6 +4718,7 @@ namespace PlutoGE::ui
             RenderPlayModeChanges();
             RenderViewportBookmarks();
             RenderGroundPlacement();
+            RenderEditorPreferences(&m_showPreferences);
 
             if (shouldOpenProjectSettingsPopup)
             {

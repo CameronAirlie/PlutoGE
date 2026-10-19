@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/panels/Panel.h"
+#include "PlutoGE/ui/EditorIcons.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -33,16 +34,18 @@ namespace PlutoGE::ui
             bool held = false;
             const bool pressed = ImGui::ButtonBehavior(rect, buttonId, &hovered, &held);
 
-            const ImU32 backgroundColor = ImGui::GetColorU32(
-                held ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered
-                                                       : ImGuiCol_Button);
-            window->DrawList->AddRectFilled(rect.Min, rect.Max, backgroundColor, 4.0f);
+            if (hovered || held)
+            {
+                window->DrawList->AddRectFilled(rect.Min, rect.Max,
+                                                ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered),
+                                                ImGui::GetStyle().FrameRounding);
+            }
 
             const ImVec2 textSize = ImGui::CalcTextSize(label);
             const ImVec2 textPos(
                 rect.Min.x + (rect.GetWidth() - textSize.x) * 0.5f,
                 rect.Min.y + (rect.GetHeight() - textSize.y) * 0.5f);
-            window->DrawList->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), label);
+            window->DrawList->AddText(textPos, ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
 
             if (hovered && tooltip != nullptr && tooltip[0] != '\0')
             {
@@ -114,7 +117,7 @@ namespace PlutoGE::ui
         if (DrawTitleBarButton(
                 "##PanelMinimize",
                 ImRect(ImVec2(minimizeLeft, buttonTop), ImVec2(minimizeRight, buttonTop + buttonHeight)),
-                "_",
+                icons::WindowMinimize,
                 "Minimize"))
         {
             ImGui::SetWindowCollapsed(true, ImGuiCond_Always);
@@ -123,7 +126,7 @@ namespace PlutoGE::ui
         if (DrawTitleBarButton(
                 "##PanelMaximize",
                 ImRect(ImVec2(maximizeLeft, buttonTop), ImVec2(maximizeRight, buttonTop + buttonHeight)),
-                m_isMaximized ? "=" : "[]",
+                m_isMaximized ? icons::WindowRestore : icons::WindowMaximize,
                 m_isMaximized ? "Restore" : "Maximize"))
         {
             ToggleMaximized();

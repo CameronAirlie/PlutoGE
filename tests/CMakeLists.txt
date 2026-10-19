@@ -677,6 +677,13 @@ target_compile_definitions(PlutoGEViewportOverlayLayoutTests PRIVATE
     PLUTO_FONT_DIRECTORY="${CMAKE_SOURCE_DIR}/editor/resources/fonts")
 add_test(NAME PlutoGEViewportOverlayLayoutTests COMMAND PlutoGEViewportOverlayLayoutTests)
 
+add_executable(PlutoGEEditorThemeTests EditorThemeTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorTheme.cpp)
+target_include_directories(PlutoGEEditorThemeTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+target_link_libraries(PlutoGEEditorThemeTests PRIVATE PlutoGE::imgui)
+target_compile_features(PlutoGEEditorThemeTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEEditorThemeTests COMMAND PlutoGEEditorThemeTests)
+
 add_executable(PlutoGEBrushStrokeSamplerTests BrushStrokeSamplerTests.cpp)
 target_include_directories(PlutoGEBrushStrokeSamplerTests PRIVATE ../editor/ui/include)
 target_link_libraries(PlutoGEBrushStrokeSamplerTests PRIVATE glm::glm)

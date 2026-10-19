@@ -60,6 +60,9 @@ add_library(PlutoGEEditorUI
     src/panels/SceneHierarchyPanel.cpp
     src/panels/InspectorPanel.cpp
     src/PanelManager.cpp
+    src/EditorTheme.cpp
+    src/EditorWidgets.cpp
+    src/EditorPreferences.cpp
 )
 add_library(PlutoGE::EditorUI ALIAS PlutoGEEditorUI)
 if (WIN32)

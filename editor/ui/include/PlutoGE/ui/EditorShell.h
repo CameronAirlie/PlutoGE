@@ -502,6 +502,7 @@ namespace PlutoGE::ui
         std::vector<SceneHistoryEntry> m_prePlayUndoStack;
         std::vector<SceneHistoryEntry> m_prePlayRedoStack;
         bool m_showViewportBookmarks = false;
+        bool m_showPreferences = false;
         bool m_bookmarksLoaded = false;
         std::filesystem::path m_bookmarkPath;
         std::vector<ViewportBookmark> m_viewportBookmarks;

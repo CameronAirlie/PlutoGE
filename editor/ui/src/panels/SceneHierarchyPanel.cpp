@@ -22,6 +22,7 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/HierarchyTransforms.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
@@ -981,10 +982,15 @@ namespace PlutoGE::ui
             GroupSelectedEntities();
         }
 
+        // Selected rows use the accent; collapsing headers elsewhere keep the neutral Header colour.
+        ImGui::PushStyleColor(ImGuiCol_Header, GetEditorColorU32(EditorColor::Selection));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, GetEditorColorU32(EditorColor::Accent, 0.16f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, GetEditorColorU32(EditorColor::SelectionHovered));
         for (auto entity : scene->GetRootEntities())
         {
             RenderEntityNode(entity);
         }
+        ImGui::PopStyleColor(3);
 
         if (m_rangeClickId)
         {

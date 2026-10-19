@@ -4345,18 +4345,14 @@ namespace PlutoGE::ui
                         m_showPreferences = true;
                 }
 
+                const bool hasProject = m_project != nullptr;
+                const auto panelToggle = [](const char *label, Panel *panel)
+                {
+                    if (ImGui::MenuItem(label, nullptr, panel->IsOpen())) panel->SetOpen(!panel->IsOpen());
+                };
+
                 if (ImGui::BeginMenu("File"))
                 {
-                    if (isBakeRunning && ImGui::MenuItem("Cancel Bake"))
-                    {
-                        m_activeBakeTask->Cancel();
-                        m_statusMessage = "Cancelling bake...";
-                    }
-                    if (isBakeRunning)
-                    {
-                        ImGui::Separator();
-                    }
-
                     ImGui::BeginDisabled(isBakeRunning);
                     if (ImGui::MenuItem("New Project...", "Ctrl+N"))
                     {
@@ -4396,32 +4392,11 @@ namespace PlutoGE::ui
                     }
                     if (!recentProjectToOpen.empty() && ConfirmContinueWithUnsavedChanges())
                         LoadProjectFromPath(recentProjectToOpen);
-                    if (ImGui::MenuItem("Save Project", "Ctrl+S", false, m_project != nullptr))
+                    if (ImGui::MenuItem("Save Project", "Ctrl+S", false, hasProject))
                     {
                         saveProject();
                     }
-                    if (ImGui::MenuItem("Project Settings...", nullptr, false, m_project != nullptr))
-                    {
-                        loadProjectSettingsDraft();
-                        shouldOpenProjectSettingsPopup = true;
-                    }
-                    if (ImGui::MenuItem("Build Project...", "Ctrl+B", false, m_project != nullptr))
-                    {
-                        buildProject();
-                    }
-                    if (ImGui::MenuItem("Build and Run Project...", "Ctrl+Shift+B", false, m_project != nullptr))
-                    {
-                        buildAndRunProject();
-                    }
-                    if (ImGui::MenuItem("Run Test Build", nullptr, false, m_project != nullptr))
-                    {
-                        RunTestBuild();
-                    }
-                    RenderProjectBenchmarkMenu();
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Build Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(false);
-                    if (ImGui::MenuItem("Build and Run Dedicated Server", nullptr, false, m_project != nullptr)) BuildServer(true);
-                    if (ImGui::MenuItem("Run Dedicated Server", nullptr, false, m_project != nullptr)) RunServerBuild();
+
                     ImGui::Separator();
                     if (ImGui::MenuItem("New Scene", "Ctrl+Alt+N"))
                     {
@@ -4439,65 +4414,18 @@ namespace PlutoGE::ui
                     {
                         saveSceneAs();
                     }
-                    if (ImGui::MenuItem("Bake Scene"))
+
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Project Settings...", nullptr, false, hasProject))
                     {
-                        runBake(scene::SceneBakeSettings::BalancedPreview());
+                        loadProjectSettingsDraft();
+                        shouldOpenProjectSettingsPopup = true;
                     }
-                    if (ImGui::MenuItem("Bake Scene Fast"))
-                    {
-                        runBake(scene::SceneBakeSettings::FastPreview());
-                    }
-                    if (ImGui::MenuItem("Bake Scene Final"))
-                    {
-                        runBake(scene::SceneBakeSettings::Final());
-                    }
-                    if (ImGui::MenuItem("Bake Scene High (512px)"))
-                    {
-                        runBake(scene::SceneBakeSettings::HighQuality());
-                    }
-                    if (ImGui::MenuItem("Bake Scene Ultra (1024px)"))
-                    {
-                        runBake(scene::SceneBakeSettings::Ultra());
-                    }
-                    if (ImGui::MenuItem("Bake Ambient Grid..."))
-                    {
-                        shouldOpenBakeSceneCustomPopup = true;
-                    }
-                    if (ImGui::MenuItem("Bake Scene Custom..."))
-                    {
-                        shouldOpenBakeSceneCustomPopup = true;
-                    }
-                    if (ImGui::MenuItem("Clear Baked Lighting", nullptr, false, m_scene != nullptr))
-                    {
-                        const bool hadProbeVolume = m_scene->HasBakedProbeVolume();
-                        const std::size_t clearedLightmaps = m_scene->ClearBakedLighting();
-                        MarkSceneDirty();
-                        m_statusMessage = "Cleared " + std::to_string(clearedLightmaps) +
-                                          " baked lightmap(s)" +
-                                          (hadProbeVolume ? " and the baked probe volume." : ".");
-                        Log(ConsoleSeverity::Info, m_statusMessage);
-                    }
-                    if (ImGui::MenuItem("Bake Top-Down Map", nullptr, false, m_scene != nullptr && m_project != nullptr))
-                    {
-                        // Outline map from solid box colliders, for minimaps (Gameplay.MapLayout).
-                        const std::filesystem::path scenePath = m_scene->GetFilePath();
-                        const std::string mapName = scenePath.empty() ? std::string("Untitled") : scenePath.stem().string();
-                        const auto result = scene::BakeTopDownMap(*m_scene);
-                        scene::MapBakeOutput output;
-                        std::string bakeError;
-                        if (scene::SaveMapBake(*m_project, result, mapName, "Maps", &output, &bakeError))
-                        {
-                            m_statusMessage = "Baked map " + output.layoutReference + " (" + result.message + ").";
-                            Log(ConsoleSeverity::Info, m_statusMessage);
-                        }
-                        else
-                        {
-                            m_statusMessage = "Map bake failed: " + bakeError;
-                            Log(ConsoleSeverity::Error, m_statusMessage);
-                        }
-                    }
+                    if (ImGui::MenuItem("Autosave and Recovery...", nullptr, false, hasProject))
+                        m_showSceneRecovery = true;
                     ImGui::EndDisabled();
 
+                    ImGui::Separator();
                     if (ImGui::MenuItem("Exit"))
                     {
                         if (ConfirmContinueWithUnsavedChanges())
@@ -4507,78 +4435,60 @@ namespace PlutoGE::ui
                     }
                     ImGui::EndMenu();
                 }
+
                 if (ImGui::BeginMenu("Edit"))
                 {
-                    if (ImGui::MenuItem("Autosave and Recovery...", nullptr, false, m_project != nullptr))
-                        m_showSceneRecovery = true;
-                    if (ImGui::MenuItem("Project Validation...", nullptr, false, m_project != nullptr))
-                        m_showProjectValidation = true;
-                    if (ImGui::MenuItem("Ambient & Reflection Debug...")) OpenDebugDrawControls();
-                    if (ImGui::MenuItem("Gameplay Debug Drawing...")) OpenDebugDrawControls();
-                    if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
-                                        GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
-                        m_showGroundPlacement = true;
-                    ImGui::Separator();
-                    ImGui::BeginDisabled(!CanUndo());
-                    if (ImGui::MenuItem("Undo", "Ctrl+Z"))
+                    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, CanUndo()))
                     {
                         Undo();
                     }
-                    ImGui::EndDisabled();
-
-                    ImGui::BeginDisabled(!CanRedo());
-                    if (ImGui::MenuItem("Redo", "Ctrl+Y"))
+                    if (ImGui::MenuItem("Redo", "Ctrl+Y", false, CanRedo()))
                     {
                         Redo();
                     }
-                    ImGui::EndDisabled();
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Drop Selection onto Ground...", nullptr, false,
+                                        GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
+                        m_showGroundPlacement = true;
                     ImGui::Separator();
                     if (ImGui::MenuItem("Preferences...", "Ctrl+,"))
                         m_showPreferences = true;
                     ImGui::EndMenu();
                 }
-                if (ImGui::BeginMenu("View"))
+
+                if (ImGui::BeginMenu("Window"))
                 {
-                    if (ImGui::MenuItem("Quality Settings", nullptr, qualitySettingsPanel->IsOpen()))
-                        qualitySettingsPanel->SetOpen(!qualitySettingsPanel->IsOpen());
-                    ImGui::MenuItem("Viewport Bookmarks", nullptr, &m_showViewportBookmarks);
-                    if (ImGui::MenuItem("Editor Viewport", NULL, viewportPanel->IsOpen()))
+                    panelToggle("Editor Viewport", viewportPanel);
+                    panelToggle("Game Viewport", viewportPanel2);
+                    panelToggle("Scene Hierarchy", sceneHierarchyPanel);
+                    panelToggle("Inspector", inspectorPanel);
+                    panelToggle("Content Browser", contentBrowserPanel);
+                    panelToggle("Console", consolePanel);
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("Asset Editors"))
                     {
-                        viewportPanel->SetOpen(!viewportPanel->IsOpen());
+                        panelToggle("Material Editor", materialEditorPanel);
+                        panelToggle("Mesh Editor", meshEditorPanel);
+                        panelToggle("Shader Graph Editor", shaderGraphEditorPanel);
+                        ImGui::Separator();
+                        panelToggle("Animation Graph Editor", animationGraphEditorPanel);
+                        panelToggle("Animation Clip Editor", animationClipEditorPanel);
+                        panelToggle("Sequencer Editor", sequencerEditorPanel);
+                        panelToggle("Particle System Editor", particleSystemEditorPanel);
+                        ImGui::Separator();
+                        panelToggle("Canvas Editor", canvasEditorPanel);
+                        panelToggle("UI Document Editor", m_rmlDocumentEditor);
+                        panelToggle("Loading Screen Editor", loadingScreenEditorPanel);
+                        panelToggle("Input Mapping Editor", inputMappingEditorPanel);
+                        ImGui::EndMenu();
                     }
-                    if (ImGui::MenuItem("Game Viewport", NULL, viewportPanel2->IsOpen()))
+                    if (ImGui::BeginMenu("Tools"))
                     {
-                        viewportPanel2->SetOpen(!viewportPanel2->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Scene Hierarchy", NULL, sceneHierarchyPanel->IsOpen()))
-                    {
-                        sceneHierarchyPanel->SetOpen(!sceneHierarchyPanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Inspector", NULL, inspectorPanel->IsOpen()))
-                    {
-                        inspectorPanel->SetOpen(!inspectorPanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Content Browser", NULL, contentBrowserPanel->IsOpen()))
-                    {
-                        contentBrowserPanel->SetOpen(!contentBrowserPanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Console", NULL, consolePanel->IsOpen()))
-                    {
-                        consolePanel->SetOpen(!consolePanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Material Editor", NULL, materialEditorPanel->IsOpen()))
-                    {
-                        materialEditorPanel->SetOpen(!materialEditorPanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Mesh Editor", NULL, meshEditorPanel->IsOpen()))
-                    {
-                        meshEditorPanel->SetOpen(!meshEditorPanel->IsOpen());
-                    }
-                    if (ImGui::MenuItem("Sequencer Editor", nullptr, sequencerEditorPanel->IsOpen()))
-                        sequencerEditorPanel->SetOpen(!sequencerEditorPanel->IsOpen());
-                    if (ImGui::MenuItem("Profiler", NULL, profilerPanel->IsOpen()))
-                    {
-                        profilerPanel->SetOpen(!profilerPanel->IsOpen());
+                        panelToggle("Profiler", profilerPanel);
+                        panelToggle("Quality Settings", qualitySettingsPanel);
+                        ImGui::MenuItem("Viewport Bookmarks", nullptr, &m_showViewportBookmarks);
+                        if (ImGui::MenuItem("Debug Drawing...")) OpenDebugDrawControls();
+                        ImGui::EndMenu();
                     }
                     ImGui::Separator();
                     if (ImGui::BeginMenu("Theme"))
@@ -4599,16 +4509,130 @@ namespace PlutoGE::ui
                     }
                     ImGui::EndMenu();
                 }
-                if (ImGui::BeginMenu("Runtime"))
+
+                if (ImGui::BeginMenu("Scene"))
+                {
+                    if (isBakeRunning)
+                    {
+                        if (ImGui::MenuItem("Cancel Bake"))
+                        {
+                            m_activeBakeTask->Cancel();
+                            m_statusMessage = "Cancelling bake...";
+                        }
+                        ImGui::Separator();
+                    }
+                    ImGui::BeginDisabled(isBakeRunning);
+                    if (ImGui::BeginMenu("Lighting", m_scene != nullptr))
+                    {
+                        if (ImGui::MenuItem("Bake Lighting"))
+                            runBake(scene::SceneBakeSettings::BalancedPreview());
+                        ImGui::SetItemTooltip("Bake with the balanced preview preset.");
+                        if (ImGui::BeginMenu("Bake with Preset"))
+                        {
+                            if (ImGui::MenuItem("Fast Preview")) runBake(scene::SceneBakeSettings::FastPreview());
+                            if (ImGui::MenuItem("Balanced Preview")) runBake(scene::SceneBakeSettings::BalancedPreview());
+                            if (ImGui::MenuItem("Final")) runBake(scene::SceneBakeSettings::Final());
+                            if (ImGui::MenuItem("High (512px)")) runBake(scene::SceneBakeSettings::HighQuality());
+                            if (ImGui::MenuItem("Ultra (1024px)")) runBake(scene::SceneBakeSettings::Ultra());
+                            ImGui::EndMenu();
+                        }
+                        if (ImGui::MenuItem("Bake Ambient Grid..."))
+                            shouldOpenBakeSceneCustomPopup = true;
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Bake Settings..."))
+                            shouldOpenBakeSceneCustomPopup = true;
+                        if (ImGui::MenuItem("Clear Baked Lighting"))
+                        {
+                            const bool hadProbeVolume = m_scene->HasBakedProbeVolume();
+                            const std::size_t clearedLightmaps = m_scene->ClearBakedLighting();
+                            MarkSceneDirty();
+                            m_statusMessage = "Cleared " + std::to_string(clearedLightmaps) +
+                                              " baked lightmap(s)" +
+                                              (hadProbeVolume ? " and the baked probe volume." : ".");
+                            Log(ConsoleSeverity::Info, m_statusMessage);
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::MenuItem("Bake Top-Down Map", nullptr, false, m_scene != nullptr && hasProject))
+                    {
+                        // Outline map from solid box colliders, for minimaps (Gameplay.MapLayout).
+                        const std::filesystem::path scenePath = m_scene->GetFilePath();
+                        const std::string mapName = scenePath.empty() ? std::string("Untitled") : scenePath.stem().string();
+                        const auto result = scene::BakeTopDownMap(*m_scene);
+                        scene::MapBakeOutput output;
+                        std::string bakeError;
+                        if (scene::SaveMapBake(*m_project, result, mapName, "Maps", &output, &bakeError))
+                        {
+                            m_statusMessage = "Baked map " + output.layoutReference + " (" + result.message + ").";
+                            Log(ConsoleSeverity::Info, m_statusMessage);
+                        }
+                        else
+                        {
+                            m_statusMessage = "Map bake failed: " + bakeError;
+                            Log(ConsoleSeverity::Error, m_statusMessage);
+                        }
+                    }
+                    ImGui::Separator();
+                    RenderAuthoringMenuItems();
+                    ImGui::EndDisabled();
+                    ImGui::EndMenu();
+                }
+
+                if (ImGui::BeginMenu("Build"))
+                {
+                    ImGui::BeginDisabled(isBakeRunning || !hasProject);
+                    if (ImGui::MenuItem("Build Project...", "Ctrl+B"))
+                    {
+                        buildProject();
+                    }
+                    if (ImGui::MenuItem("Build and Run Project...", "Ctrl+Shift+B"))
+                    {
+                        buildAndRunProject();
+                    }
+                    if (ImGui::MenuItem("Run Test Build"))
+                    {
+                        RunTestBuild();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("Dedicated Server"))
+                    {
+                        if (ImGui::MenuItem("Build")) BuildServer(false);
+                        if (ImGui::MenuItem("Build and Run")) BuildServer(true);
+                        if (ImGui::MenuItem("Run Last Build")) RunServerBuild();
+                        ImGui::EndMenu();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Project Validation..."))
+                        m_showProjectValidation = true;
+                    RenderProjectBenchmarkMenu();
+                    ImGui::EndDisabled();
+                    ImGui::EndMenu();
+                }
+
+                if (ImGui::BeginMenu("Play"))
                 {
                     const bool canRunRuntime = m_scene != nullptr;
-                    ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Play", "F5"))
+                    const bool runtimeRunning = m_engine.IsRuntimeRunning();
+                    if (ImGui::MenuItem("Play", "F5", false, canRunRuntime && !runtimeRunning))
                     {
                         m_pendingRuntimeStart = true;
                     }
-                    ImGui::EndDisabled();
-
+                    if (ImGui::MenuItem("Stop", "Shift+F5", false, runtimeRunning))
+                    {
+                        StopEditorRuntime();
+                        forceEditorCursorVisible = false;
+                        window.SetCursorLockOverride(false);
+                        window.SetScriptInputEnabled(false);
+                        window.SetCursorLocked(false);
+                    }
+                    if (ImGui::MenuItem("Stop and Keep Changes...", nullptr, false, runtimeRunning && !m_runtimeSceneReplaced))
+                    {
+                        StopEditorRuntime(true);
+                        forceEditorCursorVisible = false;
+                    }
+                    if (runtimeRunning && m_runtimeSceneReplaced)
+                        ImGui::SetItemTooltip("Keeping changes is unavailable after replacing the play scene.");
+                    ImGui::Separator();
                     if (ImGui::BeginMenu("Simulation Speed", canRunRuntime))
                     {
                         constexpr std::array<float, 6> timeScales{0.0f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
@@ -4623,43 +4647,17 @@ namespace PlutoGE::ui
                         }
                         ImGui::EndMenu();
                     }
-
-                    ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Stop", "Shift+F5"))
-                    {
-                        StopEditorRuntime();
-                        forceEditorCursorVisible = false;
-                        window.SetCursorLockOverride(false);
-                        window.SetScriptInputEnabled(false);
-                        window.SetCursorLocked(false);
-                    }
-                    if (ImGui::MenuItem("Stop and Keep Changes...", nullptr, false,
-                                        m_engine.IsRuntimeRunning() && !m_runtimeSceneReplaced))
-                    {
-                        StopEditorRuntime(true);
-                        forceEditorCursorVisible = false;
-                    }
-                    if (m_runtimeSceneReplaced)
-                        ImGui::TextDisabled("Keeping changes is unavailable after replacing the play scene.");
-                    ImGui::EndDisabled();
-
-                    ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Force Show Cursor", "Shift+F1", forceEditorCursorVisible))
+                    if (ImGui::MenuItem("Force Show Cursor", "Shift+F1", forceEditorCursorVisible, runtimeRunning))
                     {
                         forceEditorCursorVisible = !forceEditorCursorVisible;
                         window.SetCursorLockOverride(forceEditorCursorVisible);
                     }
-                    ImGui::EndDisabled();
                     ImGui::EndMenu();
                 }
+
                 if (ImGui::BeginMenu("Scripts"))
                 {
-                    if (ImGui::MenuItem("Automatically Build Changed Scripts", nullptr, &m_autoBuildScripts))
-                    {
-                        m_scriptWatch.Reset();
-                        m_nextScriptScan = {};
-                    }
-                    ImGui::BeginDisabled(m_project == nullptr || IsRuntimeExportProject());
+                    ImGui::BeginDisabled(!hasProject || IsRuntimeExportProject());
                     if (ImGui::MenuItem("Build Scripts"))
                     {
                         BuildProjectScripts();
@@ -4677,18 +4675,38 @@ namespace PlutoGE::ui
                         }
                     }
                     ImGui::EndDisabled();
-                    if (m_project != nullptr && IsRuntimeExportProject())
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Automatically Build Changed Scripts", nullptr, &m_autoBuildScripts))
+                    {
+                        m_scriptWatch.Reset();
+                        m_nextScriptScan = {};
+                    }
+                    ImGui::MenuItem("Script Build Diagnostics", nullptr, &m_showScriptBuildDiagnostics);
+                    if (hasProject && IsRuntimeExportProject())
                     {
                         ImGui::Separator();
                         ImGui::TextDisabled("Open the source project to edit or build scripts.");
                     }
                     ImGui::EndMenu();
                 }
-                RenderAuthoringMenu();
+
+                // Status sits right-aligned and is shortened to the free space; the full text is in the tooltip.
                 if (!m_statusMessage.empty())
                 {
-                    ImGui::Separator();
-                    ImGui::TextUnformatted(m_statusMessage.c_str());
+                    const float available = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                    std::string shown = m_statusMessage;
+                    if (ImGui::CalcTextSize(shown.c_str()).x > available)
+                    {
+                        const float ellipsisWidth = ImGui::CalcTextSize("...").x;
+                        while (!shown.empty() && ImGui::CalcTextSize(shown.c_str()).x + ellipsisWidth > available) shown.pop_back();
+                        shown += "...";
+                    }
+                    if (available > ImGui::CalcTextSize("...").x)
+                    {
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available - ImGui::CalcTextSize(shown.c_str()).x);
+                        ImGui::TextDisabled("%s", shown.c_str());
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m_statusMessage.c_str());
+                    }
                 }
                 ImGui::EndMainMenuBar();
             }
@@ -5018,67 +5036,77 @@ namespace PlutoGE::ui
 
             if (shouldOpenBakeSceneCustomPopup)
             {
-                ImGui::OpenPopup("Bake Scene Custom");
+                ImGui::OpenPopup("Lighting Bake Settings");
                 shouldOpenBakeSceneCustomPopup = false;
             }
 
-            if (ImGui::BeginPopupModal("Bake Scene Custom", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            if (ImGui::BeginPopupModal("Lighting Bake Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             {
                 sanitizeBakeSettings(m_customBakeSettings);
+                ImGui::PushItemWidth(180.0f);
 
-                if (ImGui::Button("Fast Preset"))
+                static constexpr const char *presetLabels[] = {"Fast Preview", "Balanced Preview", "Final", "High (512px)", "Ultra (1024px)"};
+                if (ImGui::BeginCombo("Load Preset", "Choose..."))
                 {
-                    m_customBakeSettings = scene::SceneBakeSettings::FastPreview();
+                    for (int preset = 0; preset < static_cast<int>(std::size(presetLabels)); ++preset)
+                    {
+                        if (!ImGui::Selectable(presetLabels[preset])) continue;
+                        switch (preset)
+                        {
+                            case 0: m_customBakeSettings = scene::SceneBakeSettings::FastPreview(); break;
+                            case 1: m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview(); break;
+                            case 2: m_customBakeSettings = scene::SceneBakeSettings::Final(); break;
+                            case 3: m_customBakeSettings = scene::SceneBakeSettings::HighQuality(); break;
+                            default: m_customBakeSettings = scene::SceneBakeSettings::Ultra(); break;
+                        }
+                    }
+                    ImGui::EndCombo();
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("Balanced Preset"))
-                {
-                    m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Final Preset"))
-                {
-                    m_customBakeSettings = scene::SceneBakeSettings::Final();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("High 512"))
-                {
-                    m_customBakeSettings = scene::SceneBakeSettings::HighQuality();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Ultra 1024"))
-                {
-                    m_customBakeSettings = scene::SceneBakeSettings::Ultra();
-                }
+                ImGui::SetItemTooltip("Replaces the values below with a preset; edit them afterwards as needed.");
 
-                ImGui::Separator();
-                ImGui::InputInt("Lightmap Resolution", &m_customBakeSettings.lightmapResolution);
-                ImGui::InputInt("Lightmap Tile Size", &m_customBakeSettings.lightmapTileSize);
+                ImGui::SeparatorText("Lightmaps");
+                ImGui::InputInt("Resolution", &m_customBakeSettings.lightmapResolution);
+                ImGui::InputInt("Tile Size", &m_customBakeSettings.lightmapTileSize);
                 ImGui::InputInt("Direct Shadow Samples", &m_customBakeSettings.directShadowSampleCount);
-                ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
-                ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
-                ImGui::InputInt("GI Bounce Count", &m_customBakeSettings.indirectBounceCount);
-                ImGui::InputInt("GI Denoise Passes", &m_customBakeSettings.indirectDenoisePassCount);
-                ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
                 ImGui::Checkbox("Use GPU Bake", &m_customBakeSettings.useGpu);
                 if (m_customBakeSettings.useGpu)
-                {
-                    ImGui::TextDisabled("GPU traces direct light and GI for base-colour scenes; textured GI uses the accurate CPU fallback.");
-                }
+                    ImGui::SetItemTooltip("GPU traces direct light and GI for base-colour scenes; textured GI uses the accurate CPU fallback.");
+
+                ImGui::SeparatorText("Global Illumination");
+                ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
+                ImGui::BeginDisabled(!m_customBakeSettings.bakeIndirectBounce);
+                ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
+                ImGui::InputInt("Bounce Count", &m_customBakeSettings.indirectBounceCount);
+                ImGui::InputInt("Denoise Passes", &m_customBakeSettings.indirectDenoisePassCount);
+                ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
+                ImGui::EndDisabled();
+
+                ImGui::SeparatorText("Probe Volume");
                 ImGui::Checkbox("Bake Probe Volume", &m_customBakeSettings.bakeProbeVolume);
+                ImGui::SetItemTooltip("Grid bounds follow static geometry. Solid cells are rejected; visibility limits interpolation through walls.");
                 ImGui::InputInt("Probe Directions", &m_customBakeSettings.probeDirectionCount);
                 ImGui::DragFloat("Probe Spacing", &m_customBakeSettings.probeSpacing, 0.05f, 0.05f, 100.0f);
                 ImGui::DragFloat("Surface Clearance", &m_customBakeSettings.probeSurfaceClearance, 0.01f, 0.01f, 2.0f);
                 ImGui::InputInt("Probe Budget", &m_customBakeSettings.maxProbeCount);
-                ImGui::Checkbox("Automatic Reflection Captures", &m_autoAmbientReflections);
-                ImGui::SliderInt("Reflection Capture Budget", &m_ambientReflectionCount, 0, scene::kMaxIblCaptureVolumes);
-                ImGui::TextWrapped("Grid bounds follow static geometry. Solid cells are rejected; visibility limits interpolation through walls. Reflection captures share the four-volume budget with manual captures.");
                 ImGui::SliderFloat("Probe Bounce Strength", &m_customBakeSettings.probeBounceStrength, 0.0f, 4.0f, "%.2f");
+
+                ImGui::SeparatorText("Reflection Captures");
+                ImGui::Checkbox("Automatic Reflection Captures", &m_autoAmbientReflections);
+                ImGui::SliderInt("Capture Budget", &m_ambientReflectionCount, 0, scene::kMaxIblCaptureVolumes);
+                ImGui::SetItemTooltip("Automatic captures share the %d-volume budget with manual captures.", scene::kMaxIblCaptureVolumes);
+                ImGui::PopItemWidth();
 
                 sanitizeBakeSettings(m_customBakeSettings);
 
+                ImGui::Separator();
                 ImGui::BeginDisabled(isBakeRunning);
-                if (ImGui::Button("Bake Ambient Grid")) {
+                if (ImGui::Button("Bake Lighting"))
+                {
+                    runBake(m_customBakeSettings);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Bake Ambient Grid Only")) {
                     auto settings = m_customBakeSettings;
                     settings.probesOnly = true;
                     settings.bakeProbeVolume = true;
@@ -5090,12 +5118,7 @@ namespace PlutoGE::ui
                     if (!m_activeBakeTask) m_generateAmbientReflections = false;
                     ImGui::CloseCurrentPopup();
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("Bake"))
-                {
-                    runBake(m_customBakeSettings);
-                    ImGui::CloseCurrentPopup();
-                }
+                ImGui::SetItemTooltip("Bakes only the probe volume (and automatic reflection captures), leaving lightmaps untouched.");
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Close"))

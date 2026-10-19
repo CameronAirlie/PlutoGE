@@ -43,7 +43,7 @@ the editor reset button. Direct scene renderers can opt in with
 
 ## Editor
 
-Open **View > Quality Settings** to edit each project's Low, Medium, High and
+Open **Window > Tools > Quality Settings** to edit each project's Low, Medium, High and
 Ultra definitions. Controls expose every supported quality policy field:
 
 | Control | Meaning |

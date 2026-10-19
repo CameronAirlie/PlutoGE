@@ -193,7 +193,7 @@ public sealed class HelloUiController : ScriptBehaviour
 ```
 
 Save this under `Assets/Scripts`, build the project scripts from
-**Runtime → Build Scripts**, and attach it as a Script component to an active
+**Scripts → Build Scripts**, and attach it as a Script component to an active
 entity.
 
 Useful managed operations include:

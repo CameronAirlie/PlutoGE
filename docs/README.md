@@ -17,7 +17,7 @@ code examples use the public `PlutoGE.ScriptCore` API.
 | [UI, saves, networking, and shipping](guide/game-systems.md) | Build interfaces, change scenes, persist progress, connect players, profile, and export |
 
 The examples are intentionally small. Each complete C# class belongs in its own
-file under your game's `Assets/Scripts`, followed by **Runtime > Build Scripts**.
+file under your game's `Assets/Scripts`, followed by **Scripts > Build Scripts**.
 Attach it with a Script component and assign its serialized references in the
 Inspector. Other code blocks are explicitly identified as fragments.
 

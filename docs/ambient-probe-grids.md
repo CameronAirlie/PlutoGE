@@ -2,7 +2,7 @@
 
 ## Sphere debug view
 
-Open **Edit > Ambient & Reflection Debug...** and enable **Diffuse probe spheres**
+Open **Window > Tools > Debug Drawing...** and enable **Diffuse probe spheres**
 and/or **Reflection capture spheres**. The Scene viewport draws depth-tested spheres:
 diffuse spheres evaluate that probe's stored SH in the sphere-normal direction;
 chrome spheres sample that capture's HDR cubemap. They bypass direct lighting and
@@ -25,7 +25,7 @@ component; **Clear Bake** clears only that component's data. Baked probes are st
 on the component and travel with scene saves, entity copies and prefabs. Moving, rotating or
 resizing the box invalidates its old bake until rebaked.
 
-**File > Bake Ambient Grid...** bakes all enabled, active volume components. If none
+**Scene > Lighting > Bake Ambient Grid...** bakes all enabled, active volume components. If none
 exist, the first bake creates an **Ambient Light Volume** object fitted to static
 geometry. Old scene-level grids are migrated into this component when loaded.
 This action does not generate UV2 or replace lightmaps. Mark bake geometry **Static**.

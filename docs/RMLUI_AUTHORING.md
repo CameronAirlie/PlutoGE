@@ -210,7 +210,7 @@ frame are still clipped by the scissor. A rounded or transformed frame uses a cl
 
 `PlutoGE.ScriptCore.Gameplay` provides a game-neutral map pipeline:
 
-1. **Bake.** In the editor, **File > Bake Top-Down Map** writes `Assets/Maps/<Scene>.tga` and
+1. **Bake.** In the editor, **Scene > Bake Top-Down Map** writes `Assets/Maps/<Scene>.tga` and
    `<Scene>.plutomap` for the open scene. Headless: `PlutoGEBakeMap <project.plutoproject> <scene>...`.
    Solid, non-trigger box colliders become outlined obstacles; thin or flat slabs become faint
    floors. The bake is cropped to the navigation mesh, and anything tagged `MapIgnore` is skipped.

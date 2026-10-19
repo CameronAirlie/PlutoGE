@@ -231,7 +231,7 @@ physics synchronization.
 
 Use Console messages for state transitions and failures; avoid logging every frame
 for every entity. Editor DebugDraw helps inspect rays and paths. Validate saved
-assets with **Edit > Project Validation...**, build scripts first, and rerun after
+assets with **Build > Project Validation...**, build scripts first, and rerun after
 fixing results. Validation finds particular structural/reference problems, not
 all gameplay bugs.
 

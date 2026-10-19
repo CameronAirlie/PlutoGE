@@ -96,7 +96,7 @@ build, publication waits until Play stops. Failed automatic builds retain the
 loaded assembly; successful reload happens on the editor thread. Arbitrary live
 managed state is not preserved.
 
-Authoring > Script Build Diagnostics displays compiler output. Selecting a
+Scripts > Script Build Diagnostics displays compiler output. Selecting a
 file/line diagnostic opens its source in the associated editor; line/column remain
 visible. Processes execute directly without a shell, with bounded combined
 output. Manual builds/export remain synchronous, and concurrent manual builds
@@ -117,7 +117,7 @@ public sealed class ResetPosition : EditorCommand
 }
 ```
 
-Build, select an entity, then choose Authoring > Project Commands. GameObject is
+Build, select an entity, then choose Scene > Commands > Project Commands. GameObject is
 the selection. Commands run once within one undoable scene edit; failed commands
 roll back scene changes. Do not retain entity references, replace the scene or
 schedule background scene mutations. Filesystem/network effects are outside undo.
@@ -188,7 +188,7 @@ ScriptCore owns the menu primitives; projects register actions and provide their
 own dialog content. `Input.ActiveDevice`, `Input.UsingController` and
 `Input.ActiveGamepad` report last meaningful input, independently of connection.
 
-Open **View > Quality Settings** for project-authored Low/Medium/High/Ultra
+Open **Window > Tools > Quality Settings** for project-authored Low/Medium/High/Ultra
 policies. Each tier exposes shadow resolution/cascade/distance ceilings, an option
 to use cascaded directional shadows, and the allowed post-process groups. Hover a
 control for its exact effect scope. Changes mark the project dirty; **File > Save

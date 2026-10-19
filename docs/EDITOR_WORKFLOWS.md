@@ -16,7 +16,7 @@ recover independently even while other model generations are unavailable.
 ## Keep selected play-mode changes
 
 1. Enter play mode and tune entity transforms or serialized component properties.
-2. Choose **Runtime > Stop and Keep Changes...**.
+2. Choose **Play > Stop and Keep Changes...**.
 3. Review the original and captured values. Nothing is selected initially.
 4. Check the individual values to retain and choose **Apply Selected**, or choose
    **Discard** to keep the original scene.
@@ -46,7 +46,7 @@ use the normal scene save workflow afterward.
 
 ## Viewport bookmarks
 
-Open **View > Viewport Bookmarks** with a project loaded. Enter a name and choose
+Open **Window > Tools > Viewport Bookmarks** with a project loaded. Enter a name and choose
 **Save Current View**. Select a saved view to **Recall**, **Replace View**,
 **Rename** using the name field, or **Delete** it.
 
@@ -131,7 +131,7 @@ include-all cooking remains available.
 
 ## Autosave and recovery
 
-Open **Edit > Autosave and Recovery...** to configure autosave or recover a backup.
+Open **File > Autosave and Recovery...** to configure autosave or recover a backup.
 Autosave defaults to every 120 seconds with ten backups retained per project.
 The interval supports 10–3600 seconds and retention supports 1–50 backups. Changes
 apply for the current session; **Save Settings** persists them. **Back Up Now**
@@ -186,7 +186,7 @@ budget. Undo/redo is unavailable during play or baking.
 
 ## Project validation
 
-Open **Edit > Project Validation...**, then choose **Validate Project**. The panel
+Open **Build > Project Validation...**, then choose **Validate Project**. The panel
 checks saved assets under the project's Assets directory and the current scene's
 serialized state, including unsaved edits. The current scene replaces its saved
 version for that run. Results show severity, a stable diagnostic code, owning
@@ -236,7 +236,7 @@ Missing included dependencies still stop the build. Fix errors and build again;
 there is no stale-result bypass. Other callers of the low-level export API must
 invoke validation themselves.
 
-**File > Run Test Build** exports to a unique `PlutoGE-TestBuild-*` folder in the
+**Build > Run Test Build** exports to a unique `PlutoGE-TestBuild-*` folder in the
 system temporary directory without an output-path dialog, then launches the
 standalone game with its own Runtime Profiler window. The profiler measures the
 game process and supports frame captures, CPU timelines, and copying metrics.
@@ -258,7 +258,7 @@ not checked. A clean report means these available checks found no issues.
 
 Use `PlutoGE.ScriptCore.DebugDraw` during Play to submit world-space lines, wire
 spheres, and labels. They appear in both editor Scene and Game views. Open
-**Edit > Gameplay Debug Drawing...** to toggle all overlays, filter named
+**Window > Tools > Debug Drawing...** to toggle all overlays, filter named
 categories, inspect native rejection counts, or clear the drawings/categories.
 The Game view needs an active scene camera.
 
@@ -346,7 +346,7 @@ file and then replaces the asset; **Revert** reloads it.
 
 ## Top-down maps
 
-**File > Bake Top-Down Map** turns the open scene's solid box colliders into a north-up
+**Scene > Bake Top-Down Map** turns the open scene's solid box colliders into a north-up
 outline image (`Assets/Maps/<Scene>.tga`) and a layout (`<Scene>.plutomap`). Thin or flat
 slabs become faint floors, triggers and entities tagged `MapIgnore` are skipped, and the result
 is cropped to the navigation mesh when the scene has one. Both files are registered and added

@@ -360,7 +360,7 @@ namespace PlutoGE::ui
         bool SaveSceneToPath(const std::filesystem::path &scenePath);
         bool SaveActiveSceneIntoProject();
         void PollScriptSources();
-        void RenderAuthoringMenu();
+        void RenderAuthoringMenuItems();
         AuthoringRegistry m_authoring;
         ScriptSourceWatch m_scriptWatch;
         std::future<ScriptSourceWatch::Snapshot> m_scriptWatchFuture;

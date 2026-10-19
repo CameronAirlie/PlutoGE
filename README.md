@@ -240,7 +240,7 @@ cmake --build out/build/custom --config Debug
 1. Start `PlutoGEEditor`.
 2. Select **File → New Project…**.
 3. Choose a location and a `.plutoproject` filename.
-4. Build gameplay scripts from **Runtime → Build Scripts** after adding or changing C# files.
+4. Build gameplay scripts from **Scripts → Build Scripts** after adding or changing C# files.
 5. Press `F5` to enter play mode and `Shift+F5` to stop.
 6. Save the project before creating a standalone build.
 
@@ -570,7 +570,7 @@ target if CMake reported missing RHI shaders. See [Rendering support](docs/RENDE
 - Put the source in the project's `Assets/Scripts` directory.
 - Derive the class from `ScriptBehaviour`.
 - Give it a parameterless constructor.
-- Use **Runtime → Build Scripts** and fix errors shown in the console.
+- Use **Scripts → Build Scripts** and fix errors shown in the console.
 
 ### The `hostfxr` library cannot be found
 

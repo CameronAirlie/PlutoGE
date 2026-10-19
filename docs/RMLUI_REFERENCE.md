@@ -22,7 +22,7 @@ Inventory verified against PlutoGE's RmlUi **6.1** `Factory.cpp` and `StyleSheet
 | Visual UI construction | Source hierarchy and ID picking, computed layout, source-preserving widget/text/attribute/style edits with shared undo |
 | Camera runtime UI visibility | Camera RenderRuntimeUI controls its viewport; editor camera defaults off and has a saved Inspector override |
 | CSS var()/browser custom properties | Not implemented by this pinned RCSS parser; use token generation |
-| Tactical maps | Gameplay.MapLayout/RmlMapView/RevealTracker with baked .plutomap layouts (File > Bake Top-Down Map, PlutoGEBakeMap); panned frames need `clip: always` |
+| Tactical maps | Gameplay.MapLayout/RmlMapView/RevealTracker with baked .plutomap layouts (Scene > Bake Top-Down Map, PlutoGEBakeMap); panned frames need `clip: always` |
 
 ## Registered special elements
 

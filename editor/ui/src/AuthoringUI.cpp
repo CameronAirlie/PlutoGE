@@ -79,21 +79,25 @@ namespace PlutoGE::ui
             m_scriptWatchFuture = std::async(std::launch::async, [root] { return ScriptSourceWatch::Capture(root); });
     }
 
-    void EditorShell::RenderAuthoringMenu()
+    // Scene menu entries: gameplay kits to insert, and commands that edit the scene or selection.
+    void EditorShell::RenderAuthoringMenuItems()
     {
-        if (!ImGui::BeginMenu("Authoring")) return;
-        ImGui::MenuItem("Script Build Diagnostics", nullptr, &m_showScriptBuildDiagnostics);
-        ImGui::BeginDisabled(!m_project || !m_scene || m_engine.IsRuntimeRunning());
-        for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::GameplayKit))
+        const bool canEditScene = m_project && m_scene && !m_engine.IsRuntimeRunning();
+        const auto gameplayKits = m_authoring.List(AuthoringRegistry::Kind::GameplayKit);
+        if (ImGui::BeginMenu("Insert Gameplay Kit", canEditScene && !gameplayKits.empty()))
         {
-            if (ImGui::MenuItem(entry.label.c_str(), nullptr, false, !entry.available || entry.available(*this)))
+            for (const auto &entry : gameplayKits)
             {
-                try { ExecuteSceneEdit("Insert " + entry.label, [&] { entry.execute(*this); }); }
-                catch (const std::exception &error) { Log(ConsoleSeverity::Error, error.what()); }
+                if (ImGui::MenuItem(entry.label.c_str(), nullptr, false, !entry.available || entry.available(*this)))
+                {
+                    try { ExecuteSceneEdit("Insert " + entry.label, [&] { entry.execute(*this); }); }
+                    catch (const std::exception &error) { Log(ConsoleSeverity::Error, error.what()); }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.description.c_str());
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.description.c_str());
+            ImGui::EndMenu();
         }
-        ImGui::Separator();
+        if (!ImGui::BeginMenu("Commands", canEditScene)) return;
         if (ImGui::BeginMenu("Project Commands", GetSelectedEntity() != nullptr))
         {
             auto &scripts = m_engine.GetScriptEngine();
@@ -123,7 +127,6 @@ namespace PlutoGE::ui
                 try { ExecuteSceneEdit(entry.label, [&] { entry.execute(*this); }); }
                 catch (const std::exception &error) { Log(ConsoleSeverity::Error, error.what()); }
             }
-        ImGui::EndDisabled();
         ImGui::EndMenu();
     }
 

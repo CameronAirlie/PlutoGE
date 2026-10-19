@@ -145,5 +145,6 @@ namespace PlutoGE::ui
         bool m_openDeletePopup = false;
         std::unique_ptr<AssetThumbnailCache> m_thumbnailCache;
         float m_assetGridScale = 1.0f;
+        float m_folderTreeWidth = 200.0f;
     };
 }

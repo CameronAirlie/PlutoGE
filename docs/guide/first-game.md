@@ -85,7 +85,7 @@ public sealed class SimpleWalker : ScriptBehaviour
 }
 ```
 
-Choose **Runtime > Build Scripts**. Resolve Console build errors, select Player,
+Choose **Scripts > Build Scripts**. Resolve Console build errors, select Player,
 and choose `SimpleWalker` in its Script component. Set Speed to `4`.
 
 This example moves horizontally in world space. Normalizing direction prevents
@@ -109,7 +109,7 @@ Verify these separately before adding more content:
 4. Stopping and starting returns Player to the authored spawn position.
 5. Editing Speed, rebuilding when needed, and playing again changes movement.
 
-For tuning during Play, **Runtime > Stop and Keep Changes...** lets you review
+For tuning during Play, **Play > Stop and Keep Changes...** lets you review
 supported serialized property changes before keeping them. Save afterward. It
 does not retain spawned entities or arbitrary managed state; see
 [retention rules](../EDITOR_WORKFLOWS.md#keep-selected-play-mode-changes).

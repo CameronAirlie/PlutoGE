@@ -12,7 +12,7 @@ Open **File > Project Settings** and scroll to **Dedicated Server**:
    allow list using the picker of behaviour classes from the project assembly.
 4. Add application environment defaults for settings such as port, mode or bots.
    These values are stored in the project/package; configure secrets externally.
-5. Save, then use **File > Build Dedicated Server** or **Build and Run Dedicated Server**.
+5. Save, then use **Build > Dedicated Server > Build** or **Build and Run**.
    **Run Dedicated Server** launches the existing package without rebuilding.
 
 Build actions save the project, compile scripts, validate content, then reuse the

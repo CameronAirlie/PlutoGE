@@ -430,30 +430,18 @@ namespace PlutoGE::ui
         core::CpuScope frameScope("ImGui frame startup", core::CpuCategory::UI);
         const auto beginPanelUpdateStart = std::chrono::high_resolution_clock::now();
         auto &io = ImGui::GetIO();
+        // A locked cursor belongs to the game or the fly camera. GLFW keeps moving
+        // its hidden virtual position, and the backend queues those events, so
+        // writing io.MousePos here would be overwritten inside NewFrame. NoMouse
+        // makes ImGui drop hover and clicks for the whole UI instead.
         const bool suppressImguiMouse = m_window && m_window->IsCursorLocked();
+        constexpr ImGuiConfigFlags lockedMouseFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
         if (suppressImguiMouse)
-        {
-            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-        }
+            io.ConfigFlags |= lockedMouseFlags;
         else
-        {
-            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
-        }
+            io.ConfigFlags &= ~lockedMouseFlags;
 
         m_compositor->BeginFrame();
-        if (suppressImguiMouse)
-        {
-            io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-            io.MouseDelta = ImVec2(0.0f, 0.0f);
-            io.MouseWheel = 0.0f;
-            io.MouseWheelH = 0.0f;
-            for (int buttonIndex = 0; buttonIndex < IM_ARRAYSIZE(io.MouseDown); ++buttonIndex)
-            {
-                io.MouseDown[buttonIndex] = false;
-                io.MouseClicked[buttonIndex] = false;
-                io.MouseReleased[buttonIndex] = false;
-            }
-        }
         { core::CpuScope scope("ImGui core new frame", core::CpuCategory::UI); ImGui::NewFrame(); }
         ImGuizmo::BeginFrame();
         const ImGuiID dockspaceId = workspace ? ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID) : 0;

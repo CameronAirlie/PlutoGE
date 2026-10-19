@@ -1792,7 +1792,16 @@ namespace PlutoGE::render
         glm::vec2 overrideCanvasSize{};
         glm::vec2 overrideMousePosition{};
         bool pointerInside = true;
-        if (scene.GetRuntimeUIInputOverride(
+        // A locked cursor is look input, not a pointer. GLFW still moves its
+        // hidden virtual position; letting it hover documents would make
+        // IsPointerInputCaptured() swallow the mouse deltas gameplay reads.
+        const bool cursorLocked = window.IsCursorLocked();
+        if (cursorLocked)
+        {
+            mouseX = -1;
+            mouseY = -1;
+        }
+        else if (scene.GetRuntimeUIInputOverride(
                 overrideCanvasSize, overrideMousePosition, pointerInside))
         {
             if (pointerInside)
@@ -1819,7 +1828,9 @@ namespace PlutoGE::render
 
         for (int button = 0; button < 8; ++button)
         {
-            if (input.IsMouseButtonPressed(static_cast<std::uint16_t>(button)))
+            // Releases still pass while locked so a press begun on a document
+            // before the lock does not leave an element active.
+            if (!cursorLocked && input.IsMouseButtonPressed(static_cast<std::uint16_t>(button)))
             {
                 m_pointerContext = pointerContext;
                 m_keyboardContext = pointerContext;
@@ -1828,7 +1839,7 @@ namespace PlutoGE::render
             if (input.IsMouseButtonReleased(static_cast<std::uint16_t>(button)))
                 pointerContext->ProcessMouseButtonUp(button, modifiers);
         }
-        if (input.mouseState.scrollDeltaX != 0.0 || input.mouseState.scrollDeltaY != 0.0)
+        if (!cursorLocked && (input.mouseState.scrollDeltaX != 0.0 || input.mouseState.scrollDeltaY != 0.0))
         {
             pointerContext->ProcessMouseWheel(
                 {-static_cast<float>(input.mouseState.scrollDeltaX),

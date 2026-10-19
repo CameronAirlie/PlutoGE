@@ -64,7 +64,11 @@ RGB volume sampling path.
 The ambient-only bake snapshots current lights (including lights marked dynamic),
 emissive surfaces and the physical sky. Ordinary full-scene baking retains its
 static-light selection. Probe surface lighting always traces occlusion, even when
-a light disables real-time shadows. Directional light contributes bounced ambient
+a light disables real-time shadows. Directional light is blocked by all static
+geometry, so sealed rooms stay dark even if their walls disable shadow casting.
+Point and spot lights honour each material's **Casts Shadow** setting, matching
+real-time shading: a bulb, lamp shade or glass fixture around a local light
+must disable shadow casting, or it will block that light from the probes. Directional light contributes bounced ambient
 from visible lit surfaces; sealed rooms without emissive or local light sources
 remain dark. Sky misses include broad atmospheric radiance; direct
 lighting owns the solar disk. Retained HDR cubemap pixels are also supported as an
@@ -97,8 +101,12 @@ physical sky and six-face linear HDR capture on both RHI backends.
 
 ### Large imported scenes
 
-The bake snapshot respects each MeshComponent's selected submesh range and section
-transform. Split imports such as Bistro share one source mesh across many objects;
+The bake snapshot respects each MeshComponent's selected submesh range, section
+transform and imported node transform (the current animated pose, or the bind pose
+when the node is not animated). Sections of imported models such as Bistro are
+stored in node space; omitting the node transform places the bake geometry away
+from what is rendered, so probes see sky instead of the room and receive no
+directional or local light. Split imports such as Bistro share one source mesh across many objects;
 unselected sections must not be duplicated into each object's bake snapshot.
 Material configurations are snapshotted once per material. Fallback lightmap UV
 geometry owns only the selected sections, preserving section indices and the shared

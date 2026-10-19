@@ -165,6 +165,9 @@ namespace PlutoGE::scene
         void SetSubmeshRotationOffset(size_t submeshIndex, const glm::vec3 &offset);
         glm::vec3 GetSubmeshRotationOffset(size_t submeshIndex) const;
         glm::mat4 GetSubmeshOffsetTransform(size_t submeshIndex) const;
+        // Imported node transform applied after the submesh offset, matching the
+        // pose submitted for rendering (identity for skinned or unparented submeshes).
+        glm::mat4 GetSubmeshNodeTransform(size_t submeshIndex);
 
         void SetMaterial(render::Material *material)
         {

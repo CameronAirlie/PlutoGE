@@ -1530,6 +1530,29 @@ namespace PlutoGE::scene
         return transform;
     }
 
+    glm::mat4 MeshComponent::GetSubmeshNodeTransform(size_t submeshIndex)
+    {
+        if (!m_mesh || submeshIndex >= m_mesh->GetSubmeshCount())
+        {
+            return glm::mat4(1.0f);
+        }
+        const int nodeIndex = m_mesh->GetSubmesh(submeshIndex).animatedNodeIndex;
+        if (nodeIndex < 0)
+        {
+            return glm::mat4(1.0f);
+        }
+        auto *animationComponent = FindAnimationComponent(GetOwner());
+        if (m_mesh->HasSkeleton() && animationComponent)
+        {
+            return glm::mat4(1.0f);
+        }
+        const auto &nodes = m_mesh->GetAnimationNodes();
+        return animationComponent && animationComponent->GetClipCount() > 0 &&
+                       animationComponent->CanAnimateNode(nodes, nodeIndex)
+                   ? animationComponent->GetNodeMatrix(nodes, nodeIndex)
+                   : ComputeAnimationNodeBindMatrix(nodes, nodeIndex);
+    }
+
     bool MeshComponent::NeedsFrameRenderSubmission() const
     {
         // Imported node/skeleton metadata alone does not make an object dynamic.

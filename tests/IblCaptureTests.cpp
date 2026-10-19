@@ -97,6 +97,29 @@ int main(int argc, char **argv) try
         std::cout << "Authored scene diagnostic bake completed without saving: " << result.message << std::endl;
         return 0;
     }
+    // Imported sections stored in node space render at their node transform;
+    // the bake snapshot must place them there too.
+    {
+        MeshConfig nodal;
+        for (auto p : {glm::vec3(0,0,0),glm::vec3(1,0,0),glm::vec3(0,1,0)})
+            nodal.data.vertices.push_back({{p.x,p.y,p.z},{0,0,1},{0,0},{1,0,0,1}});
+        nodal.data.indices={0,1,2};
+        Submesh section; section.indexCount=3; section.animatedNodeIndex=1;
+        nodal.submeshes.push_back(section);
+        nodal.animationNodes.push_back({"root",-1,glm::translate(glm::mat4(1),glm::vec3(10,0,0))});
+        nodal.animationNodes.push_back({"section",0,glm::scale(glm::mat4(1),glm::vec3(2))});
+        Mesh mesh(nodal); Material material;
+        scene::Scene imported;
+        auto object=std::make_unique<scene::Entity>();
+        object->AddComponent(new scene::MeshComponent({&mesh,&material}))->SetStatic(true);
+        imported.AddEntity(std::move(object));
+        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        options.maxProbeCount=8; options.probeDirectionCount=8;
+        const bool baked=scene::SceneBaker().Bake(imported,options).succeeded;
+        const auto &volume=imported.GetBakedProbeVolume();
+        if (!baked || std::abs(volume.origin.x-(10-2*.05f))>.01f || std::abs(volume.size.x-2*1.1f)>.01f)
+            throw std::runtime_error("Bake ignores imported node transforms of model sections");
+    }
     // Reproduce split-model imports: each object renders a selected section
     // of a shared mesh. Unselected distant geometry must not enter the bake.
     {
@@ -323,6 +346,29 @@ int main(int argc, char **argv) try
     float sunBounce = 0;
     for (const auto &sh : sunlit.GetBakedProbeVolume().sphericalHarmonics) sunBounce += glm::length(sh[0]);
     if (sunBounce <= 0) throw std::runtime_error("Ambient probes discard directional light bounce");
+    // A point light inside a bulb mesh that opts out of shadows must still
+    // light the surrounding room, matching real-time local-light shadowing.
+    scene::Scene lamplit;
+    for (const auto &mesh : meshes) {
+        auto wall = std::make_unique<scene::Entity>();
+        auto *component = wall->AddComponent(new scene::MeshComponent({mesh.get(), &solidMaterial}));
+        component->SetStatic(true); lamplit.AddEntity(std::move(wall));
+    }
+    Material bulbMaterial; bulbMaterial.SetCastsShadow(false);
+    auto bulb = std::make_unique<scene::Entity>();
+    bulb->AddComponent(new scene::MeshComponent({&solidMesh, &bulbMaterial}))->SetStatic(true);
+    auto *lamp = bulb->CreateComponent<scene::LightComponent>();
+    lamp->GetLight().type = scene::LightType::Point;
+    lamp->GetLight().intensity = 5;
+    lamp->GetLight().isStatic = false;
+    lamplit.AddEntity(std::move(bulb));
+    if (!scene::SceneBaker().Bake(lamplit,settings).succeeded)
+        throw std::runtime_error("Point light ambient bake failed");
+    float lampBounce = 0;
+    const auto &lampGrid = lamplit.GetBakedProbeVolume();
+    for (std::size_t i=0; i<lampGrid.positions.size(); ++i)
+        if (lampGrid.positions[i].w > .5f) lampBounce += glm::length(lampGrid.sphericalHarmonics[i][0]);
+    if (lampBounce <= 0) throw std::runtime_error("Ambient probes discard point light enclosed by a non-shadowing bulb");
     // Bake a component tightly around a 1cm gap. Clearance used to relocate
     // these probes through the opposing surface and invalidate the whole slot.
     MeshConfig slotConfig;

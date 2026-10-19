@@ -1996,8 +1996,11 @@ namespace PlutoGE::scene
                 }
 
                 float visibility = 1.0f;
-                // Probe transport uses geometric occlusion independently of
-                // real-time light and mesh shadow optimizations.
+                // Probe transport traces occlusion even when the light disables
+                // real-time shadows. The sun ignores mesh shadow opt-outs so it
+                // cannot leak through walls; local lights honour them, otherwise
+                // a bulb or lamp-shade mesh around the light blocks it entirely.
+                const bool honourShadowOptOut = !forceOcclusion || light.type != LightType::Directional;
                 if (light.castsShadows || forceOcclusion)
                 {
                     const int shadowRayCount =
@@ -2006,7 +2009,7 @@ namespace PlutoGE::scene
                             : 1;
                     if (shadowRayCount == 1)
                     {
-                        visibility = TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, !forceOcclusion).has_value()
+                        visibility = TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, honourShadowOptOut).has_value()
                                          ? 0.0f
                                          : 1.0f;
                     }
@@ -2026,7 +2029,7 @@ namespace PlutoGE::scene
                                 lightDirection +
                                 (tangent * std::cos(angle) + bitangent * std::sin(angle)) *
                                     (angularRadius * unitRadius));
-                            if (!TraceScene(rayOrigin, shadowDirection, maxDistance, triangles, acceleration, &textureCache, !forceOcclusion).has_value())
+                            if (!TraceScene(rayOrigin, shadowDirection, maxDistance, triangles, acceleration, &textureCache, honourShadowOptOut).has_value())
                             {
                                 ++visibleRayCount;
                             }
@@ -2978,8 +2981,11 @@ namespace PlutoGE::scene
                     : submeshCount;
                 for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                 {
+                    // Imported model sections are stored in node space; the
+                    // renderer applies the node transform, so the bake must too.
                     const glm::mat4 worldTransform = entity->GetWorldTransform() *
-                        meshComponent->GetMeshOffsetTransform() * meshComponent->GetSubmeshOffsetTransform(submeshIndex);
+                        meshComponent->GetMeshOffsetTransform() * meshComponent->GetSubmeshOffsetTransform(submeshIndex) *
+                        meshComponent->GetSubmeshNodeTransform(submeshIndex);
                     const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
                     auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
                     auto *renderMesh=meshComponent->GetMesh()->GetTessellated(material&&material->GetConfig().shaderGraphProgram?unsigned(material->GetConfig().shaderGraphProgram->data.header.w):0);
@@ -3435,7 +3441,8 @@ namespace PlutoGE::scene
 
 
                 glm::vec3 accumulatedIrradiance{0.0f};
-                glm::vec3 environmentSum(0),surfaceSum(0),emissionSum(0);
+                glm::vec3 environmentSum(0),surfaceSum(0),emissionSum(0),incidentSum(0),albedoSum(0);
+                int surfaceHits=0;
                 std::size_t dominantTriangle=0; float dominantEnergy=0;
                 glm::vec3 dominantHit(0);
                 int escapeRays=0;
@@ -3490,6 +3497,7 @@ namespace PlutoGE::scene
                     if (settings.logProbeDiagnostics) {
                         const auto reflected=directIrradiance*albedo;
                         surfaceSum+=reflected; emissionSum+=radiance-reflected;
+                        incidentSum+=directIrradiance; albedoSum+=albedo; ++surfaceHits;
                         const float energy=glm::dot(radiance,glm::vec3(.2126f,.7152f,.0722f));
                         if (energy>dominantEnergy) { dominantEnergy=energy; dominantTriangle=hit->triangleIndex; dominantHit=hitPosition; }
                     }
@@ -3509,6 +3517,9 @@ namespace PlutoGE::scene
                     report << "ProbeSource index=" << probeIndex << " position=" << probePosition.x << ',' << probePosition.y << ',' << probePosition.z
                         << " sky=" << luminance(environmentSum)*factor << " reflected=" << luminance(surfaceSum)*factor
                         << " emission=" << luminance(emissionSum)*factor << " escapeRays=" << escapeRays << '/' << probeDirections.size();
+                    // Separates unlit hit points from black albedo when reflected light is zero.
+                    if (surfaceHits>0) report << " surfaceHits=" << surfaceHits
+                        << " meanIncident=" << luminance(incidentSum)/surfaceHits << " meanAlbedo=" << luminance(albedoSum)/surfaceHits;
                     if (dominantEnergy>0) {
                         const auto &source=triangles[dominantTriangle];
                         report << " brightestSurface=" << (source.meshComponent && source.meshComponent->GetOwner() ? source.meshComponent->GetOwner()->GetName() : "terrain/foliage")

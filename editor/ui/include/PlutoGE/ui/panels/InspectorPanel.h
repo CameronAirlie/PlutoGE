@@ -25,6 +25,9 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    // Persists which inspector component headers are expanded in the editor layout.
+    void RegisterInspectorComponentSettings();
+
     class InspectorPanel : public Panel
     {
     public:

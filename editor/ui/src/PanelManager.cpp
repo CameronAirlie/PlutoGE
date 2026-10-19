@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
+#include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -263,6 +264,7 @@ namespace PlutoGE::ui
         m_defaultFont = io.Fonts->AddFontDefault(&defaultFontConfig);
         MergeEditorIcons(io);
         RegisterViewportOverlaySettings();
+        RegisterInspectorComponentSettings();
         SetEditorFont(m_editorFont);
         SetEditorFontSize(kDefaultEditorFontSize);
 

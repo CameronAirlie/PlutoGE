@@ -69,6 +69,8 @@
 #include <unordered_set>
 #include <vector>
 #include <imgui.h>
+#include <imgui_internal.h>
+#include <cstdio>
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -2745,6 +2747,40 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Renders offscreen; show it with a material texture slot.");
         }
 
+        // Open/closed component headers, keyed by component type (and script class),
+        // saved with the project's editor layout. Components start collapsed.
+        std::map<std::string, bool> componentHeaderOpenStates;
+
+        std::string GetScriptDisplayName(const scene::ScriptComponent &script)
+        {
+            std::string_view name = script.GetScriptClass();
+            if (const auto slash = name.find_last_of("/\\"); slash != std::string_view::npos)
+                name.remove_prefix(slash + 1);
+            if (name.ends_with(".cs"))
+                name.remove_suffix(3);
+            if (const auto dot = name.rfind('.'); dot != std::string_view::npos)
+                name.remove_prefix(dot + 1);
+            return std::string(name);
+        }
+
+        std::string GetComponentHeaderLabel(const scene::Component &component)
+        {
+            if (const auto *script = dynamic_cast<const scene::ScriptComponent *>(&component))
+                if (auto name = GetScriptDisplayName(*script); !name.empty())
+                    return name + " (Script)";
+            return GetComponentDisplayName(component);
+        }
+
+        std::string GetComponentHeaderStateKey(const scene::Component &component)
+        {
+            std::string key = GetComponentPrefabTypeName(component);
+            if (key.empty())
+                key = GetComponentDisplayName(component);
+            if (const auto *script = dynamic_cast<const scene::ScriptComponent *>(&component))
+                key += ":" + script->GetScriptClass();
+            return key;
+        }
+
         void SetInspectorTooltip(const char *text)
         {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -3706,7 +3742,9 @@ namespace PlutoGE::ui
                     for (auto *componentPtr : component)
                     {
                         ++componentIndex;
-                        if (!componentFilter.PassFilter(GetComponentDisplayName(*componentPtr)))
+                        const std::string headerLabel = GetComponentHeaderLabel(*componentPtr);
+                        if (!componentFilter.PassFilter(headerLabel.c_str()) &&
+                            !componentFilter.PassFilter(GetComponentDisplayName(*componentPtr)))
                             continue;
                         ImGui::PushID(componentPtr);
                         ImGui::Separator();
@@ -3722,9 +3760,17 @@ namespace PlutoGE::ui
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Enable or disable this component");
                         ImGui::SameLine();
-                        if (componentExpansion)
-                            ImGui::SetNextItemOpen(componentExpansion > 0);
-                        const bool isComponentOpen = ImGui::TreeNodeEx(GetComponentDisplayName(*componentPtr), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed);
+                        const std::string headerStateKey = GetComponentHeaderStateKey(*componentPtr);
+                        const auto storedOpenState = componentHeaderOpenStates.find(headerStateKey);
+                        const bool wasComponentOpen = storedOpenState != componentHeaderOpenStates.end() && storedOpenState->second;
+                        ImGui::SetNextItemOpen(componentExpansion ? componentExpansion > 0 : wasComponentOpen);
+                        // "###" keeps the ID stable when a script is renamed or reassigned.
+                        const bool isComponentOpen = ImGui::TreeNodeEx((headerLabel + "###ComponentHeader").c_str(), ImGuiTreeNodeFlags_Framed);
+                        if (isComponentOpen != wasComponentOpen)
+                        {
+                            componentHeaderOpenStates[headerStateKey] = isComponentOpen;
+                            ImGui::MarkIniSettingsDirty();
+                        }
                         if (ImGui::BeginPopupContextItem("ComponentActions"))
                         {
                             if (ImGui::MenuItem("Remove Component"))
@@ -5203,6 +5249,30 @@ namespace PlutoGE::ui
     void InspectorPanel::Shutdown()
     {
         // Cleanup code for the InspectorPanel
+    }
+
+    void RegisterInspectorComponentSettings()
+    {
+        componentHeaderOpenStates.clear();
+        ImGuiSettingsHandler handler;
+        handler.TypeName = "InspectorComponent";
+        handler.TypeHash = ImHashStr(handler.TypeName);
+        handler.ClearAllFn = [](ImGuiContext *, ImGuiSettingsHandler *) { componentHeaderOpenStates.clear(); };
+        handler.ReadOpenFn = [](ImGuiContext *, ImGuiSettingsHandler *, const char *name) -> void *
+        { return &componentHeaderOpenStates[name]; };
+        handler.ReadLineFn = [](ImGuiContext *, ImGuiSettingsHandler *, void *entry, const char *line)
+        {
+            int open = 0;
+            if (std::sscanf(line, "Open=%d", &open) == 1)
+                *static_cast<bool *>(entry) = open != 0;
+        };
+        handler.WriteAllFn = [](ImGuiContext *, ImGuiSettingsHandler *, ImGuiTextBuffer *out)
+        {
+            for (const auto &[key, open] : componentHeaderOpenStates)
+                if (open)
+                    out->appendf("[InspectorComponent][%s]\nOpen=1\n\n", key.c_str());
+        };
+        ImGui::AddSettingsHandler(&handler);
     }
 
     void InspectorPanel::RefreshFilteredSubmeshIndices(const render::Mesh &mesh)

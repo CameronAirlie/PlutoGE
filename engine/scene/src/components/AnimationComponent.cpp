@@ -1376,7 +1376,7 @@ namespace PlutoGE::scene
                 m_parameters[parameterIndex].boolValue = false;
         }
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
         recordPlaybackTiming();
         EvaluateOwnedSkeletonPose(*this);
     }
@@ -1820,7 +1820,7 @@ namespace PlutoGE::scene
         m_nodeMaskNodes = nullptr;
         m_resolvedNodeMasks.clear();
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     bool AnimationComponent::SetAnimationAssetReference(std::string animationAssetReference)
@@ -1846,7 +1846,7 @@ namespace PlutoGE::scene
             SetTime(0.0f);
             m_playing = false;
             m_jointMatricesDirty = true;
-            m_nodeMatricesDirty = true;
+            m_nodeMatricesDirty = m_basePoseDirty = true;
             return true;
         }
 
@@ -1896,7 +1896,7 @@ namespace PlutoGE::scene
             EnsureDefaultGraph();
             ResetGraphPlayback();
             m_jointMatricesDirty = true;
-            m_nodeMatricesDirty = true;
+            m_nodeMatricesDirty = m_basePoseDirty = true;
             return true;
         }
 
@@ -1912,7 +1912,7 @@ namespace PlutoGE::scene
         ApplyAnimationGraphAsset(graph);
         ResetGraphPlayback();
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
         return true;
     }
 
@@ -1941,7 +1941,7 @@ namespace PlutoGE::scene
         m_startedAutoplay = false;
         m_playing = m_autoplay && HasCurrentClip();
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     void AnimationComponent::SetCurrentClipIndex(int clipIndex)
@@ -1959,7 +1959,7 @@ namespace PlutoGE::scene
         SetTime(0.0f);
         m_startedAutoplay = false;
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     int AnimationComponent::FindClipIndex(std::string_view clipName) const
@@ -2005,7 +2005,7 @@ namespace PlutoGE::scene
         SetTime(0.0f);
         ResetGraphPlayback();
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     void AnimationComponent::SetTime(float time)
@@ -2014,7 +2014,7 @@ namespace PlutoGE::scene
         {
             m_time = 0.0f;
             m_jointMatricesDirty = true;
-            m_nodeMatricesDirty = true;
+            m_nodeMatricesDirty = m_basePoseDirty = true;
             return;
         }
 
@@ -2024,7 +2024,7 @@ namespace PlutoGE::scene
             m_time = 0.0f;
             m_playing = false;
             m_jointMatricesDirty = true;
-            m_nodeMatricesDirty = true;
+            m_nodeMatricesDirty = m_basePoseDirty = true;
             return;
         }
 
@@ -2038,6 +2038,7 @@ namespace PlutoGE::scene
             }
             m_jointMatricesDirty = m_jointMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
             m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
+            m_basePoseDirty = m_basePoseDirty || std::abs(previousTime - m_time) > 0.00001f;
             return;
         }
 
@@ -2048,6 +2049,7 @@ namespace PlutoGE::scene
         }
         m_jointMatricesDirty = m_jointMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
         m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
+        m_basePoseDirty = m_basePoseDirty || std::abs(previousTime - m_time) > 0.00001f;
     }
 
     void AnimationComponent::Seek(float time, bool preserveTransition)
@@ -2063,7 +2065,7 @@ namespace PlutoGE::scene
                 : std::clamp(time, 0.0f, duration);
             m_currentClipIndex = state.clipIndex;
             m_time = m_transition.destinationTime;
-            m_jointMatricesDirty = m_nodeMatricesDirty = true;
+            m_jointMatricesDirty = m_nodeMatricesDirty = m_basePoseDirty = true;
             return;
         }
         if (m_transition.active)
@@ -2081,7 +2083,7 @@ namespace PlutoGE::scene
         m_time = m_graphStateTime;
         m_graphStarted = true;
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     void AnimationComponent::SetEditorPreviewMode(bool enabled)
@@ -2089,7 +2091,7 @@ namespace PlutoGE::scene
         if (m_editorPreviewMode == enabled) return;
         m_editorPreviewMode = enabled;
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     float AnimationComponent::GetCurrentClipDuration() const
@@ -2761,7 +2763,7 @@ namespace PlutoGE::scene
         if (m_stripRootMotion == strip)
             return;
         m_stripRootMotion = strip;
-        m_jointMatricesDirty = true;
+        m_jointMatricesDirty = m_basePoseDirty = true;
     }
 
     void AnimationComponent::StartTransition(int sourceStateIndex, const AnimationTransition &transition)
@@ -3026,7 +3028,7 @@ namespace PlutoGE::scene
         m_currentClipIndex = m_states[static_cast<size_t>(m_graphCurrentStateIndex)].clipIndex;
         SetTime(0.0f);
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
     }
 
     void AnimationComponent::SetDefaultStateIndex(int stateIndex)
@@ -3284,11 +3286,26 @@ namespace PlutoGE::scene
         RefreshAuthoredIK(skeleton);
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
-            EvaluateJointMatrices(skeleton);
-            ApplyRagdoll(skeleton);
+            if (IsBasePoseStale(skeleton))
+                EvaluateJointMatrices(skeleton);
+            ComposeJointMatrices(skeleton);
         }
 
         return m_jointMatrices;
+    }
+
+    bool AnimationComponent::IsBasePoseStale(const render::Skeleton &skeleton) const
+    {
+        return m_basePoseDirty || m_basePoseSkeleton != &skeleton ||
+               m_basePoseMatrices.size() != skeleton.joints.size();
+    }
+
+    void AnimationComponent::ComposeJointMatrices(const render::Skeleton &skeleton)
+    {
+        m_jointMatrices = m_basePoseMatrices;
+        ApplyRagdoll(skeleton);
+        m_jointMatricesDirty = false;
+        ++m_jointPoseRevision;
     }
 
     const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes)
@@ -3301,47 +3318,49 @@ namespace PlutoGE::scene
         RefreshAuthoredIK(skeleton);
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
-            using Clock = std::chrono::high_resolution_clock;
-            if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
+            if (IsBasePoseStale(skeleton) || m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
             {
-                EvaluateNodeMatrices(nodes);
-            }
-            const auto nodePoseEnd = Clock::now();
-
-            m_jointMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
-            bool usedNodeHierarchy = false;
-            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-            {
-                const auto &joint = skeleton.joints[jointIndex];
-                if (joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(m_nodeMatrices.size()))
+                using Clock = std::chrono::high_resolution_clock;
+                if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
                 {
-                    continue;
+                    EvaluateNodeMatrices(nodes);
+                }
+                const auto nodePoseEnd = Clock::now();
+
+                m_basePoseMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
+                bool usedNodeHierarchy = false;
+                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                {
+                    const auto &joint = skeleton.joints[jointIndex];
+                    if (joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(m_nodeMatrices.size()))
+                    {
+                        continue;
+                    }
+
+                    m_basePoseMatrices[jointIndex] = joint.inverseRootMatrix *
+                                                     m_nodeMatrices[static_cast<size_t>(joint.nodeIndex)] *
+                                                     joint.inverseBindMatrix;
+                    usedNodeHierarchy = true;
+                }
+                const auto skinningEnd = Clock::now();
+                if (auto *owner = GetOwner(); owner && owner->GetScene())
+                {
+                    owner->GetScene()->RecordAnimationTiming(
+                        "Node pose / Skin matrices",
+                        std::chrono::duration<float, std::milli>(skinningEnd - nodePoseEnd).count(), *owner);
                 }
 
-                m_jointMatrices[jointIndex] = joint.inverseRootMatrix *
-                                              m_nodeMatrices[static_cast<size_t>(joint.nodeIndex)] *
-                                              joint.inverseBindMatrix;
-                usedNodeHierarchy = true;
+                if (!usedNodeHierarchy)
+                {
+                    EvaluateJointMatrices(skeleton);
+                }
+                else
+                {
+                    m_basePoseSkeleton = &skeleton;
+                    m_basePoseDirty = false;
+                }
             }
-            const auto skinningEnd = Clock::now();
-            if (auto *owner = GetOwner(); owner && owner->GetScene())
-            {
-                owner->GetScene()->RecordAnimationTiming(
-                    "Node pose / Skin matrices",
-                    std::chrono::duration<float, std::milli>(skinningEnd - nodePoseEnd).count(), *owner);
-            }
-
-            if (!usedNodeHierarchy)
-            {
-                EvaluateJointMatrices(skeleton);
-                ApplyRagdoll(skeleton);
-            }
-            else
-            {
-                m_jointMatricesDirty = false;
-                ++m_jointPoseRevision;
-                ApplyRagdoll(skeleton);
-            }
+            ComposeJointMatrices(skeleton);
         }
 
         return m_jointMatrices;
@@ -3550,7 +3569,7 @@ namespace PlutoGE::scene
             return;
 
         m_nodeBindingNodes = &nodes;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
         m_nodeChannelBindings.clear();
         m_nodeChannelBindings.resize(m_clips.size());
         for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
@@ -3877,12 +3896,11 @@ namespace PlutoGE::scene
             }
         };
 
-        m_jointMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
+        m_basePoseMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
+        m_basePoseSkeleton = &skeleton;
+        m_basePoseDirty = false;
         if (skeleton.joints.empty())
-        {
-            m_jointMatricesDirty = false;
             return;
-        }
 
         EnsureRetargetBindingCache(skeleton);
         const auto cacheEnd = Clock::now();
@@ -4011,15 +4029,12 @@ namespace PlutoGE::scene
 
         for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
         {
-            m_jointMatrices[jointIndex] = skeleton.joints[jointIndex].inverseRootMatrix *
-                                          evaluateJoint(jointIndex) *
-                                          skeleton.joints[jointIndex].inverseBindMatrix;
+            m_basePoseMatrices[jointIndex] = skeleton.joints[jointIndex].inverseRootMatrix *
+                                             evaluateJoint(jointIndex) *
+                                             skeleton.joints[jointIndex].inverseBindMatrix;
         }
         const auto skinningEnd = Clock::now();
         recordPhase("Pose / Hierarchy and skin matrices", layersEnd, skinningEnd);
-
-        m_jointMatricesDirty = false;
-        ++m_jointPoseRevision;
     }
 
     void AnimationComponent::SetRagdollEnabled(bool enabled)
@@ -4054,7 +4069,7 @@ namespace PlutoGE::scene
     void AnimationComponent::NotifyMeshChanged()
     {
         m_jointMatricesDirty = true;
-        m_nodeMatricesDirty = true;
+        m_nodeMatricesDirty = m_basePoseDirty = true;
         m_retargetBindingSkeleton = nullptr;
         m_nodeBindingNodes = nullptr;
         m_nodeMaskNodes = nullptr;
@@ -4094,16 +4109,22 @@ namespace PlutoGE::scene
         m_jointMatricesDirty = true;
     }
 
+    namespace
+    {
+        bool SameTwoBoneIKTarget(const TwoBoneIKTarget &a, const TwoBoneIKTarget &b)
+        {
+            return a.root==b.root && a.middle==b.middle && a.tip==b.tip && a.position==b.position &&
+                   a.pole==b.pole && a.rotation==b.rotation && a.weight==b.weight && a.rotationWeight==b.rotationWeight;
+        }
+    }
+
     void AnimationComponent::RefreshAuthoredIK(const render::Skeleton &skeleton)
     {
         std::vector<TwoBoneIKTarget> targets;
         if (const auto *owner=GetOwner())
             if (const auto *rig=owner->GetComponent<IKComponent>()) targets=rig->ResolveTargets(skeleton);
-        const auto equal=[](const TwoBoneIKTarget &a, const TwoBoneIKTarget &b) {
-            return a.root==b.root && a.middle==b.middle && a.tip==b.tip && a.position==b.position &&
-                   a.pole==b.pole && a.rotation==b.rotation && a.weight==b.weight && a.rotationWeight==b.rotationWeight;
-        };
-        if (targets.size()!=m_authoredIKTargets.size() || !std::equal(targets.begin(),targets.end(),m_authoredIKTargets.begin(),equal))
+        if (targets.size()!=m_authoredIKTargets.size() ||
+            !std::equal(targets.begin(),targets.end(),m_authoredIKTargets.begin(),SameTwoBoneIKTarget))
         {
             m_authoredIKTargets=std::move(targets);
             m_jointMatricesDirty=true;
@@ -4121,7 +4142,13 @@ namespace PlutoGE::scene
             !std::isfinite(target.rotation.z) || !std::isfinite(target.rotation.w) ||
             !std::isfinite(target.weight) || !std::isfinite(target.rotationWeight)) return false;
         for (auto &entry : m_ikTargets)
-            if (entry.first == id) { entry.second = std::move(target); m_jointMatricesDirty = true; return true; }
+            if (entry.first == id)
+            {
+                if (SameTwoBoneIKTarget(entry.second, target)) return true;
+                entry.second = std::move(target);
+                m_jointMatricesDirty = true;
+                return true;
+            }
         if (m_ikTargets.size() >= 16) return false;
         m_ikTargets.emplace_back(std::move(id), std::move(target));
         m_jointMatricesDirty = true;
@@ -4130,12 +4157,13 @@ namespace PlutoGE::scene
 
     void AnimationComponent::ClearTwoBoneIK(std::string_view id)
     {
-        std::erase_if(m_ikTargets, [&](const auto &entry) { return entry.first == id; });
-        m_jointMatricesDirty = true;
+        if (std::erase_if(m_ikTargets, [&](const auto &entry) { return entry.first == id; }) > 0)
+            m_jointMatricesDirty = true;
     }
 
     void AnimationComponent::ClearAllTwoBoneIK()
     {
+        if (m_ikTargets.empty()) return;
         m_ikTargets.clear();
         m_jointMatricesDirty = true;
     }

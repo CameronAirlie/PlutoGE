@@ -105,6 +105,35 @@ int main()
         Require(attachment->GetSourceMesh()==otherMesh,"Reparented socket retained stale source mesh");
         owner->RemoveComponent(rig);
         Require(glm::length(tip()-glm::vec3(2,0,0))<.0001f,"Removing rig retained cached IK");
+        {
+            // Gameplay scripts set IK targets several times a frame; that must re-solve on the
+            // cached sampled pose rather than resample and retarget every clip again.
+            const auto &skeleton=mesh.GetSkeleton();
+            auto *scripted=scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name="Scripted"}))->CreateComponent<AnimationComponent>();
+            const auto samples=[&] {
+                for (const auto &timing : scene.GetUpdateTimingStats().animationTimings)
+                    if (timing.name=="Pose / Base sampling and retargeting") return timing.callCount;
+                return decltype(scene.GetUpdateTimingStats().animationTimings.front().callCount){};
+            };
+            const auto handOf=[&](const std::vector<glm::mat4> &p) { return glm::vec3((p[2]*glm::inverse(skeleton.joints[2].inverseBindMatrix))[3]); };
+            Require(glm::length(handOf(scripted->GetJointMatrices(skeleton))-glm::vec3(2,0,0))<.0001f,"Unposed chain moved");
+            const auto sampled=samples();
+            TwoBoneIKTarget reach{.root="upper",.middle="lower",.tip="hand",.position={1,1,0},.pole={0,2,0}};
+            Require(scripted->SetTwoBoneIK("Hand",reach),"Scripted IK rejected");
+            Require(glm::length(handOf(scripted->GetJointMatrices(skeleton))-glm::vec3(1,1,0))<.0001f,"Scripted IK not applied");
+            reach.position={1,-1,0};
+            Require(scripted->SetTwoBoneIK("Hand",reach),"Scripted IK update rejected");
+            Require(glm::length(handOf(scripted->GetJointMatrices(skeleton))-glm::vec3(1,-1,0))<.0001f,"Scripted IK update not applied");
+            const auto revision=scripted->GetJointPoseRevision();
+            Require(scripted->SetTwoBoneIK("Hand",reach) && !scripted->IsJointPoseDirty(),"Unchanged IK target invalidated the pose");
+            Require(scripted->GetJointPoseRevision()==revision,"Unchanged IK target produced a new pose revision");
+            scripted->ClearTwoBoneIK("Hand");
+            Require(glm::length(handOf(scripted->GetJointMatrices(skeleton))-glm::vec3(2,0,0))<.0001f,"Cleared IK left a stale pose");
+            Require(samples()==sampled,"IK changes resampled the animation pose");
+            scripted->Seek(0);
+            (void)scripted->GetJointMatrices(skeleton);
+            Require(samples()==sampled+1,"Playback change did not resample the animation pose");
+        }
         std::cout << "PASS: authored IK evaluation, preview, invalid data, persistence, prefab references and attachments\n";
         return 0;
     }

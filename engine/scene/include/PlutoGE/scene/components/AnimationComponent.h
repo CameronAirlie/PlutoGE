@@ -293,6 +293,9 @@ namespace PlutoGE::scene
         void DispatchClipEvents(int clipIndex, float previousTime, float currentTime, bool looping, float speed);
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
+        bool IsBasePoseStale(const render::Skeleton &skeleton) const;
+        // Copies the sampled base pose and applies IK and ragdoll on top.
+        void ComposeJointMatrices(const render::Skeleton &skeleton);
         void ApplyRagdoll(const render::Skeleton &skeleton);
         void RefreshAuthoredIK(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
@@ -303,6 +306,11 @@ namespace PlutoGE::scene
 
         std::vector<render::AnimationClip> m_clips;
         std::vector<glm::mat4> m_jointMatrices;
+        // Sampled clips, blends and layers before IK and ragdoll. IK targets are
+        // set several times a frame by gameplay scripts; only playback changes
+        // should pay for resampling and retargeting.
+        std::vector<glm::mat4> m_basePoseMatrices;
+        const render::Skeleton *m_basePoseSkeleton = nullptr;
         std::vector<glm::mat4> m_nodeMatrices;
         std::string m_sourceAnimationPath;
         std::vector<AnimationState> m_states;
@@ -347,7 +355,9 @@ namespace PlutoGE::scene
         bool m_stripRootMotion = false;
         bool m_startedAutoplay = false;
         bool m_graphStarted = false;
+        // Joint dirty re-runs IK/ragdoll; base dirty also resamples the pose.
         bool m_jointMatricesDirty = true;
+        bool m_basePoseDirty = true;
         bool m_nodeMatricesDirty = true;
         std::uint64_t m_jointPoseRevision = 0;
         glm::vec3 m_pendingRagdollImpulse{0.0f};

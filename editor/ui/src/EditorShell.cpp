@@ -71,6 +71,7 @@
 #include <filesystem>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
 #include <functional>
 #include <string_view>
 #include <utility>
@@ -122,13 +123,16 @@ namespace PlutoGE::ui
     void EditorShell::GenerateAmbientReflectionCaptures()
     {
         if (!m_scene) return;
-        std::vector<scene::Entity *> generated;
+        // Automatic captures the user moved, resized or pinned keep their
+        // placement: they are recaptured and counted, but never repositioned.
+        std::vector<scene::Entity *> generated, kept;
         int manualCount = 0;
         std::function<void(scene::Entity *)> visit = [&](scene::Entity *entity) {
             if (!entity) return;
-            if (entity->GetComponent<scene::IblCaptureComponent>()) {
-                if (entity->GetComponent<scene::IblCaptureComponent>()->IsAutomaticallyPlaced()) generated.push_back(entity);
-                else ++manualCount;
+            if (auto *capture = entity->GetComponent<scene::IblCaptureComponent>()) {
+                if (!capture->IsAutomaticallyPlaced()) ++manualCount;
+                else if (capture->KeepsPlacement()) kept.push_back(entity);
+                else generated.push_back(entity);
             }
             for (auto *child : entity->GetChildren()) visit(child);
         };
@@ -144,13 +148,27 @@ namespace PlutoGE::ui
                 const auto candidates=scene::SceneBaker::GenerateReflectionProbeLayout(*grid,budget);
                 if (round<int(candidates.size()) && int(layout.size())<budget) layout.push_back(candidates[round]);
             }
+        // Each kept capture replaces the automatic candidate closest to it.
+        for (auto *entity : kept) {
+            if (layout.empty()) break;
+            const glm::vec3 position(entity->GetWorldTransform()[3]);
+            const auto closest = std::min_element(layout.begin(), layout.end(), [&](const auto &a, const auto &b) {
+                return glm::distance(a.position, position) < glm::distance(b.position, position); });
+            layout.erase(closest);
+        }
+        for (auto *entity : kept) {
+            auto *component = entity->GetComponent<scene::IblCaptureComponent>();
+            component->SetFarPlane(farPlane);
+            RequestIblCapture(component);
+        }
         // Reuse generated entities and their previous results until recapture succeeds.
+        int nextName = static_cast<int>(kept.size() + generated.size());
         for (std::size_t i = 0; i < layout.size(); ++i) {
             scene::Entity *entity;
             if (i < generated.size()) entity = generated[i];
             else {
                 auto created = std::make_unique<scene::Entity>();
-                created->SetName("Auto Ambient Reflection " + std::to_string(i+1));
+                created->SetName("Auto Ambient Reflection " + std::to_string(++nextName));
                 created->AddComponent(new scene::IblCaptureComponent())->SetAutomaticallyPlaced(true);
                 entity = m_scene->AddEntity(std::move(created));
             }
@@ -160,6 +178,7 @@ namespace PlutoGE::ui
                 ? glm::inverse(entity->GetParent()->GetWorldTransform()) * world : world);
             auto *component = entity->GetComponent<scene::IblCaptureComponent>();
             component->SetSize(layout[i].size);
+            component->RecordAutomaticPlacement(layout[i].position, component->GetSize());
             component->SetBlendDistance((std::min)({layout[i].size.x, layout[i].size.y, layout[i].size.z}) * 0.1f);
             if (!component->GetCaptureTexture()) component->SetResolution(128);
             component->SetFarPlane(farPlane);
@@ -173,7 +192,7 @@ namespace PlutoGE::ui
             else entity->RemoveComponent<scene::IblCaptureComponent>();
         }
         (void)GetSelectedEntity();
-        m_saveAfterAmbientCaptures = !layout.empty();
+        m_saveAfterAmbientCaptures = !layout.empty() || !kept.empty();
     }
 
     void EditorShell::RequestIblCapture(scene::IblCaptureComponent *captureComponent)
@@ -4989,7 +5008,7 @@ namespace PlutoGE::ui
                         if (widgets::BeginSettingsTable("##EditorTextTable"))
                         {
                             widgets::SettingsRow("Font");
-                            constexpr std::array<const char *, 3> editorFonts = {"Martian Mono", "Georama", "ImGui Default"};
+                            constexpr std::array<const char *, 4> editorFonts = {"Martian Mono", "Georama", "Roboto", "ImGui Default"};
                             if (ImGui::BeginCombo("##EditorFont", projectEditorFont.c_str()))
                             {
                                 for (const char *fontName : editorFonts)

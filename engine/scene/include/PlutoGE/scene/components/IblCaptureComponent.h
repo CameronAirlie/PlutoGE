@@ -33,6 +33,15 @@ namespace PlutoGE::scene
         void SetFarPlane(float farPlane);
         bool IsAutomaticallyPlaced() const { return m_automaticallyPlaced; }
         void SetAutomaticallyPlaced(bool value) { m_automaticallyPlaced = value; }
+        // Ambient bakes reposition automatic captures unless their placement is
+        // kept, explicitly or because the user moved/resized it since placement.
+        void RecordAutomaticPlacement(const glm::vec3 &worldPosition, const glm::vec3 &size);
+        bool HasAutomaticPlacement() const { return m_hasAutomaticPlacement; }
+        bool HasMovedFromAutomaticPlacement() const;
+        bool KeepsPlacement() const { return m_automaticallyPlaced && (m_keepPlacement || HasMovedFromAutomaticPlacement()); }
+        void SetKeepPlacement(bool keep) { m_keepPlacement = keep; }
+        bool IsPlacementExplicitlyKept() const { return m_keepPlacement; }
+        bool RestoreAutomaticPlacement();
         void MarkDirty() { m_dirty = true; }
         void ClearDirty() { m_dirty = false; }
 
@@ -58,6 +67,10 @@ namespace PlutoGE::scene
         float m_farPlane = 100.0f;
         bool m_dirty = true;
         bool m_automaticallyPlaced = false;
+        bool m_keepPlacement = false;
+        bool m_hasAutomaticPlacement = false;
+        glm::vec3 m_automaticPosition{0.0f};
+        glm::vec3 m_automaticSize{10.0f};
         std::unique_ptr<render::Texture> m_captureTexture;
         std::vector<float> m_capturePixels;
 

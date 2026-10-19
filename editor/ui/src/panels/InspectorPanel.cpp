@@ -3856,6 +3856,43 @@ namespace PlutoGE::ui
                             {
                                 iblCaptureComponent->MarkDirty();
                             }
+                            if (iblCaptureComponent->IsAutomaticallyPlaced())
+                            {
+                                ImGui::SeparatorText("Ambient Bake Placement");
+                                const bool moved = iblCaptureComponent->HasMovedFromAutomaticPlacement();
+                                if (iblCaptureComponent->KeepsPlacement())
+                                    ImGui::TextWrapped(moved
+                                        ? "Kept: you moved or resized this capture, so ambient bakes recapture it here instead of repositioning it."
+                                        : "Kept: ambient bakes recapture this capture here instead of repositioning it.");
+                                else
+                                    ImGui::TextWrapped("Automatic: ambient bakes position and size this capture. Move or resize it to keep it in place.");
+                                bool keep = iblCaptureComponent->KeepsPlacement();
+                                ImGui::BeginDisabled(moved);
+                                if (ImGui::Checkbox("Keep Placement", &keep))
+                                {
+                                    iblCaptureComponent->SetKeepPlacement(keep);
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::EndDisabled();
+                                if (moved)
+                                    ImGui::SetItemTooltip("Moved captures are always kept. Use Return to Automatic to let bakes place it again.");
+                                ImGui::BeginDisabled(!iblCaptureComponent->KeepsPlacement() || !iblCaptureComponent->HasAutomaticPlacement());
+                                if (ImGui::Button("Return to Automatic"))
+                                {
+                                    iblCaptureComponent->RestoreAutomaticPlacement();
+                                    editorShell.RequestIblCapture(iblCaptureComponent);
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::EndDisabled();
+                                ImGui::SetItemTooltip("Restores the last automatic position and size; later ambient bakes may move it again.");
+                                ImGui::SameLine();
+                                if (ImGui::Button("Convert to Manual"))
+                                {
+                                    iblCaptureComponent->SetAutomaticallyPlaced(false);
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::SetItemTooltip("Detaches this capture from ambient bakes. Manual captures are not recaptured or moved by them.");
+                            }
                         }
                         else if (auto *navigationMesh = dynamic_cast<scene::NavigationMeshComponent *>(componentPtr))
                         {

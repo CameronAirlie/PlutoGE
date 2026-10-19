@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/Scene.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -294,10 +295,48 @@ namespace PlutoGE::scene
         };
     }
 
+    void IblCaptureComponent::RecordAutomaticPlacement(const glm::vec3 &worldPosition, const glm::vec3 &size)
+    {
+        m_hasAutomaticPlacement = true;
+        m_automaticPosition = worldPosition;
+        m_automaticSize = glm::max(size, glm::vec3(0.0001f));
+    }
+
+    bool IblCaptureComponent::HasMovedFromAutomaticPlacement() const
+    {
+        if (!m_automaticallyPlaced || !m_hasAutomaticPlacement) return false;
+        // Compare the full volume so moves, rotations, scaling and Size edits all count.
+        const glm::mat4 placed = glm::translate(glm::mat4(1.0f), m_automaticPosition) * glm::scale(glm::mat4(1.0f), m_automaticSize);
+        const glm::mat4 current = GetVolumeTransform();
+        const float tolerance = 0.001f * std::max(1.0f, glm::length(m_automaticSize));
+        for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 3; ++row)
+                if (std::abs(current[column][row] - placed[column][row]) > tolerance) return true;
+        return false;
+    }
+
+    bool IblCaptureComponent::RestoreAutomaticPlacement()
+    {
+        m_keepPlacement = false;
+        auto *owner = GetOwner();
+        if (!owner || !m_hasAutomaticPlacement) return false;
+        const glm::mat4 world = glm::translate(glm::mat4(1.0f), m_automaticPosition);
+        owner->SetLocalTransformMatrix(owner->GetParent() ? glm::inverse(owner->GetParent()->GetWorldTransform()) * world : world);
+        SetSize(m_automaticSize);
+        MarkDirty();
+        return true;
+    }
+
     std::vector<Property> IblCaptureComponent::Serialize() const
     {
         auto properties = SerializeEditableProperties();
         properties.push_back({"Automatically Placed", PropertyType::Bool, m_automaticallyPlaced ? "true" : "false"});
+        properties.push_back({"Keep Placement", PropertyType::Bool, m_keepPlacement ? "true" : "false"});
+        if (m_hasAutomaticPlacement)
+        {
+            properties.push_back({"Automatic Position", PropertyType::Vec3, SerializeVec3(m_automaticPosition)});
+            properties.push_back({"Automatic Size", PropertyType::Vec3, SerializeVec3(m_automaticSize)});
+        }
         properties.push_back({"Capture Pixels", PropertyType::String, m_capturePixels.empty()
                                                                ? std::string{}
                                                                : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()),
@@ -322,6 +361,17 @@ namespace PlutoGE::scene
         for (const auto &property : properties)
         {
             if (property.name == "Automatically Placed") m_automaticallyPlaced = property.value == "true";
+            else if (property.name == "Keep Placement") m_keepPlacement = property.value == "true";
+            else if (property.name == "Automatic Position")
+            {
+                m_automaticPosition = ParseVec3(property.value, m_automaticPosition);
+                m_hasAutomaticPlacement = true;
+            }
+            else if (property.name == "Automatic Size")
+            {
+                m_automaticSize = glm::max(ParseVec3(property.value, m_automaticSize), glm::vec3(0.0001f));
+                m_hasAutomaticPlacement = true;
+            }
             else if (property.name == "Size")
             {
                 SetSize(ParseVec3(property.value, m_size));

@@ -97,6 +97,34 @@ int main(int argc, char **argv) try
         std::cout << "Authored scene diagnostic bake completed without saving: " << result.message << std::endl;
         return 0;
     }
+    // Ambient bakes keep automatic captures the user moved or resized, and the
+    // record of the automatic placement survives scene saves.
+    {
+        scene::Scene captures;
+        auto entity = std::make_unique<scene::Entity>();
+        auto *capture = entity->AddComponent(new scene::IblCaptureComponent());
+        capture->SetAutomaticallyPlaced(true);
+        entity->SetPosition({1,2,3}); capture->SetSize({4,4,4});
+        capture->RecordAutomaticPlacement({1,2,3},{4,4,4});
+        auto *owner = captures.AddEntity(std::move(entity));
+        if (capture->KeepsPlacement()) throw std::runtime_error("Unmoved automatic capture is kept");
+        owner->SetPosition({1,2,5});
+        if (!capture->HasMovedFromAutomaticPlacement() || !capture->KeepsPlacement())
+            throw std::runtime_error("Moved automatic capture is not kept");
+        scene::IblCaptureComponent restored;
+        restored.Deserialize(capture->Serialize());
+        if (!restored.IsAutomaticallyPlaced() || !restored.HasAutomaticPlacement() || restored.IsPlacementExplicitlyKept())
+            throw std::runtime_error("Automatic capture placement does not round-trip");
+        if (!capture->RestoreAutomaticPlacement() || capture->KeepsPlacement() ||
+            glm::distance(glm::vec3(owner->GetWorldTransform()[3]),glm::vec3(1,2,3)) > .0001f)
+            throw std::runtime_error("Return to automatic placement failed");
+        capture->SetSize({4,6,4});
+        if (!capture->KeepsPlacement()) throw std::runtime_error("Resized automatic capture is not kept");
+        capture->SetSize({4,4,4}); capture->SetKeepPlacement(true);
+        if (!capture->KeepsPlacement()) throw std::runtime_error("Explicitly kept capture is repositioned");
+        capture->SetAutomaticallyPlaced(false);
+        if (capture->KeepsPlacement()) throw std::runtime_error("Manual capture reports automatic placement state");
+    }
     // Imported sections stored in node space render at their node transform;
     // the bake snapshot must place them there too.
     {

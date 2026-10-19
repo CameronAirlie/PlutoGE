@@ -87,6 +87,15 @@ manual capture components. Manual captures are preserved. Generated components
 carry a serialized ownership flag; subsequent ambient bakes reuse those components
 and update their locations. The editor processes one six-face capture per frame.
 
+Each automatic capture remembers where the bake placed it. Moving, rotating,
+scaling or resizing it afterwards (by gizmo, inspector or script) keeps it in place:
+later ambient bakes recapture it there, count it towards the budget and drop the
+automatic candidate nearest to it instead of moving it back. **Keep Placement** in
+the capture's inspector keeps an unmoved capture. **Return to Automatic** restores
+the last automatic position and size so the next bake may reposition it, and
+**Convert to Manual** detaches the capture from ambient bakes entirely. Captures
+saved before placement was recorded are repositioned once by their next bake.
+
 The grid, validity, SH coefficients, visibility and generated HDR capture pixels
 are serialized with the scene. Existing saved scenes are updated after baking and
 after the reflection queue finishes; save a new scene normally. Older RGB-only

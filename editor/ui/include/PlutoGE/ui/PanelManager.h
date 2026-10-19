@@ -96,6 +96,7 @@ namespace PlutoGE::ui
         std::string m_editorFont = "Martian Mono";
         ImFont *m_martianMonoFont = nullptr;
         ImFont *m_georamaFont = nullptr;
+        ImFont *m_robotoFont = nullptr;
         ImFont *m_defaultFont = nullptr;
         void LoadLayout();
         void SaveLayout();

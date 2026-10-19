@@ -172,6 +172,8 @@ namespace PlutoGE::ui
         }
         m_martianMonoFont = LoadEditorFont(io, "MartianMono-StdRg.ttf");
         m_georamaFont = LoadEditorFont(io, "Georama-Regular.ttf");
+        // Variable font; ImGui renders its default Regular (wght 400) instance.
+        m_robotoFont = LoadEditorFont(io, "Roboto.ttf");
         ImFontConfig defaultFontConfig{};
         defaultFontConfig.SizePixels = kDefaultEditorFontSize;
         m_defaultFont = io.Fonts->AddFontDefault(&defaultFontConfig);
@@ -248,6 +250,10 @@ namespace PlutoGE::ui
         {
             selectedFont = m_georamaFont;
         }
+        else if (fontName == "Roboto")
+        {
+            selectedFont = m_robotoFont;
+        }
         else if (fontName == "ImGui Default")
         {
             selectedFont = m_defaultFont;
@@ -262,7 +268,7 @@ namespace PlutoGE::ui
             selectedFont = m_defaultFont;
         }
         ImGui::GetIO().FontDefault = selectedFont;
-        m_editorFont = fontName == "Georama" || fontName == "ImGui Default" ? fontName : "Martian Mono";
+        m_editorFont = fontName == "Georama" || fontName == "Roboto" || fontName == "ImGui Default" ? fontName : "Martian Mono";
     }
 
     void PanelManager::AddPanel(Panel *panel)

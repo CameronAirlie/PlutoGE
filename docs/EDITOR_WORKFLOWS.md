@@ -335,10 +335,14 @@ file and then replaces the asset; **Revert** reloads it.
 - **Listen** on a binding assigns the next key or gamepad button you press (Esc cancels).
   Mouse buttons and axes are chosen from the lists.
 - **Duplicate Action** copies an action and its bindings.
+- **Trigger** on a binding chooses Press (default), Tap, Hold or MultiTap and shows only that
+  kind's settings (max hold, hold time, presses, window, Exclusive). Press bindings are saved
+  without a trigger; changing the kind drops settings the new kind does not read.
 - **Mapping Report** lists empty or duplicate action names (the runtime resolves actions by
   name), gamepad buttons and keys no action uses (candidates for a new action), and inputs
   shared by several actions. Sharing is often intentional, such as a menu action on the same
-  button as a gameplay action, so it is reported rather than rejected.
+  button as a gameplay action, so it is reported rather than rejected. An input whose bindings
+  all use different triggers (tap vs hold, single vs double tap) is marked "told apart by triggers".
 
 ## Top-down maps
 

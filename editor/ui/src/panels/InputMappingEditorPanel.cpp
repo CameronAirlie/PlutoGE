@@ -38,6 +38,43 @@ namespace PlutoGE::ui
             return changed;
         }
 
+        // Trigger kind and the settings that kind reads; returns true when anything changed.
+        bool TriggerEditor(InputMappingTrigger &trigger)
+        {
+            bool changed = false;
+            int kind = static_cast<int>(trigger.kind);
+            const char *kinds[InputTriggerKindCount];
+            for (int i = 0; i < InputTriggerKindCount; ++i) kinds[i] = InputTriggerKindName(static_cast<InputTriggerKind>(i));
+            if (ImGui::Combo("Trigger", &kind, kinds, InputTriggerKindCount))
+            {
+                trigger.kind = static_cast<InputTriggerKind>(kind);
+                changed = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Press: fires on press, active while held.\nTap: fires on a quick release.\n"
+                                  "Hold: fires after holding, active until release.\nMultiTap: fires on repeated presses.");
+            switch (trigger.kind)
+            {
+            case InputTriggerKind::Tap:
+                changed |= ImGui::SliderFloat("Max Hold (s)", &trigger.duration, 0.05f, 1.0f, "%.2f");
+                break;
+            case InputTriggerKind::Hold:
+                changed |= ImGui::SliderFloat("Hold Time (s)", &trigger.duration, 0.0f, 2.0f, "%.2f");
+                break;
+            case InputTriggerKind::MultiTap:
+                changed |= ImGui::SliderInt("Presses", &trigger.count, 1, 4);
+                changed |= ImGui::SliderFloat("Window (s)", &trigger.window, 0.1f, 0.6f, "%.2f");
+                changed |= ImGui::Checkbox("Exclusive", &trigger.exclusive);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Fire only after the window passes with no further press, so a single tap\n"
+                                      "and a double tap can share this input (adds the window's latency).");
+                break;
+            case InputTriggerKind::Press:
+                break;
+            }
+            return changed;
+        }
+
         std::string Join(const std::vector<std::string> &values)
         {
             std::string text;
@@ -130,7 +167,9 @@ namespace PlutoGE::ui
         if (ImGui::TreeNode("SharedInputs", "Inputs used by several actions (%zu)", shared.size()))
         {
             ImGui::TextDisabled("Often intentional, e.g. a menu action and a gameplay action on the same button.");
-            for (const auto &input : shared) ImGui::BulletText("%s: %s", input.label.c_str(), Join(input.actions).c_str());
+            for (const auto &input : shared)
+                ImGui::BulletText("%s: %s%s", input.label.c_str(), Join(input.actions).c_str(),
+                                  input.disambiguatedByTriggers ? " (told apart by triggers)" : "");
             ImGui::TreePop();
         }
     }
@@ -219,6 +258,7 @@ namespace PlutoGE::ui
                         m_dirty = true;
                     if (ImGui::DragFloat("Scale", &binding.scale, .05f, -10, 10)) m_dirty = true;
                     if (ImGui::SliderFloat("Dead Zone", &binding.deadZone, 0, .99f)) m_dirty = true;
+                    if (TriggerEditor(binding.trigger)) m_dirty = true;
                     const bool capturing = m_captureAction == a && m_captureBinding == b;
                     if (ImGui::Button(capturing ? "Press a key or pad button... (Esc cancels)" : "Listen"))
                     {

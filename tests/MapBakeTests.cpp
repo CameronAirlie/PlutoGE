@@ -154,6 +154,62 @@ namespace
         Check(!ui::InputMappingDocument().Parse("{\"Actions\": 3}"), "Malformed mapping accepted");
         std::cout << "PASS: input mapping preservation, unlisted keys, kind changes, shared/unused inputs and name validation\n";
     }
+
+    void InputMappingTriggers()
+    {
+        // Roll and Crouch share pad B (double tap vs exclusive single tap); Walk holds a key that Roll taps.
+        const char *source = R"({
+  "Actions": [
+    { "Name": "Roll", "Bindings": [
+        { "Kind": "Key", "Key": "LeftAlt", "Scale": 1, "DeadZone": 0, "Trigger": { "Kind": "Tap", "Duration": 0.2 } },
+        { "Kind": "GamepadButton", "Button": "B", "Scale": 1, "DeadZone": 0.15,
+          "Trigger": { "Kind": "MultiTap", "Count": 2, "Window": 0.25, "Note": "keep" } } ] },
+    { "Name": "Walk", "Bindings": [
+        { "Kind": "Key", "Key": "LeftAlt", "Scale": 1, "DeadZone": 0, "Trigger": { "Kind": "Hold", "Duration": 0.2 } } ] },
+    { "Name": "Crouch", "Bindings": [
+        { "Kind": "GamepadButton", "Button": "B", "Scale": 1, "DeadZone": 0.15,
+          "Trigger": { "Window": 0.25, "Kind": "MultiTap", "Count": 1, "Exclusive": true } },
+        { "Kind": "Key", "Key": "C", "Scale": 1, "DeadZone": 0 } ] },
+    { "Name": "Jump", "Bindings": [ { "Kind": "GamepadButton", "Button": "A", "Scale": 1, "DeadZone": 0.15 } ] },
+    { "Name": "Accept", "Bindings": [ { "Kind": "GamepadButton", "Button": "A", "Scale": 1, "DeadZone": 0.15 } ] }
+  ]
+})";
+        ui::InputMappingDocument document;
+        std::string error;
+        Check(document.Parse(source, &error), error.c_str());
+        const auto &roll = document.Actions()[0].bindings;
+        const auto &crouch = document.Actions()[2].bindings;
+        Check(roll[0].trigger.kind == ui::InputTriggerKind::Tap && std::abs(roll[0].trigger.duration - .2f) < 1e-5f, "Tap trigger not parsed");
+        Check(roll[1].trigger.kind == ui::InputTriggerKind::MultiTap && roll[1].trigger.count == 2, "Multi-tap trigger not parsed");
+        Check(crouch[0].trigger.exclusive && crouch[1].trigger.IsDefault(), "Exclusive flag lost or a missing trigger invented");
+        Check(roll[1].Label() == "Pad 0 B (double tap)" && crouch[0].Label() == "Pad 0 B (single tap (exclusive))" &&
+              crouch[1].Label() == "Key C", "Trigger labels are wrong");
+
+        assets::JsonValue before, after;
+        Check(assets::ParseJson(source, before) && assets::ParseJson(document.Serialize(), after) &&
+              assets::WriteJson(before) == assets::WriteJson(after), "Unedited triggers did not save unchanged");
+
+        // Changing the kind keeps unknown fields but drops settings the new kind does not read; Press removes the trigger.
+        document.Actions()[0].bindings[1].trigger.kind = ui::InputTriggerKind::Hold;
+        document.Actions()[0].bindings[0].trigger.kind = ui::InputTriggerKind::Press;
+        assets::JsonValue changed;
+        Check(assets::ParseJson(document.Serialize(), changed), "Changed triggers produced invalid JSON");
+        const auto &bindings = changed.Find("Actions")->items[0].Find("Bindings")->items;
+        const auto *hold = bindings[1].Find("Trigger");
+        Check(hold && hold->GetString("Kind") == "Hold" && hold->Find("Duration") && !hold->Find("Count") && !hold->Find("Window") &&
+              hold->GetString("Note") == "keep", "Kind change kept stale settings or lost unknown fields");
+        Check(!bindings[0].Find("Trigger"), "Press trigger was written");
+
+        // LeftAlt and B are told apart by their triggers; A (Jump and Accept, both plain presses) is not.
+        ui::InputMappingDocument fresh;
+        fresh.Parse(source);
+        const auto sharedInputs = fresh.FindSharedInputs();
+        Check(sharedInputs.size() == 3, "Shared inputs not reported");
+        for (const auto &input : sharedInputs)
+            Check(input.disambiguatedByTriggers == (input.inputId != "GamepadButton:A@0"),
+                  "Trigger disambiguation reported wrongly");
+        std::cout << "PASS: input mapping triggers parse, label, round-trip unchanged, drop stale settings and disambiguate shared inputs\n";
+    }
 }
 
 // Optional: PlutoGEMapBakeTests <mapping.plutoinput> checks a real project mapping survives an unedited save.
@@ -162,6 +218,7 @@ int main(int argc, char **argv) try
     Json();
     Bake();
     InputMapping();
+    InputMappingTriggers();
     if (argc > 1)
     {
         std::ifstream file(argv[1], std::ios::binary);

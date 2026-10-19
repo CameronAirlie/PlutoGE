@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -39,9 +40,79 @@ namespace PlutoGE::ui
         constexpr InputNamedCode MouseAxes[] = {{"X", 0}, {"Y", 1}};
         constexpr const char *KindNames[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
         constexpr const char *ValueFields[] = {"Key", "Button", "Axis", "MouseButton", "MouseAxis"};
+        constexpr const char *TriggerKindNames[] = {"Press", "Tap", "Hold", "MultiTap"};
+        static_assert(std::size(TriggerKindNames) == InputTriggerKindCount);
 
         double Rounded(float value) { return std::round(static_cast<double>(value) * 10000.0) / 10000.0; }
         bool UsesGamepad(InputBindingKind kind) { return kind == InputBindingKind::GamepadButton || kind == InputBindingKind::GamepadAxis; }
+
+        InputMappingTrigger ParseTrigger(const assets::JsonValue &binding)
+        {
+            InputMappingTrigger trigger;
+            const auto *value = binding.Find("Trigger");
+            if (!value || !value->IsObject()) return trigger;
+            trigger.source = *value;
+            const auto kind = value->GetString("Kind", "Press");
+            const auto found = std::find(std::begin(TriggerKindNames), std::end(TriggerKindNames), kind);
+            trigger.kind = found == std::end(TriggerKindNames) ? InputTriggerKind::Press
+                                                               : static_cast<InputTriggerKind>(found - std::begin(TriggerKindNames));
+            trigger.duration = static_cast<float>(value->GetNumber("Duration", trigger.duration));
+            trigger.count = static_cast<int>(value->GetNumber("Count", trigger.count));
+            trigger.window = static_cast<float>(value->GetNumber("Window", trigger.window));
+            trigger.exclusive = value->GetBool("Exclusive", false);
+            return trigger;
+        }
+
+        // Writes only the current kind's fields; a plain press drops the object so mappings stay minimal.
+        void WriteTrigger(assets::JsonValue &binding, const InputMappingTrigger &trigger)
+        {
+            if (trigger.IsDefault())
+            {
+                binding.Remove("Trigger");
+                return;
+            }
+            auto value = trigger.source.IsObject() ? trigger.source : assets::JsonValue::MakeObject();
+            value.Set("Kind", assets::JsonValue::MakeString(InputTriggerKindName(trigger.kind)));
+            // Set updates fields in place, so an unedited trigger saves unchanged; fields another kind
+            // reads are dropped, like stale value fields after a binding kind change.
+            if (trigger.kind == InputTriggerKind::Tap || trigger.kind == InputTriggerKind::Hold)
+                value.Set("Duration", assets::JsonValue::MakeNumber(Rounded(trigger.duration)));
+            else
+                value.Remove("Duration");
+            if (trigger.kind == InputTriggerKind::MultiTap)
+            {
+                value.Set("Count", assets::JsonValue::MakeNumber(std::max(1, trigger.count)));
+                value.Set("Window", assets::JsonValue::MakeNumber(Rounded(trigger.window)));
+                if (trigger.exclusive || value.Find("Exclusive"))
+                    value.Set("Exclusive", assets::JsonValue::MakeBool(trigger.exclusive));
+            }
+            else
+                for (const char *field : {"Count", "Window", "Exclusive"}) value.Remove(field);
+            binding.Set("Trigger", std::move(value));
+        }
+    }
+
+    const char *InputTriggerKindName(InputTriggerKind kind) { return TriggerKindNames[static_cast<int>(kind)]; }
+
+    std::string InputMappingTrigger::Description() const
+    {
+        char seconds[32];
+        switch (kind)
+        {
+        case InputTriggerKind::Press: return {};
+        case InputTriggerKind::Tap: return "tap";
+        case InputTriggerKind::Hold:
+            std::snprintf(seconds, sizeof(seconds), "hold %.2g s", duration);
+            return seconds;
+        case InputTriggerKind::MultiTap:
+        {
+            const int presses = std::max(1, count);
+            std::string text = presses == 1 ? "single tap" : presses == 2 ? "double tap" : presses == 3 ? "triple tap"
+                                                                                                      : std::to_string(presses) + "x tap";
+            return exclusive ? text + " (exclusive)" : text;
+        }
+        }
+        return {};
     }
 
     std::span<const InputNamedCode> InputKeyNames() { return Keys; }
@@ -81,15 +152,17 @@ namespace PlutoGE::ui
 
     std::string InputMappingBinding::Label() const
     {
+        std::string label = value;
         switch (kind)
         {
-        case InputBindingKind::Key: return "Key " + value;
-        case InputBindingKind::GamepadButton: return "Pad " + std::to_string(gamepad) + " " + value;
-        case InputBindingKind::GamepadAxis: return "Pad " + std::to_string(gamepad) + " axis " + value;
-        case InputBindingKind::MouseButton: return "Mouse " + value;
-        case InputBindingKind::MouseAxis: return "Mouse axis " + value;
+        case InputBindingKind::Key: label = "Key " + value; break;
+        case InputBindingKind::GamepadButton: label = "Pad " + std::to_string(gamepad) + " " + value; break;
+        case InputBindingKind::GamepadAxis: label = "Pad " + std::to_string(gamepad) + " axis " + value; break;
+        case InputBindingKind::MouseButton: label = "Mouse " + value; break;
+        case InputBindingKind::MouseAxis: label = "Mouse axis " + value; break;
         }
-        return value;
+        const auto trigger = this->trigger.Description();
+        return trigger.empty() ? label : label + " (" + trigger + ")";
     }
 
     bool InputMappingDocument::Parse(std::string_view json, std::string *error)
@@ -123,6 +196,7 @@ namespace PlutoGE::ui
                     binding.gamepad = static_cast<int>(bindingValue.GetNumber("Gamepad", 0));
                     binding.scale = static_cast<float>(bindingValue.GetNumber("Scale", 1));
                     binding.deadZone = static_cast<float>(bindingValue.GetNumber("DeadZone", 0));
+                    binding.trigger = ParseTrigger(bindingValue);
                     action.bindings.push_back(std::move(binding));
                 }
             parsed.push_back(std::move(action));
@@ -155,6 +229,7 @@ namespace PlutoGE::ui
                     value.Remove("Gamepad");
                 value.Set("Scale", assets::JsonValue::MakeNumber(Rounded(binding.scale)));
                 value.Set("DeadZone", assets::JsonValue::MakeNumber(Rounded(binding.deadZone)));
+                WriteTrigger(value, binding.trigger);
                 bindings.items.push_back(std::move(value));
             }
             actionValue.Set("Bindings", std::move(bindings));
@@ -167,20 +242,30 @@ namespace PlutoGE::ui
     std::vector<InputMappingSharedInput> InputMappingDocument::FindSharedInputs() const
     {
         std::map<std::string, InputMappingSharedInput> inputs;
+        std::map<std::string, std::vector<std::string>> triggers; // Trigger description per binding on each input.
         for (const auto &action : m_actions)
             for (const auto &binding : action.bindings)
             {
                 // Axes are commonly shared by design (menus reuse movement sticks); report buttons and keys.
                 if (binding.kind == InputBindingKind::GamepadAxis || binding.kind == InputBindingKind::MouseAxis) continue;
-                auto &entry = inputs[binding.InputId()];
-                entry.inputId = binding.InputId();
+                const auto id = binding.InputId();
+                auto &entry = inputs[id];
+                entry.inputId = id;
                 entry.label = binding.Label();
                 if (std::find(entry.actions.begin(), entry.actions.end(), action.name) == entry.actions.end())
                     entry.actions.push_back(action.name);
+                triggers[id].push_back(binding.trigger.Description());
             }
         std::vector<InputMappingSharedInput> shared;
         for (auto &[id, entry] : inputs)
-            if (entry.actions.size() > 1) shared.push_back(std::move(entry));
+        {
+            if (entry.actions.size() <= 1) continue;
+            auto kinds = triggers[id];
+            std::sort(kinds.begin(), kinds.end());
+            entry.disambiguatedByTriggers = std::adjacent_find(kinds.begin(), kinds.end()) == kinds.end();
+            entry.label = id.substr(id.find(':') + 1); // The physical input, without one binding's trigger.
+            shared.push_back(std::move(entry));
+        }
         return shared;
     }
 

@@ -413,7 +413,9 @@ bool Input.CursorLocked { get; set; }
 
 Gamepad input is also available through `Input` using `GamepadButton` and
 `GamepadAxis`. `InputActionMap` maps named actions to keyboard, mouse, and
-controller bindings, with `GetAxis`, `IsDown`, and `WasPressed` queries. See
+controller bindings, with `GetAxis`, `IsDown`, and `WasPressed` queries. A binding's optional
+`Trigger` (`Tap`, `Hold`, `MultiTap`) lets actions share a control; maps that use them need
+`Update(deltaTime)` once per frame. See
 [input examples and edge semantics](guide/gameplay.md#keyboard-mouse-controllers-and-action-maps).
 
 ## Physics

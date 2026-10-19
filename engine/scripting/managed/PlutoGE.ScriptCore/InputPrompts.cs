@@ -20,9 +20,17 @@ public static class InputPrompts
             (selected == InputDevice.Controller
                 ? b.Kind is InputBindingKind.GamepadButton or InputBindingKind.GamepadAxis
                 : b.Kind is InputBindingKind.Key or InputBindingKind.MouseButton or InputBindingKind.MouseAxis))
-            .Select(Label).Where(label => label.Length > 0).Distinct().ToArray() ?? [];
+            .Select(binding => Decorate(Label(binding), binding.Trigger)).Where(label => label.Length > 0).Distinct().ToArray() ?? [];
         return labels.Length == 0 ? "UNBOUND" : string.Join(" / ", labels);
     }
+
+    // Triggers that change how the control is used are spelled out; a tap or single press reads as the control itself.
+    private static string Decorate(string label, InputTrigger? trigger) => label.Length == 0 || trigger is null ? label : trigger.Kind switch
+    {
+        InputTriggerKind.Hold => "HOLD " + label,
+        InputTriggerKind.MultiTap when trigger.Count > 1 => label + " x" + trigger.Count,
+        _ => label
+    };
 
     private static string Label(InputBinding binding) => binding.Kind switch
     {

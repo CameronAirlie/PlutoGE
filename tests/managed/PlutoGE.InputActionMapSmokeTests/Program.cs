@@ -17,7 +17,13 @@ unsafe class Program
     }
     static float current, previous;
     static int sampledAxis;
-    static bool keyDown, keyPressed, mousePressed;
+    static bool keyDown, keyPressed, mousePressed, keyReleased, padDown, padPressed;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int KeyReleased(int key) => keyReleased && key == (int)KeyCode.W ? 1 : 0;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int PadDown(int packed) => padDown && (packed & 0xffff) == (int)GamepadButton.B ? 1 : 0;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int PadPressed(int packed) => padPressed && (packed & 0xffff) == (int)GamepadButton.B ? 1 : 0;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int KeyDown(int key) => keyDown && key == (int)KeyCode.W ? 1 : 0;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -64,9 +70,10 @@ unsafe class Program
         nint vector = (nint)(delegate* unmanaged[Cdecl]<Vector3>)&Vector;
         nint flag = (nint)(delegate* unmanaged[Cdecl]<int>)&Flag;
         Require(register((nint)(delegate* unmanaged[Cdecl]<int,int>)&KeyDown,
-            (nint)(delegate* unmanaged[Cdecl]<int,int>)&KeyPressed,zero,zero,
+            (nint)(delegate* unmanaged[Cdecl]<int,int>)&KeyPressed,(nint)(delegate* unmanaged[Cdecl]<int,int>)&KeyReleased,zero,
             (nint)(delegate* unmanaged[Cdecl]<int,int>)&MousePressed,zero,vector,vector,vector,flag,flag,
-            (nint)(delegate* unmanaged[Cdecl]<int,void>)&SetFlag,zero,zero,zero,
+            (nint)(delegate* unmanaged[Cdecl]<int,void>)&SetFlag,zero,(nint)(delegate* unmanaged[Cdecl]<int,int>)&PadDown,
+            (nint)(delegate* unmanaged[Cdecl]<int,int>)&PadPressed,
             (nint)(delegate* unmanaged[Cdecl]<int,float>)&Axis) == 1, "Input registration failed");
         var history = (delegate* unmanaged[Cdecl]<nint,nint,nint,int>)Export("RegisterInputHistoryApi");
         Require(history((nint)(delegate* unmanaged[Cdecl]<int,float>)&Previous, (nint)(delegate* unmanaged[Cdecl]<int>)&Device, flag)==1,"History registration failed");
@@ -107,5 +114,77 @@ unsafe class Program
         Require(InputPrompts.Binding(prompts, "Missing") == "UNBOUND", "Missing action invented a binding");
         activeDevice = 1;
         Console.WriteLine("PASS: action lookup, keyboard/mouse bindings, trigger normalization, dead zones, gamepad routing, and frame-snapshot edges");
+        Triggers();
+    }
+
+    // Frames are simulated by setting the control state and calling Update; a W tap rolls while a W hold
+    // walks, and on B a double tap rolls while an exclusive single tap crouches.
+    static void Triggers()
+    {
+        keyDown = keyPressed = keyReleased = padDown = padPressed = false;
+        var map = new InputActionMap { Actions = [
+            new() { Name = "Roll", Bindings = [
+                new() { Kind = InputBindingKind.Key, Key = KeyCode.W, Trigger = new() { Kind = InputTriggerKind.Tap, Duration = .2f } },
+                new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.B,
+                        Trigger = new() { Kind = InputTriggerKind.MultiTap, Count = 2, Window = .25f } }] },
+            new() { Name = "Walk", Bindings = [
+                new() { Kind = InputBindingKind.Key, Key = KeyCode.W, Trigger = new() { Kind = InputTriggerKind.Hold, Duration = .2f } }] },
+            new() { Name = "Crouch", Bindings = [
+                new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.B,
+                        Trigger = new() { Kind = InputTriggerKind.MultiTap, Count = 1, Window = .25f, Exclusive = true } }] }
+        ] };
+        void Key(bool down, bool pressed = false, bool released = false) { keyDown = down; keyPressed = pressed; keyReleased = released; map.Update(.05f); }
+        void Pad(bool down, bool pressed = false, float dt = .05f) { padDown = down; padPressed = pressed; map.Update(dt); }
+
+        keyDown = keyPressed = true;
+        Require(!map.WasPressed("Roll") && !map.IsDown("Walk"), "A never-updated map fired a stateful trigger");
+
+        Key(true, pressed: true); Require(!map.WasPressed("Roll") && !map.IsDown("Walk"), "Tap or hold fired on press");
+        Key(true); Key(false, released: true);
+        Require(map.WasPressed("Roll") && map.IsDown("Roll") && !map.WasPressed("Walk"), "Short press did not tap");
+        Key(false); Require(!map.WasPressed("Roll") && !map.IsDown("Roll"), "Tap repeated");
+
+        Key(true, pressed: true);
+        int walkStarts = 0;
+        for (var frame = 0; frame < 6; frame++) { Key(true); if (map.WasPressed("Walk")) walkStarts++; }
+        Require(walkStarts == 1 && map.IsDown("Walk") && Math.Abs(map.GetAxis("Walk") - 1) < .001f, "Hold did not start once and stay active");
+        Key(false, released: true); Require(!map.WasPressed("Roll") && !map.IsDown("Walk"), "Long hold tapped or kept walking");
+
+        Key(false, pressed: true, released: true); Require(map.WasPressed("Roll"), "Press and release inside one frame lost");
+        Key(false);
+
+        Pad(true, pressed: true); Require(!map.WasPressed("Roll") && !map.WasPressed("Crouch"), "First tap of a double tap fired");
+        Pad(false); Pad(true, pressed: true); Require(map.WasPressed("Roll"), "Double tap did not fire");
+        var crouched = false;
+        for (var frame = 0; frame < 10; frame++) { Pad(false); crouched |= map.WasPressed("Crouch"); }
+        Require(!crouched, "Exclusive single tap fired after a double tap");
+
+        Pad(true, pressed: true); Pad(false);
+        int crouches = 0, rolls = 0;
+        for (var frame = 0; frame < 10; frame++) { Pad(false); crouches += map.WasPressed("Crouch") ? 1 : 0; rolls += map.WasPressed("Roll") ? 1 : 0; }
+        Require(crouches == 1 && rolls == 0, "Single tap did not crouch exactly once after the window");
+
+        Pad(true, pressed: true); Pad(false, dt: .3f); Pad(true, pressed: true, dt: .05f);
+        Require(!map.WasPressed("Roll"), "Presses further apart than the window counted as a double tap");
+        Pad(false); map.Reset(); Pad(false, dt: .3f);
+        Require(!map.WasPressed("Crouch"), "Reset kept a pending tap");
+
+        map.Actions[0].Bindings[0].Trigger = new() { Kind = InputTriggerKind.Hold, Duration = 0 };
+        Key(true, pressed: true); Require(map.WasPressed("Roll"), "Replaced trigger was not picked up");
+        Key(false, released: true);
+
+        Require(InputPrompts.Binding(map, "Walk", InputDevice.KeyboardMouse) == "HOLD W", "Hold prompt not spelled out");
+        Require(InputPrompts.Binding(map, "Roll", InputDevice.Controller) == "B x2", "Multi-tap prompt not spelled out");
+        Require(InputPrompts.Binding(map, "Crouch", InputDevice.Controller) == "B", "Single tap prompt decorated");
+
+        var loaded = InputActionMap.FromJson("""
+            { "Actions": [ { "Name": "Roll", "Bindings": [
+                { "Kind": "GamepadButton", "Button": "B", "Trigger": { "Kind": "MultiTap", "Count": 3, "Window": 0.4, "Exclusive": true } },
+                { "Kind": "Key", "Key": "LeftAlt" } ] } ] }
+            """);
+        var parsed = loaded.Actions[0].Bindings[0].Trigger;
+        Require(parsed is { Kind: InputTriggerKind.MultiTap, Count: 3, Exclusive: true } && Math.Abs(parsed.Window - .4f) < 1e-5f &&
+                loaded.Actions[0].Bindings[1].Trigger is null, "Trigger JSON not read, or a missing trigger was invented");
+        Console.WriteLine("PASS: tap/hold sharing a key, single-frame taps, double vs exclusive single tap, tap windows, reset, live trigger edits, and trigger prompts");
     }
 }

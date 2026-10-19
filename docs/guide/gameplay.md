@@ -92,7 +92,38 @@ of a keyboard axis. `WasPressed` supports key, mouse-button, and gamepad-button
 bindings, not analog threshold crossings. Implement an explicit previous-value
 comparison if an analog axis must trigger a one-shot action.
 
-`InputActionMap.Load("project://Input/Controls.plutoinput")` reads a saved mapping.
+### Binding triggers: tap, hold and multi-tap
+
+A binding can carry a `Trigger` that decides how its control becomes action activity. A binding
+without one is a plain **Press** (fires on press, active while held), exactly as above.
+
+| Kind | Fires (`WasPressed`) | Active (`IsDown`, `GetAxis`) | Settings |
+| --- | --- | --- | --- |
+| `Press` | on press | while held | none |
+| `Tap` | on release, if held no longer than `Duration` | that frame | `Duration` (s) |
+| `Hold` | once, when held for `Duration` | from then until release | `Duration` (s) |
+| `MultiTap` | on the `Count`th press, each within `Window` of the last | that frame | `Count`, `Window` (s), `Exclusive` |
+
+`Exclusive` makes a multi-tap wait out its window and fire only if no further press followed.
+That lets bindings share a control: on one key, a `Tap` and a `Hold` (tap to roll, hold to
+walk); on one button, a `MultiTap` with `Count` 2 and an exclusive `MultiTap` with `Count` 1
+(double-tap to roll, single-tap to crouch). The single tap then waits out the window before it fires.
+
+```json
+{ "Kind": "GamepadButton", "Button": "B", "Scale": 1, "DeadZone": 0.15,
+  "Trigger": { "Kind": "MultiTap", "Count": 2, "Window": 0.25 } }
+```
+
+Triggers other than `Press` keep state, so the map's owner calls `Update(deltaTime)` once per
+frame before reading actions, and `Reset()` while gameplay is paused so no half-held tap carries
+over. A map with such bindings that is never updated logs a warning once and leaves them idle;
+plain press bindings never need `Update`. `InputPrompts` spells out holds and multi-taps
+("HOLD LEFT ALT", "B x2"). To add a trigger kind, add an `InputTriggerKind` value, implement
+`IInputTriggerEvaluator` and register it in `InputTriggers` (`InputTriggers.Register` also
+replaces a built-in evaluator); add the name to the editor's `InputMappingDocument`.
+
+`InputActionMap.Load("project://Input/Controls.plutoinput")` reads a saved mapping
+(`InputActionMap.FromJson` parses mapping JSON directly).
 `CreateVehicleDefaults()` supplies an example vehicle layout. `Save` writes an
 asset during development; store player preferences in user data for installed
 games. Do not assume `Input.GetAxis` exists: the named-axis method belongs to the

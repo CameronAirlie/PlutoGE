@@ -21,14 +21,7 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(29, 0)]] Sampler2D iblAtlas2 : register(t29, space0);
 [[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
 
-[[vk::binding(31, 0)]] Sampler2D diffuseProbeAtlas : register(t31, space0);
-
-#include "../include/PlutoGE/render/AmbientProbeConfig.h"
-struct AmbientProbeVolumeParameters
-{
-    float4 origin, size, resolutionBase;
-    float4 worldToGridRows[3];
-};
+#include "SceneLightingParameters.slang"
 
 struct VertexInput
 {
@@ -67,45 +60,6 @@ struct FragmentOutput
     float4 debug : SV_Target7;
 };
 
-[[vk::binding(0, 0)]]
-cbuffer CameraParameters : register(b0, space0)
-{
-    column_major float4x4 viewProjection;
-    float4 cameraPositionAmbient;
-    float4 directionalDirectionIntensity;
-    float4 directionalColor;
-    column_major float4x4 shadowMatrices[4];
-    uint shadowsEnabled;
-    uint shadowFlipY;
-    float shadowDepthScale;
-    float shadowDepthBias;
-    float4 shadowInverseResolutions[4];
-    float4 shadowCascadeSplits;
-    float4 shadowCascadeMetrics[4];
-    float4 shadowCascadeParameters;
-    float4 shadowFilterParameters;
-    float4 shadowFilterEdgeParameters;
-    column_major float4x4 view;
-    column_major float4x4 motionViewProjection;
-    column_major float4x4 previousViewProjection;
-    float4 physicalSkyParameters[6];
-    float4 physicalSkySettings;
-    float4 temporalClipOffset;
-    float4 pointPositionRange[32];
-    float4 pointColorIntensity[32];
-    float4 pointSettings[32];
-    float4 pointDirectionSpot[32];
-    column_major float4x4 pointShadowMatrices[24];
-    float4 pointParameters;
-    float4 iblOriginIntensity[4];
-    float4 iblSizeBlend[4];
-    float4 iblSettings[4];
-    float4 iblIrradiance[36];
-    float4 probeOrigin, probeSize, probeResolution;
-    float4 probeAtlasParameters;
-    AmbientProbeVolumeParameters probeVolumes[PLUTO_AMBIENT_PROBE_VOLUMES];
-    float4 geometryParameters;
-};
 
 #include "AmbientProbeSampling.slang"
 
@@ -1187,50 +1141,65 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         }
         }
     }
-    float3 environmentSpecular = 0.0;
-    float3 ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
-    if (physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0))
+    // Environment lighting layers, most specific first: reflection captures,
+    // then the baked diffuse grid, then the physical sky, then flat ambient.
+    // A layer below full capture coverage is only evaluated where it shows.
+    const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
+    const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
+    float captureWeights[4];
+    float captureWeightSum = 0;
+    for (int i = 0; i < 4; ++i)
     {
-        const float3 environmentIrradiance = samplePhysicalSkyIrradiance(normal);
-        const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) *
-                                         pow(1.0 - ndotv, 5.0);
-        const float3 environmentDiffuse = environmentIrradiance * sampledColor.rgb *
-                                          (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
-        environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
-                              iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z;
-        ambient = environmentDiffuse * physicalSkySettings.z;
+        captureWeights[i] = transparentPass || pointParameters.w != 11.0 ? iblWeight(i, input.worldPosition) : 0.0;
+        captureWeightSum += captureWeights[i];
     }
+    const float captureCoverage = saturate(captureWeightSum);
     // Use the actual receiver plane for hemisphere rejection and ray offsets;
     // normal maps affect SH evaluation, not which side of a wall a probe is on.
     float3 ambientReceiverNormal=pointReceiverNormal;
     if (dot(ambientReceiverNormal,input.worldNormal)<0) ambientReceiverNormal=-ambientReceiverNormal;
     if ((transparentPass || alphaMode==2) && dot(ambientReceiverNormal,normal)<0) ambientReceiverNormal=-ambientReceiverNormal;
-    const float4 gridIrradiance = sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal);
-    if (gridIrradiance.w > 0) {
-        const float3 fresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
-        ambient = gridIrradiance.rgb * sampledColor.rgb * (1.0-fresnel) * (1.0-materialMetallic) / PI;
+    // Inside a baked volume the grid supplies all diffuse environment light,
+    // including under captures. Opaque surfaces can defer it to the
+    // screen-space resolve (DiffuseProbeResolve.slang), which adds
+    // irradiance * diffuse response where normal.a = 0 marks a pending pixel.
+    const int gridVolume = transparentPass || pointParameters.w != 12.0 ? selectDiffuseVolume(input.worldPosition) : -1;
+    const bool gridCovered = gridVolume >= 0;
+    const bool gridDeferred = gridCovered && !transparentPass && probeAtlasParameters.w > 0.5;
+    const float4 gridIrradiance = gridCovered && !gridDeferred
+        ? sampleDiffuseVolumeAt(gridVolume, input.worldPosition, normal, ambientReceiverNormal) : float4(0);
+    const float3 gridDiffuse = gridIrradiance.rgb * diffuseResponse;
+    float3 ambient = 0.0;
+    float3 environmentSpecular = 0.0;
+    if (captureCoverage < 1.0)
+    {
+        const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
+        if (gridCovered)
+            ambient = gridDiffuse;
+        else if (skyLighting)
+            ambient = samplePhysicalSkyIrradiance(normal) * diffuseResponse * physicalSkySettings.z;
+        else
+            ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
+        if (skyLighting)
+            environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
+                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z;
     }
+    if (captureWeightSum > 0)
     {
         float3 capturedAmbient = float3(0);
         float3 capturedSpecular = float3(0);
-        float weightSum = 0;
-        const float3 fresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
         for (int i = 0; i < 4; ++i)
         {
-            const float weight = iblWeight(i, input.worldPosition);
-            if (weight > 0)
-            {
-                const float3 diffuse = (gridIrradiance.w > 0 ? gridIrradiance.rgb : iblDiffuse(i, normal)) * sampledColor.rgb * (1.0 - fresnel) * (1.0 - materialMetallic) / PI;
-                const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * iblSpecularResponse(f0, materialRoughness, ndotv);
-                capturedAmbient += diffuse * weight;
-                capturedSpecular += specular * weight;
-            }
-            weightSum += weight;
+            if (captureWeights[i] <= 0) continue;
+            const float3 diffuse = gridCovered ? gridDiffuse : iblDiffuse(i, normal) * diffuseResponse;
+            const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * iblSpecularResponse(f0, materialRoughness, ndotv);
+            capturedAmbient += diffuse * captureWeights[i];
+            capturedSpecular += specular * captureWeights[i];
         }
-        ambient = lerp(ambient, capturedAmbient / max(weightSum, 0.0001), saturate(weightSum));
-        environmentSpecular = lerp(environmentSpecular, capturedSpecular / max(weightSum, 0.0001), saturate(weightSum));
-        ambient += environmentSpecular;
+        ambient = lerp(ambient, capturedAmbient / max(captureWeightSum, 0.0001), captureCoverage);
+        environmentSpecular = lerp(environmentSpecular, capturedSpecular / max(captureWeightSum, 0.0001), captureCoverage);
     }
+    ambient += environmentSpecular;
     float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
     if(customLighting)
     {
@@ -1304,7 +1273,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Specular visibility requires its own directional occlusion model.
     output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, 1.0);
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 0.0);
-    output.normal = float4(normal * 0.5 + 0.5, 1.0);
+    // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
+    output.normal = float4(normal * 0.5 + 0.5, gridDeferred && shaderGraph.header.y == 0 && !glass ? 0.0 : 1.0);
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);

@@ -30,6 +30,8 @@ add_library(PlutoGERender
     src/RmlLoadingDocument.cpp
     src/RhiSkinning.cpp
     src/RhiGpuSkinning.cpp
+    src/DeferredProbeIrradiance.cpp
+    src/CloudNoiseVolume.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiCameraStack.cpp
@@ -124,9 +126,15 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^SSAO")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang")
         endif()
+        if (MODULE MATCHES "^DiffuseProbe")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
+        endif()
         if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
@@ -223,7 +231,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(CameraStackTemporalTransparency "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CameraStackTemporalComposite.slang" vertexMain transparencyMain)
     pluto_add_slang_graphics_shader(ParticlesInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VolumetricFogTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceMain)
-    pluto_add_slang_graphics_shader(VolumetricCloudTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" vertexMain traceMain)
+    pluto_add_slang_graphics_shader(VolumetricCloudTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain traceMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
     pluto_add_slang_graphics_shader(VolumetricComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(FusedColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FusedColor.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorOperations.slang")
     pluto_add_slang_graphics_shader(Particles "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" vertexMain fragmentMain)
@@ -282,6 +291,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(AutoExposureApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain applyMain)
     pluto_add_slang_graphics_shader(SSAOFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOFilter.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSAOUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOUpsample.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(DiffuseProbeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceMain)
+    pluto_add_slang_graphics_shader(DiffuseProbeComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeMain)
     pluto_add_slang_compute_shader(SSAODepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAODepth.slang" computeMain r32f)
     pluto_add_slang_graphics_shader(BasicLitIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain indirectMain)
     pluto_add_slang_graphics_shader(BasicLitStandardIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" vertexMain indirectMain)
@@ -309,7 +320,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     endif()
     pluto_add_slang_graphics_shader(PhysicalSky "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSky.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SkyQuadrature "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SkyQuadrature.slang" vertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(VolumetricCloud "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(VolumetricCloud "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain fragmentMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
     pluto_add_slang_graphics_shader(SceneComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BloomPrefilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain prefilterMain)
     pluto_add_slang_graphics_shader(BloomDownsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain downsampleMain)
@@ -323,7 +335,6 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_geometry_shader(VCTVoxelize "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTVoxelize.slang" vertexMain geometryMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTConeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTConeTrace.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTTemporal.slang" vertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(VCTMetadata "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTMetadata.slang" vertexMain fragmentMain)
     # Runtime shader-graph specialisation recompiles BasicLit.slang with
     # per-graph generated code (ShaderGraphVariantCache), so the package
     # carries its sources in the layout their relative includes expect.

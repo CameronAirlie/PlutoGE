@@ -42,9 +42,27 @@ float valueNoise(float3 p)
                      lerp(hash31(i + float3(0, 1, 1)), hash31(i + 1.0), f.x), f.y),
                 f.z);
 }
+#ifdef PLUTO_CLOUD_NOISE_VOLUME
+// Production noise: the same lattice hashes baked into a tiling volume by
+// CloudNoiseVolume. Trilinear filtering at floor(p) + smoothstep(frac(p))
+// evaluates valueNoise's interpolation in one fetch. Wrapping the cell first
+// keeps the fractional part exact as wind offsets grow.
+#define PLUTO_CLOUD_NOISE_VOLUME_SIZE 128.0
+[[vk::binding(15, 0)]] Sampler3D cloudNoiseVolume : register(t15, space0);
+float cloudNoise(float3 p)
+{
+    float3 cell = floor(p);
+    float3 f = p - cell;
+    f = f * f * (3.0 - 2.0 * f);
+    cell -= PLUTO_CLOUD_NOISE_VOLUME_SIZE * floor(cell / PLUTO_CLOUD_NOISE_VOLUME_SIZE);
+    return cloudNoiseVolume.SampleLevel((cell + f + 0.5) / PLUTO_CLOUD_NOISE_VOLUME_SIZE, 0.0).r;
+}
+#else
+float cloudNoise(float3 p) { return valueNoise(p); }
+#endif
 float fbm(float3 p)
 {
-    return valueNoise(p) * 0.55 + valueNoise(p * 2.03 + float3(17.1, 9.2, 13.7)) * 0.275 + valueNoise(p * 4.12 + 9.7) * 0.1375;
+    return cloudNoise(p) * 0.55 + cloudNoise(p * 2.03 + float3(17.1, 9.2, 13.7)) * 0.275 + cloudNoise(p * 4.12 + 9.7) * 0.1375;
 }
 
 float baseCloudDensity(float3 p, float coverage)
@@ -57,11 +75,11 @@ float baseCloudDensity(float3 p, float coverage)
     // possible remaining contribution cannot reach the coverage threshold.
     // A small conservative margin keeps rounding at the bound from rejecting
     // visible density. Surviving samples retain the original octave order.
-    float noise = valueNoise(p) * 0.55;
+    float noise = cloudNoise(p) * 0.55;
     if (noise + (0.275 + 0.1375) < threshold - 0.000001) return 0.0;
-    noise += valueNoise(p * 2.03 + float3(17.1, 9.2, 13.7)) * 0.275;
+    noise += cloudNoise(p * 2.03 + float3(17.1, 9.2, 13.7)) * 0.275;
     if (noise + 0.1375 < threshold - 0.000001) return 0.0;
-    noise += valueNoise(p * 4.12 + 9.7) * 0.1375;
+    noise += cloudNoise(p * 4.12 + 9.7) * 0.1375;
     return saturate((noise - threshold) / coverage);
 #endif
 }
@@ -79,7 +97,7 @@ float densityLocal(float3 worldPosition, float3 local)
     const float coverage = max(pass.parameters[0].w, 0.001);
     float density = baseCloudDensity((worldPosition + pass.parameters[1].xyz) * pass.parameters[4].w, coverage);
     if (density > 0.001 && pass.parameters[5].y > 0.001)
-        density = saturate(density - (1.0 - valueNoise((worldPosition + pass.parameters[1].xyz) *
+        density = saturate(density - (1.0 - cloudNoise((worldPosition + pass.parameters[1].xyz) *
                                                            pass.parameters[5].x +
                                                        float3(31.4, 7.8, 19.2))) *
                                          pass.parameters[5].y * (1.0 - density));

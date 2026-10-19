@@ -4,6 +4,7 @@
 #include "RuntimeProfiler.h"
 #include "RuntimeContent.h"
 #include "ProjectBenchmark.h"
+#include "FrameCapture.h"
 #include "RuntimeViewportInput.h"
 #include <optional>
 #include "PlutoGE/platform/ContentPack.h"
@@ -669,8 +670,8 @@ int RunRuntime(int argc, char **argv)
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
                 const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
                 auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
-                if (projectBenchmark && projectBenchmark->scalarShadows)
-                    lighting.geometryDiagnosticMode = PlutoGE::render::GeometryDiagnosticMode::ReferenceDirectionalShadows;
+                if (projectBenchmark)
+                    lighting.geometryDiagnosticMode = projectBenchmark->geometryDiagnostic;
                 if (projectBenchmark && benchmarkFrameIndex == 0)
                     std::cerr << "Benchmark base camera: " << lighting.cameraPosition.x << ',' << lighting.cameraPosition.y << ','
                               << lighting.cameraPosition.z << "; lights " << cameraLights.size()
@@ -909,6 +910,23 @@ int RunRuntime(int argc, char **argv)
             {
                 PlutoGE::WriteProjectBenchmark(projectBenchmark->output, projectBenchmarkSamples);
                 PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkGpuScopes));
+            }
+            if (benchmarkSucceeded && !projectBenchmark->capture.empty())
+            {
+                // Output size is recorded with every sample; the last frame is still resident.
+                const auto &details = projectBenchmarkSamples.back().details;
+                const auto detail = [&](std::string_view name)
+                {
+                    const auto &names = PlutoGE::ProjectBenchmarkSample::DetailNames;
+                    return static_cast<std::uint32_t>(details[std::find(names.begin(), names.end(), name) - names.begin()]);
+                };
+                std::string error;
+                if (!PlutoGE::WriteFrameCapture(engine.GetRenderDevice(), engine.GetRhiRenderService().GetPresentedSceneTexture(),
+                                                detail("output_width"), detail("output_height"), projectBenchmark->capture, error))
+                {
+                    std::cerr << error << std::endl;
+                    benchmarkSucceeded = false;
+                }
             }
             else std::cerr << "Benchmark ended before collecting the requested samples.\n";
         }

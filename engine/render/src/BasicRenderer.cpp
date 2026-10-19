@@ -14,6 +14,9 @@
 #include "PersistentParameterCache.h"
 #include "MaterialPreparationCache.h"
 #include "RhiGpuSkinning.h"
+#include "DeferredProbeIrradiance.h"
+#include "CloudNoiseVolume.h"
+#include "PostProcessParameterBlock.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -167,24 +170,6 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicDebugViewParameters) == 96);
 
-        struct alignas(16) BasicPostProcessParameters
-        {
-            float exposure = 1.0f;
-            float gamma = 2.2f;
-            std::uint32_t flipY = 0;
-            std::uint32_t quality = 0;
-            glm::vec2 inverseResolution{0.0f};
-            float time = 0.0f;
-            std::uint32_t zeroToOneDepth = 0;
-            std::array<glm::vec4, 6> parameters{};
-            glm::mat4 inverseViewProjection{1.0f};
-            glm::mat4 view{1.0f};
-            glm::mat4 projection{1.0f};
-            glm::vec4 cameraPosition{0.0f};
-            glm::mat4 worldToLocal{1.0f};
-        };
-        static_assert(sizeof(BasicPostProcessParameters) == 400);
-
         constexpr std::size_t kMaxFusedColorOperations = 8;
         struct alignas(16) ColorOperationParameters
         {
@@ -272,8 +257,6 @@ namespace PlutoGE::render
             std::uint32_t indirectOnly = 0;
             std::uint32_t modulateIndirect = 1, lightingChanged = 0;
         };
-        struct alignas(16) VctMetadataParameters
-        { glm::mat4 inverseViewProjection{1.0f}, view{1.0f}; std::uint32_t flipY = 0, zeroToOneDepth = 0; glm::uvec2 padding{}; };
         static_assert(sizeof(VctVoxelParameters) == 1536);
         static_assert(sizeof(VctObjectParameters) == 64);
         static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+96);
@@ -282,7 +265,6 @@ namespace PlutoGE::render
         static_assert(offsetof(VctMipParameters, region) == 32);
         static_assert(sizeof(VctTraceParameters) == 256);
         static_assert(sizeof(VctTemporalParameters) == 240);
-        static_assert(sizeof(VctMetadataParameters) == 144);
 
         template <typename T>
         void HashVctValue(std::uint64_t &hash, const T &value)
@@ -910,6 +892,9 @@ namespace PlutoGE::render
                 if (type == BasicPostProcessEffectType::SSR)
                     postDescriptor.resourceBindings.push_back(
                         {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                if (type == BasicPostProcessEffectType::VolumetricCloud) // Baked noise lattice volume.
+                    postDescriptor.resourceBindings.push_back(
+                        {15, 0, 15, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 if (type == BasicPostProcessEffectType::VolumetricFog || type == BasicPostProcessEffectType::Ocean)
                 {
                     postDescriptor.resourceBindings.push_back(
@@ -1229,8 +1214,7 @@ namespace PlutoGE::render
                 m_vctVoxelizationPipeline = rhi::GraphicsPipeline(
                     device, device.CreateGraphicsPipeline(voxelization));
             }
-            constexpr std::array<const char *, 3> vctPostNames{
-                "VCT cone trace", "VCT temporal resolve", "VCT history metadata"};
+            constexpr std::array<const char *, 2> vctPostNames{"VCT cone trace", "VCT temporal resolve"};
             for (std::size_t index = 0; index < m_vctPostProcessPipelines.size(); ++index)
             {
                 const auto &stage = shaders.vctPostProcess[index];
@@ -1258,14 +1242,13 @@ namespace PlutoGE::render
                 }
                 else if (index == 1)
                 {
-                    descriptor.colorFormats = {rhi::Format::R32G32B32A32Float,
-                                               rhi::Format::R16G16B16A16Float};
+                    // History, composite and the next frame's history metadata.
+                    // Half precision suffices: history alpha is unused and the
+                    // metadata depth test tolerates 1% of view depth.
+                    descriptor.colorFormats = {rhi::Format::R16G16B16A16Float,
+                                               rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
                     addTexture(1); addTexture(2); addTexture(3); addTexture(5);
                     addTexture(6); addTexture(7); addTexture(8); addTexture(4); addTexture(9);
-                }
-                else
-                {
-                    addTexture(2); addTexture(3);
                 }
                 descriptor.cullMode = rhi::CullMode::None;
                 descriptor.depthTest = false;
@@ -1278,6 +1261,12 @@ namespace PlutoGE::render
             m_occlusion = std::make_unique<OcclusionCulling>();
             auto skinning = std::make_unique<RhiGpuSkinning>();
             if (skinning->Initialize(device, shaders.skinning)) m_gpuSkinning = std::move(skinning);
+            auto probeIrradiance = std::make_unique<DeferredProbeIrradiance>();
+            if (probeIrradiance->Initialize(device, {shaders.diffuseProbeTrace.vertex, shaders.diffuseProbeTrace.fragment,
+                                                     shaders.diffuseProbeComposite.fragment}))
+                m_deferredProbeIrradiance = std::move(probeIrradiance);
+            m_cloudNoise = std::make_unique<CloudNoiseVolume>();
+            if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
             m_occlusion->Initialize(device, shaders.occlusion);
             m_virtualShadowShaders = shaders.virtualShadows;
             // Compile VSM pipelines during renderer initialization, alongside
@@ -1400,6 +1389,8 @@ namespace PlutoGE::render
         m_virtualShadows.reset();
         m_occlusion.reset();
         m_gpuSkinning.reset();
+        m_deferredProbeIrradiance.reset();
+        m_cloudNoise.reset();
         m_geometrySweepFrame = 0;
         m_emptyVirtualShadowTable.Reset();
         m_emptyVirtualShadowPageTable.Reset();
@@ -1798,11 +1789,8 @@ namespace PlutoGE::render
         m_timingStats = {};
         const bool automaticSweep = lighting.geometryDiagnosticMode == GeometryDiagnosticMode::AutomaticSweep;
         auto geometryMode = lighting.geometryDiagnosticMode;
-        constexpr std::array sweepModes{GeometryDiagnosticMode::None, GeometryDiagnosticMode::MinimalShading, GeometryDiagnosticMode::MaterialOnly,
-            GeometryDiagnosticMode::BypassDirectionalShadows, GeometryDiagnosticMode::BypassDetailTextures,
-            GeometryDiagnosticMode::BypassPointLights, GeometryDiagnosticMode::BypassSkyLighting};
         if (automaticSweep)
-            geometryMode = sweepModes[(m_geometrySweepFrame++ / 32) % sweepModes.size()];
+            geometryMode = GeometrySweepModes[(m_geometrySweepFrame++ / SweepFramesPerMode) % GeometrySweepModes.size()];
         else
             m_geometrySweepFrame = 0;
         m_frameStats.geometryDiagnosticMode = geometryMode;
@@ -2009,6 +1997,28 @@ namespace PlutoGE::render
             temporalClipOffset.y = sharedClipJitter->y;
         }
         m_framePreviousViewProjection = m_hasPreviousFrame ? m_previousMotionViewProjection : currentMotionViewProjection;
+        // The geometry output layout decides which G-buffer targets exist,
+        // and with them which lighting terms may be resolved in screen space.
+        const bool geometryDebug = debugView != PostProcessDebugView::None;
+        BasicPostProcessInput geometryInputs = lighting.requiredGeometryInputs;
+        if (!decals.empty())
+            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Albedo;
+        if (beforeTemporalResolve || linearOutput)
+            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
+        for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
+        if (upscalerFrame && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
+            geometryInputs = geometryInputs | BasicPostProcessInput::Motion;
+        auto geometryLayout = geometryDebug ? GeometryOutputLayout::Diagnostics :
+            HasInput(geometryInputs, BasicPostProcessInput::Indirect) ?
+                (HasInput(geometryInputs, BasicPostProcessInput::Albedo) || m_indirectFragments[0].glsl.empty() && m_indirectFragments[0].spirv.empty()
+                    ? GeometryOutputLayout::SurfaceAllIndirect : GeometryOutputLayout::SurfaceIndirect) : GeometryOutputLayout::Surface;
+        const auto available = [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); };
+        const bool compactAvailable = std::ranges::all_of(m_compactFragments, [&](const auto &variants)
+            { return std::ranges::all_of(variants, available); });
+        if (!geometryDebug && m_compactGeometry && compactAvailable &&
+            !HasInput(geometryInputs, BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Albedo))
+            geometryLayout = HasInput(geometryInputs, BasicPostProcessInput::Motion) ? GeometryOutputLayout::ColorMotion : GeometryOutputLayout::Color;
+        if (HasInput(geometryInputs, BasicPostProcessInput::EnvironmentSpecular) && !geometryDebug) geometryLayout = GeometryOutputLayout::SurfaceReflections;
         BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -2059,9 +2069,14 @@ namespace PlutoGE::render
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
         frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
+        // Opaque probe-grid irradiance moves to a screen-space resolve when the
+        // layout provides every target it reads; otherwise BasicLit samples it.
+        const bool deferProbeIrradiance = m_deferredProbeIrradiance && lighting.diffuseProbeAtlas &&
+            lighting.diffuseProbeVolumeCount > 0 && geometryMode != GeometryDiagnosticMode::ReferenceProbeGrid &&
+            (geometryLayout == GeometryOutputLayout::SurfaceAllIndirect || geometryLayout == GeometryOutputLayout::SurfaceReflections);
         frameParameters.probeAtlasParameters = glm::vec4(lighting.diffuseProbeHitPointRow,
             lighting.diffuseProbeVolumesPrepared ? 1.0f : 0.0f, lighting.diffuseProbeSummaryRow,
-            0.0f);
+            deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
         std::size_t pointShadowCount = 0;
@@ -2614,26 +2629,6 @@ namespace PlutoGE::render
         const auto shadowRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
         rhi::RenderingInfo renderingInfo;
-        const bool geometryDebug = debugView != PostProcessDebugView::None;
-        BasicPostProcessInput geometryInputs = lighting.requiredGeometryInputs;
-        if (!decals.empty())
-            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Albedo;
-        if (beforeTemporalResolve || linearOutput)
-            geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
-        for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
-        if (upscalerFrame && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
-            geometryInputs = geometryInputs | BasicPostProcessInput::Motion;
-        auto geometryLayout = geometryDebug ? GeometryOutputLayout::Diagnostics :
-            HasInput(geometryInputs, BasicPostProcessInput::Indirect) ?
-                (HasInput(geometryInputs, BasicPostProcessInput::Albedo) || m_indirectFragments[0].glsl.empty() && m_indirectFragments[0].spirv.empty()
-                    ? GeometryOutputLayout::SurfaceAllIndirect : GeometryOutputLayout::SurfaceIndirect) : GeometryOutputLayout::Surface;
-        const auto available = [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); };
-        const bool compactAvailable = std::ranges::all_of(m_compactFragments, [&](const auto &variants)
-            { return std::ranges::all_of(variants, available); });
-        if (!geometryDebug && m_compactGeometry && compactAvailable &&
-            !HasInput(geometryInputs, BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Albedo))
-            geometryLayout = HasInput(geometryInputs, BasicPostProcessInput::Motion) ? GeometryOutputLayout::ColorMotion : GeometryOutputLayout::Color;
-        if (HasInput(geometryInputs, BasicPostProcessInput::EnvironmentSpecular) && !geometryDebug) geometryLayout = GeometryOutputLayout::SurfaceReflections;
         EnsureGeometryTargets(geometryLayout);
         renderingInfo.colorAttachments = {m_colorTarget.Get()};
         if (geometryLayout >= GeometryOutputLayout::Surface)
@@ -3081,6 +3076,15 @@ namespace PlutoGE::render
         commands.EndRendering();
         commands.EndGpuScope();
         geometryScope.End();
+        // Before decals, which relight from the composed surface colour.
+        if (deferProbeIrradiance)
+            m_deferredProbeIrradiance->Record({
+                .sceneParameters = m_cameraBuffer.Get(),
+                .probeAtlas = lighting.diffuseProbeAtlas, .probeSampler = m_vctVolumeSampler.Get(), .screenSampler = m_screenSampler.Get(),
+                .depth = m_depthTarget.Get(), .normal = m_normalTarget.Get(), .albedo = m_albedoTarget.Get(),
+                .material = m_materialTarget.Get(), .indirect = m_indirectTarget.Get(), .color = m_colorTarget.Get(),
+                .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
+                .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.geometryRecordingMs = elapsedMs(geometryRecordingStart, geometryRecordingEnd);
 
@@ -3747,6 +3751,8 @@ namespace PlutoGE::render
                 commands.BindPipeline(drawPass == 1 ? m_oceanVolumeDepthPipeline.Get() : pipeline);
                 commands.BindUniformBuffer(0, drawParameterBuffer);
                 if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
+                if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
+                    commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
                 commands.BindTexture(1, drawPass == 1 && oceanVolumeDepth ? oceanVolumeDepth : m_outputColor, m_screenSampler.Get());
                 const auto inputs = InputsFor(effect.type);
                 if (HasInput(inputs, BasicPostProcessInput::Depth))
@@ -4325,10 +4331,10 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < 2; ++index)
             {
                 m_vctHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::R32G32B32A32Float,
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
                      rhi::TextureUsage::ColorAttachment, "VCT temporal history", true}));
                 m_vctMetadataTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::R32G32B32A32Float,
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
                      rhi::TextureUsage::ColorAttachment, "VCT metadata history", true}));
             }
         }
@@ -4697,6 +4703,7 @@ namespace PlutoGE::render
         if (availableCascades == 0 || (useCache && availableCascades < cascadeCount)) return source;
         if (useCache && availableCascades == cascadeCount)
         {
+            const ScopedGpuTiming probeTiming(commands, "RHI VCT GI / Probe update");
             const auto dispatch = [&](std::uint32_t first, std::uint32_t count, bool clear, bool linear = false)
             {
                 VctProbeParameters params{m_vctCacheOriginSize,
@@ -4748,6 +4755,7 @@ namespace PlutoGE::render
         m_device->UpdateBuffer(traceBuffer.Get(), 0, Bytes(trace));
         rhi::RenderingInfo traceInfo; traceInfo.colorAttachments = {m_vctTraceTarget.Get()};
         traceInfo.width = traceWidth; traceInfo.height = traceHeight; traceInfo.clearDepth = false;
+        commands.BeginGpuScope("RHI VCT GI / Cone trace");
         commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
         commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
@@ -4759,6 +4767,7 @@ namespace PlutoGE::render
         commands.BindTexture(13, m_vctProbeRadiance.Get(), m_vctVolumeSampler.Get());
         commands.BindTexture(14, m_vctProbeVisibility.Get(), m_vctVolumeSampler.Get());
         commands.Draw(3); commands.EndRendering();
+        commands.EndGpuScope();
         const auto next = static_cast<std::uint8_t>(1u - m_vctHistoryIndex);
         VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,
             {1.0f / m_width, 1.0f / m_height}, effect.parameters[1].y, effect.parameters[1].z,
@@ -4770,8 +4779,9 @@ namespace PlutoGE::render
         auto &temporalBuffer = AcquireVctBuffer(m_vctBufferCursor++);
         m_device->UpdateBuffer(temporalBuffer.Get(), 0, Bytes(temporal));
         rhi::RenderingInfo temporalInfo;
-        temporalInfo.colorAttachments = {m_vctHistoryTargets[next].Get(), m_vctCompositeTarget.Get()};
+        temporalInfo.colorAttachments = {m_vctHistoryTargets[next].Get(), m_vctCompositeTarget.Get(), m_vctMetadataTargets[next].Get()};
         temporalInfo.width = m_width; temporalInfo.height = m_height; temporalInfo.clearDepth = false;
+        commands.BeginGpuScope("RHI VCT GI / Temporal resolve");
         commands.BeginRendering(temporalInfo); commands.BindPipeline(m_vctPostProcessPipelines[1].Get());
         commands.BindUniformBuffer(0, temporalBuffer.Get()); commands.BindTexture(1, m_vctTraceTarget.Get(), m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
@@ -4780,14 +4790,7 @@ namespace PlutoGE::render
         commands.BindTexture(8, source, m_screenSampler.Get());
         commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
         commands.BindTexture(9, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
-        const VctMetadataParameters metadata{m_inverseViewProjection, m_postProcessView,
-                                             trace.flipY, trace.zeroToOneDepth, {}};
-        auto &metadataBuffer = AcquireVctBuffer(m_vctBufferCursor++); m_device->UpdateBuffer(metadataBuffer.Get(), 0, Bytes(metadata));
-        rhi::RenderingInfo metadataInfo; metadataInfo.colorAttachments = {m_vctMetadataTargets[next].Get()};
-        metadataInfo.width = m_width; metadataInfo.height = m_height; metadataInfo.clearDepth = false;
-        commands.BeginRendering(metadataInfo); commands.BindPipeline(m_vctPostProcessPipelines[2].Get());
-        commands.BindUniformBuffer(0, metadataBuffer.Get()); commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.Draw(3); commands.EndRendering();
+        commands.EndGpuScope();
         m_vctHistoryIndex = next; m_vctHistoryValid = true; m_vctPreviousView = m_postProcessView;
         return m_vctCompositeTarget.Get();
     }

@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/GeometryDiagnostics.h"
 #include <charconv>
 #include <array>
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <iomanip>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace PlutoGE
@@ -39,14 +41,19 @@ namespace PlutoGE
     struct ProjectBenchmarkOptions
     {
         std::filesystem::path project, output;
+        // Optional PNG of the final measured frame (Vulkan).
+        std::filesystem::path capture;
         std::size_t frames = 600, warmup = 120;
-        bool frozenRender = false, scalarShadows = false;
+        bool frozenRender = false;
+        // Geometry shading diagnostic applied to every measured frame.
+        render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
         static constexpr float FixedDelta = 1.0f / 60.0f;
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 6)
-                throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] [--scalar-shadows]");
+            if (args.size() < 2 || args.size() > 7) // project, output, two counts and three switches
+                throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -61,15 +68,33 @@ namespace PlutoGE
             for (std::size_t i = 2; i < args.size(); ++i)
             {
                 const std::string_view value(args[i]);
+                constexpr std::string_view diagnosticPrefix = "--geometry-diagnostic=";
+                constexpr std::string_view capturePrefix = "--capture=";
+                const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
-                else if (value == "--scalar-shadows" && !result.scalarShadows) result.scalarShadows = true;
+                else if (value.starts_with(capturePrefix) && result.capture.empty())
+                {
+                    result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
+                    if (result.capture.extension() != ".png")
+                        throw std::invalid_argument("Benchmark capture must have a .png extension");
+                }
+                else if (value == "--scalar-shadows" && !diagnosticSet)
+                    result.geometryDiagnostic = render::GeometryDiagnosticMode::ReferenceDirectionalShadows;
+                else if (value.starts_with(diagnosticPrefix) && !diagnosticSet)
+                {
+                    const auto mode = render::ParseGeometryDiagnostic(value.substr(diagnosticPrefix.size()));
+                    // Sweeps change mode mid-capture and would mix their samples.
+                    if (!mode || *mode == render::GeometryDiagnosticMode::None || *mode == render::GeometryDiagnosticMode::AutomaticSweep)
+                        throw std::invalid_argument("Unknown or unsupported geometry diagnostic: " + std::string(value));
+                    result.geometryDiagnostic = *mode;
+                }
                 else if (value.starts_with("--") || positional >= 2)
                     throw std::invalid_argument("Unknown or duplicate benchmark option");
                 else if (positional++ == 0) result.frames = count(value, false);
                 else result.warmup = count(value, true);
             }
-            if (result.scalarShadows && !result.frozenRender)
-                throw std::invalid_argument("Scalar shadow comparisons require --frozen-render");
+            if (result.geometryDiagnostic != render::GeometryDiagnosticMode::None && !result.frozenRender)
+                throw std::invalid_argument("Geometry diagnostic comparisons require --frozen-render");
             if (result.output.extension() != ".csv")
                 throw std::invalid_argument("Benchmark output must have a .csv extension");
             return result;

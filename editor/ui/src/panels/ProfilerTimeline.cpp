@@ -111,10 +111,16 @@ namespace PlutoGE::ui
             if (ImGui::Combo("Occlusion culling", &occlusion, "Off\0Measure\0Cull\0"))
                 m_profiler->occlusionMode = static_cast<render::OcclusionMode>(occlusion);
             ImGui::SetItemTooltip("Measure counts hidden draws without rejecting them. Cull skips hidden main-pass draws. Compare total scene GPU time.");
-            int mode = static_cast<int>(m_profiler->geometryDiagnosticMode);
-            if (ImGui::Combo("Comparison mode", &mode, "Normal rendering\0Original sky evaluation\0Bypass directional shadow sampling\0Scalar directional shadow filter\0Material only (no lighting)\0Bypass standard detail textures\0Bypass point lights\0Bypass sky lighting\0Automatic shading sweep\0Draw range timings\0Minimal shading (coverage preserved)\0"))
-                m_profiler->geometryDiagnosticMode = static_cast<render::GeometryDiagnosticMode>(mode);
-            ImGui::TextWrapped("Applies to the editor viewport. Shadow bypass changes appearance for measurement; shadow pages are still generated. The automatic sweep cycles seven variants every 224 rendered frames; capture at least 240 frames with a fixed camera. Compare named geometry sweep timings, not pooled post-process/frame timings. Differences are not additive.");
+            if (ImGui::BeginCombo("Comparison mode", render::GeometryDiagnosticName(m_profiler->geometryDiagnosticMode)))
+            {
+                for (const auto &diagnostic : render::GeometryDiagnostics)
+                    if (ImGui::Selectable(diagnostic.name.data(), diagnostic.mode == m_profiler->geometryDiagnosticMode))
+                        m_profiler->geometryDiagnosticMode = diagnostic.mode;
+                ImGui::EndCombo();
+            }
+            const std::size_t sweepFrames = render::GeometrySweepModes.size() * render::SweepFramesPerMode;
+            ImGui::TextWrapped("Applies to the editor viewport. Shadow bypass changes appearance for measurement; shadow pages are still generated. The automatic sweep cycles %zu variants every %zu rendered frames; capture at least %zu frames with a fixed camera. Compare named geometry sweep timings, not pooled post-process/frame timings. Differences are not additive.",
+                               render::GeometrySweepModes.size(), sweepFrames, sweepFrames + 16);
             ImGui::TreePop();
         }
         if (m_profiler->geometryDiagnosticMode != render::GeometryDiagnosticMode::None)

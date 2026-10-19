@@ -21,14 +21,35 @@ int main() try
     }
     const std::array frozen{"game.plutoproject", "results.csv", "10", "2", "--frozen-render", "--scalar-shadows"};
     const auto frozenOptions = ProjectBenchmarkOptions::Parse(frozen);
-    if (!frozenOptions.frozenRender || !frozenOptions.scalarShadows || frozenOptions.frames != 10)
+    if (!frozenOptions.frozenRender || frozenOptions.frames != 10 ||
+        frozenOptions.geometryDiagnostic != render::GeometryDiagnosticMode::ReferenceDirectionalShadows)
         throw std::runtime_error("Frozen benchmark options lost");
-    for (const auto *bad : {"--unknown", "--scalar-shadows"})
+    const std::array diagnostic{"game.plutoproject", "results.csv", "--frozen-render", "--geometry-diagnostic=material-only"};
+    if (ProjectBenchmarkOptions::Parse(diagnostic).geometryDiagnostic != render::GeometryDiagnosticMode::MaterialOnly)
+        throw std::runtime_error("Geometry diagnostic option lost");
+    for (const auto *bad : {"--unknown", "--scalar-shadows", "--geometry-diagnostic=material-only"})
     {
         bool rejected = false;
         try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Invalid benchmark switch accepted");
+    }
+    for (const auto *bad : {"--geometry-diagnostic=bogus", "--geometry-diagnostic=sweep", "--geometry-diagnostic=none"})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", "--frozen-render", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Unsupported geometry diagnostic accepted");
+    }
+    const std::array capture{"game.plutoproject", "results.csv", "--capture=out/frame.png"};
+    if (ProjectBenchmarkOptions::Parse(capture).capture != std::filesystem::path("out/frame.png"))
+        throw std::runtime_error("Capture path lost");
+    for (const auto *bad : {"--capture=frame.jpg", "--capture="})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Invalid capture path accepted");
     }
     struct TempFile
     {

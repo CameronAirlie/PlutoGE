@@ -130,6 +130,8 @@ namespace PlutoGE::render
         result.ssaoDepth = Load("SSAODepth", "compute");
         result.ssaoFilter = {Load("SSAOFilter", "vertex"),Load("SSAOFilter", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
+        result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
+        result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};
         result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),
                             Load("OcclusionReduce", "compute"), Load("OcclusionTest", "compute")};
         constexpr std::array<std::string_view, 7> virtualCompute{
@@ -150,8 +152,8 @@ namespace PlutoGE::render
         result.vctVoxelization.vertexShader = Load("VCTVoxelize", "vertex");
         result.vctVoxelization.geometryShader = Load("VCTVoxelize", "geometry");
         result.vctVoxelization.fragmentShader = Load("VCTVoxelize", "fragment");
-        constexpr std::array<std::string_view, 3> vctModules{
-            "VCTConeTrace", "VCTTemporal", "VCTMetadata"};
+        constexpr std::array<std::string_view, 2> vctModules{
+            "VCTConeTrace", "VCTTemporal"};
         for (std::size_t index = 0; index < vctModules.size(); ++index)
             result.vctPostProcess[index] = {.vertex = Load(vctModules[index], "vertex"),
                                             .fragment = Load(vctModules[index], "fragment")};

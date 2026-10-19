@@ -55,6 +55,9 @@ namespace PlutoGE::render
         [[nodiscard]] bool PresentLoading(float elapsedSeconds, unsigned stage, const LoadingScreenStyle &style = {});
         [[nodiscard]] rhi::TextureHandle GetHostColorTexture() const noexcept
         { return m_renderer ? m_renderer->GetColorTexture() : rhi::TextureHandle{}; }
+        // The scene colour RenderSceneAndPresent last presented (bottom-up rows,
+        // including runtime UI), or null before the first presented frame.
+        [[nodiscard]] rhi::TextureHandle GetPresentedSceneTexture() const noexcept;
         // Renders cameras into their render textures. Call before the frame's
         // RenderSceneAndPresent so materials sample this frame's images.
         [[nodiscard]] bool RenderTextures(std::span<const RenderTextureView> views,

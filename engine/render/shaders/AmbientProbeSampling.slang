@@ -212,7 +212,8 @@ float3 diffuseVolumeCoordinates(int index, float3 position)
     return local / volumeSize(index).xyz;
 }
 
-float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
+// The finest baked volume containing position, or -1. Cheap: bounds only.
+int selectDiffuseVolume(float3 position)
 {
     int selected = -1;
     float finest = 1e30;
@@ -224,8 +225,18 @@ float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
         const float spacing = max(cellSize.x,max(cellSize.y,cellSize.z));
         if (spacing<finest) { finest=spacing; selected=i; }
     }
-    if (selected<0) return float4(0);
-    const float4 resolution = volumeResolution(selected);
-    return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(selected,position),
-        volumeSize(selected).xyz,resolution.xyz,int(resolution.w), volumeSize(selected).w > 0.5);
+    return selected;
+}
+
+float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal)
+{
+    if (volume<0) return float4(0);
+    const float4 resolution = volumeResolution(volume);
+    return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(volume,position),
+        volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5);
+}
+
+float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
+{
+    return sampleDiffuseVolumeAt(selectDiffuseVolume(position), position, normal, receiverNormal);
 }

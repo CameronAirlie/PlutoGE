@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/AmbientProbeConfig.h"
+#include "PlutoGE/render/GeometryDiagnostics.h"
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
@@ -32,6 +33,8 @@
 namespace PlutoGE::render
 {
     class RhiGpuSkinning;
+    class DeferredProbeIrradiance;
+    class CloudNoiseVolume;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
     struct RhiGpuSkinningDispatch;
@@ -247,6 +250,8 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         rhi::GraphicsPipelineDescriptor::ShaderCode ssaoDepth;
         BasicPostProcessShaderPackage ssaoFilter, ssaoUpsample;
+        // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
+        BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 5> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
@@ -254,7 +259,7 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage volumetricComposite;
         BasicPostProcessShaderPackage fusedColor;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
-        std::array<BasicPostProcessShaderPackage, 3> vctPostProcess;
+        std::array<BasicPostProcessShaderPackage, 2> vctPostProcess; // cone trace, temporal resolve
         rhi::ComputePipelineDescriptor::ShaderCode skinning;
     };
 
@@ -407,29 +412,6 @@ namespace PlutoGE::render
         bool castsShadows = false;
     };
 
-    enum class GeometryDiagnosticMode : std::uint8_t
-    {
-        None, ReferenceSky, BypassDirectionalShadows, ReferenceDirectionalShadows,
-        MaterialOnly, BypassDetailTextures, BypassPointLights, BypassSkyLighting,
-        AutomaticSweep, DrawRanges, MinimalShading
-    };
-    constexpr const char *GeometryDiagnosticName(GeometryDiagnosticMode mode) noexcept
-    {
-        switch (mode)
-        {
-        case GeometryDiagnosticMode::ReferenceSky: return "Original sky evaluation";
-        case GeometryDiagnosticMode::BypassDirectionalShadows: return "Bypass directional shadow sampling";
-        case GeometryDiagnosticMode::ReferenceDirectionalShadows: return "Scalar directional shadow filter";
-        case GeometryDiagnosticMode::MaterialOnly: return "Material only (no lighting)";
-        case GeometryDiagnosticMode::BypassDetailTextures: return "Bypass standard detail textures";
-        case GeometryDiagnosticMode::BypassPointLights: return "Bypass point lights";
-        case GeometryDiagnosticMode::BypassSkyLighting: return "Bypass sky lighting";
-        case GeometryDiagnosticMode::AutomaticSweep: return "Automatic shading sweep";
-        case GeometryDiagnosticMode::MinimalShading: return "Minimal shading (coverage preserved)";
-        case GeometryDiagnosticMode::DrawRanges: return "Draw range timings";
-        default: return "Normal rendering";
-        }
-    }
 
     struct BasicIblCapture
     {
@@ -767,6 +749,8 @@ namespace PlutoGE::render
         VirtualShadowReceivers m_directionalShadowReceivers, m_reusedShadowReceivers;
         std::unique_ptr<OcclusionCulling> m_occlusion;
         std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
+        std::unique_ptr<DeferredProbeIrradiance> m_deferredProbeIrradiance;
+        std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
         std::vector<RhiGpuSkinningDispatch> m_gpuSkinningDispatches;
         std::uint64_t m_geometrySweepFrame = 0;
         VirtualShadowShaders m_virtualShadowShaders;
@@ -883,7 +867,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_vctBouncePipeline;
         rhi::GraphicsPipeline m_vctDirectionalMipPipeline;
         rhi::GraphicsPipeline m_vctVoxelizationPipeline;
-        std::array<rhi::GraphicsPipeline, 3> m_vctPostProcessPipelines;
+        std::array<rhi::GraphicsPipeline, 2> m_vctPostProcessPipelines;
         struct VctCascade
         {
             std::array<rhi::Texture, 4> accumulation;

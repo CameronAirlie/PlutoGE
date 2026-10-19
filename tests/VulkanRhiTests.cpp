@@ -158,7 +158,7 @@ int main(int argc, char **argv)
         shaders.vctVoxelization.vertexShader.spirv = ReadSpirv("VCTVoxelize.vertex.spv");
         shaders.vctVoxelization.geometryShader.spirv = ReadSpirv("VCTVoxelize.geometry.spv");
         shaders.vctVoxelization.fragmentShader.spirv = ReadSpirv("VCTVoxelize.fragment.spv");
-        constexpr std::array<const char *, 3> vctModules{"VCTConeTrace", "VCTTemporal", "VCTMetadata"};
+        constexpr std::array<const char *, 2> vctModules{"VCTConeTrace", "VCTTemporal"};
         for (std::size_t index = 0; index < vctModules.size(); ++index)
         {
             shaders.vctPostProcess[index].vertex.spirv = ReadSpirv((std::string(vctModules[index]) + ".vertex.spv").c_str());

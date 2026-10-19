@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
 #include <algorithm>
+#include <cmath>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -79,6 +80,9 @@ namespace PlutoGE::render
                         glm::dot(cloud->GetWindDirection(), cloud->GetWindDirection()) > 0.000001f
                             ? glm::normalize(cloud->GetWindDirection())
                             : glm::vec3(0.0f);
+                    // Render Scale (0.25-1) selects the reduced trace: 0.5 traces at half resolution.
+                    effect.volumetricResolutionDivisor = static_cast<std::uint32_t>(
+                        std::clamp(std::lround(1.0f / std::max(cloud->GetRenderScale(), 0.25f)), 1l, 4l));
                     effect.quality = static_cast<std::uint32_t>(std::clamp(cloud->GetPrimaryStepCount(), 1, 128)) |
                                      (static_cast<std::uint32_t>(std::clamp(cloud->GetLightStepCount(), 1, 16)) << 8u);
                     effect.parameters[0] = {cloud->GetCloudColor(), cloud->GetCoverage()};

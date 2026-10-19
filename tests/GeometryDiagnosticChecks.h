@@ -39,14 +39,13 @@ void CheckGeometryDiagnostics(PlutoGE::render::BasicRenderer &renderer, Device &
     const auto normal = render(Mode::None);
     if (normal == masked || render(Mode::DrawRanges) != normal)
         throw std::runtime_error("Draw range timing changed rendered pixels");
-    constexpr std::array modes{Mode::None, Mode::MinimalShading, Mode::MaterialOnly,
-        Mode::BypassDirectionalShadows, Mode::BypassDetailTextures,
-        Mode::BypassPointLights, Mode::BypassSkyLighting};
+    const auto &modes = GeometrySweepModes;
     std::set<std::string> sweepScopes;
-    for (std::size_t frame = 0; frame < 232; ++frame)
+    // One full cycle plus a wrap into the next.
+    for (std::size_t frame = 0; frame < modes.size() * SweepFramesPerMode + 8; ++frame)
     {
         render(Mode::AutomaticSweep);
-        if (renderer.GetFrameStats().geometryDiagnosticMode != modes[(frame / 32) % modes.size()])
+        if (renderer.GetFrameStats().geometryDiagnosticMode != modes[(frame / SweepFramesPerMode) % modes.size()])
             throw std::runtime_error("Geometry diagnostic sweep has incorrect attribution");
         for (const auto &scope : device.GetTimingStats("Scene").gpuScopes)
             if (scope.name.starts_with("RHI Geometry sweep / ")) sweepScopes.insert(scope.name);

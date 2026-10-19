@@ -261,7 +261,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.vctVoxelization.vertexShader.glsl = ReadText("VCTVoxelize.vertex.glsl");
         shaders.vctVoxelization.geometryShader.glsl = ReadText("VCTVoxelize.geometry.glsl");
         shaders.vctVoxelization.fragmentShader.glsl = ReadText("VCTVoxelize.fragment.glsl");
-        constexpr std::array<const char *, 3> vctModules{"VCTConeTrace", "VCTTemporal", "VCTMetadata"};
+        constexpr std::array<const char *, 2> vctModules{"VCTConeTrace", "VCTTemporal"};
         for (std::size_t index = 0; index < vctModules.size(); ++index)
         {
             shaders.vctPostProcess[index].vertex.glsl = ReadText((std::string(vctModules[index]) + ".vertex.glsl").c_str());

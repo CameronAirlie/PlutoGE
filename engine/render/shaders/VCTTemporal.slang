@@ -37,6 +37,23 @@ float3 decodeOctahedron(float2 encoded)
     if (normal.z < 0) normal.xy = (1.0 - abs(normal.yx)) * signNotZero(normal.xy);
     return normalize(normal);
 }
+float2 encodeOctahedron(float3 normal)
+{
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.0001);
+    if (normal.z < 0) normal.xy = (1.0 - abs(normal.yx)) * signNotZero(normal.xy);
+    return normal.xy * 0.5 + 0.5;
+}
+// The surface next frame validates this frame's history against: encoded
+// normal, view depth and coverage (zero for background).
+float4 encodeHistoryMetadata(float2 uv)
+{
+    const float depth = depthTexture.Sample(uv).r;
+    if (depth <= 0.000001) return 0.0;
+    const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
+                                                      pass.flipY, pass.zeroToOneDepth);
+    const float3 normal = decodeNormal(normalTexture.Sample(uv).xyz);
+    return float4(encodeOctahedron(normal), max(-mul(pass.view, float4(position, 1.0)).z, 0.0), 1.0);
+}
 // Reconstruct low-resolution irradiance using the geometry at each trace texel.
 float3 sampleCurrent(float2 uv)
 {
@@ -123,6 +140,7 @@ struct TemporalOutput
 {
     float4 history : SV_Target0;
     float4 composite : SV_Target1;
+    float4 metadata : SV_Target2;
 };
 
 [shader("fragment")]
@@ -138,5 +156,6 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
     output.composite = pass.indirectOnly != 0
         ? float4(indirect, 1.0)
         : float4(scene.rgb + indirect, scene.a);
+    output.metadata = encodeHistoryMetadata(uv);
     return output;
 }

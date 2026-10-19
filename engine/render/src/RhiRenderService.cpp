@@ -59,6 +59,11 @@ namespace PlutoGE::render
         return m_device && m_renderTextures.Render(*m_device, views, texturePixelReader, scene);
     }
 
+    rhi::TextureHandle RhiRenderService::GetPresentedSceneTexture() const noexcept
+    {
+        return m_sceneRenderer ? m_sceneRenderer->GetColorTexture() : rhi::TextureHandle{};
+    }
+
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
                                                  const BasicLighting &lighting,
                                                  RenderCommandView commands,

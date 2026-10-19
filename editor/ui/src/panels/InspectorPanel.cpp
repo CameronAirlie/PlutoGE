@@ -2744,6 +2744,155 @@ namespace PlutoGE::ui
             }
             ImGui::TextDisabled("Renders offscreen; show it with a material texture slot.");
         }
+
+        void SetInspectorTooltip(const char *text)
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", text);
+        }
+
+        // Basic setup only: what to play and how. States, parameters, transitions,
+        // blend spaces and layers are authored in the Animation Graph Editor.
+        void RenderAnimationComponentEditor(scene::AnimationComponent &animation, scene::Entity &entity)
+        {
+            auto &editorShell = EditorShell::GetInstance();
+            const auto markChanged = [&](const char *propertyName)
+            {
+                entity.AddPrefabOverride(std::string("Component:AnimationComponent:") + propertyName);
+                editorShell.MarkSceneDirty();
+            };
+
+            static constexpr std::array animationTypes{assets::ProjectAssetType::Animation, assets::ProjectAssetType::AnimationClip};
+            if (auto selection = animation.GetSourceAnimationPath();
+                RenderProjectAssetPicker("Animations", editorShell.GetProject(), animationTypes, selection,
+                                         {.noneLabel = nullptr, .includeEngineAssets = true}) &&
+                AssignAnimationAsset(animation, selection))
+            {
+                markChanged("SourceAnimation");
+            }
+            SetInspectorTooltip("Animation file or clip that provides the clips this entity can play.");
+
+            if (auto selection = animation.GetAnimationGraphAssetReference();
+                RenderProjectAssetPicker("Graph", editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph, selection,
+                                         {.emptyPreview = "None (play a single clip)", .includeEngineAssets = true}) &&
+                (selection.empty() ? (animation.SetAnimationGraphAssetReference({}), true) : AssignAnimationGraphAsset(animation, selection)))
+            {
+                markChanged("AnimationGraph");
+            }
+            SetInspectorTooltip("Optional state machine that decides which clips play. Leave empty to play one clip.");
+
+            const std::string &graphReference = animation.GetAnimationGraphAssetReference();
+            const bool usesGraph = !graphReference.empty();
+            const int clipCount = animation.GetClipCount();
+
+            if (clipCount == 0)
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), animation.GetSourceAnimationPath().empty()
+                                                                       ? "Assign an animation asset to play clips."
+                                                                       : "The animation asset contains no clips.");
+
+            if (usesGraph)
+            {
+                if (ImGui::Button("Open Graph Editor", ImVec2(-1.0f, 0.0f)))
+                    editorShell.OpenAnimationGraphAsset(graphReference);
+                SetInspectorTooltip("Edit states, parameters and transitions for this graph.");
+
+                const auto &states = animation.GetGraphStates();
+                const int stateIndex = animation.GetCurrentStateIndex();
+                if (stateIndex >= 0 && stateIndex < static_cast<int>(states.size()))
+                    ImGui::TextDisabled("Current state: %s", states[static_cast<size_t>(stateIndex)].name.c_str());
+            }
+            else if (clipCount > 0)
+            {
+                const auto &clips = animation.GetClips();
+                const int currentClipIndex = animation.GetCurrentClipIndex();
+                const auto clipLabel = [&](int index)
+                { return clips[static_cast<size_t>(index)].name.empty() ? std::string("Clip ") + std::to_string(index) : clips[static_cast<size_t>(index)].name; };
+                const std::string preview = currentClipIndex >= 0 && currentClipIndex < clipCount ? clipLabel(currentClipIndex) : "None";
+                if (ImGui::BeginCombo("Clip", preview.c_str()))
+                {
+                    for (int clipIndex = 0; clipIndex < clipCount; ++clipIndex)
+                    {
+                        const bool selected = currentClipIndex == clipIndex;
+                        const std::string label = clipLabel(clipIndex) + "##" + std::to_string(clipIndex);
+                        if (ImGui::Selectable(label.c_str(), selected))
+                        {
+                            animation.SetCurrentClipIndex(clipIndex);
+                            markChanged("CurrentClipIndex");
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                SetInspectorTooltip("Clip played when no graph is assigned.");
+
+                bool looping = animation.IsLooping();
+                if (ImGui::Checkbox("Loop", &looping))
+                {
+                    animation.SetLooping(looping);
+                    markChanged("Looping");
+                }
+
+                if (!animation.GetGraphStates().empty())
+                    ImGui::TextDisabled("Uses %zu embedded states from an older scene. Assign a graph to edit them.",
+                                        animation.GetGraphStates().size());
+            }
+
+            bool autoplay = animation.IsAutoplay();
+            if (ImGui::Checkbox("Play On Start", &autoplay))
+            {
+                animation.SetAutoplay(autoplay);
+                markChanged("Autoplay");
+            }
+            SetInspectorTooltip("Start playing automatically when the scene starts.");
+
+            float speed = animation.GetSpeed();
+            if (ImGui::DragFloat("Speed", &speed, 0.01f, 0.0f, 10.0f, "%.2fx"))
+            {
+                animation.SetSpeed((std::max)(speed, 0.0f));
+                markChanged("Speed");
+            }
+            SetInspectorTooltip("Playback speed multiplier. 1 is normal speed.");
+
+            if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_SpanAvailWidth))
+            {
+                float poseUpdateRate = animation.GetPoseUpdateRate();
+                if (ImGui::DragFloat("Pose Update Rate", &poseUpdateRate, 0.5f, 0.0f, scene::AnimationComponent::MaxPoseUpdateRate,
+                                     poseUpdateRate <= 0.0f ? "Every frame" : "%.0f Hz"))
+                {
+                    animation.SetPoseUpdateRate(poseUpdateRate);
+                    markChanged("PoseUpdateRate");
+                }
+                SetInspectorTooltip("How often the pose is sampled. Lower values save CPU on distant or background characters. 0 samples every frame.");
+
+                bool stripRootMotion = animation.IsStrippingRootMotion();
+                if (ImGui::Checkbox("Strip Root Motion", &stripRootMotion))
+                {
+                    animation.SetStripRootMotion(stripRootMotion);
+                    markChanged("StripRootMotion");
+                }
+                SetInspectorTooltip("Keep the character in place so a controller or script owns movement and facing.");
+
+                bool ragdollEnabled = animation.IsRagdollEnabled();
+                if (ImGui::Checkbox("Ragdoll", &ragdollEnabled))
+                {
+                    animation.SetRagdollEnabled(ragdollEnabled);
+                    markChanged("RagdollEnabled");
+                }
+                SetInspectorTooltip("Simulate the skeleton physically, starting from the current pose.");
+                if (ragdollEnabled)
+                {
+                    float ragdollWeight = animation.GetRagdollWeight();
+                    if (ImGui::SliderFloat("Ragdoll Weight", &ragdollWeight, 0.0f, 1.0f))
+                    {
+                        animation.SetRagdollWeight(ragdollWeight);
+                        markChanged("RagdollWeight");
+                    }
+                    SetInspectorTooltip("Blend between animation (0) and physics (1).");
+                }
+                ImGui::TreePop();
+            }
+        }
     }
 
     void InspectorPanel::RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const
@@ -3514,403 +3663,6 @@ namespace PlutoGE::ui
                 }
             }
 
-            if (auto *animationComponent = entity->GetComponent<PlutoGE::scene::AnimationComponent>())
-            {
-                ImGui::Separator();
-                ImGui::Text("Animation");
-                static constexpr std::array animationTypes{assets::ProjectAssetType::Animation, assets::ProjectAssetType::AnimationClip};
-                if (auto selection = animationComponent->GetSourceAnimationPath();
-                    RenderProjectAssetPicker("Animation Asset", editorShell.GetProject(), animationTypes, selection,
-                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
-                    AssignAnimationAsset(*animationComponent, selection))
-                {
-                    entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
-                    editorShell.MarkSceneDirty();
-                }
-
-                if (auto selection = animationComponent->GetAnimationGraphAssetReference();
-                    RenderProjectAssetPicker("Animation Graph", editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph, selection,
-                                             {.noneLabel = nullptr, .includeEngineAssets = true}) &&
-                    AssignAnimationGraphAsset(*animationComponent, selection))
-                {
-                    entity->AddPrefabOverride("Component:AnimationComponent:AnimationGraph");
-                    editorShell.MarkSceneDirty();
-                }
-                ImGui::SameLine();
-                ImGui::BeginDisabled(animationComponent->GetAnimationGraphAssetReference().empty());
-                if (ImGui::Button("Clear##AnimationGraph"))
-                {
-                    animationComponent->SetAnimationGraphAssetReference({});
-                    entity->AddPrefabOverride("Component:AnimationComponent:AnimationGraph");
-                    editorShell.MarkSceneDirty();
-                }
-                ImGui::EndDisabled();
-
-                ImGui::TextDisabled("Clips: %d", animationComponent->GetClipCount());
-                if (animationComponent->GetClipCount() > 0)
-                {
-                    std::vector<std::string> clipNames;
-                    clipNames.reserve(animationComponent->GetClips().size());
-                    for (const auto &clip : animationComponent->GetClips())
-                    {
-                        clipNames.push_back(clip.name.empty() ? "Unnamed" : clip.name);
-                    }
-
-                    int currentClipIndex = animationComponent->GetCurrentClipIndex();
-                    const char *currentClipLabel = currentClipIndex >= 0 && currentClipIndex < static_cast<int>(clipNames.size())
-                                                       ? clipNames[static_cast<size_t>(currentClipIndex)].c_str()
-                                                       : "None";
-                    if (ImGui::BeginCombo("Clip", currentClipLabel))
-                    {
-                        for (int clipIndex = 0; clipIndex < static_cast<int>(clipNames.size()); ++clipIndex)
-                        {
-                            const bool selected = currentClipIndex == clipIndex;
-                            if (ImGui::Selectable(clipNames[static_cast<size_t>(clipIndex)].c_str(), selected))
-                            {
-                                animationComponent->SetCurrentClipIndex(clipIndex);
-                                entity->AddPrefabOverride("Component:AnimationComponent:CurrentClipIndex");
-                                editorShell.MarkSceneDirty();
-                            }
-                            if (selected)
-                            {
-                                ImGui::SetItemDefaultFocus();
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
-                }
-
-                if (ImGui::TreeNode("Animation Graph"))
-                {
-                    using AnimationParameterType = scene::AnimationComponent::AnimationParameterType;
-                    using AnimationConditionMode = scene::AnimationComponent::AnimationConditionMode;
-
-                    auto &states = animationComponent->GetGraphStates();
-                    auto &parameters = animationComponent->GetGraphParameters();
-                    bool graphChanged = false;
-
-                    if (!states.empty())
-                    {
-                        int defaultStateIndex = animationComponent->GetDefaultStateIndex();
-                        const char *defaultStateLabel = defaultStateIndex >= 0 && defaultStateIndex < static_cast<int>(states.size())
-                                                            ? states[static_cast<size_t>(defaultStateIndex)].name.c_str()
-                                                            : "None";
-                        if (ImGui::BeginCombo("Default State", defaultStateLabel))
-                        {
-                            for (int stateIndex = 0; stateIndex < static_cast<int>(states.size()); ++stateIndex)
-                            {
-                                const bool selected = defaultStateIndex == stateIndex;
-                                const std::string label = states[static_cast<size_t>(stateIndex)].name.empty()
-                                                              ? "State " + std::to_string(stateIndex)
-                                                              : states[static_cast<size_t>(stateIndex)].name;
-                                if (ImGui::Selectable(label.c_str(), selected))
-                                {
-                                    animationComponent->SetDefaultStateIndex(stateIndex);
-                                    graphChanged = true;
-                                }
-                                if (selected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-                    }
-
-                    if (ImGui::Button("Add State"))
-                    {
-                        animationComponent->AddState("State " + std::to_string(states.size()), animationComponent->GetCurrentClipIndex());
-                        graphChanged = true;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Add Float"))
-                    {
-                        animationComponent->AddParameter("Speed", AnimationParameterType::Float);
-                        graphChanged = true;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Add Bool"))
-                    {
-                        animationComponent->AddParameter("IsWalking", AnimationParameterType::Bool);
-                        graphChanged = true;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Add Trigger"))
-                    {
-                        animationComponent->AddParameter("Jump", AnimationParameterType::Trigger);
-                        graphChanged = true;
-                    }
-
-                    if (ImGui::TreeNode("Parameters"))
-                    {
-                        constexpr const char *parameterTypeLabels[] = {"Float", "Int", "Bool", "Trigger"};
-                        int parameterToRemove = -1;
-                        for (int parameterIndex = 0; parameterIndex < static_cast<int>(parameters.size()); ++parameterIndex)
-                        {
-                            auto &parameter = parameters[static_cast<size_t>(parameterIndex)];
-                            ImGui::PushID(parameterIndex);
-                            char nameBuffer[128]{};
-                            std::strncpy(nameBuffer, parameter.name.c_str(), sizeof(nameBuffer) - 1);
-                            if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
-                            {
-                                parameter.name = nameBuffer;
-                                graphChanged = true;
-                            }
-
-                            int typeIndex = static_cast<int>(parameter.type);
-                            if (ImGui::Combo("Type", &typeIndex, parameterTypeLabels, IM_ARRAYSIZE(parameterTypeLabels)))
-                            {
-                                parameter.type = static_cast<AnimationParameterType>(typeIndex);
-                                graphChanged = true;
-                            }
-
-                            if (parameter.type == AnimationParameterType::Float)
-                            {
-                                graphChanged |= ImGui::DragFloat("Value", &parameter.floatValue, 0.01f);
-                            }
-                            else if (parameter.type == AnimationParameterType::Int)
-                            {
-                                graphChanged |= ImGui::DragInt("Value", &parameter.intValue);
-                            }
-                            else
-                            {
-                                graphChanged |= ImGui::Checkbox("Value", &parameter.boolValue);
-                            }
-
-                            if (ImGui::Button("Remove Parameter"))
-                            {
-                                parameterToRemove = parameterIndex;
-                            }
-                            ImGui::Separator();
-                            ImGui::PopID();
-                        }
-
-                        if (parameterToRemove >= 0)
-                        {
-                            animationComponent->RemoveParameter(parameterToRemove);
-                            graphChanged = true;
-                        }
-                        ImGui::TreePop();
-                    }
-
-                    if (ImGui::TreeNode("States"))
-                    {
-                        int stateToRemove = -1;
-                        for (int stateIndex = 0; stateIndex < static_cast<int>(states.size()); ++stateIndex)
-                        {
-                            auto &state = states[static_cast<size_t>(stateIndex)];
-                            ImGui::PushID(stateIndex);
-                            const std::string stateLabel = state.name.empty() ? "State " + std::to_string(stateIndex) : state.name;
-                            if (ImGui::TreeNode(stateLabel.c_str()))
-                            {
-                                char nameBuffer[128]{};
-                                std::strncpy(nameBuffer, state.name.c_str(), sizeof(nameBuffer) - 1);
-                                if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
-                                {
-                                    state.name = nameBuffer;
-                                    graphChanged = true;
-                                }
-
-                                if (animationComponent->GetClipCount() > 0)
-                                {
-                                    state.clipIndex = std::clamp(state.clipIndex, 0, animationComponent->GetClipCount() - 1);
-                                    const auto &clips = animationComponent->GetClips();
-                                    const char *stateClipLabel = clips[static_cast<size_t>(state.clipIndex)].name.empty()
-                                                                     ? "Unnamed"
-                                                                     : clips[static_cast<size_t>(state.clipIndex)].name.c_str();
-                                    if (ImGui::BeginCombo("Clip", stateClipLabel))
-                                    {
-                                        for (int clipIndex = 0; clipIndex < animationComponent->GetClipCount(); ++clipIndex)
-                                        {
-                                            const auto &clipName = clips[static_cast<size_t>(clipIndex)].name;
-                                            const bool selected = state.clipIndex == clipIndex;
-                                            if (ImGui::Selectable(clipName.empty() ? "Unnamed" : clipName.c_str(), selected))
-                                            {
-                                                state.clipIndex = clipIndex;
-                                                graphChanged = true;
-                                            }
-                                            if (selected)
-                                            {
-                                                ImGui::SetItemDefaultFocus();
-                                            }
-                                        }
-                                        ImGui::EndCombo();
-                                    }
-                                }
-
-                                graphChanged |= ImGui::DragFloat("Speed", &state.speed, 0.01f, 0.0f, 10.0f);
-                                graphChanged |= ImGui::Checkbox("Loop", &state.loop);
-
-                                if (ImGui::Button("Play State"))
-                                {
-                                    animationComponent->SetCurrentStateIndex(stateIndex);
-                                    animationComponent->Play();
-                                    graphChanged = true;
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::Button("Make Default"))
-                                {
-                                    animationComponent->SetDefaultStateIndex(stateIndex);
-                                    graphChanged = true;
-                                }
-                                ImGui::SameLine();
-                                if (ImGui::Button("Remove State"))
-                                {
-                                    stateToRemove = stateIndex;
-                                }
-
-                                if (states.size() > 1)
-                                {
-                                    static int transitionTargetIndex = 0;
-                                    transitionTargetIndex = std::clamp(transitionTargetIndex, 0, static_cast<int>(states.size()) - 1);
-                                    ImGui::SetNextItemWidth(180.0f);
-                                    if (ImGui::BeginCombo("Transition Target", states[static_cast<size_t>(transitionTargetIndex)].name.c_str()))
-                                    {
-                                        for (int targetIndex = 0; targetIndex < static_cast<int>(states.size()); ++targetIndex)
-                                        {
-                                            if (targetIndex == stateIndex)
-                                            {
-                                                continue;
-                                            }
-                                            const bool selected = transitionTargetIndex == targetIndex;
-                                            if (ImGui::Selectable(states[static_cast<size_t>(targetIndex)].name.c_str(), selected))
-                                            {
-                                                transitionTargetIndex = targetIndex;
-                                            }
-                                        }
-                                        ImGui::EndCombo();
-                                    }
-                                    ImGui::SameLine();
-                                    if (ImGui::Button("Add Transition") && animationComponent->AddTransition(stateIndex, transitionTargetIndex))
-                                    {
-                                        graphChanged = true;
-                                    }
-                                }
-
-                                int transitionToRemove = -1;
-                                for (int transitionIndex = 0; transitionIndex < static_cast<int>(state.transitions.size()); ++transitionIndex)
-                                {
-                                    auto &transition = state.transitions[static_cast<size_t>(transitionIndex)];
-                                    ImGui::PushID(transitionIndex);
-                                    const std::string transitionLabel = "Transition " + std::to_string(transitionIndex);
-                                    if (ImGui::TreeNode(transitionLabel.c_str()))
-                                    {
-                                        if (!states.empty())
-                                        {
-                                            transition.destinationStateIndex = std::clamp(transition.destinationStateIndex, 0, static_cast<int>(states.size()) - 1);
-                                            if (ImGui::BeginCombo("Destination", states[static_cast<size_t>(transition.destinationStateIndex)].name.c_str()))
-                                            {
-                                                for (int targetIndex = 0; targetIndex < static_cast<int>(states.size()); ++targetIndex)
-                                                {
-                                                    const bool selected = transition.destinationStateIndex == targetIndex;
-                                                    if (ImGui::Selectable(states[static_cast<size_t>(targetIndex)].name.c_str(), selected))
-                                                    {
-                                                        transition.destinationStateIndex = targetIndex;
-                                                        graphChanged = true;
-                                                    }
-                                                }
-                                                ImGui::EndCombo();
-                                            }
-                                        }
-
-                                        graphChanged |= ImGui::DragFloat("Blend Duration", &transition.duration, 0.01f, 0.0f, 10.0f);
-                                        graphChanged |= ImGui::Checkbox("Has Exit Time", &transition.hasExitTime);
-                                        graphChanged |= ImGui::DragFloat("Exit Time", &transition.exitTime, 0.01f, 0.0f, 10.0f);
-                                        graphChanged |= ImGui::DragFloat("Offset", &transition.offset, 0.005f, 0.0f, 1.0f, "%.3f");
-
-                                        if (ImGui::Button("Add Condition") && !parameters.empty())
-                                        {
-                                            scene::AnimationComponent::AnimationCondition condition;
-                                            condition.parameterName = parameters.front().name;
-                                            transition.conditions.push_back(std::move(condition));
-                                            graphChanged = true;
-                                        }
-                                        ImGui::SameLine();
-                                        if (ImGui::Button("Remove Transition"))
-                                        {
-                                            transitionToRemove = transitionIndex;
-                                        }
-
-                                        constexpr const char *conditionModeLabels[] = {"If", "IfNot", "Greater", "Less", "Equals", "NotEqual"};
-                                        int conditionToRemove = -1;
-                                        for (int conditionIndex = 0; conditionIndex < static_cast<int>(transition.conditions.size()); ++conditionIndex)
-                                        {
-                                            auto &condition = transition.conditions[static_cast<size_t>(conditionIndex)];
-                                            ImGui::PushID(conditionIndex);
-                                            if (!parameters.empty())
-                                            {
-                                                int selectedParameterIndex = (std::max)(0, animationComponent->FindParameterIndex(condition.parameterName));
-                                                selectedParameterIndex = std::clamp(selectedParameterIndex, 0, static_cast<int>(parameters.size()) - 1);
-                                                if (ImGui::BeginCombo("Parameter", parameters[static_cast<size_t>(selectedParameterIndex)].name.c_str()))
-                                                {
-                                                    for (int parameterIndex = 0; parameterIndex < static_cast<int>(parameters.size()); ++parameterIndex)
-                                                    {
-                                                        const bool selected = selectedParameterIndex == parameterIndex;
-                                                        if (ImGui::Selectable(parameters[static_cast<size_t>(parameterIndex)].name.c_str(), selected))
-                                                        {
-                                                            condition.parameterName = parameters[static_cast<size_t>(parameterIndex)].name;
-                                                            graphChanged = true;
-                                                        }
-                                                    }
-                                                    ImGui::EndCombo();
-                                                }
-                                            }
-
-                                            int modeIndex = static_cast<int>(condition.mode);
-                                            if (ImGui::Combo("Mode", &modeIndex, conditionModeLabels, IM_ARRAYSIZE(conditionModeLabels)))
-                                            {
-                                                condition.mode = static_cast<AnimationConditionMode>(modeIndex);
-                                                graphChanged = true;
-                                            }
-                                            graphChanged |= ImGui::DragFloat("Threshold", &condition.threshold, 0.01f);
-                                            if (ImGui::Button("Remove Condition"))
-                                            {
-                                                conditionToRemove = conditionIndex;
-                                            }
-                                            ImGui::Separator();
-                                            ImGui::PopID();
-                                        }
-
-                                        if (conditionToRemove >= 0)
-                                        {
-                                            transition.conditions.erase(transition.conditions.begin() + conditionToRemove);
-                                            graphChanged = true;
-                                        }
-
-                                        ImGui::TreePop();
-                                    }
-                                    ImGui::PopID();
-                                }
-
-                                if (transitionToRemove >= 0)
-                                {
-                                    animationComponent->RemoveTransition(stateIndex, transitionToRemove);
-                                    graphChanged = true;
-                                }
-
-                                ImGui::TreePop();
-                            }
-                            ImGui::PopID();
-                        }
-
-                        if (stateToRemove >= 0)
-                        {
-                            animationComponent->RemoveState(stateToRemove);
-                            graphChanged = true;
-                        }
-                        ImGui::TreePop();
-                    }
-
-                    if (graphChanged)
-                    {
-                        entity->AddPrefabOverride("Component:AnimationComponent:Graph");
-                        editorShell.MarkSceneDirty();
-                    }
-
-                    ImGui::TreePop();
-                }
-            }
-
             // Components
             if (ImGui::CollapsingHeader("Components", ImGuiTreeNodeFlags_DefaultOpen))
             {
@@ -4007,6 +3759,11 @@ namespace PlutoGE::ui
                         else if (auto *meshComponent = dynamic_cast<scene::MeshComponent *>(componentPtr))
                         {
                             RenderMeshComponentEditor(*meshComponent, *entity);
+                            propertiesProvided = true;
+                        }
+                        else if (auto *animationComponent = dynamic_cast<scene::AnimationComponent *>(componentPtr))
+                        {
+                            RenderAnimationComponentEditor(*animationComponent, *entity);
                             propertiesProvided = true;
                         }
                         else if (auto *scriptComponent = dynamic_cast<scene::ScriptComponent *>(componentPtr))
@@ -5165,16 +4922,6 @@ namespace PlutoGE::ui
                                 (property.name == "SourceMesh" ||
                                  property.name == "MaterialAsset" ||
                                  property.name == "Instances"))
-                            {
-                                continue;
-                            }
-                            if (dynamic_cast<scene::AnimationComponent *>(componentPtr) &&
-                                (property.name == "SourceAnimation" ||
-                                 property.name == "AnimationGraph" ||
-                                 property.name == "CurrentClipIndex" ||
-                                 property.name == "ClipCount" ||
-                                 property.name.rfind("Clips.", 0) == 0 ||
-                                 property.name.rfind("Graph.", 0) == 0))
                             {
                                 continue;
                             }

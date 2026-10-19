@@ -609,20 +609,37 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
 }
 
 
+// Interleaved gradient noise with a golden-ratio step per frame.
+float interleavedGradientNoise(float2 pixel, float frame)
+{
+    const float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    return frac(noise + frame * 0.61803398875);
+}
+
 float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
-                            float slope, out float rawVisibility, out float normalizedLevel)
+                            float slope, float2 pixel, out float rawVisibility, out float normalizedLevel)
 {
     rawVisibility = 1.0; normalizedLevel = 0.0;
     const float footprint = virtualReceiverFootprint(vsm, world);
     const int firstLevel = selectVirtualLevel(vsm, world, footprint);
     if (firstLevel < 0) return -1.0;
-    const float visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
-        slope, firstLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
     // Residency fallback already returns a coherent coarse footprint. Blend
     // only the requested level with its immediate neighbour, never with an
     // arbitrarily distant fallback or missing (unshadowed) page.
     const float blend = virtualLevelBlend(vsm, firstLevel, world, footprint);
-    if (visibility < 0.0 || blend <= 0.0 ||
+    // Under temporal accumulation, pick one level per pixel with a per-frame
+    // dither instead; the resolve reproduces the blend with one evaluation.
+    // Both choices share one call site so a wave never runs the filter twice.
+    const bool dithered = temporalClipOffset.z > 0.5;
+    const int ditheredLevel = dithered && blend > interleavedGradientNoise(pixel, temporalClipOffset.w)
+        ? firstLevel + 1 : firstLevel;
+    float visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
+        slope, ditheredLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
+    // A non-resident neighbour falls back to the requested level, as the blend does.
+    if (ditheredLevel != firstLevel && normalizedLevel != float(ditheredLevel) / PLUTO_VSM_ROOT_LEVEL)
+        visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
+            slope, firstLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
+    if (dithered || visibility < 0.0 || blend <= 0.0 ||
         normalizedLevel != float(firstLevel) / PLUTO_VSM_ROOT_LEVEL) return visibility;
     float nextRaw, nextLevel;
     const float nextVisibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
@@ -1072,7 +1089,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         {
             float virtualRaw, virtualLevel;
             const float visibility = evaluateVirtualShadow(input.worldPosition, shadowNormal,
-                shadowWorldDx, shadowWorldDy, slope, virtualRaw, virtualLevel);
+                shadowWorldDx, shadowWorldDy, slope, input.position.xy, virtualRaw, virtualLevel);
             // Try resident coarser VSM levels inside evaluateVirtualShadow.
             // Unmapped/deferred pages are lit until resident, never backed by CSM.
             shadowVisibility = visibility >= 0.0 ? visibility : 1.0;

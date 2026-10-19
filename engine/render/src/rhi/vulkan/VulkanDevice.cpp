@@ -2959,7 +2959,11 @@ namespace PlutoGE::render::rhi::vulkan
         allocation.usage = VMA_MEMORY_USAGE_AUTO;
         allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         BufferResource resource;
-        if (descriptor.usage == BufferUsage::VertexStorage && data.empty())
+        // Immutable data is never written by the CPU again. Host-visible memory
+        // would make every GPU read take the slower coherent path (or PCIe), so
+        // place it in device memory and upload once through staging.
+        const bool deviceUpload = descriptor.immutable && !data.empty() && descriptor.usage != BufferUsage::Uniform;
+        if ((descriptor.usage == BufferUsage::VertexStorage && data.empty()) || deviceUpload)
         {
             allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
             allocation.flags = 0;
@@ -2981,11 +2985,31 @@ namespace PlutoGE::render::rhi::vulkan
             VkBuffer *buffer = &resource.buffer;
             VmaAllocation *memory = &resource.allocation;
             Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, buffer, memory, &allocationInfo), "vmaCreateBuffer");
-            if (!data.empty())
+            if (!data.empty() && !deviceUpload)
             {
                 std::memcpy(allocationInfo.pMappedData, data.data(), data.size());
                 vmaFlushAllocation(m_impl->allocator, *memory, 0, data.size());
             }
+        }
+        if (deviceUpload)
+        {
+            const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Buffer staging"}, data);
+            ScopeExit releaseStaging([&]
+            {
+                if (auto removed = m_impl->buffers.Remove(stagingHandle))
+                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
+            });
+            const VkBuffer source = m_impl->buffers.Get(stagingHandle)->buffer;
+            m_impl->Immediate([&](VkCommandBuffer command)
+            {
+                const VkBufferCopy region{0, 0, data.size()};
+                vkCmdCopyBuffer(command, source, resource.buffer, 1, &region);
+                VkMemoryBarrier visible{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                visible.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                visible.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                     0, 1, &visible, 0, nullptr, 0, nullptr);
+            });
         }
         return m_impl->buffers.Insert(std::move(resource));
     }

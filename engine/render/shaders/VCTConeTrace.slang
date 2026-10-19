@@ -13,7 +13,7 @@ struct TraceParameters
     uint indirectOnly;
     uint zeroToOneDepth;
     float4 cacheOriginSize;
-    float4 cacheSettings; // enabled, warm-up blend, unused, unused
+    float4 cacheSettings; // enabled, warm-up blend, checkerboard parity, full trace width (0 = uncompacted)
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TraceParameters pass; };
 [[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
@@ -161,7 +161,17 @@ float3 traceCone(float3 origin, float3 direction, float startVoxel, float3 recei
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    // Each checkerboard half of the trace grid is compacted to half width, so
+    // a frame that traces one half rasterizes only its fragments: compact
+    // texel (cx, y) traces grid texel (2cx + ((y + parity) & 1), y).
+    // A zero trace width selects an uncompacted full-grid trace.
+    float2 uv = orientFullscreenUv(input.uv, pass.flipY);
+    if (pass.cacheSettings.w > 0.0)
+    {
+        const uint2 compact = uint2(input.position.xy);
+        const uint parity = uint(pass.cacheSettings.z);
+        uv.x = (float(compact.x * 2u + ((compact.y + parity) & 1u)) + 0.5) / pass.cacheSettings.w;
+    }
     const float4 scene = sceneTexture.Sample(uv);
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return pass.indirectOnly != 0 ? 0.0 : scene;

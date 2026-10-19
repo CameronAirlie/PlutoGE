@@ -126,7 +126,7 @@ namespace PlutoGE::render
             glm::mat4 previousViewProjection{1.0f};
             std::array<glm::vec4, 6> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
-            glm::vec4 temporalClipOffset{0.0f};
+            glm::vec4 temporalClipOffset{0.0f}; // clip jitter xy, temporal accumulation, dither frame
             std::array<glm::vec4, 32> pointPositionRange{};
             std::array<glm::vec4, 32> pointColorIntensity{};
             std::array<glm::vec4, 32> pointSettings{};
@@ -256,6 +256,7 @@ namespace PlutoGE::render
             float normalThreshold = 0.0f; std::uint32_t flipY = 0, hasHistory = 0, debugView = 0, zeroToOneDepth = 0;
             std::uint32_t indirectOnly = 0;
             std::uint32_t modulateIndirect = 1, lightingChanged = 0;
+            std::uint32_t traceInterleave = 0, traceWidth = 0;
         };
         static_assert(sizeof(VctVoxelParameters) == 1536);
         static_assert(sizeof(VctObjectParameters) == 64);
@@ -264,7 +265,7 @@ namespace PlutoGE::render
         static_assert(sizeof(VctMipParameters) == 64);
         static_assert(offsetof(VctMipParameters, region) == 32);
         static_assert(sizeof(VctTraceParameters) == 256);
-        static_assert(sizeof(VctTemporalParameters) == 240);
+        static_assert(sizeof(VctTemporalParameters) == 256);
 
         template <typename T>
         void HashVctValue(std::uint64_t &hash, const T &value)
@@ -854,11 +855,10 @@ namespace PlutoGE::render
                 postDescriptor.vertexShader = vertex;
                 postDescriptor.fragmentShader = fragment;
                 postDescriptor.depthFormat = rhi::Format::Undefined;
-                // TAA stores reprojectable depth in alpha alongside HDR history.
-                // An 8-bit sRGB target cannot represent either with sufficient
-                // precision during camera motion.
+                // TAA history is HDR, which an 8-bit sRGB target cannot hold;
+                // its reprojection depth has a separate full-precision target.
                 postDescriptor.colorFormat = type == BasicPostProcessEffectType::TAA
-                                                 ? rhi::Format::R32G32B32A32Float
+                                                 ? rhi::Format::R16G16B16A16Float
                                                  : outputFormat;
                 postDescriptor.resourceBindings = {
                     {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
@@ -883,9 +883,12 @@ namespace PlutoGE::render
                 addInput(BasicPostProcessInput::EnvironmentSpecular, 8);
                 if (type == BasicPostProcessEffectType::TAA)
                 {
-                    postDescriptor.colorFormats = {rhi::Format::R32G32B32A32Float, rhi::Format::R32Float};
+                    // Colour, coverage and layered depth histories.
+                    postDescriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R32Float, rhi::Format::R32Float};
                     postDescriptor.resourceBindings.push_back(
                         {8, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    postDescriptor.resourceBindings.push_back(
+                        {10, 0, 10, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                     postDescriptor.resourceBindings.push_back(
                         {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 }
@@ -1248,7 +1251,7 @@ namespace PlutoGE::render
                     descriptor.colorFormats = {rhi::Format::R16G16B16A16Float,
                                                rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
                     addTexture(1); addTexture(2); addTexture(3); addTexture(5);
-                    addTexture(6); addTexture(7); addTexture(8); addTexture(4); addTexture(9);
+                    addTexture(6); addTexture(7); addTexture(8); addTexture(4); addTexture(9); addTexture(10);
                 }
                 descriptor.cullMode = rhi::CullMode::None;
                 descriptor.depthTest = false;
@@ -1332,6 +1335,8 @@ namespace PlutoGE::render
         for (auto &target : m_taaHistoryTargets)
             target.Reset();
         for (auto &target : m_taaCoverageHistoryTargets)
+            target.Reset();
+        for (auto &target : m_taaDepthHistoryTargets)
             target.Reset();
         m_outputCoverage = {};
         for (auto &target : m_exposureHistoryTargets)
@@ -1625,7 +1630,7 @@ namespace PlutoGE::render
             static_cast<bool>(m_temporalUpscalerOutput) == needsTemporalOutput)
             return true;
         // Viewport changes discard screen history, not stationary world illumination.
-        m_vctTraceTarget.Reset();
+        for (auto &target : m_vctTraceTargets) target.Reset();
         m_vctCompositeTarget.Reset();
         for (auto &texture : m_vctHistoryTargets) texture.Reset();
         for (auto &texture : m_vctMetadataTargets) texture.Reset();
@@ -1662,8 +1667,11 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
         {
             m_taaHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                                     {width, height, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment,
+                                                                     {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment,
                                                                       index == 0 ? "TAA history A" : "TAA history B", true}));
+            m_taaDepthHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
+                 index == 0 ? "TAA depth A" : "TAA depth B", true}));
             m_taaCoverageHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
                 {width, height, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment,
                  index == 0 ? "TAA coverage A" : "TAA coverage B", true}));
@@ -1995,6 +2003,13 @@ namespace PlutoGE::render
         {
             temporalClipOffset.x = sharedClipJitter->x;
             temporalClipOffset.y = sharedClipJitter->y;
+        }
+        // A temporal resolve accumulates jittered frames, so shading may replace
+        // per-pixel blends (VSM level transitions) with a per-frame dither.
+        if (upscalerFrame || taaEffect != postProcessEffects.end() || sharedClipJitter)
+        {
+            temporalClipOffset.z = 1.0f;
+            temporalClipOffset.w = static_cast<float>(m_frameIndex % 64u);
         }
         m_framePreviousViewProjection = m_hasPreviousFrame ? m_previousMotionViewProjection : currentMotionViewProjection;
         // The geometry output layout decides which G-buffer targets exist,
@@ -3743,7 +3758,10 @@ namespace PlutoGE::render
                 }
                 postInfo.colorAttachments = {drawPass == 0 ? colorDestination : depthDestination};
                 if (effect.type == BasicPostProcessEffectType::TAA)
+                {
                     postInfo.colorAttachments.push_back(m_taaCoverageHistoryTargets[1u - m_taaHistoryIndex].Get());
+                    postInfo.colorAttachments.push_back(m_taaDepthHistoryTargets[1u - m_taaHistoryIndex].Get());
+                }
                 postInfo.width = passWidth;
                 postInfo.height = passHeight;
                 postInfo.clearDepth = false;
@@ -3772,6 +3790,7 @@ namespace PlutoGE::render
                 {
                     commands.BindTexture(8, m_temporalMetadata ? m_temporalMetadata : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                     commands.BindTexture(9, m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
+                    commands.BindTexture(10, m_taaDepthHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
                 }
                 if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
                 {
@@ -4108,7 +4127,7 @@ namespace PlutoGE::render
         m_vctProbeRadiance.Reset(); m_vctProbeVisibility.Reset();
         m_vctCacheOriginSize = glm::vec4(0.0f); m_vctCacheConfiguration = glm::vec4(0.0f);
         m_vctProbeSchedule.Reset(); m_vctNextCascade = 0; m_vctHistoryOwner = nullptr;
-        m_vctTraceTarget.Reset();
+        for (auto &target : m_vctTraceTargets) target.Reset();
         m_vctCompositeTarget.Reset();
         for (auto &texture : m_vctHistoryTargets) texture.Reset();
         for (auto &texture : m_vctMetadataTargets) texture.Reset();
@@ -4317,17 +4336,19 @@ namespace PlutoGE::render
         const auto traceHeight = std::max(1u, (m_height + traceDivisor - 1) / traceDivisor);
         if (traceWidth != m_vctTraceWidth || traceHeight != m_vctTraceHeight)
         {
-            m_vctTraceTarget.Reset(); m_vctHistoryValid = false;
+            for (auto &target : m_vctTraceTargets) target.Reset(); m_vctHistoryValid = false;
             m_vctTraceWidth = traceWidth; m_vctTraceHeight = traceHeight;
         }
-        if (!m_vctTraceTarget)
+        if (!m_vctTraceTargets[0])
         {
             m_vctCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
                 {m_width, m_height, rhi::Format::R16G16B16A16Float,
                  rhi::TextureUsage::ColorAttachment, "VCT scene composite", true}));
-            m_vctTraceTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {traceWidth, traceHeight, rhi::Format::R16G16B16A16Float,
-                 rhi::TextureUsage::ColorAttachment, "VCT cone trace", true}));
+            // Checkerboard halves of the trace grid, each compacted to half width.
+            for (std::size_t parity = 0; parity < m_vctTraceTargets.size(); ++parity)
+                m_vctTraceTargets[parity] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {(traceWidth + 1) / 2, traceHeight, rhi::Format::R16G16B16A16Float,
+                     rhi::TextureUsage::ColorAttachment, parity == 0 ? "VCT cone trace (even)" : "VCT cone trace (odd)", true}));
             for (std::size_t index = 0; index < 2; ++index)
             {
                 m_vctHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -4740,7 +4761,16 @@ namespace PlutoGE::render
                                                        m_vctCascades[sourceIndex].size);
         }
         trace.cacheOriginSize = m_vctCacheOriginSize;
-        trace.cacheSettings = {useCache ? 1.0f : 0.0f, m_vctProbeSchedule.blend, 0.0f, 0.0f};
+        // Interleave reduced-resolution tracing once a stable history can fill
+        // the untraced half: alternate checkerboard halves each frame. Trace
+        // both halves while lighting reacts, without history, after a settings
+        // change (the stale half would keep old settings), or debugging.
+        const bool settingsStable = m_vctTraceSettings == effect.parameters && m_vctTraceQuality == effect.quality;
+        m_vctTraceSettings = effect.parameters; m_vctTraceQuality = effect.quality;
+        const bool interleaveTrace = traceDivisor > 1 && m_vctHistoryValid && m_vctReactiveFrames == 0 &&
+                                     settingsStable && effect.parameters[3].x == 0.0f;
+        m_vctTraceParity ^= 1u;
+        const std::uint32_t traceInterleave = interleaveTrace ? m_vctTraceParity + 1u : 0u;
         trace.traceSettings = {effect.parameters[0].y, effect.parameters[0].z,
                                effect.parameters[0].w, effect.parameters[1].x};
         trace.traceCounts = {availableCascades, cascadeCount, effect.quality,
@@ -4751,22 +4781,27 @@ namespace PlutoGE::render
         // History must contain only GI. Accumulating the scene color here
         // averages away its jittered detail before FSR/TAA can reconstruct it.
         trace.indirectOnly = 1u;
-        auto &traceBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-        m_device->UpdateBuffer(traceBuffer.Get(), 0, Bytes(trace));
-        rhi::RenderingInfo traceInfo; traceInfo.colorAttachments = {m_vctTraceTarget.Get()};
-        traceInfo.width = traceWidth; traceInfo.height = traceHeight; traceInfo.clearDepth = false;
         commands.BeginGpuScope("RHI VCT GI / Cone trace");
-        commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
-        commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-        commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-        commands.BindTexture(5, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-        for (std::size_t direction = 0; direction < 6; ++direction)
-            commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
-        commands.BindTexture(13, m_vctProbeRadiance.Get(), m_vctVolumeSampler.Get());
-        commands.BindTexture(14, m_vctProbeVisibility.Get(), m_vctVolumeSampler.Get());
-        commands.Draw(3); commands.EndRendering();
+        for (std::uint32_t parity = 0; parity < m_vctTraceTargets.size(); ++parity)
+        {
+            if (interleaveTrace && parity != m_vctTraceParity) continue;
+            trace.cacheSettings = {useCache ? 1.0f : 0.0f, m_vctProbeSchedule.blend, float(parity), float(traceWidth)};
+            auto &traceBuffer = AcquireVctBuffer(m_vctBufferCursor++);
+            m_device->UpdateBuffer(traceBuffer.Get(), 0, Bytes(trace));
+            rhi::RenderingInfo traceInfo; traceInfo.colorAttachments = {m_vctTraceTargets[parity].Get()};
+            traceInfo.width = (traceWidth + 1) / 2; traceInfo.height = traceHeight; traceInfo.clearDepth = false;
+            commands.BeginRendering(traceInfo); commands.BindPipeline(m_vctPostProcessPipelines[0].Get());
+            commands.BindUniformBuffer(0, traceBuffer.Get()); commands.BindTexture(1, source, m_screenSampler.Get());
+            commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
+            commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            commands.BindTexture(5, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            for (std::size_t direction = 0; direction < 6; ++direction)
+                commands.BindTexture(static_cast<std::uint32_t>(7 + direction), m_vctRadianceAtlases[direction].Get(), m_vctVolumeSampler.Get());
+            commands.BindTexture(13, m_vctProbeRadiance.Get(), m_vctVolumeSampler.Get());
+            commands.BindTexture(14, m_vctProbeVisibility.Get(), m_vctVolumeSampler.Get());
+            commands.Draw(3); commands.EndRendering();
+        }
         commands.EndGpuScope();
         const auto next = static_cast<std::uint8_t>(1u - m_vctHistoryIndex);
         VctTemporalParameters temporal{m_inverseViewProjection, m_postProcessView, m_vctPreviousView,
@@ -4776,6 +4811,8 @@ namespace PlutoGE::render
             effect.parameters[3].z > 0.5f || effect.parameters[3].x != 0.0f ? 1u : 0u,
             effect.parameters[3].x == 0.0f ? 1u : 0u};
         temporal.lightingChanged = m_vctReactiveFrames > 0 ? 1u : 0u;
+        temporal.traceInterleave = traceInterleave;
+        temporal.traceWidth = traceWidth;
         auto &temporalBuffer = AcquireVctBuffer(m_vctBufferCursor++);
         m_device->UpdateBuffer(temporalBuffer.Get(), 0, Bytes(temporal));
         rhi::RenderingInfo temporalInfo;
@@ -4783,7 +4820,8 @@ namespace PlutoGE::render
         temporalInfo.width = m_width; temporalInfo.height = m_height; temporalInfo.clearDepth = false;
         commands.BeginGpuScope("RHI VCT GI / Temporal resolve");
         commands.BeginRendering(temporalInfo); commands.BindPipeline(m_vctPostProcessPipelines[1].Get());
-        commands.BindUniformBuffer(0, temporalBuffer.Get()); commands.BindTexture(1, m_vctTraceTarget.Get(), m_screenSampler.Get());
+        commands.BindUniformBuffer(0, temporalBuffer.Get()); commands.BindTexture(1, m_vctTraceTargets[0].Get(), m_screenSampler.Get());
+        commands.BindTexture(10, m_vctTraceTargets[1].Get(), m_screenSampler.Get());
         commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get()); commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
         commands.BindTexture(5, m_motionTarget ? m_motionTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get()); commands.BindTexture(6, m_vctHistoryTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());
         commands.BindTexture(7, m_vctMetadataTargets[m_vctHistoryIndex].Get(), m_screenSampler.Get());

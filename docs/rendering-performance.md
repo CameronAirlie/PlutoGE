@@ -107,19 +107,79 @@ wrap the third texture axis, matching Vulkan.
 | Pass (ms) | Before | After |
 | --- | --- | --- |
 | Opaque geometry | 11.76 | 4.91 |
-| Deferred probe irradiance | â€“ | 1.21 |
+| Deferred probe irradiance | – | 1.21 |
 | VCT GI | 4.26 | 3.19 |
 | Volumetric clouds | 2.93 | 1.49 |
 | Scene GPU frame | 25.5 | 17.7 |
 
+## Second pass
+
+### Directional shadow level transitions (BasicLit)
+
+A VSM receiver inside a level transition band (clipmap edge or footprint
+change) used to filter two levels and blend them. With a temporal resolve
+active (TAA, an upscaler or shared camera jitter), `temporalClipOffset.z` is
+set and each pixel instead filters one level, chosen by interleaved gradient
+noise that changes every frame (`temporalClipOffset.w`); accumulation restores
+the blend. Both choices share one call site so a wave never runs the tent
+filter twice. A non-resident neighbour falls back to the requested level, as
+before. Without temporal accumulation the exact blend is kept. The forward pass
+went from 4.88 ms to 4.40 ms. The converged image differs by a mean of
+0.001 / 255.
+
+Measured split of the remaining directional shadow cost (about 1.8 ms): 0.95 ms
+of level selection, page lookups and setup, and 0.83 ms of tent filtering
+(softness 1.5 needs nine gathers).
+
+### VCT cone trace interleaving
+
+Reduced-resolution traces store each checkerboard half compacted to half
+width, in two targets. Once the history is valid and lighting and settings are
+stable, a frame traces only one half and rasterizes only its fragments; the
+temporal resolve reads both halves and down-weights the stale one. Both halves
+are traced after a settings change, during reactive lighting, without history
+and in debug views. `cacheSettings.w = 0` selects an uncompacted trace. The
+cone trace went from 1.8 ms to 1.0 ms. The image differs from full tracing by a
+mean of 0.006 / 255.
+
+### TAA history split
+
+History colour is RGBA16F. Layered depth moved to its own R32F target, read
+with exact texel loads. TAA went from 1.9 ms to 1.7 ms; the image differs by a
+mean of 0.06 / 255.
+
+### VSM page allocation
+
+The allocator's round-robin spare-page loop stops when a round grants nothing,
+and request counts are read once. Page allocation went from 0.52 ms to
+0.06 ms (live run).
+
+### Immutable buffers (Vulkan)
+
+Immutable, non-uniform buffers with initial data are placed in device-local
+memory through a staging copy. No change on integrated GPUs; this targets
+discrete GPUs, where host-visible vertex data crosses PCIe.
+
+### Results
+
+| Pass (ms) | Start of pass | After |
+| --- | --- | --- |
+| Opaque geometry | 4.91 | 4.40 |
+| VCT GI | 3.19 | 2.52 |
+| TAA | 1.9 | 1.67 |
+| Scene GPU frame | 17.7 | 15.5 |
+
 ## Next candidates
 
-* **Directional shadow filtering (2.3 ms in the forward pass).** A screen-space
-  shadow mask at reduced resolution would decouple filtering from material
-  shading, as the probe resolve does for the grid.
-* **VCT cone trace (1.8 ms at quarter resolution).** Interleaved tracing with
-  reprojection, or adaptive step counts.
-* **TAA (1.9 ms).** History is RGBA32F because its alpha stores layered NDC
-  depth. Splitting colour (RGBA16F) from depth (R32F) halves its bandwidth.
-* **Clouds.** Temporal amortisation (a quarter of trace pixels per frame with
-  reprojection).
+* **SSAO (1.85 ms).** The raw pass costs about 0.37 ms fixed plus 0.2 ms per
+  16 samples. With temporal accumulation, 16 samples instead of 32 changes
+  the converged image by a mean of 0.015 / 255 and saves 0.2 ms; it is a
+  per-project setting, so check it under motion. The six depth-pyramid
+  dispatches (0.26 ms) could be fused into one or two.
+* **Directional shadow setup (about 0.95 ms).** Level selection transforms the
+  receiver once per candidate level; clipmap levels share a rotation, so one
+  light-space transform plus per-level scale and offset would suffice.
+* **Clouds (1.5 ms).** Temporal amortisation needs a cloud history with
+  reprojection by a representative cloud depth, plus rejection for wind,
+  lighting and volume changes. The trace currently has no history by design;
+  ghosting has to be validated with camera motion, not frozen frames.

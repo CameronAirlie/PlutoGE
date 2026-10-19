@@ -20,18 +20,23 @@ Sampler2D historyTexture : register(t6, space0);
 // Per-pixel previous depth and camera layer, composed before the shared resolve.
 [[vk::binding(8, 0)]] Sampler2D temporalMetadataTexture : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler2D historyCoverageTexture : register(t9, space0);
+// Layered depth (NDC depth + 2 * camera layer) needs full float precision, so
+// it lives beside the half-precision colour history. Read with exact loads.
+[[vk::binding(10, 0)]] Sampler2D historyDepthTexture : register(t10, space0);
 
 struct TemporalOutput
 {
-    float4 colorAndDepth : SV_Target0;
+    float4 color : SV_Target0;
     float coverage : SV_Target1;
+    float encodedDepth : SV_Target2;
 };
 
 TemporalOutput temporalOutput(float3 color, float encodedDepth, float coverage)
 {
     TemporalOutput output;
-    output.colorAndDepth = float4(color, encodedDepth);
+    output.color = float4(color, 1.0);
     output.coverage = coverage;
+    output.encodedDepth = encodedDepth;
     return output;
 }
 
@@ -256,7 +261,11 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
     for (int x = 0; x < 2; ++x)
     {
         const float2 tap = (historyBase + float2(x,y) + 0.5) * pass.inverseResolution;
-        const float sampleEncodedDepth = historyTexture.Sample(saturate(tap)).a;
+        uint historyWidth, historyHeight;
+        historyDepthTexture.GetDimensions(historyWidth, historyHeight);
+        const int2 historyTexel = clamp(int2(floor(saturate(tap) * float2(historyWidth, historyHeight))),
+                                        int2(0), int2(historyWidth, historyHeight) - 1);
+        const float sampleEncodedDepth = historyDepthTexture.Load(int3(historyTexel, 0)).r;
         const float sampleLayer = floor(sampleEncodedDepth * 0.5);
         const float sampleDepth = sampleEncodedDepth - sampleLayer * 2.0;
         if (sampleLayer == layer)

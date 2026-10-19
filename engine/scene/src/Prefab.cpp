@@ -970,6 +970,116 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
+        // Entity-typed properties hold scene IDs. A prefab cannot own a reference
+        // to an entity outside its hierarchy; such values belong to the instance.
+        bool CanReferenceEntities(const Component &component)
+        {
+            return dynamic_cast<const ScriptComponent *>(&component) || dynamic_cast<const NavAgentComponent *>(&component) ||
+                   dynamic_cast<const CameraRigComponent *>(&component) || dynamic_cast<const IKComponent *>(&component);
+        }
+
+        std::optional<EntityID> ParseEntityReference(const Property &property)
+        {
+            if (property.type != PropertyType::Entity)
+                return std::nullopt;
+            try
+            {
+                const auto id = static_cast<EntityID>(std::stoul(property.value));
+                return id == 0 ? std::nullopt : std::optional<EntityID>(id);
+            }
+            catch (...)
+            {
+                return std::nullopt;
+            }
+        }
+
+        bool IsWithin(const Entity *entity, const Entity &root)
+        {
+            for (; entity; entity = entity->GetParent())
+                if (entity == &root)
+                    return true;
+            return false;
+        }
+
+        // Keeps references from an instance to scene entities outside it, such as
+        // a HUD's player, across refresh, revert and apply. Paths address the
+        // first component of a type, matching CaptureOverrideValue.
+        void CollectExternalReferenceOverrides(const Entity &entity, const Entity &instanceRoot, const Scene &scene,
+                                               std::vector<std::pair<std::string, std::string>> &overrides)
+        {
+            for (const auto &bucket : entity.GetComponentBuckets())
+            {
+                for (const auto *component : bucket)
+                {
+                    if (!component || !CanReferenceEntities(*component))
+                        continue;
+                    const auto typeName = ResolveComponentTypeName(*component);
+                    if (typeName.empty() || FindFirstComponentByType(entity, typeName) != component)
+                        continue;
+                    for (const auto &property : component->Serialize())
+                    {
+                        const auto id = ParseEntityReference(property);
+                        const auto *target = id ? scene.FindEntityByID(*id) : nullptr;
+                        if (!target || IsWithin(target, instanceRoot))
+                            continue;
+                        auto path = "Component:" + typeName + ":" + property.name;
+                        if (std::none_of(overrides.begin(), overrides.end(), [&](const auto &entry) { return entry.first == path; }))
+                            overrides.emplace_back(std::move(path), property.value);
+                    }
+                }
+            }
+        }
+
+        void ClearExternalEntityReferences(Entity &entity, const Scene &prefabScene)
+        {
+            for (const auto &bucket : entity.GetComponentBuckets())
+            {
+                for (auto *component : bucket)
+                {
+                    if (!component || !CanReferenceEntities(*component))
+                        continue;
+                    auto properties = component->Serialize();
+                    bool changed = false;
+                    for (auto &property : properties)
+                    {
+                        if (const auto id = ParseEntityReference(property); id && !prefabScene.FindEntityByID(*id))
+                        {
+                            property.value = "0";
+                            changed = true;
+                        }
+                    }
+                    if (changed)
+                        component->Deserialize(properties);
+                }
+            }
+            for (auto *child : entity.GetChildren())
+                if (child)
+                    ClearExternalEntityReferences(*child, prefabScene);
+        }
+
+        bool IsExternalReferenceOverride(const Entity &entity, std::string_view path, const Scene &prefabScene)
+        {
+            constexpr std::string_view prefix = "Component:";
+            if (!path.starts_with(prefix))
+                return false;
+            const auto remainder = path.substr(prefix.size());
+            const auto separator = remainder.find(':');
+            if (separator == std::string_view::npos)
+                return false;
+            const auto *component = FindFirstComponentByType(entity, remainder.substr(0, separator));
+            if (!component || !CanReferenceEntities(*component))
+                return false;
+            for (const auto &property : component->Serialize())
+            {
+                if (property.name == remainder.substr(separator + 1))
+                {
+                    const auto id = ParseEntityReference(property);
+                    return id && !prefabScene.FindEntityByID(*id);
+                }
+            }
+            return false;
+        }
+
         bool SaveSingleEntityScene(const Entity &entity,
                                    const std::filesystem::path &filePath,
                                    bool clearPrefabLink,
@@ -991,6 +1101,7 @@ namespace PlutoGE::scene
             if (clonedRoot)
             {
                 RemapClonedScriptEntityReferences(entity, *clonedRoot);
+                ClearExternalEntityReferences(*clonedRoot, prefabScene);
                 if (!CopyStaticModelInstanceLinks(entity, *clonedRoot, errorMessage)) return false;
             }
             if (auto roots = prefabScene.GetRootEntities(); !roots.empty() && clearPrefabLink)
@@ -1112,6 +1223,9 @@ namespace PlutoGE::scene
                 if (componentTypes != originalTypes) throw std::runtime_error("Component additions/removals must be made in the base prefab.");
                 for (const auto &path : entity->GetPrefabOverrides())
                 {
+                    // Scene references stay on the instance; see CollectExternalReferenceOverrides.
+                    if (IsExternalReferenceOverride(*entity, path, normalized))
+                        continue;
                     const auto value = CaptureOverrideValue(*entity, path);
                     if (!value || !CaptureOverrideValue(*original, path)) throw std::runtime_error("Unsupported variant override: " + path);
                     if (path.starts_with("Component:"))
@@ -1344,13 +1458,15 @@ namespace PlutoGE::scene
 
             previousInstanceToPrefabId[entity->GetID()] = entity->GetPrefabEntityID();
 
+            auto &values = overrideValues[entity->GetPrefabEntityID()];
             for (const auto &path : entity->GetPrefabOverrides())
             {
                 if (auto value = CaptureOverrideValue(*entity, path))
                 {
-                    overrideValues[entity->GetPrefabEntityID()].push_back({path, *value});
+                    values.push_back({path, *value});
                 }
             }
+            CollectExternalReferenceOverrides(*entity, instanceRoot, *scene, values);
         }
 
         if (preserveAddedChildren)

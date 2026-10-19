@@ -968,6 +968,10 @@ namespace PlutoGE::ui
         m_lastModelImportError.clear();
         m_activeModelAssetSnapshot = {};
         m_bookmarkPath.clear();
+        // Hidden editors (tests, tools) must never overwrite a user's layout.
+        m_panelManager.SetLayoutPath(m_project && m_persistEditorSettings
+                                         ? m_project->GetRootDirectory() / ".plutoge-editor" / "editor-layout.ini"
+                                         : std::filesystem::path{});
         auto &assetManager = m_engine.GetAssetManager();
         if (m_project)
         {
@@ -3345,8 +3349,6 @@ namespace PlutoGE::ui
             return false;
         }
 
-        if (!visible) ImGui::GetIO().IniFilename = nullptr;
-
         return true;
     }
 
@@ -4572,6 +4574,15 @@ namespace PlutoGE::ui
                     {
                         profilerPanel->SetOpen(!profilerPanel->IsOpen());
                     }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Reset Layout"))
+                    {
+                        for (Panel *panel : {static_cast<Panel *>(viewportPanel), static_cast<Panel *>(viewportPanel2),
+                                             static_cast<Panel *>(sceneHierarchyPanel), static_cast<Panel *>(inspectorPanel),
+                                             static_cast<Panel *>(contentBrowserPanel), static_cast<Panel *>(consolePanel)})
+                            panel->SetOpen(true);
+                        m_panelManager.ResetLayout();
+                    }
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Runtime"))
@@ -5350,6 +5361,7 @@ namespace PlutoGE::ui
         m_gameSceneRenderService.reset();
         m_editorSceneRenderService.reset();
         m_panelManager.ShutdownImGui();
+        m_panelManager.SetLayoutPath({});
         m_engine.Shutdown();
     }
 }

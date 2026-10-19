@@ -3451,11 +3451,13 @@ namespace PlutoGE::ui
                     {
                         project->RefreshAssetRegistry();
                     }
+                    // Clear first: the refresh re-adds references to scene entities
+                    // outside the instance, which the prefab cannot store.
+                    entity->ClearPrefabOverridesRecursive();
                     if (auto *currentScene = core::Engine::GetInstance().GetScene())
                     {
                         scene::Prefab::UpdateInstances(*currentScene, entity->GetPrefabSource());
                     }
-                    entity->ClearPrefabOverridesRecursive();
                     editorShell.MarkSceneDirty();
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Applied instance overrides to prefab.");

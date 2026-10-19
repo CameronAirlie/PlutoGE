@@ -34,7 +34,7 @@ cbuffer CameraParameters : register(b0, space0)
     column_major float4x4 previousViewProjection;
     float4 physicalSkyParameters[6];
     float4 physicalSkySettings;
-    float4 temporalClipOffset;
+    float4 temporalClipOffset; // clip jitter xy, temporal accumulation, dither frame
     float4 pointPositionRange[32];
     float4 pointColorIntensity[32];
     float4 pointSettings[32];

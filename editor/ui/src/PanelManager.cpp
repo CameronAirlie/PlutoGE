@@ -64,26 +64,6 @@ namespace PlutoGE::ui
             return std::filesystem::current_path();
         }
 
-        std::filesystem::path GetEditorSettingsDirectory()
-        {
-#ifdef _WIN32
-            if (const char *appData = std::getenv("APPDATA"); appData != nullptr && appData[0] != '\0')
-            {
-                return std::filesystem::path(appData) / "PlutoGE";
-            }
-#else
-            if (const char *configHome = std::getenv("XDG_CONFIG_HOME"); configHome != nullptr && configHome[0] != '\0')
-            {
-                return std::filesystem::path(configHome) / "PlutoGE";
-            }
-            if (const char *home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
-            {
-                return std::filesystem::path(home) / ".config" / "PlutoGE";
-            }
-#endif
-            return GetExecutableDirectory();
-        }
-
         void BuildDefaultEditorLayout(ImGuiID dockspaceId)
         {
             ImGui::DockBuilderRemoveNode(dockspaceId);
@@ -263,13 +243,10 @@ namespace PlutoGE::ui
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
 
-        const std::filesystem::path settingsDirectory = GetEditorSettingsDirectory();
-        std::error_code settingsError;
-        std::filesystem::create_directories(settingsDirectory, settingsError);
-        const std::filesystem::path iniPath = settingsDirectory / "editor-layout.ini";
-        m_applyDefaultLayout = !std::filesystem::exists(iniPath, settingsError);
-        m_imguiIniPath = iniPath.string();
-        io.IniFilename = m_imguiIniPath.c_str();
+        // Layouts are saved per project by SetLayoutPath/SaveLayout. ImGui only
+        // flags WantSaveIniSettings, so hidden or project-less sessions write nothing.
+        io.IniFilename = nullptr;
+        m_layoutLoadPending = true;
 
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
@@ -317,7 +294,7 @@ namespace PlutoGE::ui
             return;
         }
 
-        ImGui::SaveIniSettingsToDisk(m_imguiIniPath.c_str());
+        SaveLayout();
         if (m_compositor)
             m_compositor->Shutdown();
         m_compositor.reset();
@@ -414,6 +391,37 @@ namespace PlutoGE::ui
             panel->OnProjectChanged();
     }
 
+    void PanelManager::SetLayoutPath(const std::filesystem::path &path)
+    {
+        if (path == m_layoutPath)
+            return;
+        SaveLayout();
+        m_layoutPath = path;
+        // Loading rebuilds dock nodes, so wait for the next frame boundary.
+        m_layoutLoadPending = true;
+    }
+
+    void PanelManager::LoadLayout()
+    {
+        m_layoutLoadPending = false;
+        ImGui::ClearIniSettings();
+        std::error_code error;
+        m_applyDefaultLayout = m_layoutPath.empty() || !std::filesystem::is_regular_file(m_layoutPath, error);
+        if (!m_applyDefaultLayout)
+            ImGui::LoadIniSettingsFromDisk(m_layoutPath.string().c_str());
+    }
+
+    void PanelManager::SaveLayout()
+    {
+        // A pending load means the live layout still belongs to the previous path.
+        if (ImGui::GetCurrentContext() == nullptr || m_layoutPath.empty() || m_layoutLoadPending)
+            return;
+        std::error_code error;
+        std::filesystem::create_directories(m_layoutPath.parent_path(), error);
+        ImGui::SaveIniSettingsToDisk(m_layoutPath.string().c_str());
+        ImGui::GetIO().WantSaveIniSettings = false;
+    }
+
     void PanelManager::ShutdownPanels()
     {
         ClearCachedMaterialPreviews();
@@ -441,6 +449,8 @@ namespace PlutoGE::ui
         else
             io.ConfigFlags &= ~lockedMouseFlags;
 
+        if (m_layoutLoadPending)
+            LoadLayout();
         m_compositor->BeginFrame();
         { core::CpuScope scope("ImGui core new frame", core::CpuCategory::UI); ImGui::NewFrame(); }
         ImGuizmo::BeginFrame();
@@ -472,6 +482,11 @@ namespace PlutoGE::ui
         m_timingStats.platformViewportCount = ImGui::GetPlatformIO().Viewports.Size;
 
         ImGuiIO &io = ImGui::GetIO();
+        if (io.WantSaveIniSettings)
+        {
+            SaveLayout();
+            io.WantSaveIniSettings = false;
+        }
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             const auto platformUpdateStart = std::chrono::high_resolution_clock::now();

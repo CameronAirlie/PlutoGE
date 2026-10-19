@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -257,6 +258,34 @@ int main()
                 "Legacy project loaded cached affine variant");
             Require(!scene::Prefab::SaveVariant(*instance, assetsPath / "RejectedAffine.plutoprefab", &error) &&
                 !std::filesystem::exists(assetsPath / "RejectedAffine.plutoprefab"), "Legacy project wrote affine variant override");
+        }
+        // A prefab cannot own a scene entity outside its hierarchy (a HUD's
+        // player). Saving drops the ID; instances keep their own wiring.
+        {
+            const auto entityField = [](const scene::Entity &entity) {
+                const auto value = entity.GetComponent<scene::ScriptComponent>()->GetFieldValue("player");
+                const auto *id = value ? std::get_if<uint32_t>(&*value) : nullptr;
+                return id ? *id : 0u;
+            };
+            scene::Scene authoringScene, levelScene;
+            auto *authoringPlayer = authoringScene.AddEntity(std::make_unique<scene::Entity>());
+            auto *hud = authoringScene.AddEntity(std::make_unique<scene::Entity>());
+            Require(hud->CreateComponent<scene::ScriptComponent>()->SetFieldValue("player", authoringPlayer->GetID()), "Cannot set HUD player");
+            Require(scene::Prefab::SaveFromEntity(*hud, assetsPath / "Hud.plutoprefab", &error), error);
+            auto *levelPlayer = levelScene.AddEntity(std::make_unique<scene::Entity>());
+            auto *hudInstance = scene::Prefab::Instantiate(levelScene, "project://Hud.plutoprefab", nullptr, &error);
+            Require(hudInstance && entityField(*hudInstance) == 0, "Prefab kept an external scene entity ID");
+            // Mirrors a scene saved before the reference was tracked as an override.
+            Require(hudInstance->GetComponent<scene::ScriptComponent>()->SetFieldValue("player", levelPlayer->GetID()), "Cannot wire instance");
+            Require(scene::Prefab::UpdateInstance(*hudInstance, &error) && entityField(*hudInstance) == levelPlayer->GetID(), "Refresh lost scene reference");
+            Require(scene::Prefab::RevertInstance(*hudInstance, &error) && entityField(*hudInstance) == levelPlayer->GetID(), "Revert lost scene reference");
+            Require(scene::Prefab::ApplyInstanceToPrefab(*hudInstance, &error), error);
+            hudInstance->ClearPrefabOverridesRecursive();
+            Require(scene::Prefab::UpdateInstances(levelScene, "project://Hud.plutoprefab", &error) == 1 &&
+                entityField(*hudInstance) == levelPlayer->GetID(), "Apply lost scene reference");
+            scene::Scene emptyScene;
+            auto *fresh = scene::Prefab::Instantiate(emptyScene, "project://Hud.plutoprefab", nullptr, &error);
+            Require(fresh && entityField(*fresh) == 0, "Apply wrote a scene entity ID into the prefab");
         }
         core::Engine::GetInstance().GetAssetManager().ClearProjectContext();
         std::cout << "Prefab variant tests passed\n";

@@ -848,6 +848,7 @@ namespace PlutoGE::render
         std::vector<PostProcessTargetDescription> m_postProcessPassTargetDescriptions;
         std::array<rhi::Texture, 2> m_taaHistoryTargets;
         std::array<rhi::Texture, 2> m_taaCoverageHistoryTargets;
+        std::array<rhi::Texture, 2> m_taaDepthHistoryTargets; // Layered NDC depth beside RGBA16F colour history.
         rhi::TextureHandle m_outputCoverage;
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
@@ -914,7 +915,7 @@ namespace PlutoGE::render
         rhi::Texture m_vctSecondaryScratch;
         std::uint32_t m_vctBounceCascade = 3, m_vctNextBounceCascade = 0;
         std::uint64_t m_vctBounceLightingSignature = 0;
-        rhi::Texture m_vctTraceTarget;
+        std::array<rhi::Texture, 2> m_vctTraceTargets; // Checkerboard halves of the trace grid, half width each.
         std::uint32_t m_vctTraceWidth = 0, m_vctTraceHeight = 0;
         rhi::Texture m_vctCompositeTarget;
         std::array<rhi::Texture, 2> m_vctHistoryTargets;
@@ -925,6 +926,10 @@ namespace PlutoGE::render
         std::uint32_t m_vctCascadeCount = 0;
         std::uint8_t m_vctHistoryIndex = 0;
         bool m_vctHistoryValid = false;
+        std::uint32_t m_vctTraceParity = 0;
+        // Settings of the last trace; the untraced checkerboard half is only reusable while they hold.
+        std::array<glm::vec4, 6> m_vctTraceSettings{};
+        std::uint32_t m_vctTraceQuality = 0;
         std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};
         rhi::GraphicsPipeline m_ssaoDepthPipeline, m_ssaoFilterPipeline, m_ssaoUpsamplePipeline;

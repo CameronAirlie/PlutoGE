@@ -63,6 +63,10 @@ namespace PlutoGE::ui
 
         void ShutdownPanels();
         void OnProjectChanged();
+        // Saves the current layout to the previous file, then loads `path` (or
+        // the default layout when it does not exist). Empty disables persistence.
+        void SetLayoutPath(const std::filesystem::path &path);
+        void ResetLayout() { m_applyDefaultLayout = true; }
 
         void BeginPanelUpdate(bool workspace = true);
 
@@ -93,8 +97,12 @@ namespace PlutoGE::ui
         ImFont *m_martianMonoFont = nullptr;
         ImFont *m_georamaFont = nullptr;
         ImFont *m_defaultFont = nullptr;
-        std::string m_imguiIniPath;
+        void LoadLayout();
+        void SaveLayout();
+
+        std::filesystem::path m_layoutPath;
         bool m_applyDefaultLayout = false;
+        bool m_layoutLoadPending = false;
         std::unique_ptr<IEditorCompositor> m_compositor;
     };
 }

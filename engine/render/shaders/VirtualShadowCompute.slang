@@ -157,22 +157,30 @@ void allocateMain(uint lane : SV_GroupIndex)
     }
     if (lane == 0)
     {
+        uint requested[PLUTO_VSM_LEVELS];
         uint reserved = 0, fineLevels = 0;
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            if (virtualCoarseLevel(level)) reserved += requests[level];
-            else if (requests[level] != 0) ++fineLevels;
+            requested[level] = requests[level];
+            if (virtualCoarseLevel(level)) reserved += requested[level];
+            else if (requested[level] != 0) ++fineLevels;
         }
         uint fineCapacity = vsm.pool.x - min(vsm.pool.x, reserved);
         uint spare = vsm.pool.x;
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            planQuotas[level] = min(requests[level], virtualCoarseLevel(level) ? requests[level] : fineCapacity / max(1u, fineLevels));
+            planQuotas[level] = min(requested[level], virtualCoarseLevel(level) ? requested[level] : fineCapacity / max(1u, fineLevels));
             spare -= planQuotas[level];
         }
+        // Round-robin the spare pages; stop once a round grants nothing
+        // (every level is satisfied) instead of spinning through the pool.
         for (uint round = 0; round < vsm.pool.x && spare > 0; ++round)
+        {
+            bool granted = false;
             for (uint level = 0; level < PLUTO_VSM_LEVELS && spare > 0; ++level)
-                if (planQuotas[level] < requests[level]) { ++planQuotas[level]; --spare; }
+                if (planQuotas[level] < requested[level]) { ++planQuotas[level]; --spare; granted = true; }
+            if (!granted) break;
+        }
         stats[13] = fineCapacity;
         stats[15] = reserved;
     }

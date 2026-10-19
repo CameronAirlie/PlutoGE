@@ -17,9 +17,13 @@ struct TemporalParameters
     uint indirectOnly;
     uint modulateIndirect;
     uint lightingChanged;
+    uint traceInterleave; // 0: every trace texel is fresh; else 1 + the checkerboard parity traced this frame.
+    uint traceWidth;      // Full trace grid width; each parity target holds half of it.
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { TemporalParameters pass; };
+// Even and odd checkerboard halves of the compacted cone-trace grid.
 [[vk::binding(1, 0)]] Sampler2D currentIndirect : register(t1, space0);
+[[vk::binding(10, 0)]] Sampler2D currentIndirectOdd : register(t10, space0);
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 [[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
 [[vk::binding(5, 0)]] Sampler2D motionTexture : register(t5, space0);
@@ -55,13 +59,19 @@ float4 encodeHistoryMetadata(float2 uv)
     return float4(encodeOctahedron(normal), max(-mul(pass.view, float4(position, 1.0)).z, 0.0), 1.0);
 }
 // Reconstruct low-resolution irradiance using the geometry at each trace texel.
+// Trace grid texel (x, y) lives in the (x + y) parity target at (x / 2, y).
+float3 loadTrace(uint2 texel)
+{
+    const int3 compact = int3(texel.x >> 1, texel.y, 0);
+    return ((texel.x + texel.y) & 1u) == 0u ? currentIndirect.Load(compact).rgb : currentIndirectOdd.Load(compact).rgb;
+}
 float3 sampleCurrent(float2 uv)
 {
-    uint width, height;
-    currentIndirect.GetDimensions(width, height);
-    const float2 size = float2(width, height);
+    uint compactWidth, height;
+    currentIndirect.GetDimensions(compactWidth, height);
+    const float2 size = float2(pass.traceWidth, height);
     if (all(abs(size * pass.inverseResolution - 1.0) < 0.001))
-        return currentIndirect.Sample(uv).rgb;
+        return loadTrace(uint2(min(uv * size, size - 1.0)));
     const float depth = depthTexture.Sample(uv).r;
     if (depth <= 0.000001) return 0.0;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection, pass.flipY, pass.zeroToOneDepth);
@@ -82,10 +92,14 @@ float3 sampleCurrent(float2 uv)
         // rapidly across a coarse texel, while rejecting separate surfaces.
         const float planeDistance = abs(dot(tapPosition - position, normal));
         const float similarity = pow(saturate(dot(normal, decodeNormal(normalTexture.Sample(tap).xyz))), 16.0);
+        // Texels skipped by interleaved tracing are a frame old; they fill
+        // gaps but must not outweigh this frame's samples.
+        const uint2 tapTexel = uint2(clamp(base + float2(x, y), 0.0, size - 1.0));
+        const bool fresh = pass.traceInterleave == 0 || ((tapTexel.x + tapTexel.y) & 1u) == pass.traceInterleave - 1u;
         const float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) *
             (y == 0 ? 1.0 - fraction.y : fraction.y) * similarity *
-            exp(-planeDistance / max(0.05, viewDepth * 0.02));
-        sum += currentIndirect.Sample(tap).rgb * weight;
+            exp(-planeDistance / max(0.05, viewDepth * 0.02)) * (fresh ? 1.0 : 0.25);
+        sum += loadTrace(tapTexel) * weight;
         weights += weight;
     }
     return weights > 0.00001 ? sum / weights : 0.0;

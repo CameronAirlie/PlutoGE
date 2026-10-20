@@ -1027,6 +1027,22 @@ namespace PlutoGE::assets
             return false;
         }
 
+        std::error_code fileError;
+        const bool looseFile = std::filesystem::is_regular_file(clipPath, fileError);
+        const auto writeTime = looseFile ? std::filesystem::last_write_time(clipPath, fileError)
+                                         : std::filesystem::file_time_type::min();
+        const bool cacheable = !fileError;
+        if (cacheable)
+        {
+            std::scoped_lock lock(m_animationClipCacheMutex);
+            if (const auto cached = m_animationClipCache.find(clipPath);
+                cached != m_animationClipCache.end() && cached->second.writeTime == writeTime)
+            {
+                clip = cached->second.clip;
+                return true;
+            }
+        }
+
         PlutoGE::content::InputFile input(clipPath, std::ios::binary);
         if (!input.is_open())
         {
@@ -1046,7 +1062,16 @@ namespace PlutoGE::assets
                                                        : version >= 3   ? 4
                                                        : version >= 2   ? 3
                                                                         : 2);
-        return input.good();
+        if (!input.good())
+        {
+            return false;
+        }
+        if (cacheable)
+        {
+            std::scoped_lock lock(m_animationClipCacheMutex);
+            m_animationClipCache[clipPath] = {writeTime, clip};
+        }
+        return true;
     }
 
     bool AssetManager::LoadAnimationClipReferences(const std::string &assetReference, std::vector<std::string> &clipReferences) const
@@ -3335,6 +3360,10 @@ namespace PlutoGE::assets
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
+        {
+            std::scoped_lock lock(m_animationClipCacheMutex);
+            m_animationClipCache.clear();
+        }
         m_projectRootDirectory.clear();
         m_projectAssetDirectory = "Assets";
     }

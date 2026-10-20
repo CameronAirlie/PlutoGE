@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -187,6 +188,16 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
         std::unordered_map<std::string, render::ShaderGraph> m_shaderGraphCache;
         std::unordered_map<std::string, AnimationGraphAsset> m_animationGraphCache;
+        // Decoded clips by resolved path. Every character that plays a graph loads each of its clips, so without
+        // this a crowd re-reads and re-decodes hundreds of files per spawn. Loose files are revalidated by write
+        // time so re-imported clips are picked up; packaged clips cannot change and are kept.
+        struct CachedAnimationClip
+        {
+            std::filesystem::file_time_type writeTime{};
+            render::AnimationClip clip;
+        };
+        mutable std::mutex m_animationClipCacheMutex;
+        mutable std::unordered_map<std::string, CachedAnimationClip> m_animationClipCache;
         std::unordered_map<std::string, std::pair<bool, SurfaceResponseAsset>> m_surfaceResponseCache;
         std::unordered_map<std::string, ParticleSystemAsset> m_particleSystemCache;
         std::unordered_map<std::string, PostProcessPresetAsset> m_postProcessPresetCache;

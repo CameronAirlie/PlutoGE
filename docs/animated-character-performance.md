@@ -16,7 +16,24 @@ samples the pose at a fixed rate instead of every frame. Playback still consumes
 real time, and IK and attachments still follow the held pose every frame.
 Ragdolls ignore the rate. Changing the rate starts at a stable per-entity phase,
 so a crowd entering the same rate does not resample on one frame. The
-ThirdPersonProject applies it by camera distance in `PoseRateLod`.
+ThirdPersonProject applies it in `PoseRateLod`, by camera distance and by whether the camera can see the
+character (behind the view or occluded drops to a low hidden rate). Procedural IK also changes the final
+palette, so below full detail the project solves its foot and held-item IK at the pose rate too; between
+solves the palette is unchanged and the actor is not re-skinned.
+
+## Spawning cost
+
+Instantiating a character used to cost 300+ ms, nearly all of it in `AnimationComponent` deserialization:
+
+* **Clip cache.** `AssetManager::LoadAnimationClipAsset` keeps decoded clips by resolved path, revalidated by
+  file write time (packaged clips are kept). A graph with hundreds of clips no longer re-reads and decodes every
+  `.plutoclip` for each instance; each instance still copies the decoded clips (tens of milliseconds for a
+  large graph), so sharing clip data between instances is the next step.
+* **Lazy retarget caches.** Each clip's retarget binding cache is built the first time the clip is sampled,
+  not for every clip on the first evaluation, so a character pays only for the clips it plays.
+* **Prefab preloading.** `Prefab::Preload` (C#: `Prefab.Preload`) parses a prefab ahead of time.
+
+A mercenary on the ThirdPersonProject's 268-clip graph went from about 330 ms to 60 ms per spawn.
 
 ## GPU skinning
 

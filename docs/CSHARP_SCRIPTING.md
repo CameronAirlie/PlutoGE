@@ -502,6 +502,10 @@ var other = Prefab.Instantiate("project://Prefabs/Enemy.plutoprefab");
 
 Available overloads accept no transform, a position, or a position and Euler rotation. Instantiation returns `null` on failure.
 
+`Prefab.Preload(reference)` parses and caches a prefab ahead of its first instantiation (for example in a
+spawner's `OnCreate`, while the scene loads); `Prefab.IsReady(reference)` reports whether the cached copy is
+current.
+
 Scene loading:
 
 ```csharp
@@ -537,6 +541,11 @@ public sealed class WeaponSettings : ScriptableObject
 `ScriptableObject.Load<T>(assetReference)` materializes a data asset at runtime, for example to
 restore an item definition recorded in a save file. It returns null for empty or missing
 references and for assets of a different type; each call creates a new instance, so cache the result.
+
+Scriptable objects held in serialized fields follow edits to their asset while the game runs: before a
+script's update its scriptable fields are polled about every quarter second. A loose `project://` asset is
+only re-read when its file's write time changes; other references are re-read on each poll, and assets with
+no loose file (packaged content) every few seconds.
 
 ## Project files and save data
 

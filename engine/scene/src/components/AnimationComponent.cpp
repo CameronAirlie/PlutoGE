@@ -3767,22 +3767,17 @@ namespace PlutoGE::scene
             hashCombine(signature, static_cast<std::size_t>(mapping.targetJointIndex + 1));
             hashCombine(signature, static_cast<std::size_t>(mapping.bone));
         }
-        bool bindingSizesMatch = m_retargetClipCaches.size() == m_clips.size();
-        if (bindingSizesMatch)
-        {
-            for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
-            {
-                if (m_retargetClipCaches[clipIndex].jointBindings.size() != m_clips[clipIndex].channels.size())
-                {
-                    bindingSizesMatch = false;
-                    break;
-                }
-            }
-        }
         if (m_retargetBindingSkeleton == &skeleton &&
             m_retargetBindingSignature == signature &&
-            bindingSizesMatch)
+            m_retargetClipCaches.size() == m_clips.size())
         {
+            // A clip whose channels changed since its cache was built is rebuilt when next sampled.
+            for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
+            {
+                auto &cache = m_retargetClipCaches[clipIndex];
+                if (cache.built && cache.jointBindings.size() != m_clips[clipIndex].channels.size())
+                    cache = AnimationRetargetClipCache{};
+            }
             return;
         }
 
@@ -3820,69 +3815,71 @@ namespace PlutoGE::scene
             glm::vec3 ignoredScale;
             DecomposeTransform(m_targetGlobalBindTransforms[jointIndex], ignoredTranslation, m_targetGlobalBindRotations[jointIndex], ignoredScale);
         }
+    }
 
-        for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
+    void AnimationComponent::BuildRetargetClipCache(size_t clipIndex, const render::Skeleton &skeleton)
+    {
+        auto &cache = m_retargetClipCaches[clipIndex];
+        cache = AnimationRetargetClipCache{};
+        cache.built = true;
+        const auto &channels = m_clips[clipIndex].channels;
+        cache.jointBindings.reserve(channels.size());
+        cache.mappingBindings.reserve(channels.size());
+        int sourceNodeCount = 0;
+        for (const auto &channel : channels)
+            sourceNodeCount = channel.nodeIndex >= 0 ? std::max(sourceNodeCount, channel.nodeIndex + 1) : sourceNodeCount;
+        cache.sourceLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+        cache.sourceGlobalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+        cache.sourceInverseLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+        cache.sourceGlobalBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        cache.sourceBindTranslations.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(0.0f));
+        cache.sourceBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        cache.sourceBindScales.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(1.0f));
+        cache.sourceParentIndices.assign(static_cast<size_t>(sourceNodeCount), -1);
+        cache.sourceNodesPresent.assign(static_cast<size_t>(sourceNodeCount), 0);
+        cache.sourceParentBindBases.assign(static_cast<size_t>(sourceNodeCount), glm::mat3(1.0f));
+        for (const auto &channel : channels)
         {
-            const auto &channels = m_clips[clipIndex].channels;
-            auto &cache = m_retargetClipCaches[clipIndex];
-            cache.jointBindings.reserve(channels.size());
-            cache.mappingBindings.reserve(channels.size());
-            int sourceNodeCount = 0;
-            for (const auto &channel : channels)
-                sourceNodeCount = channel.nodeIndex >= 0 ? std::max(sourceNodeCount, channel.nodeIndex + 1) : sourceNodeCount;
-            cache.sourceLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
-            cache.sourceGlobalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
-            cache.sourceInverseLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
-            cache.sourceGlobalBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            cache.sourceBindTranslations.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(0.0f));
-            cache.sourceBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            cache.sourceBindScales.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(1.0f));
-            cache.sourceParentIndices.assign(static_cast<size_t>(sourceNodeCount), -1);
-            cache.sourceNodesPresent.assign(static_cast<size_t>(sourceNodeCount), 0);
-            cache.sourceParentBindBases.assign(static_cast<size_t>(sourceNodeCount), glm::mat3(1.0f));
-            for (const auto &channel : channels)
+            cache.jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
+            const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+            cache.mappingBindings.push_back(mapping ? static_cast<int>(mapping - skeleton.humanoidBoneMappings.data()) : -1);
+            if (channel.nodeIndex < 0 || channel.nodeIndex >= sourceNodeCount)
+                continue;
+            const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+            cache.sourceParentIndices[nodeIndex] = channel.sourceParentNodeIndex;
+            if (channel.hasSourceLocalBindTransform)
+                cache.sourceLocalBindTransforms[nodeIndex] = channel.sourceLocalBindTransform;
+            if (channel.hasSourceGlobalBindTransform)
             {
-                cache.jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
-                const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
-                cache.mappingBindings.push_back(mapping ? static_cast<int>(mapping - skeleton.humanoidBoneMappings.data()) : -1);
-                if (channel.nodeIndex < 0 || channel.nodeIndex >= sourceNodeCount)
-                    continue;
-                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
-                cache.sourceParentIndices[nodeIndex] = channel.sourceParentNodeIndex;
-                if (channel.hasSourceLocalBindTransform)
-                    cache.sourceLocalBindTransforms[nodeIndex] = channel.sourceLocalBindTransform;
-                if (channel.hasSourceGlobalBindTransform)
-                {
-                    cache.sourceGlobalBindTransforms[nodeIndex] = channel.sourceGlobalBindTransform;
-                    cache.sourceNodesPresent[nodeIndex] = 1;
-                }
+                cache.sourceGlobalBindTransforms[nodeIndex] = channel.sourceGlobalBindTransform;
+                cache.sourceNodesPresent[nodeIndex] = 1;
             }
-            for (size_t nodeIndex = 0; nodeIndex < static_cast<size_t>(sourceNodeCount); ++nodeIndex)
+        }
+        for (size_t nodeIndex = 0; nodeIndex < static_cast<size_t>(sourceNodeCount); ++nodeIndex)
+        {
+            cache.sourceInverseLocalBindTransforms[nodeIndex] = glm::inverse(cache.sourceLocalBindTransforms[nodeIndex]);
+            DecomposeTransform(cache.sourceLocalBindTransforms[nodeIndex], cache.sourceBindTranslations[nodeIndex],
+                               cache.sourceBindRotations[nodeIndex], cache.sourceBindScales[nodeIndex]);
+            glm::vec3 ignoredTranslation;
+            glm::vec3 ignoredScale;
+            DecomposeTransform(cache.sourceGlobalBindTransforms[nodeIndex], ignoredTranslation,
+                               cache.sourceGlobalBindRotations[nodeIndex], ignoredScale);
+            if (cache.sourceNodesPresent[nodeIndex])
             {
-                cache.sourceInverseLocalBindTransforms[nodeIndex] = glm::inverse(cache.sourceLocalBindTransforms[nodeIndex]);
-                DecomposeTransform(cache.sourceLocalBindTransforms[nodeIndex], cache.sourceBindTranslations[nodeIndex],
-                                   cache.sourceBindRotations[nodeIndex], cache.sourceBindScales[nodeIndex]);
-                glm::vec3 ignoredTranslation;
-                glm::vec3 ignoredScale;
-                DecomposeTransform(cache.sourceGlobalBindTransforms[nodeIndex], ignoredTranslation,
-                                   cache.sourceGlobalBindRotations[nodeIndex], ignoredScale);
-                if (cache.sourceNodesPresent[nodeIndex])
-                {
-                    cache.sourceParentBindBases[nodeIndex] = glm::mat3(
-                        cache.sourceGlobalBindTransforms[nodeIndex] * cache.sourceInverseLocalBindTransforms[nodeIndex]);
-                }
+                cache.sourceParentBindBases[nodeIndex] = glm::mat3(
+                    cache.sourceGlobalBindTransforms[nodeIndex] * cache.sourceInverseLocalBindTransforms[nodeIndex]);
             }
-            cache.sourceToTargetBasis = ResolveRetargetBasis(channels, cache, skeleton, m_targetGlobalBindTransforms);
-            ResolveReferencePoseCorrections(channels, cache, skeleton, m_targetGlobalBindTransforms);
-            for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+        }
+        cache.sourceToTargetBasis = ResolveRetargetBasis(channels, cache, skeleton, m_targetGlobalBindTransforms);
+        ResolveReferencePoseCorrections(channels, cache, skeleton, m_targetGlobalBindTransforms);
+        for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+        {
+            const int mappingIndex = cache.mappingBindings[channelIndex];
+            if (mappingIndex >= 0 && skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)].bone == render::HumanoidBone::Hips &&
+                channels[channelIndex].nodeIndex >= 0)
             {
-                const int mappingIndex = cache.mappingBindings[channelIndex];
-                if (mappingIndex >= 0 && skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)].bone == render::HumanoidBone::Hips &&
-                    channels[channelIndex].nodeIndex >= 0)
-                {
-                    cache.sourceHipsNodeIndex = channels[channelIndex].nodeIndex;
-                    break;
-                }
+                cache.sourceHipsNodeIndex = channels[channelIndex].nodeIndex;
+                break;
             }
         }
     }
@@ -3913,6 +3910,8 @@ namespace PlutoGE::scene
         {
             static const AnimationRetargetClipCache emptyCache;
             const bool validBindings = clipIndex >= 0 && clipIndex < static_cast<int>(m_retargetClipCaches.size());
+            if (validBindings && !m_retargetClipCaches[static_cast<size_t>(clipIndex)].built)
+                BuildRetargetClipCache(static_cast<size_t>(clipIndex), skeleton);
             return SampleRetargetedJointTransforms(
                 m_clips, clipIndex, time, skeleton,
                 validBindings ? m_retargetClipCaches[static_cast<size_t>(clipIndex)] : emptyCache,

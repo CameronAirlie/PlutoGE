@@ -198,6 +198,8 @@ internal static unsafe partial class ScriptBridge
     private static readonly ConcurrentDictionary<long, ScriptBehaviour> Instances = new();
     private static readonly Dictionary<uint, List<ScriptBehaviour>> InstancesByEntity = new();
     private static readonly Dictionary<string, ScriptClassMetadata> ScriptClasses = new(StringComparer.Ordinal);
+    // Scriptable-object members of each script type, for the per-update asset refresh (empty: nothing to refresh).
+    private static readonly Dictionary<Type, MemberInfo[]> ScriptableMembers = new();
     private static readonly Dictionary<(Type Type, string Name, int Arity), MethodInfo[]> InvokableMethods = new();
     private static readonly object Gate = new();
 
@@ -524,6 +526,7 @@ internal static unsafe partial class ScriptBridge
                     _loadedAssembly.GetName().Name ?? Path.GetFileNameWithoutExtension(fullPath));
 
                 ScriptClasses.Clear();
+                ScriptableMembers.Clear();
                 foreach (var scriptClass in DiscoverBuiltinScriptClasses())
                 {
                     ScriptClasses[scriptClass.FullName] = scriptClass;
@@ -3125,6 +3128,7 @@ internal static unsafe partial class ScriptBridge
         Instances.Clear();
         InstancesByEntity.Clear();
         ScriptClasses.Clear();
+        ScriptableMembers.Clear();
         InvokableMethods.Clear();
 
         if (_loadContext is null)
@@ -3606,15 +3610,24 @@ internal static unsafe partial class ScriptBridge
 
     private static void RefreshScriptableObjectReferences(ScriptBehaviour instance)
     {
-        if (_loadScriptableObjectAsset == null ||
-            !ScriptClasses.TryGetValue(instance.GetType().FullName ?? string.Empty, out var ownerClass))
+        if (_loadScriptableObjectAsset == null)
         {
             return;
         }
 
-        foreach (var member in ownerClass.Fields.Where(field => field.Type == 24))
+        // Runs before every script update: look the members up once per type, and skip types without any.
+        var type = instance.GetType();
+        if (!ScriptableMembers.TryGetValue(type, out var members))
         {
-            var value = member.Member switch
+            members = ScriptClasses.TryGetValue(type.FullName ?? string.Empty, out var ownerClass)
+                ? ownerClass.Fields.Where(field => field.Type == 24).Select(field => field.Member).ToArray()
+                : [];
+            ScriptableMembers[type] = members;
+        }
+
+        foreach (var member in members)
+        {
+            var value = member switch
             {
                 FieldInfo fieldInfo => fieldInfo.GetValue(instance),
                 PropertyInfo propertyInfo => propertyInfo.GetValue(instance),
@@ -3635,6 +3648,10 @@ internal static unsafe partial class ScriptBridge
             return;
         }
         instance.NextRefreshTimestamp = now + 250;
+        if (!LooseAssetChanged(instance))
+        {
+            return;
+        }
 
         var referenceBytes = Encoding.UTF8.GetBytes(instance.AssetReference + '\0');
         string assetData;
@@ -3660,6 +3677,44 @@ internal static unsafe partial class ScriptBridge
 
         ApplyFieldValues(instance, scriptClass, string.Join('\n', lines.Skip(1)));
         instance.SerializedData = assetData;
+    }
+
+    /// <summary>
+    /// For a project asset stored as a loose file, whether it changed since the last poll: a timestamp check
+    /// stands in for re-reading the asset every poll. Without a loose file (packaged content, or a host that has
+    /// not set <see cref="Application.AssetsPath"/>) the asset is re-read, but only every few seconds. Other
+    /// references always re-read.
+    /// </summary>
+    private static bool LooseAssetChanged(ScriptableObject instance)
+    {
+        const string projectScheme = "project://";
+        if (!instance.AssetReference.StartsWith(projectScheme, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        DateTime written;
+        try
+        {
+            var path = Path.Combine(Application.AssetsPath, instance.AssetReference[projectScheme.Length..]);
+            if (!File.Exists(path))
+            {
+                instance.NextRefreshTimestamp = Environment.TickCount64 + 5000;
+                return true;
+            }
+            written = File.GetLastWriteTimeUtc(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return true;
+        }
+
+        if (instance.SourceWriteTime == written)
+        {
+            return false;
+        }
+        instance.SourceWriteTime = written;
+        return true;
     }
 
     private static object? CreateReferenceValue(Type memberType, string value)

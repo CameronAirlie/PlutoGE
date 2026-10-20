@@ -10,6 +10,8 @@ public abstract class ScriptableObject
 
     internal string SerializedData { get; set; } = string.Empty;
     internal long NextRefreshTimestamp { get; set; }
+    // Last-write time of the loose asset file when it was last read, for change polling.
+    internal DateTime? SourceWriteTime { get; set; }
 
     public bool IsValid => !string.IsNullOrWhiteSpace(AssetReference);
 

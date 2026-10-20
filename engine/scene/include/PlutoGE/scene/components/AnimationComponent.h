@@ -17,6 +17,8 @@ namespace PlutoGE::scene
 {
     struct AnimationRetargetClipCache
     {
+        // Built the first time its clip is sampled: a character only pays for the clips it plays.
+        bool built = false;
         std::vector<int> jointBindings;
         std::vector<int> mappingBindings;
         std::vector<glm::mat4> sourceLocalBindTransforms;
@@ -317,6 +319,7 @@ namespace PlutoGE::scene
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
         void EnsureNodeBindingCache(const std::vector<render::AnimationNode> &nodes);
         void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
+        void BuildRetargetClipCache(size_t clipIndex, const render::Skeleton &skeleton);
         std::vector<float> ResolveJointMask(int maskId, const render::Skeleton &skeleton) const;
         const std::vector<float> &ResolveNodeMask(int maskId, const std::vector<render::AnimationNode> &nodes);
 

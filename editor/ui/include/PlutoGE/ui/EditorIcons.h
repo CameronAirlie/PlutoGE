@@ -54,6 +54,13 @@ namespace PlutoGE::ui::icons
     inline constexpr const char *InputMappingAsset = "\xef\x84\x9b"; // gamepad
     inline constexpr const char *SurfaceResponseAsset = "\xef\x95\x8b"; // shoe-prints
     inline constexpr const char *LoadingScreenAsset = "\xef\x89\x92"; // hourglass-half
+    inline constexpr const char *Crosshairs = "\xef\x81\x9b"; // crosshairs
+    inline constexpr const char *FolderOpen = "\xef\x81\xbc"; // folder-open
+    inline constexpr const char *Ellipsis = "\xef\x85\x81"; // ellipsis
+    inline constexpr const char *Car = "\xef\x86\xb9"; // car
+    inline constexpr const char *History = "\xef\x87\x9a"; // clock-rotate-left
+    inline constexpr const char *Quit = "\xef\x8b\xb5"; // right-from-bracket
+    inline constexpr const char *Warning = "\xef\x81\xb1"; // triangle-exclamation
     inline constexpr ImWchar Ranges[] = {
         0xe163, 0xe163,
         0xe2ca, 0xe2ca,
@@ -67,12 +74,15 @@ namespace PlutoGE::ui::icons
         0xf03e, 0xf03e,
         0xf042, 0xf042,
         0xf047, 0xf047,
+        0xf05b, 0xf05b,
         0xf065, 0xf065,
         0xf067, 0xf067,
         0xf06e, 0xf06e,
+        0xf071, 0xf071,
         0xf076, 0xf076,
         0xf078, 0xf078,
         0xf07b, 0xf07b,
+        0xf07c, 0xf07c,
         0xf0ac, 0xf0ac,
         0xf0c5, 0xf0c5,
         0xf0c7, 0xf0c7,
@@ -80,16 +90,20 @@ namespace PlutoGE::ui::icons
         0xf0ea, 0xf0ea,
         0xf11b, 0xf11b,
         0xf12e, 0xf12e,
+        0xf141, 0xf141,
         0xf15b, 0xf15b,
         0xf1b2, 0xf1b3,
+        0xf1b9, 0xf1b9,
         0xf1c0, 0xf1c0,
         0xf1c9, 0xf1c9,
+        0xf1da, 0xf1da,
         0xf1de, 0xf1de,
         0xf1f8, 0xf1f8,
         0xf1fc, 0xf1fc,
         0xf252, 0xf252,
         0xf2d0, 0xf2d2,
         0xf2ea, 0xf2ea,
+        0xf2f5, 0xf2f5,
         0xf2f9, 0xf2f9,
         0xf424, 0xf424,
         0xf53f, 0xf53f,

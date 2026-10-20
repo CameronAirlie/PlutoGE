@@ -72,6 +72,7 @@ add_library(PlutoGEEditorUI
     src/EditorTheme.cpp
     src/EditorWidgets.cpp
     src/EditorPreferences.cpp
+    src/ProjectLauncher.cpp
 )
 add_library(PlutoGE::EditorUI ALIAS PlutoGEEditorUI)
 if (WIN32)

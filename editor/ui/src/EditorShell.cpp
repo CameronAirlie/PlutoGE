@@ -14,6 +14,7 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
@@ -3386,6 +3387,8 @@ namespace PlutoGE::ui
 
     bool EditorShell::RunProjectLauncher()
     {
+        ProjectLauncher launcher;
+        std::string launcherError;
         // A separate frame loop keeps scene updates, shortcuts and workspace panels dormant.
         while (!m_project)
         {
@@ -3393,77 +3396,66 @@ namespace PlutoGE::ui
             window.PollEvents();
             if (window.ShouldClose()) return false;
             window.SetScriptInputEnabled(false);
-            std::filesystem::path openPath;
-            std::filesystem::path createPath;
-            std::string templateId;
+
+            std::vector<ProjectTemplateOption> templates;
+            for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate))
+                templates.push_back({entry.id, entry.label, entry.description, !entry.available || entry.available(*this)});
+
             const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
             m_engine.GetRenderer().BeginFrame();
             m_panelManager.BeginPanelUpdate(false);
-            const auto *viewport = ImGui::GetMainViewport();
-            ImGui::SetNextWindowPos(viewport->WorkPos);
-            ImGui::SetNextWindowSize(viewport->WorkSize);
-            ImGui::Begin("Project Launcher", nullptr, ImGuiWindowFlags_NoDecoration |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking);
-            ImGui::Spacing();
-            ImGui::TextUnformatted("PlutoGE");
-            ImGui::TextUnformatted("Open or create a project to start building.");
-            ImGui::Separator();
-            if (ImGui::Button("Open Project...")) openPath = ShowOpenFileDialog(kProjectFileFilter);
-            ImGui::SameLine();
-            if (ImGui::Button("Create Project...")) ImGui::OpenPopup("Project template");
-            if (ImGui::BeginPopup("Project template"))
-            {
-                for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate))
-                {
-                    if (ImGui::MenuItem(entry.label.c_str(), nullptr, false, !entry.available || entry.available(*this)))
-                    {
-                        templateId = entry.id;
-                        createPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.description.c_str());
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Quit")) window.RequestClose();
-            ImGui::Spacing();
-            ImGui::TextWrapped("%s", m_statusMessage.c_str());
-            ImGui::Separator();
-            ImGui::TextUnformatted("Recent projects");
-            if (m_recentProjects.empty()) ImGui::TextDisabled("No recent projects. Open an existing project or create one above.");
-            ImGui::BeginChild("Recent project list", ImVec2(0, 0), false);
-            for (const auto &path : m_recentProjects)
-            {
-                ImGui::PushID(path.string().c_str());
-                std::error_code error;
-                const bool exists = std::filesystem::is_regular_file(path, error);
-                if (ImGui::Selectable(path.stem().string().c_str(), false) && exists) openPath = path;
-                ImGui::TextDisabled("%s%s", path.string().c_str(), exists ? "" : " (unavailable)");
-                ImGui::Separator();
-                ImGui::PopID();
-            }
-            ImGui::EndChild();
-            ImGui::End();
+            const auto actions = launcher.Draw(m_recentProjects, templates, launcherError);
             m_panelManager.EndPanelUpdate();
             if (vulkan) static_cast<void>(m_engine.GetRhiRenderService().Present());
             else m_engine.GetRenderer().EndFrame();
             if (window.ShouldClose()) return false;
 
-            // Execute after presentation: project changes can replace the native window/backend.
+            if (actions.quit)
+            {
+                window.RequestClose();
+                continue;
+            }
+            if (!actions.forget.empty())
+            {
+                std::erase(m_recentProjects, actions.forget);
+                SaveRecentProjects();
+            }
+            if (!actions.reveal.empty())
+            {
+#ifdef _WIN32
+                const std::wstring arguments = L"/select,\"" + actions.reveal.wstring() + L"\"";
+                ShellExecuteW(nullptr, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+                std::string error;
+                LaunchExecutable("/usr/bin/xdg-open", &error, actions.reveal.parent_path().string());
+#endif
+            }
+
+            // Dialogs and project loads run after presentation: they block, and
+            // project changes can replace the native window/backend.
+            std::filesystem::path openPath = actions.open;
+            std::filesystem::path createPath;
+            if (actions.browse) openPath = ShowOpenFileDialog(kProjectFileFilter);
+            if (!actions.createTemplateId.empty())
+                createPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+
             if (!openPath.empty())
             {
                 std::string error;
                 const auto project = assets::Project::Load(openPath, &error);
-                if (!project) { m_statusMessage = error.empty() ? "Failed to open project." : error; continue; }
+                if (!project) { launcherError = error.empty() ? "Failed to open project." : error; continue; }
                 if (project->GetManifest().graphicsApi != m_engine.GetConfig().graphicsApi)
                 {
                     const bool visible = m_persistEditorSettings;
                     Shutdown();
                     if (!Initialize(openPath, visible)) return false;
                 }
-                LoadProjectFromPath(openPath);
+                if (!LoadProjectFromPath(openPath)) launcherError = m_statusMessage;
             }
-            else if (!createPath.empty()) CreateProjectAtPath(createPath, templateId);
+            else if (!createPath.empty())
+            {
+                if (!CreateProjectAtPath(createPath, actions.createTemplateId)) launcherError = m_statusMessage;
+            }
             else glfwWaitEventsTimeout(1.0 / 60.0);
         }
         return true;

@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 using namespace PlutoGE::scene;
@@ -174,8 +175,75 @@ int main() try
         Check(glm::length(displacement) < 1, "Agent stalled while following a tight wall detour");
         cornerScene.StopRuntime();
     }
+    // Layered floors: an upper storey over open ground, reached by a 35-degree ramp. Each column under the
+    // storey holds both floors; paths and projection keep to the floor they are on and change floors on the ramp.
+    for (const bool withRamp : {true, false})
+    {
+        Scene storeyScene;
+        const auto box = [&](glm::vec3 position, glm::vec3 size, glm::vec3 rotation = {}) {
+            auto *entity = storeyScene.AddEntity(std::make_unique<Entity>());
+            entity->SetPosition(position);
+            entity->SetRotation(rotation);
+            entity->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = size});
+        };
+        box({0, -.5f, 0}, {12, 1, 12});
+        box({2, 2.9f, 0}, {6, .2f, 12});   // Upper floor: x -1..5, top at y 3, underside at 2.8.
+        if (withRamp)
+        {
+            const float angle = glm::radians(35.0f), rise = 3.0f, run = rise / std::tan(angle);
+            const glm::vec2 top{-1.0f - run * .5f, rise * .5f};   // Middle of the ramp's top surface.
+            box({top.x + .1f * std::sin(angle), top.y - .1f * std::cos(angle), -4}, {rise / std::sin(angle), .2f, 2}, {0, 0, 35});
+        }
+        NavigationBakeSettings storeySettings;
+        storeySettings.boundsMin = {-6, -1, -6}; storeySettings.boundsMax = {6, 6, 6};
+        storeySettings.cellSize = .4f; storeySettings.maxStepHeight = .4f; storeySettings.staticObjectsOnly = true;
+        Check(navigation.Bake(storeyScene, storeySettings), "Layered bake failed");
+        const auto columnAt = [&](float x, float z) {
+            return static_cast<int>((z - storeySettings.boundsMin.z) / storeySettings.cellSize) * navigation.GetWidth() +
+                   static_cast<int>((x - storeySettings.boundsMin.x) / storeySettings.cellSize);
+        };
+        Check(navigation.GetLayerCount(columnAt(2.1f, .1f)) == 2, "A column under an upper floor did not hold both floors");
+        glm::vec3 projected;
+        Check(navigation.ProjectPoint({2, .9f, 0}, projected, .2f, 1.5f) && std::abs(projected.y) < .05f,
+              "A point on the ground under an upper floor projected onto the wrong floor");
+        Check(navigation.ProjectPoint({2, 3.9f, 0}, projected, .2f, 1.5f) && std::abs(projected.y - 3) < .05f,
+              "A point on an upper floor projected onto the wrong floor");
+        const auto under = navigation.FindPath({0, .9f, 4}, {4, .9f, -4}, .2f, 1.5f);
+        bool stayedDown = under.complete;
+        for (const auto &point : under.points) stayedDown = stayedDown && point.y < 1.5f;
+        Check(stayedDown, "A ground route under an upper floor left the ground");
+        const auto upstairs = navigation.FindPath({-5.5f, .9f, 4}, {3, 3.9f, 0}, .2f, 1.5f);
+        if (withRamp)
+        {
+            bool usedRamp = false;
+            for (const auto &point : upstairs.points) usedRamp = usedRamp || (point.z < -2.5f && point.x < -.5f);
+            Check(upstairs.complete && upstairs.points.back().y > 2.5f && usedRamp, "The route upstairs did not climb the ramp");
+        }
+        else
+            Check(!upstairs.complete, "An upper floor without a way up was reported reachable");
+    }
+    {
+        // Under a thick solid (a wall wider than a cell) the ground is not a layer: nothing may walk inside it.
+        Scene wallScene;
+        auto *ground = wallScene.AddEntity(std::make_unique<Entity>());
+        ground->SetPosition({0, -.5f, 0});
+        ground->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {12, 1, 12}});
+        auto *block = wallScene.AddEntity(std::make_unique<Entity>());
+        block->SetPosition({0, 1.5f, 0});
+        block->CreateComponent<ColliderComponent>(ColliderComponentConfig{.size = {2.4f, 3, 2.4f}});
+        NavigationBakeSettings wallSettings;
+        wallSettings.boundsMin = {-6, -1, -6}; wallSettings.boundsMax = {6, 6, 6}; wallSettings.cellSize = .4f;
+        Check(navigation.Bake(wallScene, wallSettings), "Thick-wall bake failed");
+        const int centre = static_cast<int>(6 / wallSettings.cellSize) * navigation.GetWidth() + static_cast<int>(6 / wallSettings.cellSize);
+        Check(navigation.GetLayerCount(centre) == 1, "The ground inside a thick solid was recorded as a layer");
+        glm::vec3 projected;
+        Check(navigation.ProjectPoint({0, .9f, 0}, projected, .2f, 1.5f) &&
+                  (std::abs(projected.x) > 1.2f || std::abs(projected.z) > 1.2f || projected.y > 2.9f),
+              "A point inside a thick solid projected onto the ground inside it");
+        Check(navigation.FindPath({-3, .9f, 0}, {3, .9f, 0}, .2f, 1.5f).complete, "No route round a thick solid");
+    }
     navigation.Clear();
     Check(!navigation.FindPath(start, end).complete, "Cleared navigation returned stale route");
-    std::cout << "PASS: direct routes, actor heights, obstacle detours, unreachable goals and invalidation\n";
+    std::cout << "PASS: direct routes, actor heights, obstacle detours, unreachable goals, layered floors and invalidation\n";
 }
 catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }

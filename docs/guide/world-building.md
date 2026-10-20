@@ -178,6 +178,24 @@ on start. Start with Speed `3.5`, Radius `0.5`, Height `1.8`, and Stopping Dista
 `0.15`, then tune for your character. These are current config defaults, not a
 guarantee they fit a particular imported model.
 
+**Floors and stairs.** The bake is layered: it records every walkable surface
+down through each grid column, so the floors of a building, a mezzanine over a
+hall or a bridge over a yard are all walkable, and agents change floors where a
+ramp or stair collider links them within the Maximum Slope and Maximum Step
+Height. Make the bounds' top clear the highest floor. Two details follow from
+the grid:
+
+- A floor counts only where open space lies above it. The ground inside a thick
+  wall or under a solid block is not a layer, and a low crawlspace (under a ramp,
+  say) stays in the bake but fails any agent taller than its headroom.
+- Agents need openings wider than their footprint on the grid. A footprint
+  covers the cells within the agent radius plus half a cell, so with a radius of
+  `0.35` a doorway must be at least `1.6` wide at Cell Size `0.4` but only `1.2`
+  wide at `0.3`. Use a finer cell for interiors with ordinary doors.
+
+Visual stairs are best built as an invisible sloped collider under step meshes
+without colliders: characters and the bake then see one even slope.
+
 If the guard does not move, check mesh coverage, bake availability, a reachable
 destination, agent clearance, and active components. Do not simultaneously drive
 the same entity with a custom movement script. Navigation does not promise that

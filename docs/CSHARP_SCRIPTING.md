@@ -459,7 +459,7 @@ NavigationPath Navigation.FindPath(
     float agentRadius = 0.0f, float agentHeight = 0.0f)
 ```
 
-`ProjectPoint` finds the nearest walkable point that accommodates the requested agent dimensions. It returns `false` when the object is invalid, does not contain a navigation mesh, the mesh is unavailable, or no suitable point exists.
+`ProjectPoint` finds the nearest walkable point (in three dimensions, so a point on an upper floor projects onto that floor rather than the one beneath it) that accommodates the requested agent dimensions. It returns `false` when the object is invalid, does not contain a navigation mesh, the mesh is unavailable, or no suitable point exists.
 
 `FindPath` returns a `NavigationPath` with read-only `Points` and `Complete` properties. `Points` contains world-space waypoints, including the requested start and end positions when a route is found. `Complete` is `false` and `Points` is empty when no route can be found or the navigation mesh is unavailable. Negative agent radius and height values are clamped to zero.
 

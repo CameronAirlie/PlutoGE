@@ -167,6 +167,18 @@ document.Element("damage").SetClass("hidden", false);
 
 `RmlElement.Markup` sets inner RML, not escaped plain text. Escape untrusted/user strings before assigning them. The attribute indexer reads/writes native attributes. SetClass and SetStyle mutate native state; the float SetStyle overload means **px**, so use a string ending in `dp` for scalable dimensions. Subscribe/On/OnClick attach events by ID. Markup replacement can replace children and their native handles; prefer updating leaf nodes.
 
+Three behaviours to design around:
+
+- **`focus: none` blocks clicks.** RmlUi 6.1 activates and clicks the nearest ancestor that can take focus
+  (`Context::FindFocusElement`), so a button whose container sets `focus: none` (an inherited property) sends
+  its click to that ancestor instead. Give interactive layers inside a non-focusable HUD `focus: auto`.
+- **One managed subscriber per click.** Native events are counted per document path, element id and event;
+  `RmlEvent.DispatchRegisteredEvents` lets the newest managed subscription consume them, so two `OnClick`
+  subscriptions to the same element starve the older one.
+- **Screen documents persist across scene reloads.** Screen canvases are keyed by document path, so loading
+  the same scene again can reuse the live document with its previous classes. Write a controller's full
+  presentation state once the document is live instead of relying on markup defaults.
+
 `ObservableValue<T>`, `UIBinding<T>`, `UIBindingGroup`, and `RmlBindings` provide managed observable DOM updates. RmlBindings covers markup, progress values, pixel lengths, and classes. Dispose binding groups so subscriptions do not outlive the controller. This is not a reflection bridge for native RmlUi data models.
 
 Native RmlUi supports data models, expressions/interpolation, data-for loops, conditional/visible views, class/style/attribute/text/RML/value/checked views, aliases, and event/value controllers. They require a registered C++ data model. PlutoGE does not register arbitrary C# properties as RmlUi models, so do not use `data-model` or `{{variable}}` expecting it to bind a C# field automatically. For game scripts use the managed DOM/observable API. Native extensions can register a model explicitly and dirty its variables; follow upstream structural-view restrictions.

@@ -17,11 +17,16 @@ namespace PlutoGE::scene
             const float slope = std::tan(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
             return std::max(std::max(0.0f, settings.maxStepHeight), slope * std::max(0.0f, horizontalDistance)) + 0.001f;
         }
+
+        // Rays restart this far under each surface they hit to look for the next layer down. Rays starting
+        // inside a collider do not report it, so the solid that was hit is skipped.
+        constexpr float LayerRayRestart = 0.01f;
     }
 
     void NavigationSystem::Clear()
     {
         m_cells.clear();
+        m_columnStart.clear();
         m_debugPoints.clear();
         m_agentWalkabilityCache.clear();
         m_width = m_depth = 0;
@@ -37,51 +42,83 @@ namespace PlutoGE::scene
         if (static_cast<uint64_t>(m_width) * m_depth > 4000000)
             return false;
 
-        m_cells.resize(static_cast<size_t>(m_width) * m_depth);
-        const float rayLength = std::max(0.1f, settings.boundsMax.y - settings.boundsMin.y);
+        const auto raycast = [&](const glm::vec3 &origin, const glm::vec3 &direction, float length, PhysicsRaycastHit &hit) {
+            return scene.Raycast(origin, direction, length, hit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags);
+        };
         const float minimumNormalY = std::cos(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
+        const float halfCell = m_settings.cellSize * 0.5f;
+        const glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
+        m_columnStart.assign(static_cast<size_t>(m_width) * m_depth + 1, 0);
         for (int z = 0; z < m_depth; ++z)
         {
             platform::LoadingWork::Checkpoint();
             for (int x = 0; x < m_width; ++x)
             {
-                const glm::vec3 origin{settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize,
-                                       settings.boundsMax.y,
-                                       settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
-                PhysicsRaycastHit floorHit;
-                auto &cell = m_cells[static_cast<size_t>(z) * m_width + x];
-                if (!scene.Raycast(origin, {0.0f, -1.0f, 0.0f}, rayLength, floorHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags) || floorHit.normal.y < minimumNormalY)
-                    continue;
-
-                cell.walkable = true;
-                cell.height = floorHit.point.y;
-                cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
-                PhysicsRaycastHit ceilingHit;
-                const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
-                if (scene.Raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags))
-                    cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
-
-                // Vertical samples miss thin partitions between cell centres and
-                // colliders containing the top of the bake. Probe the cell's
-                // footprint above step height, in both directions so a probe
-                // starting inside a solid still has an outside-in counterpart.
-                const glm::vec3 probeCenter = floorHit.point +
-                    glm::vec3(0.0f, std::max(0.0f, settings.maxStepHeight) + 0.05f, 0.0f);
-                const float halfCell = m_settings.cellSize * 0.5f;
-                const glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
-                for (const auto &direction : directions)
+                const int column = z * m_width + x;
+                m_columnStart[column] = static_cast<int>(m_cells.size());
+                const float columnX = settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize;
+                const float columnZ = settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize;
+                // Walk down the column: every surface hit is a candidate layer; the next ray starts just under it.
+                float rayTop = settings.boundsMax.y;
+                float surfaceAbove = std::numeric_limits<float>::infinity();
+                for (int hits = 0; hits < MaxLayersPerColumn * 2 && rayTop > settings.boundsMin.y; ++hits)
                 {
-                    PhysicsRaycastHit obstacleHit;
-                    if (scene.Raycast(probeCenter - direction * halfCell, direction,
-                                      m_settings.cellSize, obstacleHit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags) &&
-                        std::abs(obstacleHit.normal.y) < minimumNormalY)
-                    {
-                        cell.walkable = false;
+                    PhysicsRaycastHit floorHit;
+                    if (!raycast({columnX, rayTop, columnZ}, {0.0f, -1.0f, 0.0f}, rayTop - settings.boundsMin.y, floorHit))
                         break;
+                    rayTop = floorHit.point.y - LayerRayRestart;
+                    const bool firstSurface = !std::isfinite(surfaceAbove);
+                    const float above = surfaceAbove;
+                    surfaceAbove = floorHit.point.y;
+                    if (floorHit.normal.y < minimumNormalY)
+                        continue;
+
+                    Cell cell;
+                    cell.column = column;
+                    cell.walkable = true;
+                    cell.height = floorHit.point.y;
+                    const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
+                    PhysicsRaycastHit ceilingHit;
+                    if (firstSurface)
+                    {
+                        cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
+                        if (raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit))
+                            cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
                     }
+                    else
+                    {
+                        // A lower surface is open only if something stops a ray going up before the surface above:
+                        // the underside of the floor above, or anything in between. Under a solid (the ground
+                        // beneath a thick wall) the upward ray starts inside it and finds nothing.
+                        const float gap = above - clearanceOrigin.y;
+                        if (gap <= 0.0f || !raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, gap + LayerRayRestart, ceilingHit))
+                            continue;
+                        cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
+                    }
+
+                    // Vertical samples miss thin partitions between cell centres and
+                    // colliders containing the top of the bake. Probe the cell's
+                    // footprint above step height, in both directions so a probe
+                    // starting inside a solid still has an outside-in counterpart.
+                    const glm::vec3 probeCenter = floorHit.point +
+                        glm::vec3(0.0f, std::max(0.0f, settings.maxStepHeight) + 0.05f, 0.0f);
+                    for (const auto &direction : directions)
+                    {
+                        PhysicsRaycastHit obstacleHit;
+                        if (raycast(probeCenter - direction * halfCell, direction, m_settings.cellSize, obstacleHit) &&
+                            std::abs(obstacleHit.normal.y) < minimumNormalY)
+                        {
+                            cell.walkable = false;
+                            break;
+                        }
+                    }
+                    m_cells.push_back(cell);
+                    if (static_cast<int>(m_cells.size()) - m_columnStart[column] >= MaxLayersPerColumn)
+                        break;
                 }
             }
         }
+        m_columnStart.back() = static_cast<int>(m_cells.size());
 
         for (int index = 0; index < static_cast<int>(m_cells.size()); ++index)
             if (m_cells[index].walkable)
@@ -91,11 +128,31 @@ namespace PlutoGE::scene
 
     glm::vec3 NavigationSystem::CellPosition(int index) const
     {
-        const int x = index % m_width;
-        const int z = index / m_width;
+        const int x = m_cells[index].column % m_width;
+        const int z = m_cells[index].column / m_width;
         return {m_settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize,
                 m_cells[index].height,
                 m_settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
+    }
+
+    int NavigationSystem::FindLayer(int column, float height, float maxDelta) const
+    {
+        if (column < 0 || column + 1 >= static_cast<int>(m_columnStart.size()))
+            return -1;
+        // Two layers in reach of one height are a floor and the crawlspace under it (the ground beneath the foot
+        // of a ramp): take the one with the most headroom, then the nearest.
+        int best = -1;
+        for (int index = m_columnStart[column]; index < m_columnStart[column + 1]; ++index)
+        {
+            const float delta = std::abs(m_cells[index].height - height);
+            if (delta > maxDelta)
+                continue;
+            if (best < 0 || m_cells[index].clearance > m_cells[best].clearance + 0.001f ||
+                (std::abs(m_cells[index].clearance - m_cells[best].clearance) <= 0.001f &&
+                 delta < std::abs(m_cells[best].height - height)))
+                best = index;
+        }
+        return best;
     }
 
     bool NavigationSystem::ComputeCellWalkableForAgent(int index, float agentRadius, float agentHeight) const
@@ -104,8 +161,8 @@ namespace PlutoGE::scene
             return false;
         agentRadius = std::max(0.0f, agentRadius);
         agentHeight = std::max(0.0f, agentHeight);
-        const int centerX = index % m_width;
-        const int centerZ = index / m_width;
+        const int centerX = m_cells[index].column % m_width;
+        const int centerZ = m_cells[index].column / m_width;
         const int radiusInCells = static_cast<int>(std::ceil(agentRadius / m_settings.cellSize));
         const float centerHeight = m_cells[index].height;
 
@@ -120,9 +177,9 @@ namespace PlutoGE::scene
                 const int z = centerZ + dz;
                 if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
                     return false;
-                const auto &cell = m_cells[static_cast<size_t>(z) * m_width + x];
-                if (!cell.walkable || cell.clearance + 0.001f < agentHeight ||
-                    std::abs(cell.height - centerHeight) > MaxTraversableHeightDelta(m_settings, distance))
+                // The footprint stands on the layer of each column nearest this floor; none in reach is a drop.
+                const int layer = FindLayer(z * m_width + x, centerHeight, MaxTraversableHeightDelta(m_settings, distance));
+                if (layer < 0 || !m_cells[layer].walkable || m_cells[layer].clearance + 0.001f < agentHeight)
                     return false;
             }
         }
@@ -158,23 +215,33 @@ namespace PlutoGE::scene
         const int centerZ = static_cast<int>((point.z - m_settings.boundsMin.z) / m_settings.cellSize);
         int best = -1;
         float bestDistance = std::numeric_limits<float>::max();
-        for (int radius = 0; radius <= 8 && best < 0; ++radius)
+        for (int radius = 0; radius <= 8; ++radius)
         {
+            // Layers make the nearest cell three-dimensional: a floor straight above or below may be farther than
+            // one a ring out on the point's own floor. Stop once a ring cannot hold anything closer.
+            const float ringDistance = std::max(0, radius - 1) * m_settings.cellSize;
+            if (best >= 0 && ringDistance * ringDistance > bestDistance)
+                break;
             for (int z = centerZ - radius; z <= centerZ + radius; ++z)
             {
                 for (int x = centerX - radius; x <= centerX + radius; ++x)
                 {
                     if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
                         continue;
-                    const int index = z * m_width + x;
-                    if (!IsCellWalkableForAgent(index, agentRadius, agentHeight))
+                    if (std::max(std::abs(x - centerX), std::abs(z - centerZ)) != radius)
                         continue;
-                    const glm::vec3 delta = CellPosition(index) - point;
-                    const float distance = glm::dot(delta, delta);
-                    if (distance < bestDistance)
+                    const int column = z * m_width + x;
+                    for (int index = m_columnStart[column]; index < m_columnStart[column + 1]; ++index)
                     {
-                        bestDistance = distance;
-                        best = index;
+                        if (!IsCellWalkableForAgent(index, agentRadius, agentHeight))
+                            continue;
+                        const glm::vec3 delta = CellPosition(index) - point;
+                        const float distance = glm::dot(delta, delta);
+                        if (distance < bestDistance)
+                        {
+                            bestDistance = distance;
+                            best = index;
+                        }
                     }
                 }
             }
@@ -197,9 +264,15 @@ namespace PlutoGE::scene
         horizontalDelta.y = 0.0f;
         const float distance = glm::length(horizontalDelta);
         const int samples = std::max(1, static_cast<int>(std::ceil(distance / (m_settings.cellSize * 0.25f))));
+        const float stepDelta = m_settings.maxStepHeight + 0.001f;
+        const float sideDelta = MaxTraversableHeightDelta(m_settings, m_settings.cellSize);
         float previousHeight = start.y;
         int previousX = -1, previousZ = -1;
         const auto &walkability = GetAgentWalkability(agentRadius, agentHeight);
+        const auto walkableNear = [&](int column, float height, float maxDelta) {
+            const int layer = FindLayer(column, height, maxDelta);
+            return layer >= 0 && walkability[layer] != 0;
+        };
         for (int sample = 0; sample <= samples; ++sample)
         {
             const float t = static_cast<float>(sample) / samples;
@@ -208,20 +281,21 @@ namespace PlutoGE::scene
             const int z = static_cast<int>(std::floor((point.z - m_settings.boundsMin.z) / m_settings.cellSize));
             if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
                 return false;
-            const int index = z * m_width + x;
-            const auto &cell = m_cells[index];
-            if (!walkability[index] ||
-                std::abs(cell.height - previousHeight) > m_settings.maxStepHeight + 0.001f)
+            // Follow the floor the segment is on: the layer within a step of the last sample.
+            const int index = FindLayer(z * m_width + x, previousHeight, stepDelta);
+            if (index < 0 || !walkability[index])
                 return false;
             // Match the A* diagonal rule: never shortcut through a blocked corner.
             if (previousX >= 0 && previousX != x && previousZ != z &&
-                (!walkability[previousZ * m_width + x] || !walkability[z * m_width + previousX]))
+                (!walkableNear(previousZ * m_width + x, previousHeight, sideDelta) ||
+                 !walkableNear(z * m_width + previousX, previousHeight, sideDelta)))
                 return false;
             previousX = x;
             previousZ = z;
-            previousHeight = cell.height;
+            previousHeight = m_cells[index].height;
         }
-        return true;
+        // Columns hold several floors: arriving under (or over) the end on another floor is not reaching it.
+        return std::abs(previousHeight - end.y) <= stepDelta;
     }
 
     NavigationPath NavigationSystem::FindPath(const glm::vec3 &startPoint, const glm::vec3 &endPoint,
@@ -262,6 +336,9 @@ namespace PlutoGE::scene
         costs[start] = 0.0f;
         open.push({start, 0.0f});
         constexpr int directions[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+        const float goalHeight = m_cells[goal].height;
+        const int goalX = m_cells[goal].column % m_width;
+        const int goalZ = m_cells[goal].column / m_width;
 
         while (!open.empty())
         {
@@ -272,36 +349,37 @@ namespace PlutoGE::scene
             closed[current] = 1;
             if (current == goal)
                 break;
-            const int x = current % m_width;
-            const int z = current / m_width;
+            const int x = m_cells[current].column % m_width;
+            const int z = m_cells[current].column / m_width;
+            const float height = m_cells[current].height;
             for (const auto &direction : directions)
             {
                 const int nextX = x + direction[0];
                 const int nextZ = z + direction[1];
                 if (nextX < 0 || nextZ < 0 || nextX >= m_width || nextZ >= m_depth)
                     continue;
-                const int next = nextZ * m_width + nextX;
                 const bool diagonal = direction[0] != 0 && direction[1] != 0;
                 const float linkDistance = m_settings.cellSize * (diagonal ? 1.41421356f : 1.0f);
-                if (!walkability[next] ||
-                    std::abs(m_cells[next].height - m_cells[current].height) > MaxTraversableHeightDelta(m_settings, linkDistance))
+                const float maxDelta = MaxTraversableHeightDelta(m_settings, linkDistance);
+                // Step onto the neighbouring column's layer nearest this floor (ramps and stairs link floors).
+                const int next = FindLayer(nextZ * m_width + nextX, height, maxDelta);
+                if (next < 0 || !walkability[next])
                     continue;
                 if (diagonal)
                 {
-                    const int sideX = z * m_width + nextX;
-                    const int sideZ = nextZ * m_width + x;
-                    if (!walkability[sideX] ||
-                        !walkability[sideZ])
+                    const int sideX = FindLayer(z * m_width + nextX, height, maxDelta);
+                    const int sideZ = FindLayer(nextZ * m_width + x, height, maxDelta);
+                    if (sideX < 0 || sideZ < 0 || !walkability[sideX] || !walkability[sideZ])
                         continue;
                 }
-                const float newCost = costs[current] + (diagonal ? 1.4142f : 1.0f);
+                const float climb = std::abs(m_cells[next].height - height) / m_settings.cellSize;
+                const float newCost = costs[current] + std::sqrt((diagonal ? 2.0f : 1.0f) + climb * climb);
                 if (newCost >= costs[next])
                     continue;
                 costs[next] = newCost;
                 parents[next] = current;
-                const int goalX = goal % m_width;
-                const int goalZ = goal / m_width;
-                open.push({next, newCost + std::hypot(static_cast<float>(goalX - nextX), static_cast<float>(goalZ - nextZ))});
+                const float rise = (goalHeight - m_cells[next].height) / m_settings.cellSize;
+                open.push({next, newCost + std::sqrt(static_cast<float>((goalX - nextX) * (goalX - nextX) + (goalZ - nextZ) * (goalZ - nextZ)) + rise * rise)});
             }
         }
 

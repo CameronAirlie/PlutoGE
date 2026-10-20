@@ -7,8 +7,7 @@
 #include <memory>
 #include <vector>
 #include "PlutoGE/ui/EditorCompositor.h"
-
-struct ImFont;
+#include "PlutoGE/ui/EditorFonts.h"
 
 namespace PlutoGE::platform
 {
@@ -76,11 +75,10 @@ namespace PlutoGE::ui
         void PresentViewportOverlay(const EditorViewportRegion &region, EditorTextureHandle texture,
                                     bool bottomUp, const std::function<void()> &presentHost);
 
-        static std::filesystem::path GetEditorFontPath(const char *fontFileName);
         void SetEditorFontSize(float fontSize);
         [[nodiscard]] float GetEditorFontSize() const { return m_editorFontSize; }
-        void SetEditorFont(const std::string &fontName);
-        [[nodiscard]] const std::string &GetEditorFont() const { return m_editorFont; }
+        void SetEditorFont(fonts::EditorFont font);
+        [[nodiscard]] fonts::EditorFont GetEditorFont() const { return m_editorFont; }
 
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
         [[nodiscard]] EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor);
@@ -92,12 +90,9 @@ namespace PlutoGE::ui
         std::vector<Panel *> m_panels;
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
-        float m_editorFontSize = 12.0f;
-        std::string m_editorFont = "Martian Mono";
-        ImFont *m_martianMonoFont = nullptr;
-        ImFont *m_georamaFont = nullptr;
-        ImFont *m_robotoFont = nullptr;
-        ImFont *m_defaultFont = nullptr;
+        float m_editorFontSize = fonts::kBaseSize;
+        fonts::EditorFont m_editorFont = fonts::kDefaultFont;
+        fonts::EditorFontLibrary m_fonts;
         void LoadLayout();
         void SaveLayout();
 

@@ -100,7 +100,7 @@ namespace PlutoGE::assets
         float runtimeUpscaleSharpness = 0.25f;
         render::rhi::UpscalerQuality runtimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
         float editorFontSize = 15.0f;
-        std::string editorFont = "Martian Mono";
+        std::string editorFont = "Roboto";
         ProjectEditorCameraSettings editorCamera;
         std::string editorCameraPostProcessPreset;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;

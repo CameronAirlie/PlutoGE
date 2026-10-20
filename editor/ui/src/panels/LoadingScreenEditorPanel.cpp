@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/Project.h"
@@ -128,7 +129,7 @@ namespace PlutoGE::ui
             const auto cssPath = directory / (name + ".rcss");
             for (const auto &path : {assetPath, rmlPath, cssPath})
                 if (std::filesystem::exists(path)) throw std::runtime_error("An asset with that name already exists");
-            const auto font = PanelManager::GetEditorFontPath("Georama-Regular.ttf");
+            const auto font = fonts::ResolvePath("Georama-Regular.ttf");
             if (font.empty()) throw std::runtime_error("Editor font is unavailable; cannot create a portable template");
             const auto fontPath = directory / "Georama-Regular.ttf";
             if (!std::filesystem::exists(fontPath)) std::filesystem::copy_file(font, fontPath);

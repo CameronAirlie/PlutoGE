@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
@@ -38,7 +39,7 @@ namespace PlutoGE::ui
         void StarterUI(EditorShell &editor, bool applicationMode)
         {
             if (!editor.GetProject()) throw std::runtime_error("Open a project first");
-            const auto font = PanelManager::GetEditorFontPath("MartianMono-StdRg.ttf");
+            const auto font = fonts::ResolvePath("MartianMono-StdRg.ttf");
             if (font.empty()) throw std::runtime_error("Starter UI font is unavailable");
             const auto resources = std::filesystem::path(font).parent_path().parent_path() / "authoring";
             const auto destination = editor.GetProject()->GetAssetDirectoryPath() / "UI";

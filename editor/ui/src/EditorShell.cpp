@@ -15,6 +15,7 @@
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/EditorWidgets.h"
@@ -2619,7 +2620,7 @@ namespace PlutoGE::ui
 
         const auto &manifest = m_project->GetManifest();
         m_panelManager.SetEditorFontSize(manifest.editorFontSize);
-        m_panelManager.SetEditorFont(manifest.editorFont);
+        m_panelManager.SetEditorFont(fonts::FromName(manifest.editorFont));
         ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
         if (manifest.editorCameraPostProcessPreset.empty() ||
             !m_editorCamera.SetPostProcessPresetAssetReference(manifest.editorCameraPostProcessPreset))
@@ -2720,7 +2721,7 @@ namespace PlutoGE::ui
         ClearCachedMaterialPreviews();
         ApplyProjectContext();
         m_project->GetManifest().editorFontSize = m_panelManager.GetEditorFontSize();
-        m_project->GetManifest().editorFont = m_panelManager.GetEditorFont();
+        m_project->GetManifest().editorFont = fonts::Name(m_panelManager.GetEditorFont());
         SetScene(CreateEmptyScene());
 
         // Choose the initial startup scene once; ordinary saves preserve this setting.
@@ -3605,7 +3606,7 @@ namespace PlutoGE::ui
         float projectRuntimeUpscaleSharpness = 0.25f;
         render::rhi::UpscalerQuality projectRuntimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
-        std::string projectEditorFont = m_panelManager.GetEditorFont();
+        fonts::EditorFont projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
         enum class ProjectSettingsPage { General, Display, Rendering, Editor, Scripting, Build, Server };
         ProjectSettingsPage projectSettingsPage = ProjectSettingsPage::General;
@@ -3647,7 +3648,7 @@ namespace PlutoGE::ui
             projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
             projectRuntimeUpscalerQuality = manifest.runtimeUpscalerQuality;
             projectEditorFontSize = manifest.editorFontSize;
-            projectEditorFont = manifest.editorFont;
+            projectEditorFont = fonts::FromName(manifest.editorFont);
         };
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
@@ -5008,15 +5009,14 @@ namespace PlutoGE::ui
                         if (widgets::BeginSettingsTable("##EditorTextTable"))
                         {
                             widgets::SettingsRow("Font");
-                            constexpr std::array<const char *, 4> editorFonts = {"Martian Mono", "Georama", "Roboto", "ImGui Default"};
-                            if (ImGui::BeginCombo("##EditorFont", projectEditorFont.c_str()))
+                            if (ImGui::BeginCombo("##EditorFont", fonts::Name(projectEditorFont).data()))
                             {
-                                for (const char *fontName : editorFonts)
+                                for (const auto &font : fonts::All())
                                 {
-                                    const bool selected = projectEditorFont == fontName;
-                                    if (ImGui::Selectable(fontName, selected))
+                                    const bool selected = projectEditorFont == font.font;
+                                    if (ImGui::Selectable(font.name.data(), selected))
                                     {
-                                        projectEditorFont = fontName;
+                                        projectEditorFont = font.font;
                                         m_panelManager.SetEditorFont(projectEditorFont);
                                     }
                                     if (selected)
@@ -5025,7 +5025,7 @@ namespace PlutoGE::ui
                                 ImGui::EndCombo();
                             }
                             widgets::SettingsRow("Font size");
-                            if (ImGui::SliderFloat("##EditorFontSize", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
+                            if (ImGui::SliderFloat("##EditorFontSize", &projectEditorFontSize, fonts::kMinSize, fonts::kMaxSize, "%.1f px"))
                                 m_panelManager.SetEditorFontSize(projectEditorFontSize);
                             widgets::EndSettingsTable();
                         }
@@ -5202,9 +5202,9 @@ namespace PlutoGE::ui
                     if (ImGui::Button("Cancel", ImVec2(cancelWidth, 0.0f)))
                     {
                         m_panelManager.SetEditorFontSize(manifest.editorFontSize);
-                        m_panelManager.SetEditorFont(manifest.editorFont);
+                        m_panelManager.SetEditorFont(fonts::FromName(manifest.editorFont));
                         projectEditorFontSize = manifest.editorFontSize;
-                        projectEditorFont = manifest.editorFont;
+                        projectEditorFont = fonts::FromName(manifest.editorFont);
                         projectGraphicsApi = manifest.graphicsApi;
                         ImGui::CloseCurrentPopup();
                     }
@@ -5228,8 +5228,8 @@ namespace PlutoGE::ui
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
                         manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
                         manifest.runtimeUpscalerQuality = projectRuntimeUpscalerQuality;
-                        manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
-                        manifest.editorFont = projectEditorFont;
+                        manifest.editorFontSize = std::clamp(projectEditorFontSize, fonts::kMinSize, fonts::kMaxSize);
+                        manifest.editorFont = fonts::Name(projectEditorFont);
                         const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();
                         manifest.scriptAssembly = configuredScriptAssembly.empty()
                                                       ? std::string{}
@@ -5249,7 +5249,7 @@ namespace PlutoGE::ui
                             editorVSyncEnabled = manifest.vSyncEnabled;
                             static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
                             m_panelManager.SetEditorFontSize(manifest.editorFontSize);
-                            m_panelManager.SetEditorFont(manifest.editorFont);
+                            m_panelManager.SetEditorFont(fonts::FromName(manifest.editorFont));
                             if (graphicsApiChanged)
                             {
                                 m_pendingGraphicsApi = manifest.graphicsApi;

@@ -1,5 +1,5 @@
 #include "PlutoGE/ui/PanelManager.h"
-#include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -17,23 +17,11 @@
 
 #include "PlutoGE/platform/Window.h"
 
-#include <iostream>
 #include <chrono>
 #include <cfloat>
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <filesystem>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace PlutoGE::ui
 {
@@ -43,27 +31,11 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr bool kEnableNativeMultiViewport = true;
-        constexpr float kDefaultEditorFontSize = 15.0f;
-        constexpr float kMinEditorFontSize = 10.0f;
-        constexpr float kMaxEditorFontSize = 24.0f;
 
         float DurationMs(const std::chrono::high_resolution_clock::time_point &start,
                          const std::chrono::high_resolution_clock::time_point &end)
         {
             return std::chrono::duration<float, std::milli>(end - start).count();
-        }
-
-        std::filesystem::path GetExecutableDirectory()
-        {
-#ifdef _WIN32
-            std::array<char, MAX_PATH> modulePath{};
-            const DWORD modulePathLength = GetModuleFileNameA(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
-            if (modulePathLength > 0 && modulePathLength < modulePath.size())
-            {
-                return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
-            }
-#endif
-            return std::filesystem::current_path();
         }
 
         void BuildDefaultEditorLayout(ImGuiID dockspaceId)
@@ -84,64 +56,6 @@ namespace PlutoGE::ui
             ImGui::DockBuilderDockWindow("Content Browser", bottomId);
             ImGui::DockBuilderDockWindow("Console", bottomId);
             ImGui::DockBuilderFinish(dockspaceId);
-        }
-
-        std::filesystem::path ResolveEditorFontPath(const char *fontFileName)
-        {
-            const std::filesystem::path relativeFontPath = std::filesystem::path("resources/fonts") / fontFileName;
-            const std::array<std::filesystem::path, 4> candidates = {
-                GetExecutableDirectory() / relativeFontPath,
-                std::filesystem::current_path() / relativeFontPath,
-                std::filesystem::current_path() / "editor" / relativeFontPath,
-                std::filesystem::current_path() / ".." / ".." / ".." / "editor" / relativeFontPath,
-            };
-
-            for (const auto &candidate : candidates)
-            {
-                std::error_code errorCode;
-                if (std::filesystem::exists(candidate, errorCode))
-                {
-                    return candidate.lexically_normal();
-                }
-            }
-
-            return {};
-        }
-
-        void MergeEditorIcons(ImGuiIO &io)
-        {
-            const auto path = ResolveEditorFontPath("fa-solid-900.ttf");
-            if (path.empty())
-            {
-                std::cerr << "Editor icon font missing: fa-solid-900.ttf\n";
-                return;
-            }
-            ImFontConfig config{};
-            config.MergeMode = true;
-            config.PixelSnapH = true;
-            config.GlyphMinAdvanceX = kDefaultEditorFontSize;
-            io.Fonts->AddFontFromFileTTF(path.string().c_str(), kDefaultEditorFontSize,
-                                       &config, icons::Ranges);
-        }
-
-        ImFont *LoadEditorFont(ImGuiIO &io, const char *fontFileName)
-        {
-            const auto fontPath = ResolveEditorFontPath(fontFileName);
-            if (!fontPath.empty())
-            {
-                ImFontConfig fontConfig{};
-                fontConfig.OversampleH = 3;
-                fontConfig.OversampleV = 2;
-                fontConfig.PixelSnapH = true;
-                if (io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), kDefaultEditorFontSize, &fontConfig))
-                {
-                    auto *font = io.Fonts->Fonts.back();
-                    MergeEditorIcons(io);
-                    return font;
-                }
-            }
-
-            return nullptr;
         }
     }
 
@@ -170,18 +84,11 @@ namespace PlutoGE::ui
             io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
             io.ConfigViewportsNoDecoration = false;
         }
-        m_martianMonoFont = LoadEditorFont(io, "MartianMono-StdRg.ttf");
-        m_georamaFont = LoadEditorFont(io, "Georama-Regular.ttf");
-        // Variable font; ImGui renders its default Regular (wght 400) instance.
-        m_robotoFont = LoadEditorFont(io, "Roboto.ttf");
-        ImFontConfig defaultFontConfig{};
-        defaultFontConfig.SizePixels = kDefaultEditorFontSize;
-        m_defaultFont = io.Fonts->AddFontDefault(&defaultFontConfig);
-        MergeEditorIcons(io);
+        m_fonts.Load(io);
         RegisterViewportOverlaySettings();
         RegisterInspectorComponentSettings();
         SetEditorFont(m_editorFont);
-        SetEditorFontSize(kDefaultEditorFontSize);
+        SetEditorFontSize(fonts::kBaseSize);
 
         m_compositor = CreateEditorCompositor(device->GetApi());
         if (!m_compositor || !m_compositor->Initialize(*window, *device, *swapchain))
@@ -234,41 +141,16 @@ namespace PlutoGE::ui
         return m_compositor ? m_compositor->GetImGuiTextureId(texture) : 0;
     }
 
-    std::filesystem::path PanelManager::GetEditorFontPath(const char *fontFileName)
-    { return ResolveEditorFontPath(fontFileName); }
-
     void PanelManager::SetEditorFontSize(float fontSize)
     {
-        m_editorFontSize = std::clamp(fontSize, kMinEditorFontSize, kMaxEditorFontSize);
-        ImGui::GetIO().FontGlobalScale = m_editorFontSize / kDefaultEditorFontSize;
+        m_editorFontSize = std::clamp(fontSize, fonts::kMinSize, fonts::kMaxSize);
+        ImGui::GetIO().FontGlobalScale = m_editorFontSize / fonts::kBaseSize;
     }
 
-    void PanelManager::SetEditorFont(const std::string &fontName)
+    void PanelManager::SetEditorFont(fonts::EditorFont font)
     {
-        ImFont *selectedFont = nullptr;
-        if (fontName == "Georama")
-        {
-            selectedFont = m_georamaFont;
-        }
-        else if (fontName == "Roboto")
-        {
-            selectedFont = m_robotoFont;
-        }
-        else if (fontName == "ImGui Default")
-        {
-            selectedFont = m_defaultFont;
-        }
-        else
-        {
-            selectedFont = m_martianMonoFont;
-        }
-
-        if (selectedFont == nullptr)
-        {
-            selectedFont = m_defaultFont;
-        }
-        ImGui::GetIO().FontDefault = selectedFont;
-        m_editorFont = fontName == "Georama" || fontName == "Roboto" || fontName == "ImGui Default" ? fontName : "Martian Mono";
+        m_editorFont = fonts::Info(font).font;
+        ImGui::GetIO().FontDefault = m_fonts.Get(m_editorFont);
     }
 
     void PanelManager::AddPanel(Panel *panel)

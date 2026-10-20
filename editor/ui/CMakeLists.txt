@@ -60,6 +60,7 @@ add_library(PlutoGEEditorUI
     src/panels/SceneHierarchyPanel.cpp
     src/panels/InspectorPanel.cpp
     src/PanelManager.cpp
+    src/EditorFonts.cpp
     src/EditorTheme.cpp
     src/EditorWidgets.cpp
     src/EditorPreferences.cpp

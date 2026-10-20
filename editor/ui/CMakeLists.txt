@@ -43,6 +43,14 @@ add_library(PlutoGEEditorUI
     src/panels/ConsolePanel.cpp
     src/panels/ContentBrowserPanel.cpp
     src/panels/AnimationGraphEditorPanel.cpp
+    src/animgraph/AnimationGraphDocument.cpp
+    src/animgraph/AnimationGraphInspector.cpp
+    src/animgraph/AnimationGraphLayers.cpp
+    src/animgraph/AnimationGraphLiveSession.cpp
+    src/animgraph/AnimationGraphSidebar.cpp
+    src/animgraph/AnimationGraphWidgets.cpp
+    src/animgraph/StateMachineCanvas.cpp
+    src/animgraph/StateMachineView.cpp
     src/panels/AnimationClipEditorPanel.cpp
     src/panels/SequencerEditorPanel.cpp
     src/panels/MaterialEditorPanel.cpp

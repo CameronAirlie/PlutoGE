@@ -60,6 +60,7 @@ namespace PlutoGE::scene
 namespace PlutoGE::ui
 {
     class RmlDocumentEditorPanel;
+    class AnimationGraphEditorPanel;
     class ProfilerPanel;
     class ViewportPanel;
     class EditorSceneRenderService;
@@ -489,6 +490,7 @@ namespace PlutoGE::ui
         std::string m_activeLoadingScreenAssetReference;
         bool m_openLoadingScreenEditorRequested = false;
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
+        AnimationGraphEditorPanel *m_animationGraphEditor = nullptr;
         TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
         SceneGenerationRetention m_runtimeSceneGenerations;

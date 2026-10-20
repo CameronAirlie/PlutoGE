@@ -2126,6 +2126,7 @@ namespace PlutoGE::ui
     {
         const ImGuiIO &io = ImGui::GetIO();
         if (io.WantTextInput || (m_rmlDocumentEditor && m_rmlDocumentEditor->OwnsKeyboardFocus()) ||
+            (m_animationGraphEditor && m_animationGraphEditor->OwnsKeyboardFocus()) ||
             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
@@ -2202,7 +2203,8 @@ namespace PlutoGE::ui
 
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
-        if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()))
+        if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()) &&
+            !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()))
         {
             return true;
         }
@@ -2218,6 +2220,12 @@ namespace PlutoGE::ui
         {
             m_rmlDocumentEditor->SetOpen(true);
             Log(ConsoleSeverity::Warning, "Save or discard UI document edits before switching projects or exiting.");
+            return false;
+        }
+        if (m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges())
+        {
+            m_animationGraphEditor->SetOpen(true);
+            Log(ConsoleSeverity::Warning, "Save or revert animation graph edits before switching projects or exiting.");
             return false;
         }
         return true;
@@ -3545,9 +3553,9 @@ namespace PlutoGE::ui
         shaderGraphEditorPanel->Initialize();
         m_panelManager.AddPanel(shaderGraphEditorPanel);
 
-        auto animationGraphEditorPanel = new AnimationGraphEditorPanel(PanelConfig{"Animation Graph Editor", false});
-        animationGraphEditorPanel->Initialize();
-        m_panelManager.AddPanel(animationGraphEditorPanel);
+        m_animationGraphEditor = new AnimationGraphEditorPanel(PanelConfig{"Animation Graph Editor", false});
+        m_animationGraphEditor->Initialize();
+        m_panelManager.AddPanel(m_animationGraphEditor);
 
         auto sequencerEditorPanel = new SequencerEditorPanel(PanelConfig{"Sequencer Editor", false});
         sequencerEditorPanel->Initialize();
@@ -4216,7 +4224,7 @@ namespace PlutoGE::ui
                 }
                 if (ConsumeAnimationGraphEditorOpenRequest())
                 {
-                    animationGraphEditorPanel->SetOpen(true);
+                    m_animationGraphEditor->SetOpen(true);
                 }
                 if (ConsumeSequencerEditorOpenRequest())
                     sequencerEditorPanel->SetOpen(true);
@@ -4345,6 +4353,7 @@ namespace PlutoGE::ui
                 // Use the same actions for menu clicks and keyboard shortcuts.
                 const ImGuiIO &fileShortcutIO = ImGui::GetIO();
                 if (!isBakeRunning && !fileShortcutIO.WantTextInput && !m_rmlDocumentEditor->OwnsKeyboardFocus() &&
+                    !m_animationGraphEditor->OwnsKeyboardFocus() &&
                     !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
                     (fileShortcutIO.KeyCtrl || fileShortcutIO.KeySuper))
                 {
@@ -4496,7 +4505,7 @@ namespace PlutoGE::ui
                         panelToggle("Mesh Editor", meshEditorPanel);
                         panelToggle("Shader Graph Editor", shaderGraphEditorPanel);
                         ImGui::Separator();
-                        panelToggle("Animation Graph Editor", animationGraphEditorPanel);
+                        panelToggle("Animation Graph Editor", m_animationGraphEditor);
                         panelToggle("Animation Clip Editor", animationClipEditorPanel);
                         panelToggle("Sequencer Editor", sequencerEditorPanel);
                         panelToggle("Particle System Editor", particleSystemEditorPanel);

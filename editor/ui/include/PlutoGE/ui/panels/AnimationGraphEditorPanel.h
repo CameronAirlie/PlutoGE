@@ -1,15 +1,16 @@
 #pragma once
 
-#include "PlutoGE/assets/AnimationGraph.h"
+#include "PlutoGE/ui/animgraph/AnimationGraphDocument.h"
+#include "PlutoGE/ui/animgraph/AnimationGraphLiveSession.h"
+#include "PlutoGE/ui/animgraph/StateMachineCanvas.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
-#include <GraphEditor.h>
-
 #include <string>
-#include <vector>
 
 namespace PlutoGE::ui
 {
+    // Hierarchical state machine editor: an outline/parameters/layers sidebar,
+    // a canvas showing one group at a time, and a selection inspector.
     class AnimationGraphEditorPanel : public Panel
     {
     public:
@@ -18,19 +19,23 @@ namespace PlutoGE::ui
 
         void Render() override;
 
+        // While focused, the panel owns undo/redo/save shortcuts.
+        bool OwnsKeyboardFocus() const;
+        bool HasUnsavedChanges() const { return m_document.IsDirty(); }
+
     private:
         void LoadActiveGraph();
+        bool Save();
+        void HandleShortcuts();
+        void DrawToolbar();
+        void DrawStatusBar();
 
         std::string m_loadedReference;
-        assets::AnimationGraphAsset m_graph;
-        int m_selectedStateId = 0;
-        std::vector<int> m_selectedStateIds;
-        int m_selectedTransitionId = 0;
-        GraphEditor::Options m_graphOptions;
-        GraphEditor::ViewState m_graphViewState;
-        GraphEditor::FitOnScreen m_graphFit = GraphEditor::Fit_AllNodes;
-        ImVec2 m_addStatePosition{80.0f, 80.0f};
-        bool m_openAddStatePopup = false;
-        bool m_dirty = false;
+        animgraph::AnimationGraphDocument m_document;
+        animgraph::StateMachineCanvas m_canvas;
+        animgraph::AnimationGraphLiveSession m_live;
+        std::string m_canvasSearch;
+        bool m_liveEnabled = true;
+        bool m_focused = false;
     };
 }

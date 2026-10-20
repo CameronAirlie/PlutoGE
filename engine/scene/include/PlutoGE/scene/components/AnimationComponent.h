@@ -238,6 +238,18 @@ namespace PlutoGE::scene
         bool CrossFadeState(std::string_view stateName, float duration, float startTime = 0.0f);
         const std::vector<AnimationLayer> &GetLayers() const { return m_layers; }
 
+        // Read-only snapshot of base graph playback, used by editor debugging.
+        struct GraphPlaybackInfo
+        {
+            int currentStateIndex = -1;
+            // Normalized time of the current state's reference clip, 0..1 when looping.
+            float currentStateNormalizedTime = 0.0f;
+            int transitionSourceStateIndex = -1;
+            int transitionDestinationStateIndex = -1;
+            float transitionProgress = 0.0f;
+        };
+        GraphPlaybackInfo GetGraphPlaybackInfo() const;
+
         // Enables a lightweight, constraint-based skeletal ragdoll. The current
         // animated pose is used as the initial pose, so entering ragdoll does
         // not pop. A weight below one blends physics with animation.

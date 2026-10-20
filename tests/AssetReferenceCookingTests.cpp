@@ -552,7 +552,7 @@ int main(int argc, char **argv)
             state.clipReference = "project://Walk.plutoclip";
             state.blendSpacePoints.push_back({.clipReference="project://Walk.plutoclip"});
             graph.states.push_back(state);
-            graph.transitions.push_back({.id=1, .fromStateId=1, .toStateId=1, .offset=0.375f,
+            graph.transitions.push_back({.id=1, .from=AnimationGraphNodeRef::ForState(1), .to=AnimationGraphNodeRef::ForState(1), .offset=0.375f,
                                          .conditions={{.parameterName="Grounded"}}});
             graph.layers.push_back({.id=1, .name="Layer", .graphReference="project://Base.plutoanimgraph", .clipReference="project://Walk.plutoclip"});
             Require(nativeWriter.SaveAnimationGraphAsset("project://Output.plutoanimgraph", graph, &error), error);

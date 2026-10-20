@@ -26,6 +26,16 @@ add_test(NAME PlutoGECapsuleQueryTests COMMAND PlutoGECapsuleQueryTests)
 add_executable(PlutoGEAnimationSeekTests AnimationSeekTests.cpp)
 pluto_link_engine(PlutoGEAnimationSeekTests)
 add_test(NAME PlutoGEAnimationSeekTests COMMAND PlutoGEAnimationSeekTests)
+# The editor's graph document and canvas view model are ImGui-free, so they
+# are compiled in directly rather than linking the whole editor.
+add_executable(PlutoGEAnimationGraphTests AnimationGraphTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/animgraph/AnimationGraphDocument.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/animgraph/StateMachineView.cpp)
+target_include_directories(PlutoGEAnimationGraphTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
+pluto_link_engine(PlutoGEAnimationGraphTests)
+add_test(NAME PlutoGEAnimationGraphTests COMMAND PlutoGEAnimationGraphTests)
+add_executable(PlutoGEAnimationGraphTool EXCLUDE_FROM_ALL ../tools/AnimationGraphTool.cpp)
+pluto_link_engine(PlutoGEAnimationGraphTool)
 
 if (MSVC)
     # Test executables are never distributed. FASTLINK PDBs reference the

@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AnimationGraphUtils.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -600,6 +601,71 @@ namespace PlutoGE::scene
             default:
                 return AnimationComponent::AnimationConditionMode::If;
             }
+        }
+
+        // Flattens an asset graph into runtime states. Groups exist only for
+        // authoring: their transitions are expanded onto every state they cover,
+        // in the evaluation order defined by animgraph::CompileTransitions.
+        template <typename ResolveClip>
+        std::vector<AnimationComponent::AnimationState> BuildRuntimeStates(const assets::AnimationGraphAsset &graph,
+                                                                           ResolveClip &resolveClipIndex,
+                                                                           int &defaultStateIndex)
+        {
+            std::vector<AnimationComponent::AnimationState> states;
+            std::unordered_map<int, int> stateIndexById;
+            states.reserve(graph.states.size());
+            for (const auto &assetState : graph.states)
+            {
+                AnimationComponent::AnimationState state;
+                state.name = assetState.name.empty() ? "State " + std::to_string(states.size()) : assetState.name;
+                state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
+                state.speed = assetState.speed;
+                state.loop = assetState.loop;
+                state.blendSpaceParameterX = assetState.blendSpaceParameterX;
+                state.blendSpaceParameterY = assetState.blendSpaceParameterY;
+                for (const auto &assetPoint : assetState.blendSpacePoints)
+                {
+                    state.blendSpacePoints.push_back(AnimationComponent::AnimationState::BlendSpacePoint{
+                        .clipIndex = resolveClipIndex(assetPoint.clipReference, assetPoint.clipName, assetPoint.clipIndex),
+                        .positionX = assetPoint.positionX,
+                        .positionY = assetPoint.positionY,
+                    });
+                }
+                if (!state.blendSpacePoints.empty())
+                    state.clipIndex = state.blendSpacePoints.front().clipIndex;
+                stateIndexById[assetState.id] = static_cast<int>(states.size());
+                states.push_back(std::move(state));
+            }
+
+            for (const auto &compiled : assets::animgraph::CompileTransitions(graph))
+            {
+                const auto fromIt = stateIndexById.find(compiled.fromStateId);
+                const auto toIt = stateIndexById.find(compiled.toStateId);
+                if (fromIt == stateIndexById.end() || toIt == stateIndexById.end())
+                    continue;
+
+                const auto &assetTransition = *compiled.source;
+                AnimationComponent::AnimationTransition transition;
+                transition.destinationStateIndex = toIt->second;
+                transition.duration = assetTransition.duration;
+                transition.hasExitTime = assetTransition.hasExitTime;
+                transition.exitTime = assetTransition.exitTime;
+                transition.offset = assetTransition.offset;
+                transition.conditions.reserve(assetTransition.conditions.size());
+                for (const auto &assetCondition : assetTransition.conditions)
+                {
+                    transition.conditions.push_back(AnimationComponent::AnimationCondition{
+                        .parameterName = assetCondition.parameterName,
+                        .mode = ConvertConditionMode(assetCondition.mode),
+                        .threshold = assetCondition.threshold,
+                    });
+                }
+                states[static_cast<size_t>(fromIt->second)].transitions.push_back(std::move(transition));
+            }
+
+            const auto defaultIt = stateIndexById.find(graph.defaultStateId);
+            defaultStateIndex = defaultIt == stateIndexById.end() ? 0 : defaultIt->second;
+            return states;
         }
 
         template <typename ResolveIndexFn, typename BindTransformFn>
@@ -2287,30 +2353,7 @@ namespace PlutoGE::scene
             return clipIndex;
         };
 
-        std::unordered_map<int, int> stateIndexById;
-        m_states.reserve(graph.states.size());
-        for (const auto &assetState : graph.states)
-        {
-            AnimationState state;
-            state.name = assetState.name.empty() ? "State " + std::to_string(m_states.size()) : assetState.name;
-            state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
-            state.speed = assetState.speed;
-            state.loop = assetState.loop;
-            state.blendSpaceParameterX = assetState.blendSpaceParameterX;
-            state.blendSpaceParameterY = assetState.blendSpaceParameterY;
-            for (const auto &assetPoint : assetState.blendSpacePoints)
-            {
-                state.blendSpacePoints.push_back(AnimationState::BlendSpacePoint{
-                    .clipIndex = resolveClipIndex(assetPoint.clipReference, assetPoint.clipName, assetPoint.clipIndex),
-                    .positionX = assetPoint.positionX,
-                    .positionY = assetPoint.positionY,
-                });
-            }
-            if (!state.blendSpacePoints.empty())
-                state.clipIndex = state.blendSpacePoints.front().clipIndex;
-            stateIndexById[assetState.id] = static_cast<int>(m_states.size());
-            m_states.push_back(std::move(state));
-        }
+        m_states = BuildRuntimeStates(graph, resolveClipIndex, m_defaultStateIndex);
 
         m_layers.reserve(graph.layers.size());
         for (const auto &assetLayer : graph.layers)
@@ -2329,53 +2372,7 @@ namespace PlutoGE::scene
                 {
                     for (const auto &parameter : layerGraph.parameters)
                         addParameterIfMissing(parameter);
-
-                    std::unordered_map<int, int> layerStateIndexById;
-                    layer.graphStates.reserve(layerGraph.states.size());
-                    for (const auto &assetState : layerGraph.states)
-                    {
-                        AnimationState state;
-                        state.name = assetState.name.empty() ? "State " + std::to_string(layer.graphStates.size()) : assetState.name;
-                        state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
-                        state.speed = assetState.speed;
-                        state.loop = assetState.loop;
-                        state.blendSpaceParameterX = assetState.blendSpaceParameterX;
-                        state.blendSpaceParameterY = assetState.blendSpaceParameterY;
-                        for (const auto &assetPoint : assetState.blendSpacePoints)
-                        {
-                            state.blendSpacePoints.push_back(AnimationState::BlendSpacePoint{
-                                .clipIndex = resolveClipIndex(assetPoint.clipReference, assetPoint.clipName, assetPoint.clipIndex),
-                                .positionX = assetPoint.positionX,
-                                .positionY = assetPoint.positionY,
-                            });
-                        }
-                        if (!state.blendSpacePoints.empty())
-                            state.clipIndex = state.blendSpacePoints.front().clipIndex;
-                        layerStateIndexById[assetState.id] = static_cast<int>(layer.graphStates.size());
-                        layer.graphStates.push_back(std::move(state));
-                    }
-                    for (const auto &assetTransition : layerGraph.transitions)
-                    {
-                        const auto fromIt = layerStateIndexById.find(assetTransition.fromStateId);
-                        const auto toIt = layerStateIndexById.find(assetTransition.toStateId);
-                        if (fromIt == layerStateIndexById.end() || toIt == layerStateIndexById.end())
-                            continue;
-                        AnimationTransition transition;
-                        transition.destinationStateIndex = toIt->second;
-                        transition.duration = assetTransition.duration;
-                        transition.hasExitTime = assetTransition.hasExitTime;
-                        transition.exitTime = assetTransition.exitTime;
-                        transition.offset = assetTransition.offset;
-                        for (const auto &condition : assetTransition.conditions)
-                            transition.conditions.push_back(AnimationCondition{
-                                .parameterName = condition.parameterName,
-                                .mode = ConvertConditionMode(condition.mode),
-                                .threshold = condition.threshold,
-                            });
-                        layer.graphStates[static_cast<size_t>(fromIt->second)].transitions.push_back(std::move(transition));
-                    }
-                    const auto defaultState = layerStateIndexById.find(layerGraph.defaultStateId);
-                    layer.graphDefaultStateIndex = defaultState == layerStateIndexById.end() ? 0 : defaultState->second;
+                    layer.graphStates = BuildRuntimeStates(layerGraph, resolveClipIndex, layer.graphDefaultStateIndex);
                     layer.graphCurrentStateIndex = layer.graphDefaultStateIndex;
                 }
             }
@@ -2393,35 +2390,6 @@ namespace PlutoGE::scene
             m_layers.push_back(std::move(layer));
         }
 
-        for (const auto &assetTransition : graph.transitions)
-        {
-            const auto fromIt = stateIndexById.find(assetTransition.fromStateId);
-            const auto toIt = stateIndexById.find(assetTransition.toStateId);
-            if (fromIt == stateIndexById.end() || toIt == stateIndexById.end())
-            {
-                continue;
-            }
-
-            AnimationTransition transition;
-            transition.destinationStateIndex = toIt->second;
-            transition.duration = assetTransition.duration;
-            transition.hasExitTime = assetTransition.hasExitTime;
-            transition.exitTime = assetTransition.exitTime;
-            transition.offset = assetTransition.offset;
-            transition.conditions.reserve(assetTransition.conditions.size());
-            for (const auto &assetCondition : assetTransition.conditions)
-            {
-                transition.conditions.push_back(AnimationCondition{
-                    .parameterName = assetCondition.parameterName,
-                    .mode = ConvertConditionMode(assetCondition.mode),
-                    .threshold = assetCondition.threshold,
-                });
-            }
-            m_states[static_cast<size_t>(fromIt->second)].transitions.push_back(std::move(transition));
-        }
-
-        const auto defaultIt = stateIndexById.find(graph.defaultStateId);
-        m_defaultStateIndex = defaultIt == stateIndexById.end() ? 0 : defaultIt->second;
         m_graphCurrentStateIndex = m_defaultStateIndex;
         m_graphStateTime = 0.0f;
         m_transition = {};
@@ -3023,6 +2991,30 @@ namespace PlutoGE::scene
         // lets UpdateLayers fade the layer out and reveal the base graph.
         if (finished && !state.loop && !startedTransition)
             layer.playing = false;
+    }
+
+    AnimationComponent::GraphPlaybackInfo AnimationComponent::GetGraphPlaybackInfo() const
+    {
+        GraphPlaybackInfo info;
+        if (m_states.empty() || !m_graphStarted)
+            return info;
+
+        info.currentStateIndex = m_graphCurrentStateIndex;
+        const auto &state = m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
+        if (const float duration = GetClipDuration(state.clipIndex); duration > 0.0f)
+        {
+            const float normalized = m_graphStateTime / duration;
+            info.currentStateNormalizedTime = state.loop ? std::fmod(std::max(0.0f, normalized), 1.0f) : std::clamp(normalized, 0.0f, 1.0f);
+        }
+        if (m_transition.active)
+        {
+            info.transitionSourceStateIndex = m_transition.sourceStateIndex;
+            info.transitionDestinationStateIndex = m_transition.destinationStateIndex;
+            info.transitionProgress = m_transition.duration > 0.0f
+                                          ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f)
+                                          : 1.0f;
+        }
+        return info;
     }
 
     void AnimationComponent::SetCurrentStateIndex(int stateIndex)

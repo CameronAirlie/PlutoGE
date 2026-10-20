@@ -28,6 +28,9 @@ add_library(PlutoGEAssets
     src/AssetReferences.cpp
     src/ProjectValidation.cpp
     src/ModelAsset.cpp
+    src/AnimationGraphUtils.cpp
+    src/AnimationGraphValidation.cpp
+    src/AnimationGraphSerialization.cpp
     src/AssetManager.cpp
     src/SurfaceResponseAsset.cpp
     src/LoadingScreenAsset.cpp

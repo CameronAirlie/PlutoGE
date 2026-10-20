@@ -36,6 +36,7 @@ struct ResolveSurface
     float3 position;
     float3 normal;         // Shading normal, as written by the geometry pass.
     float3 receiverNormal; // Geometric normal facing the camera.
+    float positionError;   // Reconstruction uncertainty of position.
     bool pending;
 };
 
@@ -48,7 +49,9 @@ float3 worldAt(int2 texel)
 
 // The geometric normal from depth: each axis uses the neighbour on the same
 // surface (smaller depth step), so silhouettes do not bend the receiver plane.
-float3 receiverNormalAt(int2 texel, float3 position)
+// footprint receives the larger same-surface neighbour step: depth precision
+// and normal noise both grow with it, so probe visibility must tolerate it.
+float3 receiverNormalAt(int2 texel, float3 position, out float footprint)
 {
     const int2 last = fullSize() - 1;
     const float3 right = worldAt(clamp(texel + int2(1, 0), int2(0), last)) - position;
@@ -57,6 +60,7 @@ float3 receiverNormalAt(int2 texel, float3 position)
     const float3 down = position - worldAt(clamp(texel - int2(0, 1), int2(0), last));
     const float3 dx = dot(right, right) < dot(left, left) ? right : left;
     const float3 dy = dot(up, up) < dot(down, down) ? up : down;
+    footprint = sqrt(max(dot(dx, dx), dot(dy, dy)));
     float3 normal = cross(dx, dy);
     normal = dot(normal, normal) > 1e-20 ? normalize(normal) : float3(0, 1, 0);
     return dot(normal, cameraPositionAmbient.xyz - position) < 0.0 ? -normal : normal;
@@ -69,13 +73,15 @@ ResolveSurface surfaceAt(int2 texel)
     surface.pending = encodedNormal.a < 0.5 && depthTexture.Load(int3(texel, 0)).r > 0.000001;
     surface.position = worldAt(texel);
     surface.normal = decodeNormal(encodedNormal.xyz);
-    surface.receiverNormal = surface.pending ? receiverNormalAt(texel, surface.position) : surface.normal;
+    float footprint = 0.0;
+    surface.receiverNormal = surface.pending ? receiverNormalAt(texel, surface.position, footprint) : surface.normal;
+    surface.positionError = footprint * 0.5;
     return surface;
 }
 
 float3 gridIrradianceAt(ResolveSurface surface)
 {
-    return max(sampleDiffuseGrid(surface.position, surface.normal, surface.receiverNormal).rgb, 0.0);
+    return max(sampleDiffuseGrid(surface.position, surface.normal, surface.receiverNormal, surface.positionError).rgb, 0.0);
 }
 
 // Matches BasicLit's diffuse environment response for opaque surfaces.

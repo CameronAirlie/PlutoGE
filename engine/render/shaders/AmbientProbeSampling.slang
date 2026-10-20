@@ -161,7 +161,10 @@ float3 evaluateProbeIrradiance(int index, float3 normal)
 
 // Eight cell neighbours, visibility rejection, normal weighting and normalized
 // interpolation. Invalid/occluded probes never contribute light across walls.
-float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base, bool preparedNormals)
+// positionError is the receiver's reconstruction uncertainty (0 for exact
+// rasterized positions); depth-reconstructed receivers far from the camera
+// need a matching bias or entire visibility texels read as occluded.
+float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base, bool preparedNormals, float positionError)
 {
     if (any(uvw < 0) || any(uvw > 1)) return float4(0);
     const int3 resolution = int3(res);
@@ -170,7 +173,8 @@ float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal
     const float3 fraction = frac(grid);
     float3 irradiance = float3(0);
     float sum = 0;
-    const float bias = min(0.002, min(size.x/res.x, min(size.y/res.y, size.z/res.z)) * 0.01);
+    const float spacing = min(size.x/res.x, min(size.y/res.y, size.z/res.z));
+    const float bias = max(min(0.002, spacing * 0.01), min(positionError, spacing * 0.25));
     [ForceUnroll] for (int neighbour = 0; neighbour < 8; ++neighbour) {
         const int x = neighbour & 1, y = (neighbour >> 1) & 1, z = neighbour >> 2;
         const int3 c = clamp(cell + int3(x,y,z), int3(0), resolution - 1);
@@ -228,15 +232,15 @@ int selectDiffuseVolume(float3 position)
     return selected;
 }
 
-float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal)
+float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
 {
     if (volume<0) return float4(0);
     const float4 resolution = volumeResolution(volume);
     return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(volume,position),
-        volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5);
+        volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5, positionError);
 }
 
-float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal)
+float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
 {
-    return sampleDiffuseVolumeAt(selectDiffuseVolume(position), position, normal, receiverNormal);
+    return sampleDiffuseVolumeAt(selectDiffuseVolume(position), position, normal, receiverNormal, positionError);
 }

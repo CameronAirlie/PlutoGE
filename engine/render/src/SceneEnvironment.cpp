@@ -1,4 +1,5 @@
 #include "PlutoGE/render/SceneEnvironment.h"
+#include "PlutoGE/render/PhysicalSkyModel.h"
 #include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
@@ -31,13 +32,14 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        glm::vec3 AtmosphericSunTransmittance(const scene::PhysicalSkyComponent &sky, const glm::vec3 &sunDirection)
+        // The sky's sun follows the directional light unless the sky handed
+        // that light to the moon (BuildSceneLighting records the true sun).
+        glm::vec3 SunDirection(const render::BasicLighting &lighting)
         {
-            const float airMass = 1.0f / std::max(sunDirection.y + 0.075f, 0.04f);
-            const glm::vec3 extinction = glm::vec3(0.028f, 0.067f, 0.155f) * std::max(sky.GetRayleighStrength(), 0.0f) +
-                                         glm::vec3(0.035f) * std::max(sky.GetMieStrength(), 0.0f) +
-                                         glm::vec3(0.004f, 0.012f, 0.002f) * std::max(sky.GetOzoneStrength(), 0.0f);
-            return glm::exp(-extinction * airMass) * glm::max(sky.GetSunColor(), glm::vec3(0.0f));
+            const glm::vec3 sun = glm::dot(lighting.sunDirection, lighting.sunDirection) > 0.000001f
+                                      ? lighting.sunDirection
+                                      : -lighting.directionalDirection;
+            return glm::dot(sun, sun) > 0.000001f ? glm::normalize(sun) : glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
         void CollectAtmosphere(const scene::Scene *scene, const glm::vec3 &cameraPosition,
@@ -49,20 +51,14 @@ namespace PlutoGE::render
                 return;
             if (const auto *sky = FindPhysicalSky(scene, filter))
             {
-                render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
                 // Horizon attenuation can make a valid sun's intensity zero.
                 // Keep its direction so sunset cannot reset the sky to daytime.
-                glm::vec3 sunDirection = -lighting.directionalDirection;
-                if (glm::dot(sunDirection, sunDirection) < 0.000001f)
-                    sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
-                effect.exposure = sky->GetExposure();
-                effect.parameters[0] = {glm::normalize(sunDirection), sky->GetRayleighStrength()};
-                effect.parameters[1] = {sky->GetSunColor(), sky->GetMieStrength()};
-                effect.parameters[2] = {sky->GetMoonColor(), sky->GetMieAnisotropy()};
-                effect.parameters[3] = {sky->GetGroundColor(), sky->GetOzoneStrength()};
-                effect.parameters[4] = {sky->GetSunIntensity(), sky->GetSunAngularRadius(), sky->GetNightIntensity(),
-                                        sky->GetStarIntensity()};
-                effect.parameters[5] = {sky->GetMoonIntensity(), sky->GetMoonAngularRadius(), 0.0f, 0.0f};
+                const auto &settings = sky->GetSettings();
+                const auto celestial = render::ResolveCelestialState(settings, SunDirection(lighting));
+                render::BasicPostProcessEffect effect{render::BasicPostProcessEffectType::PhysicalSky};
+                effect.exposure = settings.exposure;
+                effect.parameters = render::PackPhysicalSkyParameters(settings, celestial);
+                effect.worldToLocal = glm::mat4(celestial.worldToCelestial);
                 effects.push_back(effect);
             }
 
@@ -91,9 +87,17 @@ namespace PlutoGE::render
                     effect.parameters[2] = {lightDirection, cloud->GetExtinction()};
                     effect.parameters[3] = {glm::max(lighting.directionalColor, glm::vec3(0.0f)),
                                             std::max(lighting.directionalIntensity, 0.0f) * horizonVisibility};
+                    // Daylight fill follows the sun even when the moon is the scattering light.
+                    float ambientLight = cloud->GetAmbientLight();
+                    if (lighting.directionalIsMoon)
+                    {
+                        const float daylight = glm::smoothstep(-0.12f, 0.035f, SunDirection(lighting).y);
+                        ambientLight *= daylight * daylight;
+                    }
                     effect.parameters[4] = {cloud->GetScatteringAlbedo(), cloud->GetAnisotropy(),
-                                            cloud->GetAmbientLight(), cloud->GetBaseNoiseScale()};
-                    effect.parameters[5] = {cloud->GetDetailNoiseScale(), cloud->GetDetailErosion(), 0.0f, 0.0f};
+                                            ambientLight, cloud->GetBaseNoiseScale()};
+                    effect.parameters[5] = {cloud->GetDetailNoiseScale(), cloud->GetDetailErosion(),
+                                            lighting.directionalIsMoon ? 1.0f : 0.0f, 0.0f};
                     const auto *entity = cloud->GetOwner();
                     const glm::mat4 volumeTransform =
                         entity->GetWorldTransform() * glm::scale(glm::mat4(1.0f), cloud->GetSize());
@@ -130,14 +134,20 @@ namespace PlutoGE::render
                 break;
             }
 
-        if (const auto *sky = FindPhysicalSky(scene); sky && lighting.directionalIntensity > 0.0f)
+        if (const auto *sky = FindPhysicalSky(scene))
         {
-            glm::vec3 sunDirection = -lighting.directionalDirection;
+            const glm::vec3 sunDirection = -lighting.directionalDirection;
             if (glm::dot(sunDirection, sunDirection) > 0.000001f)
             {
-                sunDirection = glm::normalize(sunDirection);
-                lighting.directionalColor *= AtmosphericSunTransmittance(*sky, sunDirection);
-                lighting.directionalIntensity *= glm::smoothstep(-0.02f, 0.03f, sunDirection.y);
+                const auto &settings = sky->GetSettings();
+                const auto celestial = render::ResolveCelestialState(settings, sunDirection);
+                const auto light = render::ResolveCelestialLight(settings, celestial, lighting.directionalColor,
+                                                                 lighting.directionalIntensity);
+                lighting.sunDirection = celestial.sunDirection;
+                lighting.directionalIsMoon = light.isMoon;
+                lighting.directionalDirection = light.direction;
+                lighting.directionalColor = light.color;
+                lighting.directionalIntensity = light.intensity;
             }
         }
 
@@ -154,20 +164,7 @@ namespace PlutoGE::render
             return lhs.distanceSquared > rhs.distanceSquared;
         });
         for (auto &cloud : clouds)
-        {
-            if (const auto *sky = FindPhysicalSky(scene); sky && cloud.effect.parameters[2].y <= -0.02f)
-            {
-                auto &effect = cloud.effect;
-                const float sunHeight = effect.parameters[2].y;
-                const float night = 1.0f - glm::smoothstep(-0.31f, -0.04f, sunHeight);
-                const float visibility = night * glm::smoothstep(-0.04f, 0.04f, -sunHeight);
-                effect.parameters[2] = {-glm::vec3(effect.parameters[2]), effect.parameters[2].w};
-                effect.parameters[3] = {sky->GetMoonColor(), sky->GetMoonIntensity() * visibility};
-                // The scattering light is now the moon; ambient still follows the sun.
-                effect.parameters[5].z = 1.0f;
-            }
             atmosphereEffects.push_back(std::move(cloud.effect));
-        }
 
         return atmosphereEffects;
     }

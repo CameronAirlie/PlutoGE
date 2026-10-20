@@ -1400,7 +1400,10 @@ namespace PlutoGE::render
         }
         std::erase_if(basicEffects, [&](const auto &effect) { return !m_graphicsQuality.Allows(effect.type); });
         for (auto &effect : basicEffects)
-            if (HasInput(InputsFor(effect.type), BasicPostProcessInput::Depth))
+            // Atmosphere packets own lane 5 (sky night parameters, the cloud light source).
+            if (HasInput(InputsFor(effect.type), BasicPostProcessInput::Depth) &&
+                effect.type != BasicPostProcessEffectType::PhysicalSky &&
+                effect.type != BasicPostProcessEffectType::VolumetricCloud)
             {
                 effect.parameters[5].z = cameraData.nearPlane;
                 effect.parameters[5].w = cameraData.farPlane;

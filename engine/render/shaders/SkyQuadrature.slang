@@ -1,7 +1,8 @@
 #include "Fullscreen.slang"
+#include "../include/PlutoGE/render/PhysicalSkyLayout.h"
 [[vk::binding(0, 0)]] cbuffer SkyParameters : register(b0, space0)
 {
-    float4 physicalSkyParameters[6];
+    float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
 };
 static const float PI = 3.14159265359;

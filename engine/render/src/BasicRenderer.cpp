@@ -124,7 +124,7 @@ namespace PlutoGE::render
             glm::mat4 view{1.0f};
             glm::mat4 motionViewProjection{1.0f};
             glm::mat4 previousViewProjection{1.0f};
-            std::array<glm::vec4, 6> physicalSkyParameters{};
+            std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
             glm::vec4 temporalClipOffset{0.0f}; // clip jitter xy, temporal accumulation, dither frame
             std::array<glm::vec4, 32> pointPositionRange{};
@@ -140,7 +140,7 @@ namespace PlutoGE::render
             std::array<AmbientProbeVolumeParameters, PLUTO_AMBIENT_PROBE_VOLUMES> probeVolumes{};
             glm::vec4 geometryParameters{}; // Preserve receiver shadow sampling for diagnostic outputs.
         };
-        static_assert(sizeof(BasicFrameParameters) == 6112);
+        static_assert(sizeof(BasicFrameParameters) == 6016 + 16 * PLUTO_SKY_LANE_COUNT);
 
         struct alignas(16) BasicObjectParameters
         {
@@ -174,15 +174,15 @@ namespace PlutoGE::render
         struct alignas(16) ColorOperationParameters
         {
             glm::vec4 control{0.0f};
-            std::array<glm::vec4, 6> parameters{};
+            std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> parameters{};
         };
         struct alignas(16) FusedColorParameters
         {
             glm::vec4 header{0.0f};
             std::array<ColorOperationParameters, kMaxFusedColorOperations> operations{};
         };
-        static_assert(sizeof(ColorOperationParameters) == 112);
-        static_assert(sizeof(FusedColorParameters) == 912);
+        static_assert(sizeof(ColorOperationParameters) == 16 + 16 * PLUTO_POST_PROCESS_LANES);
+        static_assert(sizeof(FusedColorParameters) == 16 + kMaxFusedColorOperations * sizeof(ColorOperationParameters));
 
         int ColorOperationCode(BasicPostProcessEffectType type)
         {
@@ -618,7 +618,7 @@ namespace PlutoGE::render
                 sky.debugName = "Physical sky fixed quadrature";
                 m_skyQuadraturePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(sky));
                 m_skyQuadratureBuffer = rhi::Buffer(device, device.CreateBuffer(
-                    {7 * sizeof(glm::vec4), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
+                    {sizeof(m_skyEnvironmentParameters), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
                 m_skyQuadratureTexture = rhi::Texture(device, device.CreateTexture(
                     {PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment, "Physical sky lighting atlas", true}));
             }
@@ -2137,7 +2137,7 @@ namespace PlutoGE::render
             // Generate before any receiver reads. RHI transitions the render target
             // to sampled usage on binding. Refilter only when sky parameters change.
             ScopedGpuTiming skyTiming(commands, "RHI Sky Quadrature");
-            std::array<glm::vec4, 7> parameters;
+            std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> parameters;
             std::copy(frameParameters.physicalSkyParameters.begin(), frameParameters.physicalSkyParameters.end(), parameters.begin());
             parameters.back() = frameParameters.physicalSkySettings;
             if (!m_skyEnvironmentValid || parameters != m_skyEnvironmentParameters)

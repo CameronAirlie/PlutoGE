@@ -173,4 +173,41 @@ namespace PlutoGE::render
                      GL_DYNAMIC_DRAW);
     }
 
+    bool Mesh::ReplaceGeometry(MeshData data)
+    {
+        if (m_geometryImmutable || !IsValidTriangleList(data)) return false;
+
+        ++m_contentRevision; ++s_contentEpoch;
+        m_tessellated.fill(nullptr);
+        m_meshData = std::move(data);
+        if (!HasValidTangents(m_meshData)) GenerateTangents(m_meshData);
+        m_bounds = ComputeBounds(m_meshData);
+        m_config.data = m_meshData;
+        m_config.hasLightmapUvs = false;
+        m_config.submeshes.assign(1, Submesh{
+            .indexOffset = 0,
+            .indexCount = static_cast<uint32_t>(m_meshData.indices.size()),
+            .materialIndex = 0,
+        });
+        auto &submesh = m_config.submeshes.front();
+        submesh.bounds = m_bounds;
+        submesh.hasBoundsExtents = ComputeBoundsExtents(m_meshData, 0, submesh.indexCount, submesh.boundsMin, submesh.boundsMax);
+        m_hasLightmapUvSourceData = false;
+        m_lightmapUvSourceData = {};
+        m_generatedLightmapUvSubmeshes.clear();
+        m_hasUsablePrimaryUvs = HasUsableUvs(m_meshData, 0, submesh.indexCount, false);
+        m_hasUsableLightmapUvs = HasUsableUvs(m_meshData, 0, submesh.indexCount, true);
+        m_submeshHasUsablePrimaryUvs.assign(1, m_hasUsablePrimaryUvs);
+        m_submeshHasUsableLightmapUvs.assign(1, m_hasUsableLightmapUvs);
+
+        if (!m_VBO) return true; // CPU/RHI meshes need no legacy GL upload.
+        glBindVertexArray(m_VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
+        glBufferData(GL_ARRAY_BUFFER, m_meshData.vertices.size() * sizeof(MeshVertexData), m_meshData.vertices.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_meshData.indices.size() * sizeof(uint32_t), m_meshData.indices.data(), GL_DYNAMIC_DRAW);
+        glBindVertexArray(0);
+        return true;
+    }
+
 }

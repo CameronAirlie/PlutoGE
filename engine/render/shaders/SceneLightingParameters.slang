@@ -5,6 +5,7 @@
 [[vk::binding(31, 0)]] Sampler2D diffuseProbeAtlas : register(t31, space0);
 
 #include "../include/PlutoGE/render/AmbientProbeConfig.h"
+#include "../include/PlutoGE/render/PhysicalSkyLayout.h"
 struct AmbientProbeVolumeParameters
 {
     float4 origin, size, resolutionBase;
@@ -32,7 +33,7 @@ cbuffer CameraParameters : register(b0, space0)
     column_major float4x4 view;
     column_major float4x4 motionViewProjection;
     column_major float4x4 previousViewProjection;
-    float4 physicalSkyParameters[6];
+    float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
     float4 temporalClipOffset; // clip jitter xy, temporal accumulation, dither frame
     float4 pointPositionRange[32];

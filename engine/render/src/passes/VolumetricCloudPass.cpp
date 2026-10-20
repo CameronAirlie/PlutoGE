@@ -1,4 +1,5 @@
 #include "PlutoGE/render/passes/VolumetricCloudPass.h"
+#include "PlutoGE/render/PhysicalSkyModel.h"
 
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
@@ -460,10 +461,11 @@ namespace PlutoGE::render
             for (const auto *root : ctx.scene->GetRootEntities())
                 if (const auto *sky = FindSky(root))
                 {
-                    const float night = 1.0f - glm::smoothstep(-0.31f, -0.04f, sunHeight);
-                    lightDirection = -lightDirection;
+                    const auto celestial = ResolveCelestialState(sky->GetSettings(), lightDirection);
+                    lightDirection = celestial.moonDirection;
                     lightColor = sky->GetMoonColor();
-                    lightIntensity = sky->GetMoonIntensity() * night * glm::smoothstep(-0.04f, 0.04f, -sunHeight);
+                    lightIntensity = sky->GetMoonIntensity() * SkyNight(sunHeight) *
+                                     glm::smoothstep(-0.04f, 0.04f, celestial.moonDirection.y);
                     break;
                 }
         bool hasTemporalAA = false;

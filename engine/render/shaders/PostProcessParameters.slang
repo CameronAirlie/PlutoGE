@@ -1,3 +1,4 @@
+#include "../include/PlutoGE/render/PostProcessLayout.h"
 struct PostProcessParameterBlock
 {
     float exposure;
@@ -7,7 +8,7 @@ struct PostProcessParameterBlock
     float2 inverseResolution;
     float time;
     uint zeroToOneDepth;
-    float4 parameters[6];
+    float4 parameters[PLUTO_POST_PROCESS_LANES];
     column_major float4x4 inverseViewProjection;
     column_major float4x4 view;
     column_major float4x4 projection;

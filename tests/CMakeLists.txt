@@ -158,6 +158,8 @@ add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanFogTests COMMAND PlutoGEVulkanRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanSkyQuadratureTests COMMAND PlutoGEVulkanRhiTests --sky-quadrature)
 add_test(NAME PlutoGEOpenGLSkyQuadratureTests COMMAND PlutoGEOpenGLRhiTests --sky-quadrature)
+add_test(NAME PlutoGEVulkanNightSkyTests COMMAND PlutoGEVulkanRhiTests --night-sky)
+add_test(NAME PlutoGEOpenGLNightSkyTests COMMAND PlutoGEOpenGLRhiTests --night-sky)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)
 add_test(NAME PlutoGEVulkanSkinningTests COMMAND PlutoGEVulkanRhiTests --skinning)
 add_test(NAME PlutoGEOpenGLSkinningTests COMMAND PlutoGEOpenGLRhiTests --skinning)
@@ -254,6 +256,14 @@ add_executable(PlutoGESkeletonAttachmentTests
 pluto_link_engine(PlutoGESkeletonAttachmentTests)
 
 add_test(NAME PlutoGESkeletonAttachmentTests COMMAND PlutoGESkeletonAttachmentTests)
+
+add_executable(PlutoGEMeshRuntimeGeometryTests
+    MeshRuntimeGeometryTests.cpp
+)
+
+pluto_link_engine(PlutoGEMeshRuntimeGeometryTests)
+
+add_test(NAME PlutoGEMeshRuntimeGeometryTests COMMAND PlutoGEMeshRuntimeGeometryTests)
 
 add_executable(PlutoGEFoliageCollisionTests
     FoliageCollisionTests.cpp
@@ -459,6 +469,11 @@ target_link_libraries(PlutoGERmlUiFontRasterTests PRIVATE RmlUi::Core)
 target_include_directories(PlutoGERmlUiFontRasterTests PRIVATE "${CMAKE_SOURCE_DIR}/third_party/rmlui")
 target_compile_definitions(PlutoGERmlUiFontRasterTests PRIVATE PLUTO_FONT_TEST_FILE="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
 add_test(NAME PlutoGERmlUiFontRasterTests COMMAND PlutoGERmlUiFontRasterTests)
+
+add_executable(PlutoGERmlFontRasterScaleTests RmlFontRasterScaleTests.cpp)
+target_include_directories(PlutoGERmlFontRasterScaleTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include)
+target_compile_features(PlutoGERmlFontRasterScaleTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGERmlFontRasterScaleTests COMMAND PlutoGERmlFontRasterScaleTests)
 pluto_link_engine(PlutoGERmlUiAntialiasingTests)
 target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Platform)
 target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
@@ -584,6 +599,10 @@ add_executable(PlutoGESceneCpuCacheTests SceneCpuCacheTests.cpp)
 target_link_libraries(PlutoGESceneCpuCacheTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGESceneCpuCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGESceneCpuCacheTests COMMAND PlutoGESceneCpuCacheTests)
+
+add_executable(PlutoGEPhysicalSkyModelTests PhysicalSkyModelTests.cpp)
+pluto_link_engine(PlutoGEPhysicalSkyModelTests)
+add_test(NAME PlutoGEPhysicalSkyModelTests COMMAND PlutoGEPhysicalSkyModelTests)
 
 add_executable(PlutoGEDirectionalShadowReachTests DirectionalShadowReachTests.cpp)
 target_link_libraries(PlutoGEDirectionalShadowReachTests PRIVATE PlutoGE::Scene)

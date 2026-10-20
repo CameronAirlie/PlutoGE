@@ -1,6 +1,7 @@
 #include "PlutoGE/render/passes/PhysicalSkyPass.h"
 
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/PhysicalSkyModel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
@@ -76,6 +77,7 @@ namespace PlutoGE::render
                 uniform mat4 uInverseViewProjection;
                 uniform vec3 uCameraPosition;
                 uniform vec3 uSunDirection;
+                uniform vec3 uMoonDirection;
                 uniform vec3 uSunColor;
                 uniform vec3 uMoonColor;
                 uniform vec3 uGroundColor;
@@ -188,7 +190,7 @@ namespace PlutoGE::render
                     float sunHalo = pow(max(cosine, 0.0), 512.0) * day;
                     sky += uSunColor * uSunIntensity * (sunDisc + sunHalo * 0.08) * sunTransmittance;
 
-                    vec3 moonDirection = -sunDirection;
+                    vec3 moonDirection = normalize(uMoonDirection);
                     float moonCosine = dot(direction, moonDirection);
                     float moonHeight = moonDirection.y;
                     float moonRadius = radians(max(uMoonAngularRadius, 0.01));
@@ -230,9 +232,13 @@ namespace PlutoGE::render
             return glm::dot(direction, direction) > 0.000001f ? glm::normalize(direction) : glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
+        // The legacy pipeline draws the moon where the RHI sky does, but keeps
+        // its simpler appearance; night lighting is RHI-only.
         void SetSkyUniforms(Shader &shader, const scene::PhysicalSkyComponent &sky, const glm::vec3 &sunDirection)
         {
-            shader.SetUniform("uSunDirection", sunDirection);
+            const auto celestial = ResolveCelestialState(sky.GetSettings(), sunDirection);
+            shader.SetUniform("uSunDirection", celestial.sunDirection);
+            shader.SetUniform("uMoonDirection", celestial.moonDirection);
             shader.SetUniform("uSunColor", sky.GetSunColor());
             shader.SetUniform("uMoonColor", sky.GetMoonColor());
             shader.SetUniform("uGroundColor", sky.GetGroundColor());

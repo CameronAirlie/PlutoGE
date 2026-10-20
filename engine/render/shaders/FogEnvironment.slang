@@ -28,9 +28,8 @@ float3 horizonHazeLighting(float3 rayDirection, float ambient, float3 sunlight, 
         // Sample the actual sky at this azimuth; exclude the sun disc, which
         // must not turn the haze band into a second sun. Follow sky exposure.
         const float3 skyHorizon = samplePhysicalSkyEnvironment(horizonDirection, 0.0);
-        const float daylight = smoothstep(-0.09, 0.035, physicalSkyParameters[0].y);
-        const float3 diffuseSun = max(physicalSkyParameters[1].rgb, 0.0) *
-            max(physicalSkyParameters[4].x, 0.0) * daylight * 0.02;
+        const PhysicalSky sky = decodeFramePhysicalSky();
+        const float3 diffuseSun = sky.sunColor * sky.sunIntensity * sky.day * 0.02;
         const float3 horizon = skyHorizon + diffuseSun;
         const float3 distantAir = skyHorizon + diffuseSun * float3(0.25, 0.5, 1.0);
         const float below = smoothstep(0.0, sin(radians(clamp(widthDegrees * 3.0, 0.3, 80.0))),

@@ -3293,30 +3293,6 @@ namespace PlutoGE::scene
             return generatedCount;
         }
 
-        // Match PhysicalSkyEnvironment.slang's broad sky radiance (the directional
-        // light owns the solar disk). Snapshot parameters before worker threads start.
-        glm::vec3 SampleProbeSky(const PhysicalSkyComponent &sky, glm::vec3 sun, glm::vec3 d)
-        {
-            const float day = glm::smoothstep(-0.09f, 0.035f, sun.y);
-            const float night = 1-glm::smoothstep(-0.31f, -0.04f, sun.y);
-            const float twilight = glm::smoothstep(-0.31f, -0.02f, sun.y)*(1-glm::smoothstep(0.02f, 0.22f, sun.y));
-            const glm::vec3 rayleigh = glm::vec3(0.028f,0.067f,0.155f)*sky.GetRayleighStrength();
-            const glm::vec3 mie(sky.GetMieStrength()*0.035f);
-            const glm::vec3 extinction = rayleigh+mie+glm::vec3(0.004f,0.012f,0.002f)*sky.GetOzoneStrength();
-            const glm::vec3 viewT = glm::exp(-extinction/(std::max(d.y,0.001f)+0.075f));
-            const glm::vec3 sunT = glm::exp(-extinction/std::max(sun.y+0.075f,0.04f));
-            const float cosine = glm::dot(d,sun), g = std::clamp(sky.GetMieAnisotropy(),-0.95f,0.95f);
-            const float phaseR = 3*(1+cosine*cosine)/(16*3.14159265f);
-            const float phaseM = (1-g*g)/(4*3.14159265f*std::pow(std::max(1+g*g-2*g*cosine,0.0001f),1.5f));
-            glm::vec3 color = (rayleigh*phaseR+mie*phaseM)*(1.0f-viewT)/glm::max(extinction,glm::vec3(0.0001f))*sunT*sky.GetSunColor()*sky.GetSunIntensity()*day;
-            color += glm::vec3(1,0.12f,0.018f)*twilight*twilight*std::pow(1-std::clamp(d.y,0.0f,1.0f),5.0f)*(0.02f+std::pow(std::max(cosine,0.0f),12.0f)*0.16f)*sky.GetSunIntensity();
-            color += glm::mix(glm::vec3(0.002f,0.003f,0.009f),glm::vec3(0.012f,0.022f,0.06f),std::pow(std::clamp(d.y,0.0f,1.0f),0.35f))*sky.GetNightIntensity()*night;
-            const float moonCosine = glm::dot(d,-sun), moonRadius = glm::radians(std::max(sky.GetMoonAngularRadius(),0.01f));
-            color += sky.GetMoonColor()*sky.GetMoonIntensity()*night*glm::smoothstep(-0.04f,0.04f,-sun.y)*(glm::smoothstep(std::cos(moonRadius*1.25f),std::cos(moonRadius),moonCosine)+std::pow(std::max(moonCosine,0.0f),256.0f)*0.08f);
-            color = glm::mix(sky.GetGroundColor()*glm::mix(sky.GetNightIntensity()*0.1f,1.0f,day),color,glm::smoothstep(-0.08f,0.015f,d.y));
-            return glm::max(color*sky.GetExposure(),glm::vec3(0));
-        }
-
         BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights,
                                           const std::vector<BakeTriangle> &triangles,
                                           const BakeAccelerationStructure &acceleration,
@@ -3564,9 +3540,12 @@ namespace PlutoGE::scene
                     auto &environment=preparedBake.probeEnvironments[count];
                     const auto directions=GenerateSphereDirections(count);
                     environment.reserve(directions.size());
+                    // Broad sky radiance matching the GPU environment; the
+                    // directional light owns the sun and moon discs.
+                    const auto celestial = sky ? render::ResolveCelestialState(sky->GetSettings(), sun) : render::CelestialState{};
                     for (auto d : directions) {
                         glm::vec3 radiance(0);
-                        if (sky) radiance = SampleProbeSky(*sky,sun,d);
+                        if (sky) radiance = render::EvaluatePhysicalSkyEnvironment(sky->GetSettings(), celestial, d);
                         else if (!pixels.empty() && map->GetWidth() > 0) {
                             const auto a = glm::abs(d); int face; glm::vec2 uv;
                             if (a.x >= a.y && a.x >= a.z) { face=d.x>=0?0:1; uv={d.x>=0?-d.z:d.z,-d.y}; uv/=a.x; }

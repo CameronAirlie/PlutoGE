@@ -254,6 +254,8 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshEmission;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshEmission;
+    private static delegate* unmanaged[Cdecl]<uint, float*, float*, float*, int, uint*, int, int> _setMeshGeometry;
+    private static delegate* unmanaged[Cdecl]<uint, void> _clearMeshGeometry;
     private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipCount;
     private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipIndex;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationClipIndex;
@@ -883,6 +885,24 @@ internal static unsafe partial class ScriptBridge
         _setMeshColor = setMeshColor;
         _getMeshEmission = getMeshEmission;
         _setMeshEmission = setMeshEmission;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    /// <summary>Optional: hosts built before runtime mesh geometry never call it, and the API then reports false.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterMeshGeometryApi")]
+    public static int RegisterMeshGeometryApi(
+        delegate* unmanaged[Cdecl]<uint, float*, float*, float*, int, uint*, int, int> setMeshGeometry,
+        delegate* unmanaged[Cdecl]<uint, void> clearMeshGeometry)
+    {
+        if (setMeshGeometry == null || clearMeshGeometry == null)
+        {
+            SetError("Managed mesh geometry API registration received a null function pointer.");
+            return 0;
+        }
+
+        _setMeshGeometry = setMeshGeometry;
+        _clearMeshGeometry = clearMeshGeometry;
         _lastError = string.Empty;
         return 1;
     }
@@ -2414,6 +2434,35 @@ internal static unsafe partial class ScriptBridge
         }
 
         _setMeshEmission(entityId, NativeVector3.FromManaged(emission));
+    }
+
+    internal static bool IsMeshGeometrySupported => _setMeshGeometry != null;
+
+    internal static bool SetMeshGeometry(uint entityId, ReadOnlySpan<Vector3> positions, ReadOnlySpan<Vector3> normals,
+        ReadOnlySpan<Vector2> uvs, ReadOnlySpan<uint> indices)
+    {
+        if (_setMeshGeometry == null)
+        {
+            return false;
+        }
+
+        // Vector3/Vector2 are tightly packed floats, matching the native xyz/uv arrays.
+        fixed (Vector3* positionData = positions)
+        fixed (Vector3* normalData = normals)
+        fixed (Vector2* uvData = uvs)
+        fixed (uint* indexData = indices)
+        {
+            return _setMeshGeometry(entityId, (float*)positionData, normals.IsEmpty ? null : (float*)normalData,
+                uvs.IsEmpty ? null : (float*)uvData, positions.Length, indexData, indices.Length) != 0;
+        }
+    }
+
+    internal static void ClearMeshGeometry(uint entityId)
+    {
+        if (_clearMeshGeometry != null)
+        {
+            _clearMeshGeometry(entityId);
+        }
     }
 
     internal static int GetAnimationClipCount(uint entityId) => _getAnimationClipCount == null ? 0 : _getAnimationClipCount(entityId);

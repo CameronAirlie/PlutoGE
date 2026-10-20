@@ -5,6 +5,7 @@
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
 #include "SkyQuadratureChecks.h"
+#include "NightSkyChecks.h"
 #include "ShaderGraphRenderingChecks.h"
 #include "SourceTextureRefreshRenderingChecks.h"
 #include "OutlineRenderingChecks.h"
@@ -556,6 +557,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                     return pixels;
                 });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--night-sky")
+        {
+            CheckNightSky(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--fog-only")

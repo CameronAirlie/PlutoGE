@@ -1,5 +1,6 @@
 #include "VirtualShadowCommon.slang"
 #include "VirtualShadowSampling.slang"
+#include "../include/PlutoGE/render/PhysicalSkyLayout.h"
 // Prefix of BasicFrameParameters, shared with the opaque lighting pass.
 [[vk::binding(7, 0)]] cbuffer SceneLighting : register(b7, space0)
 {
@@ -21,7 +22,7 @@
     column_major float4x4 view;
     column_major float4x4 motionViewProjection;
     column_major float4x4 previousViewProjection;
-    float4 physicalSkyParameters[6];
+    float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
 };
 [[vk::binding(8, 0)]] Sampler2D shadowTexture0 : register(t8, space0);

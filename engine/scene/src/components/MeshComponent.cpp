@@ -1384,6 +1384,49 @@ namespace PlutoGE::scene
         return true;
     }
 
+    bool MeshComponent::SetRuntimeGeometry(render::MeshData data)
+    {
+        if (!render::Mesh::IsValidTriangleList(data)) return false;
+        if (!m_runtimeGeometryActive)
+        {
+            m_runtimeGeometrySource = m_mesh;
+            m_runtimeGeometryActive = true;
+        }
+        if (data.indices.empty())
+        {
+            SetMesh(nullptr);
+            return true;
+        }
+        // The mesh object lives as long as the component, so renderer caches
+        // keyed by it only see content revisions, never a reused address.
+        if (!m_runtimeGeometry)
+        {
+            render::MeshConfig config;
+            config.data = std::move(data);
+            m_runtimeGeometry.reset(render::Mesh::CreateInitialized(config));
+        }
+        else if (!m_runtimeGeometry->ReplaceGeometry(std::move(data)))
+        {
+            return false;
+        }
+        SetSubmeshRange(-1, 1);
+        if (m_mesh != m_runtimeGeometry.get()) SetMesh(m_runtimeGeometry.get());
+        else
+        {
+            RefreshMeshDerivedState();
+            MarkRenderCommandsDirty();
+        }
+        return true;
+    }
+
+    void MeshComponent::ClearRuntimeGeometry()
+    {
+        if (!m_runtimeGeometryActive) return;
+        m_runtimeGeometryActive = false;
+        SetMesh(m_runtimeGeometrySource);
+        m_runtimeGeometrySource = nullptr;
+    }
+
     void MeshComponent::Update(float deltaTime)
     {
         (void)deltaTime;

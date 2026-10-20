@@ -148,9 +148,34 @@ and several output resolutions on the intended hardware.
 ## Physical sky and volumetric clouds
 
 PhysicalSkyComponent exposes Rayleigh/Mie scattering, ozone, sun and moon colors
-and intensity, exposure, and night/star controls. Tune the sky alongside the scene's
-directional lighting; changing sky appearance alone is not a complete scripted
-day/night gameplay system.
+and intensity, exposure, and night-sky controls. The sun follows the scene's
+directional light; rotate that light to change the time of day. Everything at
+night follows from it:
+
+- **Moon.** With *Moon Placement* set to Orbit, the moon trails the sun by
+  *Moon Phase* (0 new, 0.5 full) and rises and sets with it. Manual placement
+  fixes it by *Moon Azimuth* and *Moon Elevation*. The disc shows the correct
+  phase for the sun's position, plus *Moon Earthshine* on the dark side.
+- **Moonlight.** With *Moon Casts Light* on, the directional light switches to
+  the moon once the sun has set, including its shadows. *Moon Light Intensity*
+  is full-moon illuminance as a fraction of the sun light's intensity; it dims
+  with the phase. *Moon Sky Intensity* controls the moonlit blue of the sky.
+- **Stars and night glow.** *Star Intensity*, *Star Twinkle* and *Milky Way
+  Intensity* control the star field, which turns with the sun. *Night
+  Intensity* is airglow. *Light Pollution Color/Intensity* adds a city glow
+  near the horizon.
+- **Celestial frame.** *Latitude* sets the pole's height above north, *North
+  Azimuth* the world heading of north (0 is -Z), and *Star Rotation* the
+  season. Match these to how your directional light moves.
+
+Changing sky appearance alone is not a complete scripted day/night gameplay
+system; drive the directional light from your own time-of-day logic. See
+[night sky rendering](../NIGHT_SKY.md) for the model and extension points.
+
+**Example: a moonlit night.** Point the directional light about 30 degrees
+below the horizon and leave Moon Phase at 0.5. Raise Moon Light Intensity if
+the scene is too dark for play, and tune Exposure rather than the sun light's
+intensity, which also sets the moon's brightness.
 
 **Example: a clear outdoor level.** Start from the sky defaults and establish a
 readable sun direction and exposure. Add clouds only after terrain and character

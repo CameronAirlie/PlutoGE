@@ -2,6 +2,8 @@
 
 #include <memory>
 #include "PlutoGE/render/RmlElementLookup.h"
+#include "PlutoGE/render/RmlFontRasterScale.h"
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -183,6 +185,9 @@ namespace PlutoGE::render
         std::unordered_map<std::string, bool> m_documentUsesBackdrop;
         std::unordered_map<std::string, std::string> m_generatedDocumentSources;
         std::unordered_map<std::string, std::string> m_resolvedGeneratedFonts;
+        // Mirrors the process-wide RmlUi atlas density, so runtime resets keep it.
+        RmlFontRasterScale m_fontRasterScale;
+        std::chrono::steady_clock::time_point m_lastFontRasterUpdate{};
         std::unordered_map<std::string, glm::vec4> m_documentProjectionState;
         std::unordered_map<std::string, glm::vec2> m_documentSizes;
         std::unordered_map<std::string, WorldSurfaceTarget> m_worldSurfaceTargets;

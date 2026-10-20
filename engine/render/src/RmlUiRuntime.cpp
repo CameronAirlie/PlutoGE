@@ -962,12 +962,22 @@ namespace PlutoGE::render
         discoveryScope.End();
 
         // Canvas transforms enlarge geometry without requesting larger font
-        // faces. Match the atlas to the largest active canvas and the RHI's 2x
+        // faces. Match the atlas to the largest drawn canvas and the RHI's 2x
         // antialiasing surface, retaining RmlUi's original layout measurements.
-        float fontRasterScale = m_rhiRenderer ? 2.0f : 1.0f;
+        // Hidden and off-screen documents draw no text, and distance-scaled
+        // projected labels change scale continuously; RmlFontRasterScale keeps
+        // them from repeatedly releasing every font atlas.
+        const float supersampling = m_rhiRenderer ? 2.0f : 1.0f;
+        float fontRasterScale = supersampling;
         for (const auto &[key, request] : requestedDocuments)
-            fontRasterScale = std::max(fontRasterScale, request.scale * (m_rhiRenderer ? 2.0f : 1.0f));
-        PlutoGE_SetRmlUiFontRasterScale(fontRasterScale);
+            if (request.visible && request.inFrontOfCamera)
+                fontRasterScale = std::max(fontRasterScale, request.scale * supersampling);
+        const auto now = std::chrono::steady_clock::now();
+        const float elapsedSeconds = m_lastFontRasterUpdate == std::chrono::steady_clock::time_point{}
+            ? 0.0f
+            : std::chrono::duration<float>(now - m_lastFontRasterUpdate).count();
+        m_lastFontRasterUpdate = now;
+        PlutoGE_SetRmlUiFontRasterScale(static_cast<float>(m_fontRasterScale.Update(fontRasterScale, elapsedSeconds)));
 
         for (auto it = m_worldSurfaceTargets.begin(); it != m_worldSurfaceTargets.end();)
         {

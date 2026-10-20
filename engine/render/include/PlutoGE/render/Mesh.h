@@ -697,6 +697,17 @@ namespace PlutoGE::render
         const MeshData &GetMeshData() const { return m_meshData; }
         Mesh *GetTessellated(unsigned level);
         void UpdateVertexData(const std::vector<MeshVertexData> &vertices);
+        // Replaces vertices and indices of a runtime mesh (one submesh, material
+        // slot 0, no LODs). Renderers re-upload through the content revision.
+        bool ReplaceGeometry(MeshData data);
+        // True for a triangle list whose indices all address its vertices.
+        static bool IsValidTriangleList(const MeshData &data)
+        {
+            if (data.indices.size() % 3 != 0) return false;
+            for (const auto index : data.indices)
+                if (index >= data.vertices.size()) return false;
+            return true;
+        }
         GLuint GetVAO() const { return m_VAO; }
 
         // protected:

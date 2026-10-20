@@ -316,6 +316,25 @@ Properties: `Intensity`, `Color`.
 
 Properties: `Static`, `Color`, `Emission`.
 
+`SetGeometry(positions, indices, normals = default, uvs = default)` replaces the drawn mesh with a script-built
+triangle list in the entity's local space, for geometry rebuilt at runtime (vision cones, trails, area markers).
+The component keeps its materials. The first call creates a mesh owned by the component; later calls replace its
+contents in place (renderers re-upload through the content revision), so rebuilding several times a second is
+fine. Normals and uvs are optional; missing normals are smoothed from the triangles and tangents are always
+generated. An empty triangle list draws nothing. `ClearGeometry()` restores the mesh the component had before.
+The geometry is not saved with the scene. Spans let you pass pooled lists without copying:
+
+```csharp
+var mesh = marker.GetComponent<MeshComponent>()!;
+mesh.SetGeometry(CollectionsMarshal.AsSpan(positions), CollectionsMarshal.AsSpan(indices),
+                 uvs: CollectionsMarshal.AsSpan(uvs));
+```
+
+`SetGeometry` returns false for invalid input (an index past the vertices, a partial triangle, non-finite
+positions, normal/uv counts that differ from the positions) and on hosts built before the API;
+`MeshComponent.SupportsGeometry` reports which. Native: `MeshComponent::SetRuntimeGeometry` and
+`render::Mesh::ReplaceGeometry` (tested by `PlutoGEMeshRuntimeGeometryTests`).
+
 ### AnimationComponent
 
 Properties: `ClipCount` (read-only), `ClipIndex`, `Playing`, `Looping`, `Autoplay`, `Speed`, and `Time`.

@@ -30,6 +30,7 @@
 #include "GpuSkinningChecks.h"
 #include "BufferUploadChecks.h"
 #include "SkyQuadratureChecks.h"
+#include "NightSkyChecks.h"
 #include "SsrRenderingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
@@ -118,6 +119,7 @@ int main(int argc, char **argv)
         loadPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
+        loadPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
         shaders.volumetricTrace[0].vertex.spirv = ReadSpirv("VolumetricFogTrace.vertex.spv");
         shaders.volumetricTrace[0].fragment.spirv = ReadSpirv("VolumetricFogTrace.fragment.spv");
         shaders.volumetricComposite.vertex.spirv = ReadSpirv("VolumetricComposite.vertex.spv");
@@ -392,6 +394,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--sky-quadrature")
         {
             CheckSkyQuadrature(device, shaders, [&](auto texture, auto, auto) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--night-sky")
+        {
+            CheckNightSky(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--fog-only")

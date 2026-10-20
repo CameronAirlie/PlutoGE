@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/PostProcessLayout.h"
+
 #include <glm/glm.hpp>
 
 #include <array>
@@ -18,12 +20,12 @@ namespace PlutoGE::render
         glm::vec2 inverseResolution{0.0f};
         float time = 0.0f;
         std::uint32_t zeroToOneDepth = 0;
-        std::array<glm::vec4, 6> parameters{};
+        std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> parameters{};
         glm::mat4 inverseViewProjection{1.0f};
         glm::mat4 view{1.0f};
         glm::mat4 projection{1.0f};
         glm::vec4 cameraPosition{0.0f};
         glm::mat4 worldToLocal{1.0f};
     };
-    static_assert(sizeof(BasicPostProcessParameters) == 400);
+    static_assert(sizeof(BasicPostProcessParameters) == 304 + 16 * PLUTO_POST_PROCESS_LANES);
 }

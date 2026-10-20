@@ -1,3 +1,4 @@
+#include "../include/PlutoGE/render/PostProcessLayout.h"
 // Shared by standalone and fused passes; keep authored operation order.
 float3 aces(float3 value)
 {
@@ -14,7 +15,7 @@ float colorGrain(float2 pixel, float time)
     return frac(sin(dot(pixel + time, float2(12.9898, 78.233))) * 43758.5453);
 }
 
-float3 applyColorGrading(float3 color, float2 uv, float2 pixel, float time, float4 parameters[6])
+float3 applyColorGrading(float3 color, float2 uv, float2 pixel, float time, float4 parameters[PLUTO_POST_PROCESS_LANES])
 {
     const float4 primary = parameters[0]; // brightness, contrast, saturation, temperature
     const float4 secondary = parameters[1]; // tint, vibrance, lift, grading gamma

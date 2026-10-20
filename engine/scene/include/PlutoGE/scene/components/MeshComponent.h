@@ -69,6 +69,12 @@ namespace PlutoGE::scene
         bool UsesRetainedGeometry(const render::Mesh *baseline) const
         { return m_mesh == baseline || (m_lightmapGeometry && m_mesh == m_lightmapGeometry.get() && m_lightmapGeometrySource == baseline); }
         void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
+        // Script-built geometry (vision cones, trails) owned by this component.
+        // Later calls replace it in place; an empty triangle list draws nothing.
+        // Clearing restores the mesh the component had before. Not serialized.
+        bool SetRuntimeGeometry(render::MeshData data);
+        void ClearRuntimeGeometry();
+        bool HasRuntimeGeometry() const { return m_runtimeGeometryActive; }
         bool GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices);
         void SetStatic(bool isStatic)
         {
@@ -295,6 +301,9 @@ namespace PlutoGE::scene
         std::unique_ptr<render::Mesh> m_lightmapGeometry;
         render::Mesh *m_lightmapGeometrySource = nullptr;
         std::vector<std::unique_ptr<render::Mesh>> m_retiredLightmapGeometry;
+        std::unique_ptr<render::Mesh> m_runtimeGeometry;
+        render::Mesh *m_runtimeGeometrySource = nullptr;
+        bool m_runtimeGeometryActive = false;
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;

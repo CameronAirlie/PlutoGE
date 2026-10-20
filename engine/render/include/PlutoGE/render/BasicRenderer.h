@@ -8,6 +8,7 @@
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/OceanParameters.h"
+#include "PlutoGE/render/PhysicalSkyLayout.h"
 
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/VctRelighting.h"
@@ -456,7 +457,12 @@ namespace PlutoGE::render
         // the background and surface lighting cannot drift apart.
         bool physicalSkyEnabled = false;
         float physicalSkyExposure = 1.0f;
-        std::array<glm::vec4, 6> physicalSkyParameters{};
+        std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
+        // A physical sky may hand the directional light to the moon at night.
+        // Atmosphere passes still need the sun: zero means the directional
+        // light is the sun, so sunDirection is -directionalDirection.
+        glm::vec3 sunDirection{0.0f};
+        bool directionalIsMoon = false;
         glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
         float directionalIntensity = 1.0f;
         glm::vec3 directionalColor{1.0f};
@@ -510,7 +516,7 @@ namespace PlutoGE::render
         // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
         // VCT uses lane 2.z for trace divisor and lane 4.w for local injection.
         // Lane 5.x is local gain minus one; 5.y is secondary bounce (0 disables).
-        std::array<glm::vec4, 6> parameters{};
+        std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
         // Volumetric trace resolution; 1 retains the full-resolution reference.
@@ -767,7 +773,7 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 3> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
-        std::array<glm::vec4, 7> m_skyEnvironmentParameters{};
+        std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};
         bool m_skyEnvironmentValid = false;
         rhi::Texture m_glassDepthCopy;
         rhi::Buffer m_glassReflectionBuffer;
@@ -928,7 +934,7 @@ namespace PlutoGE::render
         bool m_vctHistoryValid = false;
         std::uint32_t m_vctTraceParity = 0;
         // Settings of the last trace; the untraced checkerboard half is only reusable while they hold.
-        std::array<glm::vec4, 6> m_vctTraceSettings{};
+        std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> m_vctTraceSettings{};
         std::uint32_t m_vctTraceQuality = 0;
         std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};

@@ -152,6 +152,14 @@ changing buckets releases font resources through RmlUi so existing documents
 refresh their text geometry. Enlarging the canvas therefore uses finer glyph
 coverage instead of magnifying the original low-resolution font bitmap.
 
+A bucket change restyles every document and can take tens of milliseconds, so
+`RmlFontRasterScale` limits how often it happens. Only visible, on-screen
+documents set the requirement. Density rises once glyphs would be magnified by
+more than 10%, and falls only after a lower requirement has lasted three
+seconds. Distance-scaled projected labels can therefore move across a bucket
+boundary without causing a hitch on every crossing. `PlutoGERmlFontRasterScaleTests`
+covers the policy.
+
 Bitmap/color glyphs and glyphs too large for the atlas retain their original
 rendering. Unique font-effect textures also retain their original resolution;
 shared-atlas shadows use the denser base glyphs. Atlas memory grows with the

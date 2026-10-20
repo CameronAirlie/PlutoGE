@@ -1,10 +1,11 @@
+#include "../include/PlutoGE/render/PostProcessLayout.h"
 #include "Fullscreen.slang"
 #include "ColorOperations.slang"
 
 struct ColorOperation
 {
     float4 control; // type: 0 tone map, 1 gamma, 2 grading; exposure, gamma, reserved
-    float4 parameters[6];
+    float4 parameters[PLUTO_POST_PROCESS_LANES];
 };
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0)
 {

@@ -11,6 +11,8 @@ the OpenGL compatibility default. New projects inherit the active editor API.
 
 For automated local ambient lighting and sparse reflection captures, see
 [ambient probe grids](ambient-probe-grids.md).
+For the sky at night (moon phases, moonlight handoff and stars), see
+[night sky rendering](NIGHT_SKY.md).
 
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
 Vulkan scene rendering uses `RhiSceneRenderer`/`BasicRenderer`; the engine also

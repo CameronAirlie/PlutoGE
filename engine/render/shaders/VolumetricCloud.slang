@@ -227,8 +227,9 @@ float4 integrateCloud(FullscreenVertexOutput input)
                         (12.56637061 * pow(max(1.0 + anisotropy * anisotropy - 2.0 * anisotropy * cosine, 0.0001), 1.5));
     // Fade the uniform daylight fill early in twilight. At night, the
     // directional moon term supplies illumination without an emissive floor.
-    const float sunHeight = lightDirection.y * (pass.parameters[5].z > 0.5 ? -1.0 : 1.0);
-    const float daylight = smoothstep(-0.12, 0.035, sunHeight);
+    // Lane 5.z marks a non-solar light; the CPU then pre-scales the fill by
+    // the sun's daylight, which this light direction cannot provide.
+    const float daylight = pass.parameters[5].z > 0.5 ? 1.0 : smoothstep(-0.12, 0.035, lightDirection.y);
     const float ambientLight = pass.parameters[4].z * daylight * daylight;
     for (uint index = 0; index < 128u; ++index)
     {

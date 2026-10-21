@@ -3814,11 +3814,22 @@ namespace PlutoGE::ui
                         }
                         else if (auto *scriptComponent = dynamic_cast<scene::ScriptComponent *>(componentPtr))
                         {
+                            const std::string previousSource = scriptComponent->GetSource();
+                            const auto previousValues = scriptComponent->GetFieldValuesSnapshot();
                             if (RenderScriptComponentEditor(*scriptComponent, *entity))
                             {
-                                entity->AddPrefabOverride("Component:ScriptComponent:Source");
+                                if (scriptComponent->GetSource() != previousSource)
+                                    entity->AddPrefabOverride("Component:ScriptComponent:Source");
+                                for (const auto &[name, value] : scriptComponent->GetFieldValuesSnapshot())
+                                {
+                                    const auto previous = previousValues.find(name);
+                                    if (previous == previousValues.end() || previous->second != value)
+                                        entity->AddPrefabOverride("Component:ScriptComponent:" + name);
+                                }
                                 editorShell.MarkSceneDirty();
                             }
+                            // The script editor draws Source and every field itself; skip the generic property list.
+                            propertiesProvided = true;
                         }
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {

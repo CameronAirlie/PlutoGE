@@ -970,6 +970,21 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                         graphState);
 #endif
 #include "SurfaceCoverage.slang"
+    // Unlit graphs output colour + emission only (see the end of this function). The flag is graph data, not a
+    // compile-time constant, so return before lighting, probes and the transparent fog march instead of computing
+    // and discarding them; the branch is uniform per draw.
+    if (shaderGraph.header.y != 0)
+    {
+        FragmentOutput output = (FragmentOutput)0;
+        output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
+        output.normal = float4(normal * 0.5 + 0.5, 1.0);
+        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
+        output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
+                               input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0.0, 1.0);
+        output.albedo = sampledColor;
+        output.debug = float4(saturate(input.objectDebug), 0.0, 1.0, 1.0);
+        return output;
+    }
     if (!transparentPass && (pointParameters.w == 4.0 || pointParameters.w == 10.0))
     {
         // Retain material evaluation, alpha coverage, MRT bandwidth and motion;

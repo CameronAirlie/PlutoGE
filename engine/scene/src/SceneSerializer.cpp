@@ -24,6 +24,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
+#include "PlutoGE/scene/components/RagdollTuningComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
@@ -251,6 +252,8 @@ namespace PlutoGE::scene
             }
             if (dynamic_cast<const ActiveRagdollComponent *>(&component))
                 return "ActiveRagdollComponent";
+            if (dynamic_cast<const RagdollTuningComponent *>(&component))
+                return "RagdollTuningComponent";
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
             {
                 return "SkeletonAttachmentComponent";
@@ -368,6 +371,8 @@ namespace PlutoGE::scene
             }
             if (componentType == "ActiveRagdollComponent")
                 return std::make_unique<ActiveRagdollComponent>();
+            if (componentType == "RagdollTuningComponent")
+                return std::make_unique<RagdollTuningComponent>();
             if (componentType == "SkeletonAttachmentComponent")
             {
                 return std::make_unique<SkeletonAttachmentComponent>();

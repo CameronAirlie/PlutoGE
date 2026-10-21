@@ -12,6 +12,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
+#include "PlutoGE/scene/components/RagdollTuningComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -200,6 +201,7 @@ namespace PlutoGE::ui
             IK = 32,
             SkeletonAttachment = 33,
             AmbientLightVolume = 34,
+            RagdollTuning = 35,
         };
 
         struct ScriptAssetOption
@@ -1295,6 +1297,10 @@ namespace PlutoGE::ui
             {
                 return "Active Ragdoll Component";
             }
+            if (dynamic_cast<const scene::RagdollTuningComponent *>(&component))
+            {
+                return "Ragdoll Tuning Component";
+            }
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
             {
                 return "Skeleton Attachment Component";
@@ -1397,6 +1403,8 @@ namespace PlutoGE::ui
                 return "AnimationComponent";
             if (dynamic_cast<const scene::ActiveRagdollComponent *>(&component))
                 return "ActiveRagdollComponent";
+            if (dynamic_cast<const scene::RagdollTuningComponent *>(&component))
+                return "RagdollTuningComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
             if (dynamic_cast<const scene::SequencerComponent *>(&component))
@@ -1546,6 +1554,9 @@ namespace PlutoGE::ui
             case AddableComponentType::ActiveRagdoll:
                 return entity.HasComponent<scene::AnimationComponent>() &&
                        !entity.HasComponent<scene::ActiveRagdollComponent>();
+            case AddableComponentType::RagdollTuning:
+                return entity.HasComponent<scene::AnimationComponent>() &&
+                       !entity.HasComponent<scene::RagdollTuningComponent>();
             case AddableComponentType::Sequencer:
                 return !entity.HasComponent<scene::SequencerComponent>();
             case AddableComponentType::IK:
@@ -1644,6 +1655,7 @@ namespace PlutoGE::ui
             {
                 renderItem("Animation", AddableComponentType::Animation);
                 renderItem("Active Ragdoll", AddableComponentType::ActiveRagdoll);
+                renderItem("Ragdoll Tuning", AddableComponentType::RagdollTuning);
                 renderItem("Two Bone IK Rig", AddableComponentType::IK);
                 renderItem("Skeleton Attachment", AddableComponentType::SkeletonAttachment);
                 if (!search.IsActive())
@@ -1800,6 +1812,9 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::ActiveRagdoll:
                 entity.CreateComponent<scene::ActiveRagdollComponent>();
+                break;
+            case AddableComponentType::RagdollTuning:
+                entity.CreateComponent<scene::RagdollTuningComponent>();
                 break;
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();

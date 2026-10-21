@@ -5,12 +5,15 @@ optionally drive that ragdoll toward its animated pose. The result remains fully
 physical: collisions and impulses can displace the character while joint motors
 and a root controller try to recover the requested pose.
 
-The system is split between two components:
+The system is split between three components:
 
 - `AnimationComponent` owns ragdoll creation, destruction, impulses, and the
   blend between the animated and simulated skinning poses.
 - `ActiveRagdollComponent` configures the physical controller that makes an
   enabled ragdoll follow the entity transform and current animation.
+- `RagdollTuningComponent` (optional) tunes a humanoid's body: its mass, muscle
+  strength and tone, and joint damping and friction. See
+  [Humanoid bodies](#humanoid-bodies).
 
 This separation allows the same ragdoll to switch between passive and active
 behaviour without rebuilding the entity's component layout.
@@ -41,7 +44,8 @@ bones, IK helpers, and attachment joints remain animation-driven beneath their
 nearest physical parent. Unknown rigs fall back to a complete representation so
 they remain functional. Parent and child physical bodies are connected by
 six-degree-of-freedom constraints with locked translation and bounded swing and
-twist.
+twist. Humanoids get anatomical joints and muscles
+([Humanoid bodies](#humanoid-bodies)); other rigs keep generic joints.
 
 The implementation also provides:
 
@@ -54,9 +58,69 @@ The implementation also provides:
 - automatic suppression of the owner's ordinary collider hierarchy while its
   ragdoll is active, avoiding two physical representations fighting each other.
 
-The generated shape and mass values are currently automatic. Skeleton scale,
-joint hierarchy, and bind-pose quality therefore have a direct effect on the
-result.
+The generated shapes are automatic, and so are the masses of non-humanoid rigs.
+Skeleton scale, joint hierarchy, and bind-pose quality therefore have a direct
+effect on the result.
+
+## Humanoid bodies
+
+A rig with at least six recognised humanoid bones (the skeleton's humanoid
+mapping, or common names such as Mixamo's) is built as a body with muscles,
+not a chain of loose capsules. A body that dies stays in one piece: it braces,
+its legs give way, it folds at the hips and knees and settles in a natural
+heap. It doesn't flop like a string of beads or bend its knees backward.
+
+- **Anatomical joints.** Each joint is limited by its role
+  (`RagdollProfile::Humanoid`): knees and elbows are hinges that never bend
+  backward, hips and shoulders are ball joints, and the spine segments and the
+  neck allow a little movement each. Ranges are measured from the bind pose. The
+  joint frames come from the rig's geometry: bone directions, plus the body's
+  up and forward from the hips, head, legs and toes. Any T- or A-posed humanoid
+  therefore works without per-rig axis setup. A starting pose outside a range
+  widens it, so nothing snaps on activation.
+- **Muscles.** Each joint holds the pose the ragdoll started in with a capped
+  servo. Its strength is a multiple of the torque that holds everything beyond
+  the joint level against gravity, so muscles scale with the body. The servo is
+  solved inside the constraint solver, so even strong muscles cannot explode.
+  When gravity or an impact asks for more than a muscle has, the joint gives.
+- **Muscle tone.** Tone starts at `Initial Tone` (the body braces), holds for
+  `Tone Hold`, then eases over `Tone Decay` down to `Sustained Tone`. At that
+  level the body can no longer hold itself up, but its joints still resist.
+  Legs get only 15 % of the brace, so a standing body falls rather than
+  standing like a statue.
+- **Damping and friction.** A damping-only spring on every joint slows a limb's
+  spin relative to its parent. It doesn't slow the fall itself, so bodies tumble
+  naturally but don't whip. Friction adds a small static resistance.
+- **Mass.** `Body Mass` (75 kg) is split by segment mass tables (pelvis 11 %,
+  thigh 10 %, hand 0.6 % and so on), and torso bones get wide collision
+  shapes. `AddRagdollImpulse` is a real impulse: 30 N·s starts a 75 kg body
+  at 0.4 m/s.
+
+### Ragdoll Tuning component
+
+Add **Animation > Ragdoll Tuning** to the entity with the Animation component
+to tune one character, for example a heavy brute or a limper zombie. Without
+it, humanoids use the defaults. Strength, tone, damping and friction apply live
+(a script or the editor can change them on a ragdoll that already exists).
+Mass and limits apply when the ragdoll is built.
+
+| Property | Default | Effect |
+| --- | ---: | --- |
+| `Body Mass` | `75` | Total mass (kg), split anatomically. |
+| `Muscle Strength` | `1` | Scales every muscle. `0` with tone `0` is a limp body (anatomical limits remain). |
+| `Initial Tone` | `1` | Muscle tone while the body braces. |
+| `Sustained Tone` | `0.3` | Tone once it has relaxed. Lower is looser. |
+| `Tone Hold` | `0.15` | Seconds at the initial tone. |
+| `Tone Decay` | `1.6` | Seconds to ease down to the sustained tone. |
+| `Joint Damping` | `8` | Rate (1/s) at which a limb's spin relative to its parent decays. |
+| `Joint Friction` | `0.05` | Static joint resistance, as a fraction of each muscle's hold torque. |
+| `Anatomical Limits` | `true` | Off: generic cone limits around the starting pose, but muscles still apply. |
+
+Per-bone data (ranges, mass shares, strengths, braces, radii) lives in
+`RagdollProfile::Humanoid()` (`engine/scene/src/RagdollProfile.cpp`). The Bullet
+side is in `engine/scene/src/RagdollJoints.cpp`. A ragdoll's tone follows its
+age, which survives physics-world rebuilds. `ResetRagdoll()` starts a fresh body
+that braces again.
 
 Dormant Active Ragdoll components do not create bodies, constraints, collision
 pairs, or per-joint target poses. Keep `RagdollEnabled` false on living
@@ -172,10 +236,12 @@ the runtime bodies are derived from that data.
 
 ## Current limitations
 
-- Collision capsules, masses, and joint limits are generated rather than
-  authored per bone.
-- The default angular limits are shared across joints rather than using a
-  humanoid-specific profile.
+- Collision capsules are generated rather than authored per bone, and
+  non-humanoid rigs share generic angular limits and length-based masses.
+- Humanoid joint ranges assume a T- or A-pose bind (the shoulder range is
+  measured from a horizontal arm).
+- Muscles hold the pose the ragdoll started in. They have no behaviours yet,
+  such as bracing a fall with the arms or clutching a wound.
 - Active control uses one set of strength values for every joint.
 - Managed scripting does not yet expose `MaxForce` or `MaxTorque`.
 - `RagdollWeight` linearly blends skinning matrices; use `1` when evaluating

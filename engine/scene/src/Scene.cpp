@@ -15,6 +15,9 @@
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
+#include "PlutoGE/scene/components/RagdollTuningComponent.h"
+#include "PlutoGE/scene/RagdollProfile.h"
+#include "RagdollJoints.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
@@ -809,6 +812,12 @@ namespace PlutoGE::scene
             bool loggedPosePublication = false;
             btVector3 initialRootPosition{0.0f, 0.0f, 0.0f};
             uint32_t simulatedStepCount = 0;
+            // Humanoids (RagdollProfile): one muscle per constraint, empty for
+            // other rigs, which keep the generic joints.
+            RagdollProfile profile;
+            std::vector<detail::RagdollMuscle> muscles;
+            // Seconds since the ragdoll was built; muscle tone follows it.
+            float age = 0.0f;
         };
 
         struct RagdollJointTuning
@@ -922,6 +931,36 @@ namespace PlutoGE::scene
             }
             return result;
         }
+
+        // A matrix's rotation with any (uniform) scale removed.
+        glm::mat3 RotationOf(const glm::mat4 &transform)
+        {
+            glm::mat3 rotation(transform);
+            for (int column = 0; column < 3; ++column)
+            {
+                const float length = glm::length(rotation[column]);
+                rotation[column] = length > 1e-8f ? rotation[column] / length : glm::vec3(0.0f);
+            }
+            return rotation;
+        }
+
+        btTransform ToBulletTransform(const glm::vec3 &origin, const glm::mat3 &rotation)
+        {
+            btTransform transform;
+            transform.setOrigin(ToBullet(origin));
+            transform.setBasis(btMatrix3x3(rotation[0][0], rotation[1][0], rotation[2][0],
+                                           rotation[0][1], rotation[1][1], rotation[2][1],
+                                           rotation[0][2], rotation[1][2], rotation[2][2]));
+            return transform;
+        }
+
+        // Humanoids get anatomical joints; rigs with too few recognised bones
+        // keep the generic ones (SelectPhysicalRagdollJoints keeps every joint).
+        constexpr size_t kMinimumHumanoidRagdollBones = 6;
+        // Joint damping and muscles settle a humanoid, so its bodies need far
+        // less damping of their own than the generic articulation (which
+        // would otherwise slow the fall itself).
+        constexpr float kHumanoidRagdollBodyAngularDamping = 0.3f;
 
         AnimationComponent *FindActiveRagdollOwner(Entity *entity)
         {
@@ -1750,6 +1789,7 @@ namespace PlutoGE::scene
         };
         std::unordered_map<AnimationComponent *, std::unordered_map<size_t, PreservedRagdollPart>>
             preservedRagdolls;
+        std::unordered_map<AnimationComponent *, float> preservedRagdollAges;
         if (m_runtimePhysicsState && m_runtimePhysicsState->world)
         {
             for (auto &ragdoll : m_runtimePhysicsState->world->ragdolls)
@@ -1757,6 +1797,7 @@ namespace PlutoGE::scene
                 if (ragdoll.animation && ragdoll.revision == ragdoll.animation->GetRagdollRevision())
                 {
                     auto &preservedParts = preservedRagdolls[ragdoll.animation];
+                    preservedRagdollAges[ragdoll.animation] = ragdoll.age;
                     preservedParts.reserve(ragdoll.parts.size());
                     for (const auto &part : ragdoll.parts)
                     {
@@ -1996,12 +2037,36 @@ namespace PlutoGE::scene
             ragdoll.meshComponent = meshComponent;
             ragdoll.skeleton = &skeleton;
             ragdoll.revision = animation->GetRagdollRevision();
+            ragdoll.profile = ResolveRagdollProfile(animation->GetOwner()->GetComponent<RagdollTuningComponent>());
+            if (const auto age = preservedRagdollAges.find(animation); age != preservedRagdollAges.end())
+                ragdoll.age = age->second;
             const auto physicalJoints = SelectPhysicalRagdollJoints(skeleton);
             ragdoll.parts.reserve(physicalJoints.size());
             ragdoll.jointToPart.assign(skeleton.joints.size(), -1);
             std::vector<uint8_t> physicalJointMask(skeleton.joints.size(), 0);
             for (const size_t physicalJoint : physicalJoints)
                 physicalJointMask[physicalJoint] = 1;
+
+            // Humanoid anatomy: each joint's bone, the bind pose (limits are
+            // measured from it) and the body's up and forward in that pose.
+            const auto bones = ClassifyRagdollJoints(skeleton);
+            const bool humanoid = static_cast<size_t>(std::count_if(physicalJoints.begin(), physicalJoints.end(),
+                [&](size_t joint) { return bones[joint].has_value(); })) >= kMinimumHumanoidRagdollBones;
+            std::vector<glm::mat4> bindGlobals(skeleton.joints.size());
+            std::vector<glm::vec3> bindPositions(skeleton.joints.size());
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                const auto &joint = skeleton.joints[jointIndex];
+                bindGlobals[jointIndex] = glm::inverse(joint.inverseRootMatrix) * glm::inverse(joint.inverseBindMatrix);
+                bindPositions[jointIndex] = glm::vec3(bindGlobals[jointIndex][3]);
+            }
+            const RagdollBodyAxes bodyAxes = EstimateRagdollBodyAxes(bones, bindPositions);
+            float massFractionTotal = 0.0f;
+            for (const size_t jointIndex : physicalJoints)
+                massFractionTotal += ragdoll.profile.For(bones[jointIndex]).massFraction;
+            std::vector<glm::vec3> partBindDirections;
+            partBindDirections.reserve(physicalJoints.size());
+
             std::vector<glm::mat4> jointWorldTransforms(skeleton.joints.size());
             // Skinning matrices are local to the rendered mesh model, which
             // may live on a transformed descendant and have an authored mesh
@@ -2044,23 +2109,34 @@ namespace PlutoGE::scene
                 }
 
                 glm::vec3 endPosition = jointPosition;
+                glm::vec3 bindDirection(0.0f, 1.0f, 0.0f);
                 if (childIndex >= 0)
+                {
                     endPosition = glm::vec3(jointWorldTransforms[static_cast<size_t>(childIndex)][3]);
+                    bindDirection = bindPositions[static_cast<size_t>(childIndex)] - bindPositions[jointIndex];
+                }
                 else
                 {
                     int parent = skeleton.joints[jointIndex].parentJointIndex;
                     while (parent >= 0 && ragdoll.jointToPart[static_cast<size_t>(parent)] < 0)
                         parent = skeleton.joints[static_cast<size_t>(parent)].parentJointIndex;
                     if (parent >= 0)
+                    {
                         endPosition += (jointPosition - glm::vec3(jointWorldTransforms[static_cast<size_t>(parent)][3])) * 0.45f;
+                        bindDirection = bindPositions[jointIndex] - bindPositions[static_cast<size_t>(parent)];
+                    }
                     else
                         endPosition += glm::vec3(0.0f, 0.2f, 0.0f);
                 }
+                partBindDirections.push_back(bindDirection);
 
+                const auto &boneSettings = ragdoll.profile.For(bones[jointIndex]);
                 glm::vec3 direction = endPosition - jointPosition;
                 const float length = std::max(glm::length(direction), 0.08f);
                 direction = glm::length(direction) > 0.00001f ? glm::normalize(direction) : glm::vec3(0, 1, 0);
-                const float radius = std::clamp(length * 0.22f, 0.035f, 0.16f);
+                const float radius = humanoid && boneSettings.radius > 0.0f
+                                         ? boneSettings.radius
+                                         : std::clamp(length * 0.22f, 0.035f, 0.16f);
                 auto shape = std::make_unique<btCapsuleShape>(radius, std::max(0.0f, length - 2.0f * radius));
 
                 const glm::quat bodyRotation = glm::rotation(glm::vec3(0, 1, 0), direction);
@@ -2071,15 +2147,19 @@ namespace PlutoGE::scene
                 bulletTransform.setOrigin(ToBullet(bodyPosition));
                 bulletTransform.setRotation(btQuaternion(bodyRotation.x, bodyRotation.y, bodyRotation.z, bodyRotation.w));
 
-                // Keeping neighbouring bodies within a modest mass ratio is
-                // essential for stable articulated constraint solving.
-                const float mass = std::clamp(length * 3.0f, 0.5f, 3.0f);
+                // Humanoids split a real body mass anatomically (neighbouring
+                // segments stay within a modest ratio). Other rigs keep masses
+                // from bone length: a modest mass ratio is essential for stable
+                // articulated constraint solving.
+                const float mass = humanoid && massFractionTotal > 0.0f
+                                       ? ragdoll.profile.bodyMass * boneSettings.massFraction / massFractionTotal
+                                       : std::clamp(length * 3.0f, 0.5f, 3.0f);
                 btVector3 inertia;
                 shape->calculateLocalInertia(mass, inertia);
                 auto motionState = std::make_unique<btDefaultMotionState>(bulletTransform);
                 btRigidBody::btRigidBodyConstructionInfo info(mass, motionState.get(), shape.get(), inertia);
                 info.m_linearDamping = 0.05f;
-                info.m_angularDamping = kDefaultRagdollJointTuning.angularDamping;
+                info.m_angularDamping = humanoid ? kHumanoidRagdollBodyAngularDamping : kDefaultRagdollJointTuning.angularDamping;
                 auto body = std::make_unique<btRigidBody>(info);
                 body->setFriction(0.8f);
                 body->setRestitution(0.0f);
@@ -2114,20 +2194,53 @@ namespace PlutoGE::scene
                 });
             }
 
+            // Each part's parent part, for the muscles' loads (what lies beyond each joint).
+            std::vector<int> parentParts(ragdoll.parts.size(), -1);
+            for (size_t partIndex = 0; partIndex < ragdoll.parts.size(); ++partIndex)
+            {
+                int parentJointIndex = skeleton.joints[ragdoll.parts[partIndex].jointIndex].parentJointIndex;
+                while (parentJointIndex >= 0 && ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)] < 0)
+                    parentJointIndex = skeleton.joints[static_cast<size_t>(parentJointIndex)].parentJointIndex;
+                if (parentJointIndex >= 0)
+                    parentParts[partIndex] = ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)];
+            }
+            const auto descends = [&](size_t partIndex, size_t ancestor)
+            {
+                for (int current = static_cast<int>(partIndex); current >= 0; current = parentParts[static_cast<size_t>(current)])
+                    if (current == static_cast<int>(ancestor))
+                        return true;
+                return false;
+            };
+            const bool anatomical = humanoid && ragdoll.profile.anatomicalLimits;
+
             for (size_t childPartIndex = 0; childPartIndex < ragdoll.parts.size(); ++childPartIndex)
             {
                 const size_t jointIndex = ragdoll.parts[childPartIndex].jointIndex;
-                int parentJointIndex = skeleton.joints[jointIndex].parentJointIndex;
-                while (parentJointIndex >= 0 && ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)] < 0)
-                    parentJointIndex = skeleton.joints[static_cast<size_t>(parentJointIndex)].parentJointIndex;
-                if (parentJointIndex < 0)
+                if (parentParts[childPartIndex] < 0)
                     continue;
-                const size_t parentPartIndex = static_cast<size_t>(ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)]);
+                const size_t parentPartIndex = static_cast<size_t>(parentParts[childPartIndex]);
+                const size_t parentJointIndex = ragdoll.parts[parentPartIndex].jointIndex;
+                const glm::vec3 pivot(jointWorldTransforms[jointIndex][3]);
                 btTransform jointFrame;
                 jointFrame.setIdentity();
-                jointFrame.setOrigin(ToBullet(glm::vec3(jointWorldTransforms[jointIndex][3])));
+                jointFrame.setOrigin(ToBullet(pivot));
                 jointFrame.setRotation(ToBulletRotation(jointWorldTransforms[jointIndex]));
-                const btTransform parentFrame = ragdoll.parts[parentPartIndex].body->getWorldTransform().inverse() * jointFrame;
+                btTransform parentJointFrame = jointFrame;
+                const auto &boneSettings = ragdoll.profile.For(bones[jointIndex]);
+                if (anatomical)
+                {
+                    // The joint's anatomical frame in bind pose, attached to
+                    // each bone: the two coincide (all angles zero) when the
+                    // pair is in its bind relation, so limits are anatomical
+                    // whatever pose the ragdoll starts from.
+                    const glm::mat3 anatomy = RagdollJointBasis(partBindDirections[childPartIndex],
+                                                                bodyAxes.Direction(boneSettings.flexDirection));
+                    const glm::mat3 inChild = glm::transpose(RotationOf(bindGlobals[jointIndex])) * anatomy;
+                    const glm::mat3 inParent = glm::transpose(RotationOf(bindGlobals[parentJointIndex])) * anatomy;
+                    jointFrame = ToBulletTransform(pivot, RotationOf(jointWorldTransforms[jointIndex]) * inChild);
+                    parentJointFrame = ToBulletTransform(pivot, RotationOf(jointWorldTransforms[parentJointIndex]) * inParent);
+                }
+                const btTransform parentFrame = ragdoll.parts[parentPartIndex].body->getWorldTransform().inverse() * parentJointFrame;
                 const btTransform childFrame = ragdoll.parts[childPartIndex].body->getWorldTransform().inverse() * jointFrame;
                 auto constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
                     *ragdoll.parts[parentPartIndex].body,
@@ -2135,23 +2248,49 @@ namespace PlutoGE::scene
                 const auto &tuning = kDefaultRagdollJointTuning;
                 constraint->setLinearLowerLimit(btVector3(0, 0, 0));
                 constraint->setLinearUpperLimit(btVector3(0, 0, 0));
-                const btVector3 angularLimits(
-                    glm::radians(tuning.twistLimitDegrees),
-                    glm::radians(tuning.swingLimitDegrees),
-                    glm::radians(tuning.swingLimitDegrees));
-                constraint->setAngularLowerLimit(-angularLimits);
-                constraint->setAngularUpperLimit(angularLimits);
-                for (int axis = 3; axis < 6; ++axis)
+                if (anatomical)
                 {
-                    // A zero-velocity motor acts as bounded joint friction. It
-                    // dissipates motion but, unlike a positional spring, cannot
-                    // add energy by pulling the ragdoll toward a rest pose.
-                    constraint->enableMotor(axis, true);
-                    constraint->setTargetVelocity(axis, 0.0f);
-                    constraint->setMaxMotorForce(axis, tuning.angularFrictionForce);
-                    constraint->setBounce(axis, 0.0f);
-                    constraint->setParam(BT_CONSTRAINT_STOP_ERP, tuning.limitErrorReduction, axis);
-                    constraint->setParam(BT_CONSTRAINT_STOP_CFM, 0.0f, axis);
+                    // The muscle's load: everything beyond the joint, held out level.
+                    float distalMass = 0.0f, distalInertia = 0.0f;
+                    glm::vec3 distalMoment(0.0f);
+                    for (size_t partIndex = 0; partIndex < ragdoll.parts.size(); ++partIndex)
+                    {
+                        if (!descends(partIndex, childPartIndex))
+                            continue;
+                        const auto *body = ragdoll.parts[partIndex].body.get();
+                        const float partMass = body->getInvMass() > 0.0f ? 1.0f / body->getInvMass() : 0.0f;
+                        const glm::vec3 offset = FromBullet(body->getCenterOfMassPosition()) - pivot;
+                        distalMass += partMass;
+                        distalMoment += offset * partMass;
+                        distalInertia += partMass * glm::dot(offset, offset);
+                    }
+                    const float lever = distalMass > 0.0f ? glm::length(distalMoment / distalMass) : 0.0f;
+                    constexpr float gravity = 9.81f;
+                    ragdoll.muscles.push_back(detail::ConfigureAnatomicalJoint(
+                        *constraint, boneSettings, gravity * distalMass * lever, distalInertia));
+                    detail::DriveRagdollMuscle(*constraint, ragdoll.muscles.back(), ragdoll.profile,
+                                               ragdoll.profile.tone.At(ragdoll.age));
+                }
+                else
+                {
+                    const btVector3 angularLimits(
+                        glm::radians(tuning.twistLimitDegrees),
+                        glm::radians(tuning.swingLimitDegrees),
+                        glm::radians(tuning.swingLimitDegrees));
+                    constraint->setAngularLowerLimit(-angularLimits);
+                    constraint->setAngularUpperLimit(angularLimits);
+                    for (int axis = 3; axis < 6; ++axis)
+                    {
+                        // A zero-velocity motor acts as bounded joint friction. It
+                        // dissipates motion but, unlike a positional spring, cannot
+                        // add energy by pulling the ragdoll toward a rest pose.
+                        constraint->enableMotor(axis, true);
+                        constraint->setTargetVelocity(axis, 0.0f);
+                        constraint->setMaxMotorForce(axis, tuning.angularFrictionForce);
+                        constraint->setBounce(axis, 0.0f);
+                        constraint->setParam(BT_CONSTRAINT_STOP_ERP, tuning.limitErrorReduction, axis);
+                        constraint->setParam(BT_CONSTRAINT_STOP_CFM, 0.0f, axis);
+                    }
                 }
                 constraint->setOverrideNumSolverIterations(tuning.solverIterations);
                 constraint->setDbgDrawSize(0.15f);
@@ -4611,6 +4750,17 @@ namespace PlutoGE::scene
                         }
                     }
                 }
+            }
+            else if (!ragdoll.muscles.empty())
+            {
+                // Humanoid muscles: tone follows the ragdoll's age, and the
+                // tuning component may change the whole-body values live.
+                ragdoll.age += step;
+                ApplyRagdollTuning(ragdoll.profile, ragdoll.animation->GetOwner()->GetComponent<RagdollTuningComponent>());
+                const float tone = ragdoll.profile.tone.At(ragdoll.age);
+                for (size_t constraintIndex = 0; constraintIndex < ragdoll.constraints.size(); ++constraintIndex)
+                    detail::DriveRagdollMuscle(*static_cast<btGeneric6DofSpring2Constraint *>(ragdoll.constraints[constraintIndex].get()),
+                                               ragdoll.muscles[constraintIndex], ragdoll.profile, tone);
             }
             else
             {

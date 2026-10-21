@@ -16,6 +16,8 @@ add_library(PlutoGEScene
     src/ModelInstanceUnpacking.cpp
     src/AssetReconciliation.cpp
     src/Scene.cpp
+    src/RagdollJoints.cpp
+    src/RagdollProfile.cpp
     src/SceneBaker.cpp
     src/MapBake.cpp
     src/SceneSerializer.cpp
@@ -24,6 +26,7 @@ add_library(PlutoGEScene
     src/components/AnimationComponent.cpp
     src/components/AudioEnvironmentVolumeComponent.cpp
     src/components/ActiveRagdollComponent.cpp
+    src/components/RagdollTuningComponent.cpp
     src/components/ClothComponent.cpp
     src/components/MeshComponent.cpp
     src/components/NavAgentComponent.cpp

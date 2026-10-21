@@ -335,6 +335,12 @@ for passive collapse; disabling it does not remove the ragdoll. Apply
 animation. Test recovery and initial overlap separately rather than assuming a
 blend value implements a complete stand-up state machine.
 
+Humanoid rigs collapse as bodies, not loose chains: anatomical joint limits,
+muscles that brace and then relax, joint damping and a realistic mass. Add
+**Animation > Ragdoll Tuning** to make one character heavier, stiffer or looser.
+Impulses are physical, so scale them to the body's mass (30 N·s moves 75 kg at
+0.4 m/s).
+
 See [ragdoll authoring and managed controls](../RAGDOLLS.md) for generated bone
 shapes, motor settings, impulses, and current constraints.
 

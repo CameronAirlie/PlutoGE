@@ -2745,6 +2745,16 @@ namespace PlutoGE::scripting
             try { core::Engine::GetInstance().GetAudioSystem().PrewarmVoicePool(static_cast<std::size_t>(count)); }
             catch (...) {} // Preparation is optional; normal playback can still allocate on demand.
         }
+        float GetAudioOutputVolume()
+        {
+            try { return core::Engine::GetInstance().GetAudioSystem().GetOutputVolume(); }
+            catch (...) { return 1.0f; }
+        }
+        void SetAudioOutputVolume(float volume)
+        {
+            try { core::Engine::GetInstance().GetAudioSystem().SetOutputVolume(volume); }
+            catch (...) {} // Never unwind native exceptions across the managed boundary.
+        }
 
         const char *GetSoundEmitterClipReference(uint32_t entityId)
         {
@@ -3744,6 +3754,7 @@ namespace PlutoGE::scripting
         register_prefab_api_fn registerPrefabApi = nullptr;
         register_window_api_fn registerWindowApi = nullptr;
         register_window_api_fn registerAudioPreparationApi = nullptr;
+        register_window_api_fn registerAudioOutputApi = nullptr;
         register_window_api_fn registerProfilingApi = nullptr;
         register_window_api_fn registerPointerApi = nullptr;
         int(PLUTO_HOST_CALL *registerWindowSizeApi)(void *, void *, void *) = nullptr;
@@ -3870,6 +3881,7 @@ namespace PlutoGE::scripting
             impl.registerPrefabApi = nullptr;
             impl.registerWindowApi = nullptr;
             impl.registerAudioPreparationApi = nullptr;
+            impl.registerAudioOutputApi = nullptr;
             impl.registerProfilingApi = nullptr;
             impl.registerPointerApi = nullptr;
             impl.registerWindowSizeApi = nullptr;
@@ -4237,6 +4249,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowApi"), impl.registerWindowApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterAudioPreparationApi"), impl.registerAudioPreparationApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAudioOutputApi"), impl.registerAudioOutputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterProfilingApi"), impl.registerProfilingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPointerApi"), impl.registerPointerApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowSizeApi"), impl.registerWindowSizeApi) &&
@@ -4580,6 +4593,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&PreloadAudioClip), reinterpret_cast<void *>(&PrewarmAudioVoices)) == 0)
         {
             setManagedBridgeFailure("RegisterAudioPreparationApi");
+            return false;
+        }
+
+        if (!m_impl->registerAudioOutputApi || m_impl->registerAudioOutputApi(
+                reinterpret_cast<void *>(&GetAudioOutputVolume), reinterpret_cast<void *>(&SetAudioOutputVolume)) == 0)
+        {
+            setManagedBridgeFailure("RegisterAudioOutputApi");
             return false;
         }
 

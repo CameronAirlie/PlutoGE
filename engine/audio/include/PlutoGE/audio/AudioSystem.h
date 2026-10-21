@@ -98,6 +98,10 @@ namespace PlutoGE::audio
         void Update(const ListenerState &listener, const std::vector<EmitterState> &emitters, float deltaTime);
         bool PreloadClip(const std::string &clipPath);
         void PrewarmVoicePool(std::size_t voiceCount);
+        // Player output volume (0-1), applied at the output stage on top of every listener and emitter gain.
+        // It belongs to the application rather than a scene, so it survives scene changes.
+        void SetOutputVolume(float volume);
+        [[nodiscard]] float GetOutputVolume() const { return m_outputVolume; }
         void ClearEmitters();
         bool IsEmitterActive(std::uint64_t key) const;
         bool IsAvailable() const { return m_initialized; }
@@ -111,6 +115,8 @@ namespace PlutoGE::audio
         float ComputePan(const ListenerState &listener, const EmitterState &emitter) const;
 
         bool m_initialized = false;
+        float m_outputVolume = 1.0f;
+        float m_appliedOutputVolume = -1.0f;
         void *m_xaudio = nullptr;
         void *m_masterVoice = nullptr;
         void *m_openAlDevice = nullptr;

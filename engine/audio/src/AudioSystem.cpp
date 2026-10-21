@@ -472,9 +472,15 @@ namespace PlutoGE::audio
 #endif
     }
 
+    void AudioSystem::SetOutputVolume(float volume)
+    {
+        m_outputVolume = std::isfinite(volume) ? std::clamp(volume, 0.0f, 1.0f) : 1.0f;
+    }
+
     void AudioSystem::Shutdown()
     {
         ClearEmitters();
+        m_appliedOutputVolume = -1.0f;
         m_hasOpenAlEnvironmentState = false;
         m_hasPreviousOpenAlListenerPosition = false;
 
@@ -1145,7 +1151,7 @@ namespace PlutoGE::audio
                 alListener3f(AL_POSITION, listener.position.x, listener.position.y, listener.position.z);
                 alListener3f(AL_VELOCITY, listenerVelocity.x, listenerVelocity.y, listenerVelocity.z);
                 alListenerfv(AL_ORIENTATION, orientation);
-                alListenerf(AL_GAIN, std::max(listener.masterVolume, 0.0f));
+                alListenerf(AL_GAIN, std::max(listener.masterVolume, 0.0f) * m_outputVolume);
                 if (m_openAlEnvironmentEffect && m_openAlEnvironmentSlot)
                 {
                     core::CpuScope environmentScope("Audio environment", core::CpuCategory::Audio);
@@ -1192,7 +1198,7 @@ namespace PlutoGE::audio
             {
                 alListener3f(AL_POSITION, 0.0f, 0.0f, 0.0f);
                 alListener3f(AL_VELOCITY, 0.0f, 0.0f, 0.0f);
-                alListenerf(AL_GAIN, 1.0f);
+                alListenerf(AL_GAIN, m_outputVolume);
                 m_hasPreviousOpenAlListenerPosition = false;
             }
 
@@ -1410,6 +1416,11 @@ namespace PlutoGE::audio
         if (!xaudio || !m_masterVoice)
         {
             return;
+        }
+        if (m_appliedOutputVolume != m_outputVolume &&
+            SUCCEEDED(static_cast<IXAudio2MasteringVoice *>(m_masterVoice)->SetVolume(m_outputVolume)))
+        {
+            m_appliedOutputVolume = m_outputVolume;
         }
 
         std::vector<std::uint64_t> activeKeys;

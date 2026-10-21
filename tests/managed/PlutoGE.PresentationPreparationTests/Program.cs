@@ -16,6 +16,11 @@ unsafe class Program
     static int Begin(nint name) { return scopeResult++; }
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void End(int token) { ended.Add(token); }
+    static float outputVolume = 1.0f;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static float GetOutput() => outputVolume;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void SetOutput(float volume) { outputVolume = volume; }
     static void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
     static delegate* unmanaged[Cdecl]<nint, nint, int> Registration(string name)
     {
@@ -41,6 +46,18 @@ unsafe class Program
         catch (ArgumentOutOfRangeException) {}
         try { Audio.PreloadClip(" "); throw new Exception("Blank clip accepted"); }
         catch (ArgumentException) {}
+        Require(!Audio.OutputVolumeSupported && Audio.OutputVolume == 1.0f, "Unregistered output volume must read 1");
+        Audio.OutputVolume = 0.5f;
+        register = Registration("RegisterAudioOutputApi");
+        Require(register(0, 0) == 0, "Null output registration accepted");
+        Require(register((nint)(delegate* unmanaged[Cdecl]<float>)&GetOutput,
+            (nint)(delegate* unmanaged[Cdecl]<float, void>)&SetOutput) == 1, "Output registration failed");
+        Audio.OutputVolume = 0.25f;
+        Require(Audio.OutputVolumeSupported && Audio.OutputVolume == 0.25f, "Output volume did not round-trip");
+        Audio.OutputVolume = 4.0f;
+        Require(outputVolume == 1.0f, "Output volume not clamped");
+        Audio.OutputVolume = float.NaN;
+        Require(outputVolume == 1.0f, "Non-finite output volume accepted");
         register = Registration("RegisterProfilingApi");
         Require(register(0, 0) == 0, "Null profiling registration accepted");
         Require(register((nint)(delegate* unmanaged[Cdecl]<nint, int>)&Begin,
@@ -62,6 +79,6 @@ unsafe class Program
         scopeResult = -1;
         using (Profiler.Scope("Disabled trace")) {}
         Require(ended.Count == 3, "Disabled trace was ended");
-        Console.WriteLine("PASS: audio preparation ABI, validation, native failure propagation and profiler scope lifetime");
+        Console.WriteLine("PASS: audio preparation and output ABI, validation, native failure propagation and profiler scope lifetime");
     }
 }

@@ -181,6 +181,13 @@ namespace PlutoGE::scene
         // otherwise reports the first contact (including an initial overlap). Ignores triggers.
         bool QueryCapsule(const glm::vec3 &center, const glm::vec3 &displacement, float radius, float height,
                           PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0) const;
+        // How much (0-1) the geometry between a listener and a spatial sound muffles it, as the audio update computes
+        // it. Colliders with Blocks Audio off, triggers, both entities' hierarchies and the surface the sound plays on
+        // (hits within 0.3 m of the emitter) do not block.
+        float ComputeAudioOcclusion(const glm::vec3 &listenerPosition, const glm::vec3 &listenerForward,
+                                    const glm::vec3 &listenerUp, const glm::vec3 &emitterPosition,
+                                    EntityID emitterEntityId = 0, EntityID listenerEntityId = 0,
+                                    std::size_t sampleCount = 5) const;
         void RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
                           EntityID ignoredEntityId,
                           std::vector<PhysicsRaycastHit> &hits,

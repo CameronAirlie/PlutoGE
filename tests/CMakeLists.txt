@@ -405,6 +405,10 @@ target_include_directories(PlutoGESurfaceResponseTests PRIVATE ../editor/ui/incl
 pluto_link_engine(PlutoGESurfaceResponseTests)
 add_test(NAME PlutoGESurfaceResponseTests COMMAND PlutoGESurfaceResponseTests)
 
+add_executable(PlutoGEAudioOcclusionTests AudioOcclusionTests.cpp)
+pluto_link_engine(PlutoGEAudioOcclusionTests)
+add_test(NAME PlutoGEAudioOcclusionTests COMMAND PlutoGEAudioOcclusionTests)
+
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGESurfaceResponseManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SurfaceResponseSmokeTests/PlutoGE.SurfaceResponseSmokeTests.csproj --configuration Release)

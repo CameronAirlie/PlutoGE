@@ -312,7 +312,12 @@ markers and [surface assets](../SURFACE_RESPONSES.md), rather than spawning an
 unrelated timer per sound.
 
 Collider Blocks Audio enables participation in obstruction. Test a wall between
-listener and source before building complex interiors. Audio Environment Volume
+listener and source before building complex interiors.
+Occlusion ignores triggers, and hits within 0.3 m of the source, so a sound playing
+on a surface (a footstep, an impact) is not muffled by that surface. Turn Blocks
+Audio off on character colliders when the listener follows behind a character,
+or the character's own body muffles its sounds. `Scene::ComputeAudioOcclusion`
+returns the value the audio update uses, for tests and debugging tools. Audio Environment Volume
 adds box/sphere regions with presets such as Room, Cave, Forest, and Underwater,
 plus blend distance and priority.
 

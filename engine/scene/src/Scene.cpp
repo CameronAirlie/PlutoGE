@@ -169,23 +169,29 @@ namespace PlutoGE::scene
             return value / std::sqrt(lengthSquared);
         }
 
-        float ComputeAudioOcclusion(const Scene &scene,
-                                    const audio::ListenerState &listenerState,
+        // A sound playing on a surface (a footstep, a bullet impact) is not
+        // blocked by that surface: hits this close to the emitter are ignored.
+        constexpr float AudioOcclusionSurfaceTolerance = 0.3f;
+
+        float MeasureAudioOcclusion(const Scene &scene,
+                                    const glm::vec3 &listenerPosition,
+                                    const glm::vec3 &listenerForward,
+                                    const glm::vec3 &listenerUp,
                                     const glm::vec3 &emitterPosition,
                                     EntityID emitterEntityId,
                                     EntityID listenerEntityId,
                                     std::size_t sampleCount)
         {
-            const glm::vec3 emitterOffset = emitterPosition - listenerState.position;
+            const glm::vec3 emitterOffset = emitterPosition - listenerPosition;
             const float distance = glm::length(emitterOffset);
-            if (!listenerState.active || distance <= 0.05f)
+            if (distance <= 0.05f)
             {
                 return 0.0f;
             }
 
             const glm::vec3 direction = emitterOffset / distance;
-            const glm::vec3 right = SafeNormalize(glm::cross(listenerState.forward, listenerState.up), glm::vec3(1.0f, 0.0f, 0.0f));
-            const glm::vec3 up = SafeNormalize(listenerState.up, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::vec3 right = SafeNormalize(glm::cross(listenerForward, listenerUp), glm::vec3(1.0f, 0.0f, 0.0f));
+            const glm::vec3 up = SafeNormalize(listenerUp, glm::vec3(0.0f, 1.0f, 0.0f));
             const float spread = std::clamp(distance * 0.035f, 0.08f, 0.45f);
             const std::array<glm::vec3, 5> listenerOffsets{
                 glm::vec3(0.0f),
@@ -203,21 +209,23 @@ namespace PlutoGE::scene
                 const float sampleWeight = index == 0 ? 1.5f : 1.0f;
                 totalWeight += sampleWeight;
 
-                glm::vec3 sampleOrigin = listenerState.position + listenerOffsets[index];
+                glm::vec3 sampleOrigin = listenerPosition + listenerOffsets[index];
                 float remainingDistance = distance;
                 EntityID ignoredEntityId = emitterEntityId;
                 bool blocked = false;
                 for (int rayStep = 0; rayStep < 16 && remainingDistance > 0.001f; ++rayStep)
                 {
                     PhysicsRaycastHit hit;
-                    if (!scene.Raycast(sampleOrigin, direction, remainingDistance, hit, ignoredEntityId) || hit.entityId == 0)
+                    if (!scene.Raycast(sampleOrigin, direction, remainingDistance, hit, ignoredEntityId) || hit.entityId == 0 ||
+                        remainingDistance - hit.distance <= AudioOcclusionSurfaceTolerance)
                     {
                         break;
                     }
 
                     const auto *hitEntity = scene.FindEntityByID(hit.entityId);
                     const auto *hitCollider = hitEntity ? hitEntity->GetComponent<ColliderComponent>() : nullptr;
-                    const bool skipsAudio = hit.entityId == listenerEntityId || (hitCollider && !hitCollider->BlocksAudio());
+                    const bool skipsAudio = hit.entityId == listenerEntityId ||
+                                            (hitCollider && (!hitCollider->BlocksAudio() || hitCollider->IsTrigger()));
                     if (!skipsAudio)
                     {
                         blocked = true;
@@ -3224,8 +3232,10 @@ namespace PlutoGE::scene
                         const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
                                                               ? listenerComponent->GetOwner()->GetID()
                                                               : 0;
-                        emitter->CacheAudioOcclusion(ComputeAudioOcclusion(*this,
-                                                                           listenerState,
+                        emitter->CacheAudioOcclusion(MeasureAudioOcclusion(*this,
+                                                                           listenerState.position,
+                                                                           listenerState.forward,
+                                                                           listenerState.up,
                                                                            emitterState.position,
                                                                            owner->GetID(),
                                                                            listenerEntityId,
@@ -3685,6 +3695,15 @@ namespace PlutoGE::scene
         {
             InvalidateFoliagePhysics();
         }
+    }
+
+    float Scene::ComputeAudioOcclusion(const glm::vec3 &listenerPosition, const glm::vec3 &listenerForward,
+                                       const glm::vec3 &listenerUp, const glm::vec3 &emitterPosition,
+                                       EntityID emitterEntityId, EntityID listenerEntityId,
+                                       std::size_t sampleCount) const
+    {
+        return MeasureAudioOcclusion(*this, listenerPosition, listenerForward, listenerUp, emitterPosition,
+                                     emitterEntityId, listenerEntityId, sampleCount);
     }
 
     bool Scene::Raycast(const glm::vec3 &origin,

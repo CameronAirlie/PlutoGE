@@ -1,5 +1,6 @@
 add_library(PlutoGEAudio
     src/AudioSystem.cpp
+    src/StbVorbis.cpp
 )
 
 add_library(PlutoGE::Audio ALIAS PlutoGEAudio)
@@ -13,6 +14,11 @@ target_link_libraries(PlutoGEAudio PUBLIC
     PlutoGE::Content
     PlutoGE::glm
     PlutoGE::openal_soft
+)
+
+# stb_vorbis (Ogg Vorbis decoding) ships in the stb checkout behind PlutoGE::stb_image.
+target_link_libraries(PlutoGEAudio PRIVATE
+    PlutoGE::stb_image
 )
 
 target_compile_definitions(PlutoGEAudio PRIVATE

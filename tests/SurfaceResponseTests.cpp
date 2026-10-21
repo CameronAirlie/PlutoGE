@@ -51,6 +51,12 @@ int main()
             std::istringstream input(invalid);
             Require(!ReadSurfaceResponseAsset(input, restored) && restored.friction == surface.friction, "Malformed asset changed output");
         }
+        // Ogg Vorbis clips are audio assets too (the audio system decodes them), so surfaces may name them.
+        std::istringstream ogg("SurfaceResponseVersion=1\nFootstepSound=project://Steps/stone step.ogg\nImpactSound=project://Hits & Breaks/hit.OGG\n");
+        SurfaceResponseAsset oggSurface;
+        Require(ReadSurfaceResponseAsset(ogg, oggSurface) && oggSurface.footstep.sound == "project://Steps/stone step.ogg" &&
+            oggSurface.impact.sound == "project://Hits & Breaks/hit.OGG", "Ogg sounds rejected");
+        Require(Project::GetAssetTypeForReference("project://a.ogg") == ProjectAssetType::Audio, "Ogg is not classified as audio");
         Scratch scratch;
         auto &manager = core::Engine::GetInstance().GetAssetManager();
         manager.SetProjectContext(scratch.root.string());

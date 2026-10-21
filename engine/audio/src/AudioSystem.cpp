@@ -7,12 +7,18 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <string_view>
 #include <unordered_set>
+
+// Ogg Vorbis decoding (stb_vorbis, public domain); the implementation is compiled once in StbVorbis.cpp.
+#define STB_VORBIS_HEADER_ONLY
+#define STB_VORBIS_NO_STDIO
+#include <stb_vorbis.c>
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
 #define AL_ALEXT_PROTOTYPES
@@ -239,6 +245,56 @@ namespace PlutoGE::audio
             }
 
             return clip.IsValid();
+        }
+
+        /// Decodes an Ogg Vorbis file (read through the content system, so packed builds work) to float samples.
+        bool LoadVorbisFile(const std::string &filePath, DecodedClip &clip)
+        {
+            PlutoGE::content::InputFile input(filePath, std::ios::binary);
+            if (!input.is_open())
+            {
+                return false;
+            }
+
+            const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+            if (bytes.size() < 4 || bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+                std::memcmp(bytes.data(), "OggS", 4) != 0)
+            {
+                return false;
+            }
+
+            int channels = 0;
+            int sampleRate = 0;
+            short *decoded = nullptr;
+            const int frames = stb_vorbis_decode_memory(bytes.data(), static_cast<int>(bytes.size()), &channels, &sampleRate, &decoded);
+            if (frames <= 0 || channels <= 0 || sampleRate <= 0 || decoded == nullptr)
+            {
+                std::free(decoded);
+                return false;
+            }
+
+            const auto count = static_cast<std::size_t>(frames) * static_cast<std::size_t>(channels);
+            clip.channels = channels;
+            clip.sampleRate = sampleRate;
+            clip.samples.resize(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                clip.samples[index] = static_cast<float>(decoded[index]) / 32768.0f;
+            }
+            std::free(decoded);
+            return clip.IsValid();
+        }
+
+        /// Decodes a clip by its contents: Ogg Vorbis ("OggS") or RIFF/WAVE.
+        bool LoadAudioFile(const std::string &filePath, DecodedClip &clip)
+        {
+            PlutoGE::content::InputFile input(filePath, std::ios::binary);
+            char magic[4] = {};
+            if (input.is_open() && input.read(magic, sizeof(magic)) && std::memcmp(magic, "OggS", 4) == 0)
+            {
+                return LoadVorbisFile(filePath, clip);
+            }
+            return LoadWaveFile(filePath, clip);
         }
 #endif
 
@@ -516,7 +572,7 @@ namespace PlutoGE::audio
         {
             PreparedClip result;
             DecodedClip decoded;
-            if (!LoadWaveFile(clipPath, decoded)) return result;
+            if (!LoadAudioFile(clipPath, decoded)) return result;
             result.clip.channels = decoded.channels;
             result.clip.sampleRate = decoded.sampleRate;
             result.clip.samples = std::move(decoded.samples);

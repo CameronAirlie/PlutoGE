@@ -294,7 +294,8 @@ collision with every scene mesh or animated character.
 
 ## Audio emitters, listeners, and environments
 
-SoundEmitterComponent plays an assigned clip. Use spatialization for world sounds
+SoundEmitterComponent plays an assigned clip: a WAV (PCM 8/16/24/32-bit or float) or an
+Ogg Vorbis (`.ogg`) file, decoded once when first loaded. Use spatialization for world sounds
 and non-spatial playback for music or UI feedback. SoundListenerComponent defines
 the listening position; place the intended listener on the player camera or a
 deliberate player audio point and avoid ambiguous multiple active listeners.

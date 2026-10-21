@@ -113,7 +113,7 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Texture;
         }
-        if (EndsWithInsensitive(reference, ".wav"))
+        if (EndsWithInsensitive(reference, ".wav") || EndsWithInsensitive(reference, ".ogg"))
         {
             return ProjectAssetType::Audio;
         }

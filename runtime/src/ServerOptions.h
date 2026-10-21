@@ -16,6 +16,8 @@ namespace PlutoGE
         unsigned tickRate = 60;
         bool tickRateSpecified = false;
         unsigned ticks = 0; // Zero runs until shutdown; nonzero supports automation.
+        // False runs ticks back to back instead of on the wall clock (automation: a test finishes as fast as it simulates).
+        bool paced = true;
         std::vector<std::string> scripts;
         std::vector<assets::ServerEnvironmentVariable> environment;
         static ServerOptions Parse(int argc, char **argv)
@@ -37,6 +39,12 @@ namespace PlutoGE
                     if (equals == std::string::npos || !assets::IsServerEnvironmentName(value.substr(0, equals)))
                         throw std::invalid_argument("Expected --env NAME=VALUE; PLUTOGE_HEADLESS is reserved");
                     result.environment.push_back({value.substr(0, equals), value.substr(equals + 1)});
+                }
+                else if (option == "--pacing")
+                {
+                    if (value != "realtime" && value != "none")
+                        throw std::invalid_argument("Expected --pacing realtime or --pacing none");
+                    result.paced = value == "realtime";
                 }
                 else if (option == "--tick-rate" || option == "--ticks")
                 {

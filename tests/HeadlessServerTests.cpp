@@ -86,10 +86,17 @@ int main(int argc, char **argv) try
     const char *arguments[] = {"server", "--project", "game.plutoproject", "--scene", "project://arena.plutoscene", "--script", "Test.Simulation", "--tick-rate", "60", "--ticks", "10"};
     auto options = ServerOptions::Parse(11, const_cast<char **>(arguments));
     Check(options.tickRate == 60 && options.ticks == 10 && options.scripts.size() == 1, "Server options parse failed");
+    Check(options.paced, "Servers must be paced by default");
+    const char *unpaced[] = {"server", "--pacing", "none"};
+    Check(!ServerOptions::Parse(3, const_cast<char **>(unpaced)).paced, "--pacing none was ignored");
     const char *invalid[] = {"server", "--tick-rate", "nan"};
     bool rejected = false;
     try { (void)ServerOptions::Parse(3, const_cast<char **>(invalid)); } catch (const std::invalid_argument &) { rejected = true; }
     Check(rejected, "Invalid server rate accepted");
+    const char *invalidPacing[] = {"server", "--pacing", "fast"};
+    rejected = false;
+    try { (void)ServerOptions::Parse(3, const_cast<char **>(invalidPacing)); } catch (const std::invalid_argument &) { rejected = true; }
+    Check(rejected, "Invalid server pacing accepted");
     const auto contentRoot = std::filesystem::temp_directory_path() / ("PlutoGEHeadlessTest-" +
         std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(contentRoot / "source" / "Assets");

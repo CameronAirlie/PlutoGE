@@ -156,7 +156,8 @@ int main(int argc, char **argv)
         if (!engine.GetSceneLoading().Load(scenePath, [&](auto scene)
             { lifetime.scene = std::move(scene); engine.SetScene(lifetime.scene.get()); engine.StartRuntime(); }, {}))
             throw std::runtime_error(engine.GetSceneLoading().Status().error);
-        std::cout << "Headless server running: " << options.scene << " at " << options.tickRate << " Hz\n";
+        std::cout << "Headless server running: " << options.scene << " at " << options.tickRate << " Hz"
+                  << (options.paced ? "" : " (unpaced)") << '\n';
         using Clock = std::chrono::steady_clock;
         const auto interval = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / options.tickRate));
         auto deadline = Clock::now();
@@ -210,6 +211,8 @@ int main(int argc, char **argv)
                     std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << '\n';
                 deadline = Clock::now();
             }
+            // Unpaced runs simulate the same fixed step back to back (automation); paced runs follow the wall clock.
+            if (!options.paced) continue;
             deadline += interval;
             // Bound catch-up work after a long stall rather than spinning indefinitely.
             if (Clock::now() - deadline > interval * 5) deadline = Clock::now();

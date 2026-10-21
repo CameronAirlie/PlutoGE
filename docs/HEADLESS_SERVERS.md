@@ -97,6 +97,9 @@ local-input scripts when reusing authored game scenes.
 
 The host uses a paced steady-clock fixed timestep (10–240 Hz, default 60), bounded
 catch-up work, SIGINT/SIGTERM shutdown and optional --ticks N for automation.
+`--pacing none` drops the wall-clock pacing: ticks run back to back with the same fixed
+step, so an automated test finishes as fast as it simulates (`--pacing realtime`, the
+default, is what live servers use).
 A zero tick count runs continuously. Application.Quit requests stop this loop.
 Scene transitions currently require restarting with a new --scene; a script request
 fails explicitly instead of entering a graphical loading flow.

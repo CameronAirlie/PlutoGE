@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 #ifdef _WIN32
+// windows.h must not define min/max macros for includers (they break std::numeric_limits<T>::max() in engine headers).
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 

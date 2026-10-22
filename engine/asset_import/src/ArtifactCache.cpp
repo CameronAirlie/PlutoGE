@@ -131,8 +131,9 @@ namespace PlutoGE::assetimport
                 if (errorMessage) *errorMessage = "Artifact input identities must be nonempty and unique, with an absolute source path.";
                 return false;
             }
+            // Keys are committed in source metadata, so they must not depend on
+            // where the project is checked out; identities are already relative.
             Frame(hasher, input.identity);
-            Frame(hasher, Utf8(input.path.lexically_normal()));
             Frame(hasher, content::DigestToHex(input.digest));
         }
         key = hasher.Finalize();

@@ -74,6 +74,9 @@ int main()
         std::reverse(reordered.inputs.begin(), reordered.inputs.end());
         content::ContentDigest other;
         Require(assetimport::ComputeArtifactKey(reordered, other) && key == other, "Input order changed artifact identity");
+        auto relocated = recipe;
+        for (auto &input : relocated.inputs) input.path = scratch.root / "Elsewhere" / input.path.filename();
+        Require(assetimport::ComputeArtifactKey(relocated, other) && key == other, "Checkout location changed artifact identity");
         for (unsigned change = 0; change < 4; ++change)
         {
             auto changed = recipe;

@@ -1,3 +1,4 @@
+#include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 
 #include "PlutoGE/assets/Project.h"
@@ -655,6 +656,10 @@ namespace PlutoGE::scene
                     command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
                     command.usePrimaryUvForLightmap = true;
+                    // The instance array is rebuilt (a new identity) whenever it changes, so the renderer may reuse
+                    // its prepared packet, batches and shadow signatures for as long as this command lives.
+                    command.sourceObject = render::RenderObjectIdentity().Value();
+                    command.sourceRevision = 1;
                     m_cachedRenderCommands.push_back(command);
                 }
             }

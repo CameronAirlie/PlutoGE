@@ -6,6 +6,16 @@
 
 namespace PlutoGE::render
 {
+    // Skinned poses are never cached. Instance arrays are cached only when the
+    // producer stamps the command with an identity and a revision that changes
+    // whenever it rebuilds the array (FoliageComponent).
+    inline bool Cacheable(const RenderCommand &command)
+    {
+        if (command.jointMatrices) return false;
+        if (!command.instanceModels && !command.previousInstanceModels) return true;
+        return command.sourceObject && command.sourceRevision;
+    }
+
     // Lists belong to one RhiSceneRenderer/viewport. Authoritative producer
     // revisions share immutable rigid packets across passes; procedural callers
     // retain value validation. Neither path treats addresses or Static as proof
@@ -32,8 +42,9 @@ namespace PlutoGE::render
             bool Matches(const RenderCommand &command, std::uint64_t revision) const
             {
                 // Array contents can mutate behind const shared_ptrs. Do not
-                // infer pose/instance revisions from pointer equality.
-                const bool common = valid && !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels &&
+                // infer pose/instance revisions from pointer equality; only a
+                // producer revision vouches for an instance array (foliage).
+                const bool common = valid && Cacheable(command) &&
                        materialRevision == revision && input.mesh == command.mesh &&
                        input.material == command.material && input.submeshIndex == command.submeshIndex &&
                        input.lodIndex == command.lodIndex && input.minShadowLodIndex == command.minShadowLodIndex &&
@@ -54,7 +65,7 @@ namespace PlutoGE::render
                 emitted = packet != nullptr;
                 if (packet)
                     draw = *packet;
-                valid = !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels;
+                valid = Cacheable(command);
             }
         };
         struct RetainedKey
@@ -78,8 +89,7 @@ namespace PlutoGE::render
         struct RetainedEntry { Entry packet; std::uint64_t lastUse = 0; };
         static bool CanRetain(const RenderCommand &command)
         {
-            return command.sourceObject && command.sourceRevision && !command.jointMatrices &&
-                !command.instanceModels && !command.previousInstanceModels;
+            return command.sourceObject && command.sourceRevision && Cacheable(command);
         }
         // drawLod is the LOD the packet actually draws; shadow lists may select
         // a coarser caster than the visible list for the same command.

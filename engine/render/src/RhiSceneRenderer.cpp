@@ -1031,10 +1031,7 @@ namespace PlutoGE::render
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
-                draw.preparationRevision =
-                    !command.jointMatrices && !command.instanceModels && !command.previousInstanceModels
-                        ? preparation.NextRevision()
-                        : 0;
+                draw.preparationRevision = Cacheable(command) ? preparation.NextRevision() : 0;
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
                 entry.Store(command, revision, &draw);

@@ -63,6 +63,8 @@ namespace PlutoGE::render
         // Skinned shadow-only casters skipped (not deformed) because they cannot
         // shadow any receiver in this view.
         std::size_t skinnedShadowCastersOutOfReach = 0;
+        // Rigid casters dropped because the full list exceeded the VSM caster capacity.
+        std::size_t rigidShadowCastersOutOfReach = 0;
         std::size_t recordedGeometryDepthDrawCount = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;

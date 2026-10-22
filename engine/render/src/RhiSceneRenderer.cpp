@@ -5,6 +5,7 @@
 #include "BasicDrawBatching.h"
 #include "CanonicalGeometry.h"
 #include "DirectionalShadowReach.h"
+#include "PlutoGE/render/VirtualShadowConfig.h"
 #include "ParticleDrawOrder.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
@@ -577,18 +578,29 @@ namespace PlutoGE::render
         // Skinned casters pay a full deformation before any shadow culling.
         // Drop those that cannot shadow a receiver in this view. Local lights
         // have their own reach, so any local shadow keeps the full list.
+        // Rigid casters normally stay listed so VSM pages cached for them stay
+        // valid as the camera moves; a scene with more caster chunks than the
+        // VSM accepts (a whole large map) would lose directional shadows
+        // entirely, so there rigid casters out of reach are dropped as well.
         RenderCommandView directionalShadowCommands = shadowCommands;
         if (prepareShadowCasters && !localShadows)
         {
+            std::size_t casterChunks = 0;
+            for (const auto &command : shadowCommands)
+                casterChunks += command.instanceModels && !command.instanceModels->empty()
+                    ? (command.instanceModels->size() + 63) / 64 : 1;
+            const bool cullRigid = casterChunks > PLUTO_VSM_MAX_DRAW_CHUNKS;
             const float shadowDistance = std::max(lighting.shadowDistance > 0.0f
                 ? std::min(cameraData.farPlane, lighting.shadowDistance) : cameraData.farPlane, 8.0f);
             const float casterDistance = lighting.shadowCasterDistance > 0.0f ? lighting.shadowCasterDistance : shadowDistance;
             if (const auto reach = DirectionalShadowReach::Create(glm::vec3(glm::inverse(cameraData.view)[3]),
                     cameraData.projection, lighting.directionalDirection, shadowDistance, casterDistance))
             {
+                const auto skinned = [](const RenderCommand &command)
+                { return command.jointMatrices && !command.jointMatrices->empty(); };
                 const auto outOfReach = [&](const RenderCommand &command)
                 {
-                    return command.jointMatrices && !command.jointMatrices->empty() &&
+                    return (cullRigid || skinned(command)) &&
                         !reach->Contains(command.worldBounds.center, command.worldBounds.radius);
                 };
                 const auto culled = static_cast<std::size_t>(std::ranges::count_if(shadowCommands, outOfReach));
@@ -599,8 +611,26 @@ namespace PlutoGE::render
                     for (const auto &command : shadowCommands)
                         if (!outOfReach(command)) m_directionalShadowCommands.push_back(&command);
                     directionalShadowCommands = m_directionalShadowCommands;
-                    m_timingStats.skinnedShadowCastersOutOfReach = culled;
+                    for (const auto &command : shadowCommands)
+                        if (outOfReach(command))
+                            ++(skinned(command) ? m_timingStats.skinnedShadowCastersOutOfReach
+                                                : m_timingStats.rigidShadowCastersOutOfReach);
                 }
+            }
+        }
+        // Still more casters in reach than the VSM accepts: shade this frame with
+        // cascaded shadow maps (no chunk limit) rather than no directional shadows.
+        bool virtualShadowCapacityFallback = false;
+        if (prepareShadowCasters && lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual)
+        {
+            std::size_t casterChunks = 0;
+            for (const auto &command : directionalShadowCommands)
+                casterChunks += command.instanceModels && !command.instanceModels->empty()
+                    ? (command.instanceModels->size() + 63) / 64 : 1;
+            if (casterChunks > PLUTO_VSM_MAX_DRAW_CHUNKS)
+            {
+                effectiveLighting.shadowMethod = ShadowMethod::Cascaded;
+                virtualShadowCapacityFallback = true;
             }
         }
         auto &pendingSkinning = m_pendingSkinning;
@@ -1838,7 +1868,9 @@ namespace PlutoGE::render
         m_timingStats.occlusionMode = effectiveLighting.occlusionMode;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;
-        m_timingStats.directionalShadowStatus = frameStats.directionalShadowStatus;
+        m_timingStats.directionalShadowStatus = virtualShadowCapacityFallback
+            ? "Cascaded shadow maps (fallback: more casters in reach than VSM accepts)"
+            : frameStats.directionalShadowStatus;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();

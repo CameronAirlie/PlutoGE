@@ -101,8 +101,9 @@ selections remain Cascaded. Active VSM allocates and samples no cascade maps;
 missing fine pages use resident coarser VSM coverage. The fixed page pool and
 update budgets can produce coarse or delayed shadows while pages warm up.
 
-Unsupported VSM capabilities, missing shaders, excessive draw chunks, and
-vertex-deforming or masked shader graphs report unavailable directional shadows.
+Unsupported VSM capabilities, missing shaders and vertex-deforming or masked shader graphs report unavailable
+directional shadows. Excessive caster draw chunks first cull rigid casters out of shadow reach, then fall back to
+cascaded shadow maps for that frame (see virtual-shadow-maps.md).
 They do not automatically select cascades. Opaque fragment-only graphs and
 standard texture-masked materials are supported. Select Cascaded explicitly for
 scenes requiring that compatibility path. See [VSM defaults](VSM_DEFAULT.md) and

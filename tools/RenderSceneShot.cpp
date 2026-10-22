@@ -21,6 +21,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 
 #include <filesystem>
 #include <limits>
@@ -160,6 +161,30 @@ int main(int argc, char **argv) try
                 draws.push_back(draw);
             }
         }
+        // Terrain draws every chunk submesh, as TerrainComponent::SubmitRenderCommands does at runtime.
+        if (auto *terrain = entity->GetComponent<scene::TerrainComponent>(); terrain && terrain->IsEnabled())
+        {
+            auto *mesh = terrain->GetMeshForBaking();
+            auto *material = terrain->GetMaterial();
+            if (!mesh || !material) ++skipped;
+            else
+                for (std::size_t index = 0; index < mesh->GetSubmeshCount(); ++index)
+                {
+                    render::RenderCommand draw;
+                    draw.mesh = mesh; draw.material = material;
+                    draw.submeshIndex = static_cast<std::uint32_t>(index);
+                    draw.model = draw.previousModel = entity->GetWorldTransform();
+                    draw.worldBounds = mesh->GetSubmesh(index).bounds;
+                    draw.worldBounds.center = glm::vec3(draw.model * glm::vec4(draw.worldBounds.center, 1));
+                    draw.worldBounds.radius *= std::max({glm::length(glm::vec3(draw.model[0])),
+                        glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
+                    draw.previousWorldBounds = draw.worldBounds;
+                    draw.isStatic = true;
+                    draw.usePrimaryUvForLightmap = true;
+                    draw.terrainGeomorph = true;
+                    draws.push_back(draw);
+                }
+        }
         // Foliage is instanced at runtime; expand each instance into an ordinary draw here.
         for (auto *foliage : entity->GetComponents<scene::FoliageComponent>())
         {
@@ -251,6 +276,9 @@ int main(int argc, char **argv) try
                              atmosphere, pixels, render::PostProcessDebugView::None, true, world.get()))
             throw std::runtime_error("Scene render failed");
     }
+    const auto &stats = renderer.GetTimingStats();
+    std::cout << "Directional shadows: " << stats.directionalShadowStatus << " (" << stats.shadowCandidateCount
+              << " casters; " << stats.rigidShadowCastersOutOfReach << " rigid out of reach)\n";
     const auto image = device.ReadTextureRgba8(renderer.GetColorTexture());
     const std::filesystem::path output(argv[3]);
     if (output.has_parent_path()) std::filesystem::create_directories(output.parent_path());

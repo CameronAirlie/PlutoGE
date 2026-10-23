@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/CloudOcclusion.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -126,18 +127,72 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     expect(sample(false), 0, "Unlit fog must not emit ambient light");
     lighting.directionalIntensity = 1;
     lighting.directionalColor = {1,1,1};
-    expect(sample(false), 1.f / (4.f * 3.14159265f), "Directional fog phase must be normalized");
+    lighting.directionalDirection = {0,-1,0};
+    expect(sample(false), 0, "An infinite homogeneous medium must extinguish sunlight");
+    // With falloff 1 the medium above the horizontal ray has optical depth
+    // density / falloff = .1 toward an overhead sun.
+    fog.parameters[1].x = 1;
+    const float sunThroughFog = std::exp(-.1f) / (4.f * 3.14159265f);
+    expect(sample(false), sunThroughFog, "Directional fog phase must be normalized");
     lighting.shadowsEnabled = true;
     lighting.shadowResolution = 64;
     lighting.shadowCascadeCount = 1;
     for (float shadowDistance : {1.f, 4.f, 20.f})
     {
         lighting.shadowCascadeSplits = glm::vec4(shadowDistance);
-        expect(sample(false), 1.f / (4.f * 3.14159265f), "Missing cascade coverage must not darken distant fog");
+        expect(sample(false), sunThroughFog, "Missing cascade coverage must not darken distant fog");
     }
     lighting.shadowsEnabled = false;
+    {
+        // A cloud slab overhead dims the sun by its mean extinction. The
+        // horizontal view ray never enters the slab, so only fog lighting changes.
+        BasicPostProcessEffect cloud{BasicPostProcessEffectType::VolumetricCloud};
+        cloud.parameters[0] = {1, 1, 1, 1};
+        cloud.parameters[1] = {0, 0, 0, 1};
+        cloud.parameters[2] = {0, 1, 0, .3f};
+        cloud.parameters[3] = {1, 1, 1, 1};
+        cloud.parameters[4] = {.9f, .5f, 0, .01f};
+        cloud.parameters[5] = {.05f, 0, 0, 0};
+        cloud.worldToLocal = glm::inverse(glm::translate(glm::mat4(1), glm::vec3(0, 15, 0)) *
+                                          glm::scale(glm::mat4(1), glm::vec3(10000, 10, 10000)));
+        fog.parameters[2].y = 0; // Isolate sunlight from the clouds' overcast fill.
+        const std::array clouded{cloud, fog};
+        const auto occlusion = BuildCloudOcclusion(clouded);
+        const float cloudTransmittance = std::exp(-occlusion.volumes[0].w * 10.f);
+        lighting.directionalIntensity = 8;
+        renderer.Render(projection * lighting.view, lighting, {}, std::span(&clouded[0], 2));
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        expect(static_cast<int>(pixels[(16 * 33 + 16) * 4]) / 255.0f, 8.f * sunThroughFog * cloudTransmittance,
+               "Clouds overhead must dim fog sunlight by their mean extinction");
+        if (cloudTransmittance > .6f || cloudTransmittance < .1f)
+            throw std::runtime_error("Cloud occlusion check must exercise a partially opaque slab");
+        // Without sky or sun, the only fog light is the cloud base radiance
+        // that replaces the blocked fraction of the sky.
+        fog.parameters[2].y = 1;
+        cloud.parameters[3].w = 20;
+        const std::array overcast{cloud, fog};
+        const auto overcastOcclusion = BuildCloudOcclusion(overcast);
+        const float skyVisibility = std::exp(-1.66f * overcastOcclusion.volumes[0].w * 10.f);
+        lighting.directionalIntensity = 0;
+        renderer.Render(projection * lighting.view, lighting, {}, std::span(&overcast[0], 2));
+        const auto overcastPixels = readPixels(renderer.GetColorTexture());
+        expect(static_cast<int>(overcastPixels[(16 * 33 + 16) * 4]) / 255.0f,
+               overcastOcclusion.volumes[0].r * (1.f - skyVisibility),
+               "Clouds must replace blocked sky light with their base radiance");
+    }
+    fog.parameters[1].x = 0;
     lighting.directionalIntensity = 0;
     lighting.ambientIntensity = 1;
+    {
+        // Haze accumulates with distance; opaque fog scattering within metres must hide it.
+        auto hazed = fog;
+        hazed.parameters[0] = {.5f, .5f, .5f, .1f};
+        hazed.parameters[3] = {1, 1, 4, 2000};
+        renderer.Render(projection * lighting.view, lighting, {}, std::span(&hazed, 1));
+        const auto pixels = readPixels(renderer.GetColorTexture());
+        expect(static_cast<int>(pixels[(16 * 33 + 16) * 4]) / 255.0f, .5f,
+               "Nearby opaque height fog must hide distant haze");
+    }
     fog.parameters[2].w = .25f;
     expect(sample(false), .04f * .75f + .25f, "Sky must respect maximum fog opacity");
     fog.parameters[2].w = 1;

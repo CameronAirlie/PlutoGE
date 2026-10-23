@@ -30,6 +30,41 @@ float infiniteHeightFogOpticalDepth(float density, float falloff, float heightOf
                      log(slope), -80.0, 80.0));
 }
 
+// Direct light reaching a point inside the height fog. The medium above the
+// point attenuates the light first, so a dense layer darkens toward its base
+// instead of glowing uniformly. Light from below the horizon is extinguished.
+float heightFogSunTransmittance(float density, float falloff, float heightOffset,
+                                float height, float lightDirectionY)
+{
+    return exp(-infiniteHeightFogOpticalDepth(density, falloff, heightOffset, height, lightDirectionY));
+}
+
+// Distance along a ray at which its accumulated optical depth reaches
+// opticalDepth. Callers keep opticalDepth below the ray's total depth.
+float heightFogDistanceAtOpticalDepth(float density, float falloff, float heightOffset,
+                                      float startHeight, float directionY, float opticalDepth)
+{
+    if (density <= 0.0 || opticalDepth <= 0.0) return 0.0;
+    falloff = max(falloff, 0.0);
+    float slope = falloff * directionY;
+    float logStartDensity = clamp(log(density) - falloff * (startHeight - heightOffset), -80.0, 80.0);
+    // Distance in a homogeneous medium with the start density.
+    float homogeneous = opticalDepth * exp(-logStartDensity);
+    if (abs(slope * homogeneous) < 0.001) return homogeneous;
+    // depth(s) = startDensity * (1 - exp(-slope * s)) / slope, inverted for s.
+    return -log(max(1.0 - slope * homogeneous, 0.000001)) / slope;
+}
+
+// Analytic segments are lit at one representative point: the distance before
+// which half of the segment's single scattering, 1 - T, is accumulated.
+float heightFogScatteringMidpoint(float density, float falloff, float heightOffset,
+                                  float startHeight, float directionY, float segmentDepth, float segmentLength)
+{
+    float halfDepth = -log(0.5 + 0.5 * exp(-segmentDepth));
+    return min(heightFogDistanceAtOpticalDepth(density, falloff, heightOffset, startHeight, directionY, halfDepth),
+               segmentLength);
+}
+
 float fogShadowWeight(float distance, float detailDistance)
 {
     // Fade to the distant lighting model over the final fifth of coverage.

@@ -177,6 +177,10 @@ namespace PlutoGE::render
             PostProcessParameter{.name = "Horizon Haze", .type = PostProcessParameterType::Float, .value = std::to_string(m_horizonHaze)},
             PostProcessParameter{.name = "Haze Width", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeWidth)},
             PostProcessParameter{.name = "Haze Distance", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeDistance)},
+            PostProcessParameter{.name = "Noise Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseStrength)},
+            PostProcessParameter{.name = "Noise Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseScale)},
+            PostProcessParameter{.name = "Noise Wind X", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseWind.x)},
+            PostProcessParameter{.name = "Noise Wind Z", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseWind.y)},
             PostProcessParameter{
                 .name = "Max Opacity",
                 .type = PostProcessParameterType::Float,
@@ -242,6 +246,14 @@ namespace PlutoGE::render
                 m_hazeWidth = std::clamp(std::stof(parameter.value), 0.1f, 45.0f);
             else if (parameter.name == "Haze Distance")
                 m_hazeDistance = std::clamp(std::stof(parameter.value), 1.0f, 1000000.0f);
+            else if (parameter.name == "Noise Strength")
+                m_noiseStrength = std::clamp(std::stof(parameter.value), 0.0f, 1.0f);
+            else if (parameter.name == "Noise Scale")
+                m_noiseScale = std::clamp(std::stof(parameter.value), 1.0f, 10000.0f);
+            else if (parameter.name == "Noise Wind X")
+                m_noiseWind.x = std::clamp(std::stof(parameter.value), -100.0f, 100.0f);
+            else if (parameter.name == "Noise Wind Z")
+                m_noiseWind.y = std::clamp(std::stof(parameter.value), -100.0f, 100.0f);
             else if (parameter.name == "Scattering")
             {
                 m_scattering = glm::clamp(std::stof(parameter.value), 0.0f, 2.0f);
@@ -562,6 +574,9 @@ namespace PlutoGE::render
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
                 float lightVisibility = 1.0;
+                // Opacity-weighted scattering distance, which places the fog within the haze.
+                float scatterDistance = 0.0;
+                float scatterWeight = 0.0;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -589,6 +604,8 @@ namespace PlutoGE::render
                         float shadowDistance = (float(stepIndex) + cellJitter) * stepLength;
                         vec3 shadowPosition = uCameraPosition + rayDirection * shadowDistance;
                         lightVisibility = 1.0 - ComputeDirectionalLightShadow(shadowPosition, viewDepthScale * shadowDistance) * fogShadowWeight(shadowDistance, detailDistance);
+                        lightVisibility *= heightFogSunTransmittance(uFogDensity, uHeightFalloff, uHeightOffset,
+                            shadowPosition.y, normalize(uLightDirection).y);
                     }
                     // Environment radiance is already the incident ambient
                     // light. Do not attenuate it a second time based on the
@@ -601,6 +618,8 @@ namespace PlutoGE::render
                     vec3 fogLighting = ambientScatter + (fogTint * directionalScatter);
 
                     accumulatedLight += transmittance * segmentFog * fogLighting;
+                    scatterDistance += transmittance * segmentFog * (sampleDistance + 0.5 * stepLength);
+                    scatterWeight += transmittance * segmentFog;
                     transmittance *= segmentTransmittance;
 
                     if (transmittance <= 0.000001)
@@ -618,19 +637,36 @@ namespace PlutoGE::render
                     ? infiniteHeightFogOpticalDepth(uFogDensity, uHeightFalloff, uHeightOffset, tailHeight, rayDirection.y)
                     : heightFogOpticalDepth(uFogDensity, uHeightFalloff, uHeightOffset, tailHeight, rayDirection.y, max(hitDistance - marchDistance, 0.0));
                 float tailTransmittance = exp(-tailDepth);
+                // Light the tail at its scattering midpoint (FogIntegration).
+                float tailLength = isSky ? 1e30 : max(hitDistance - marchDistance, 0.0);
+                float tailMidpoint = heightFogScatteringMidpoint(uFogDensity, uHeightFalloff, uHeightOffset,
+                    tailHeight, rayDirection.y, tailDepth, tailLength);
+                float tailSun = heightFogSunTransmittance(uFogDensity, uHeightFalloff, uHeightOffset,
+                    tailHeight + rayDirection.y * tailMidpoint, normalize(uLightDirection).y);
                 vec3 tailLighting = ambientFogColor * uAmbientContribution + fogTint *
-                    uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution;
+                    uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * tailSun;
                 accumulatedLight += transmittance * (1.0 - tailTransmittance) * tailLighting;
+                scatterDistance += transmittance * (1.0 - tailTransmittance) * (marchDistance + tailMidpoint);
+                scatterWeight += transmittance * (1.0 - tailTransmittance);
                 transmittance *= tailTransmittance;
 
-                float heightOpacity = min(1.0 - transmittance, clamp(uMaxOpacity, 0.0, 1.0));
-                accumulatedLight *= heightOpacity / max(1.0 - transmittance, 0.0001);
-                transmittance = 1.0 - heightOpacity;
-                float hazeTransmission = horizonHazeTransmittance(rayDirection.y, hitDistance, isSky,
+                // Max Opacity scales the layer so contrast keeps falling with distance.
+                float opacityScale = clamp(uMaxOpacity, 0.0, 1.0);
+                accumulatedLight *= opacityScale;
+                transmittance = 1.0 - opacityScale * (1.0 - transmittance);
+                // Split the haze at the fog's scattering distance: nearer haze
+                // veils the fog, farther haze lies behind it (FogEnvironment.slang).
+                float fogDistance = scatterWeight > 0.0 ? scatterDistance / scatterWeight : 0.0;
+                float hazeTotal = horizonHazeTransmittance(rayDirection.y, hitDistance, isSky,
                     uHorizonHaze.x, uHorizonHaze.y, uHorizonHaze.z);
+                float hazeFront = max(horizonHazeTransmittance(rayDirection.y,
+                    isSky ? fogDistance : min(fogDistance, hitDistance), false,
+                    uHorizonHaze.x, uHorizonHaze.y, uHorizonHaze.z), hazeTotal);
+                float hazeBehind = hazeTotal / max(hazeFront, 0.000001);
                 vec3 hazeColor = ambientFogColor * vec3(0.65, 0.8, 1.0);
-                accumulatedLight = accumulatedLight * hazeTransmission + hazeColor * (1.0 - hazeTransmission);
-                transmittance *= hazeTransmission;
+                accumulatedLight = (1.0 - hazeFront) * hazeColor +
+                    hazeFront * (accumulatedLight + transmittance * (1.0 - hazeBehind) * hazeColor);
+                transmittance *= hazeFront * hazeBehind;
                 float totalFog = Saturate(1.0 - transmittance);
                 if (totalFog <= 0.0001)
                 {

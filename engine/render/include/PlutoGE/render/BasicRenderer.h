@@ -551,6 +551,9 @@ namespace PlutoGE::render
         // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
         // VCT uses lane 2.z for trace divisor and lane 4.w for local injection.
         // Lane 5.x is local gain minus one; 5.y is secondary bounce (0 disables).
+        // VolumetricFog uses lanes 0-3 for its medium and haze, 4.y/4.z for
+        // noise strength/frequency and 6.xyz for wind velocity; the renderer
+        // writes 4.x (ocean depth) and 5.xyz (wind offset) per frame.
         std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources

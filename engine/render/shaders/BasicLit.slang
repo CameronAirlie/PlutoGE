@@ -758,23 +758,29 @@ float4 glassAtmosphere(float3 worldPosition)
     }
     const float marchDistance = min(distance, detailDistance);
     const float stepLength = marchDistance / steps;
+    const float3 sunDirection = normalize(-directionalDirectionIntensity.xyz);
     const float g = clamp(glassFog[2].x, -0.85, 0.85);
-    const float cosine = dot(direction, normalize(-directionalDirectionIntensity.xyz));
+    const float cosine = dot(direction, sunDirection);
     const float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5));
-    const float3 ambientLight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
-        max(glassFog[2].y, 0.0) * fogEnvironmentLighting(cameraPositionAmbient.w);
-    const float3 sunlight = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0) *
-        max(glassFog[2].z, 0.0) * max(directionalColor.rgb, 0.0) * max(directionalDirectionIntensity.w, 0.0) * phase;
+    const float3 albedo = max(glassFog[0].rgb, 0.0) * max(glassFog[1].w, 0.0);
+    const FogMedium medium = makeFogMedium(glassFog[0].w, glassFog[1].x, glassFog[1].y);
+    FogLighting lighting;
+    lighting.ambientAlbedo = albedo * max(glassFog[2].y, 0.0);
+    lighting.environment = fogEnvironmentLighting(cameraPositionAmbient.w);
+    lighting.sunRadiance = albedo * max(glassFog[2].z, 0.0) * max(directionalColor.rgb, 0.0) *
+        max(directionalDirectionIntensity.w, 0.0) * phase;
     float transmittance = 1.0;
     float3 radiance = 0.0;
+    float scatterDistance = 0.0;
+    float scatterWeight = 0.0;
     for (int i = 0; i < steps; ++i)
     {
         const float sampleDistance = (i + 0.5) * stepLength;
         const float3 position = cameraPositionAmbient.xyz + direction * sampleDistance;
-        const float opticalDepth = heightFogOpticalDepth(glassFog[0].w, glassFog[1].x,
-            glassFog[1].y, cameraPositionAmbient.y + direction.y * (i * stepLength), direction.y, stepLength);
+        const float opticalDepth = heightFogOpticalDepth(medium.density, medium.falloff,
+            medium.heightOffset, cameraPositionAmbient.y + direction.y * (i * stepLength), direction.y, stepLength);
         float visibility = 1.0;
-        if (shadowsEnabled != 0 && any(sunlight > 0.0))
+        if (shadowsEnabled != 0 && any(lighting.sunRadiance > 0.0))
         {
             if (shadowCascadeParameters.w > 0.5)
                 visibility = virtualShadowFogVisibility(vsm, virtualShadowAtlas, virtualShadowTable, position);
@@ -790,27 +796,40 @@ float4 glassAtmosphere(float3 worldPosition)
         }
         visibility = lerp(1.0, visibility, fogShadowWeight(sampleDistance, detailDistance));
         const float segment = exp(-opticalDepth);
-        radiance += transmittance * (1.0 - segment) * (ambientLight + sunlight * visibility);
+        const float weight = transmittance * (1.0 - segment);
+        radiance += weight * fogPointRadiance(lighting, medium, cloudOcclusion, position, sunDirection, visibility);
+        scatterDistance += weight * sampleDistance;
+        scatterWeight += weight;
         transmittance *= segment;
     }
-    const float tailDepth = heightFogOpticalDepth(glassFog[0].w, glassFog[1].x, glassFog[1].y,
-        cameraPositionAmbient.y + direction.y * marchDistance, direction.y, max(distance - marchDistance, 0.0));
+    const float tailHeight = cameraPositionAmbient.y + direction.y * marchDistance;
+    const float tailLength = max(distance - marchDistance, 0.0);
+    const float tailDepth = heightFogOpticalDepth(medium.density, medium.falloff, medium.heightOffset,
+        tailHeight, direction.y, tailLength);
     const float tailTransmittance = exp(-tailDepth);
-    radiance += transmittance * (1.0 - tailTransmittance) * (ambientLight + sunlight);
+    if (tailTransmittance < 1.0)
+    {
+        const float tailMidpoint = heightFogScatteringMidpoint(medium.density, medium.falloff, medium.heightOffset,
+            tailHeight, direction.y, tailDepth, tailLength);
+        const float weight = transmittance * (1.0 - tailTransmittance);
+        radiance += weight * fogPointRadiance(lighting, medium, cloudOcclusion,
+            cameraPositionAmbient.xyz + direction * (marchDistance + tailMidpoint), sunDirection, 1.0);
+        scatterDistance += weight * (marchDistance + tailMidpoint);
+        scatterWeight += weight;
+    }
     transmittance *= tailTransmittance;
-    const float opacity = min(1.0 - transmittance, saturate(glassFog[2].w));
-    radiance *= opacity / max(1.0 - transmittance, 0.0001);
-    transmittance = 1.0 - opacity;
+    // Max Opacity scales the layer; see VolumetricFog.slang.
+    const float opacityScale = saturate(glassFog[2].w);
+    float4 fog = float4(radiance * opacityScale, 1.0 - opacityScale * (1.0 - transmittance));
     if (glassFog[3].y > 0.0)
     {
-        const float hazeTransmittance = horizonHazeTransmittance(direction.y, distance, false,
-            glassFog[3].y, glassFog[3].z, glassFog[3].w);
         const float3 hazeLighting = horizonHazeLighting(direction, cameraPositionAmbient.w,
-            directionalColor.rgb * max(directionalDirectionIntensity.w, 0.0), glassFog[3].z);
-        radiance = radiance * hazeTransmittance + hazeLighting * (1.0 - hazeTransmittance);
-        transmittance *= hazeTransmittance;
+            directionalColor.rgb * max(directionalDirectionIntensity.w, 0.0), glassFog[3].z,
+            evaluateCloudLighting(cloudOcclusion, cameraPositionAmbient.xyz, sunDirection));
+        fog = composeHorizonHaze(fog, scatterWeight > 0.0 ? scatterDistance / scatterWeight : 0.0,
+                                 direction.y, distance, false, glassFog[3], hazeLighting);
     }
-    return float4(radiance, transmittance);
+    return fog;
 }
 #endif
 

@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
+#include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -23,6 +24,10 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <span>
+#include <vector>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace
 {
@@ -326,6 +331,45 @@ int main()
         !Near(fogPacket->parameters[2].w, 1.0f) ||
         compositePacket->type != BasicPostProcessEffectType::SceneComposite)
         return 12;
+
+    // Fog density noise: strength and frequency in lane 4, wind velocity in lane 6.
+    fog.SetParameters({PostProcessParameter{.name = "Noise Strength", .value = "0.25"},
+                       PostProcessParameter{.name = "Noise Scale", .value = "50"},
+                       PostProcessParameter{.name = "Noise Wind X", .value = "3"},
+                       PostProcessParameter{.name = "Noise Wind Z", .value = "-2"}});
+    const auto noisyFog = AdaptPostProcessEffect(fog);
+    if (!noisyFog || !Near(noisyFog->parameters[4].y, 0.25f) || !Near(noisyFog->parameters[4].z, 0.02f) ||
+        !Near(noisyFog->parameters[6].x, 3.0f) || !Near(noisyFog->parameters[6].z, -2.0f))
+        return 150;
+
+    // The CPU mean of the cloud noise density matches an independent 40k-sample
+    // estimate of VolumetricCloud.slang's density (0.0619 at the component defaults,
+    // 0.482 at full coverage without erosion).
+    if (std::abs(EstimateMeanCloudNoiseDensity(0.55f, 0.32f, 0.035f / 0.006f) - 0.0619f) > 0.006f ||
+        std::abs(EstimateMeanCloudNoiseDensity(1.0f, 0.0f, 1.0f) - 0.482f) > 0.015f)
+        return 151;
+    {
+        // Cloud occlusion keeps the nearest volumes, which come last.
+        BasicPostProcessEffect cloud{BasicPostProcessEffectType::VolumetricCloud};
+        cloud.parameters[0] = {1, 1, 1, 0.55f};
+        cloud.parameters[1].w = 0.42f;
+        cloud.parameters[2] = {0, 1, 0, 0.012f};
+        cloud.parameters[4] = {0.9f, 0.65f, 0.22f, 0.006f};
+        cloud.parameters[5] = {0.035f, 0.32f, 0, 0};
+        std::vector<BasicPostProcessEffect> effects(PLUTO_CLOUD_OCCLUSION_VOLUMES + 1, cloud);
+        for (std::size_t index = 0; index < effects.size(); ++index)
+            effects[index].worldToLocal = glm::translate(glm::mat4(1.0f), glm::vec3(float(index), 0, 0));
+        effects.push_back(BasicPostProcessEffect{BasicPostProcessEffectType::VolumetricFog});
+        const auto occlusion = BuildCloudOcclusion(effects);
+        const float expected = EstimateMeanCloudNoiseDensity(0.55f, 0.32f, 0.035f / 0.006f) * 0.74f * 0.42f * 0.012f;
+        if (!Near(occlusion.volumes[0].w * 1.0e4f, expected * 1.0e4f) ||
+            !Near(occlusion.worldToLocal[0][3].x, float(PLUTO_CLOUD_OCCLUSION_VOLUMES)) ||
+            !Near(occlusion.worldToLocal[PLUTO_CLOUD_OCCLUSION_VOLUMES - 1][3].x, 1.0f) ||
+            !(occlusion.volumes[0].x > 0.0f))
+            return 152;
+        if (BuildCloudOcclusion(std::span(effects).last(1)).volumes[0].w != 0.0f)
+            return 153;
+    }
 
     if (StageFor(BasicPostProcessEffectType::SceneComposite) != BasicPostProcessStage::LightingComposite ||
         StageFor(BasicPostProcessEffectType::SSAO) != BasicPostProcessStage::AmbientOcclusion ||

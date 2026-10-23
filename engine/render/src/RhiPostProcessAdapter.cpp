@@ -243,6 +243,9 @@ namespace PlutoGE::render
                                         settings.directionalContribution, settings.maxOpacity};
                 result.parameters[3] = {static_cast<float>(settings.shadowStepStride),
                     settings.horizonHaze, settings.hazeWidth, settings.hazeDistance};
+                // Lane 4.x and lane 5 are written per frame by the renderer.
+                result.parameters[4] = {0.0f, settings.noiseStrength, 1.0f / settings.noiseScale, 0.0f};
+                result.parameters[6] = {settings.noiseWind.x, 0.0f, settings.noiseWind.y, 0.0f};
                 return result;
             });
         }

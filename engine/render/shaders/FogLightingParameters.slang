@@ -1,6 +1,7 @@
 #ifndef PLUTO_FOG_LIGHTING_PARAMETERS
 #define PLUTO_FOG_LIGHTING_PARAMETERS
 #include "../include/PlutoGE/render/PhysicalSkyLayout.h"
+#include "CloudOcclusion.slang"
 
 // This is the prefix of BasicRenderer's frame block through the fields fog
 // consumes. Keeping fog on that existing buffer makes directional lighting and
@@ -29,6 +30,7 @@ cbuffer FogLightingParameters : register(b7, space0)
     column_major float4x4 fogPreviousViewProjection;
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
+    CloudOcclusionParameters fogCloudOcclusion;
 };
 
 #endif

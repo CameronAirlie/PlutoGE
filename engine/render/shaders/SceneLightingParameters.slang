@@ -6,6 +6,7 @@
 
 #include "../include/PlutoGE/render/AmbientProbeConfig.h"
 #include "../include/PlutoGE/render/PhysicalSkyLayout.h"
+#include "CloudOcclusion.slang"
 struct AmbientProbeVolumeParameters
 {
     float4 origin, size, resolutionBase;
@@ -35,6 +36,7 @@ cbuffer CameraParameters : register(b0, space0)
     column_major float4x4 previousViewProjection;
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
+    CloudOcclusionParameters cloudOcclusion;
     float4 temporalClipOffset; // clip jitter xy, temporal accumulation, dither frame
     float4 pointPositionRange[32];
     float4 pointColorIntensity[32];

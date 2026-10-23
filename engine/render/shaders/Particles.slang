@@ -32,9 +32,10 @@ static const float PI = 3.14159265359;
 // Particles composite after the fog pass, over a background that already
 // carries fog. Attenuating a particle by the fog in front of it and adding that
 // segment's in-scattering composites exactly over it. Fog varies little across
-// one billboard, so it is integrated once per particle, unshadowed, matching
-// the fog pass's distant (unshadowed) term. values[24-27] mirror the
-// VolumetricFog effect parameters; zero density and haze disable it.
+// one billboard, so it is integrated once per particle, unshadowed and at mean
+// density, lit at the segment's scattering midpoint like the fog pass's
+// distant term. values[24-27] mirror the VolumetricFog effect parameters;
+// zero density and haze disable it.
 float4 particleFog(float3 worldPosition)
 {
     const float4 colorDensity = values[24], heightDetailScattering = values[25];
@@ -43,28 +44,32 @@ float4 particleFog(float3 worldPosition)
     const float3 ray = worldPosition - fogCameraPositionAmbient.xyz;
     const float distance = length(ray);
     const float3 direction = ray / max(distance, 0.0001);
+    const float3 sunDirection = normalize(-fogDirectionalDirectionIntensity.xyz);
     const float g = clamp(phaseAmbientSunOpacity.x, -0.85, 0.85);
-    const float cosine = dot(direction, normalize(-fogDirectionalDirectionIntensity.xyz));
+    const float cosine = dot(direction, sunDirection);
     const float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5));
-    const float3 medium = max(colorDensity.rgb, 0.0) * max(heightDetailScattering.w, 0.0);
-    const float3 ambient = medium * max(phaseAmbientSunOpacity.y, 0.0) *
-        fogEnvironmentLighting(fogCameraPositionAmbient.w);
-    const float3 sunlight = medium * max(phaseAmbientSunOpacity.z, 0.0) * max(fogDirectionalColor.rgb, 0.0) *
+    const float3 albedo = max(colorDensity.rgb, 0.0) * max(heightDetailScattering.w, 0.0);
+    const FogMedium medium = makeFogMedium(colorDensity.w, heightDetailScattering.x, heightDetailScattering.y);
+    FogLighting lighting;
+    lighting.ambientAlbedo = albedo * max(phaseAmbientSunOpacity.y, 0.0);
+    lighting.environment = fogEnvironmentLighting(fogCameraPositionAmbient.w);
+    lighting.sunRadiance = albedo * max(phaseAmbientSunOpacity.z, 0.0) * max(fogDirectionalColor.rgb, 0.0) *
         max(fogDirectionalDirectionIntensity.w, 0.0) * phase;
-    const float heightTransmittance = exp(-heightFogOpticalDepth(colorDensity.w, heightDetailScattering.x,
-        heightDetailScattering.y, fogCameraPositionAmbient.y, direction.y, distance));
-    const float opacity = min(1.0 - heightTransmittance, saturate(phaseAmbientSunOpacity.w));
-    float3 radiance = opacity * (ambient + sunlight);
-    float transmittance = 1.0 - opacity;
+    const float opticalDepth = heightFogOpticalDepth(medium.density, medium.falloff, medium.heightOffset,
+        fogCameraPositionAmbient.y, direction.y, distance);
+    const float midpoint = heightFogScatteringMidpoint(medium.density, medium.falloff, medium.heightOffset,
+        fogCameraPositionAmbient.y, direction.y, opticalDepth, distance);
+    const float opacity = saturate(phaseAmbientSunOpacity.w) * (1.0 - exp(-opticalDepth));
+    float4 fog = float4(opacity * fogPointRadiance(lighting, medium, fogCloudOcclusion,
+        fogCameraPositionAmbient.xyz + direction * midpoint, sunDirection, 1.0), 1.0 - opacity);
     if (haze.y > 0.0)
     {
-        const float hazeTransmittance = horizonHazeTransmittance(direction.y, distance, false, haze.y, haze.z, haze.w);
         const float3 hazeLighting = horizonHazeLighting(direction, fogCameraPositionAmbient.w,
-            fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), haze.z);
-        radiance = radiance * hazeTransmittance + hazeLighting * (1.0 - hazeTransmittance);
-        transmittance *= hazeTransmittance;
+            fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), haze.z,
+            evaluateCloudLighting(fogCloudOcclusion, fogCameraPositionAmbient.xyz, sunDirection));
+        fog = composeHorizonHaze(fog, midpoint, direction.y, distance, false, haze, hazeLighting);
     }
-    return float4(radiance, transmittance);
+    return fog;
 }
 [[vk::binding(1, 0)]] Sampler2D uAlbedoTexture : register(t1, space0);
 [[vk::binding(2, 0)]] Sampler2D uSceneDepth : register(t2, space0);

@@ -16,6 +16,7 @@
 #include "RhiGpuSkinning.h"
 #include "DeferredProbeIrradiance.h"
 #include "CloudNoiseVolume.h"
+#include "PlutoGE/render/CloudOcclusion.h"
 #include "PostProcessParameterBlock.h"
 
 #include <cstddef>
@@ -103,6 +104,22 @@ namespace PlutoGE::render
             glm::vec4 alpha, color, factors, emission, cameraTime;
             ShaderGraphProgramData graph;
         };
+        // Fog density noise drifts with the shader-graph clock. Lane 6.xyz is
+        // the wind velocity and lane 4.z the noise frequency. Wrapping to the
+        // lattice period keeps the offset precise in long sessions without a seam.
+        glm::vec3 FogNoiseWindOffset(const BasicPostProcessEffect &effect)
+        {
+            const float frequency = effect.parameters[4].z;
+            if (frequency <= 0.0f)
+                return glm::vec3(0.0f);
+            const double period = CloudNoiseVolume::Size / static_cast<double>(frequency);
+            const double time = ShaderGraphTimeSeconds();
+            glm::vec3 offset{0.0f};
+            for (int axis = 0; axis < 3; ++axis)
+                offset[axis] = static_cast<float>(std::fmod(effect.parameters[6][axis] * time, period));
+            return offset;
+        }
+
         GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time)
         {
             GraphShadowMaterial data{glm::vec4(draw.uvScale,draw.alphaCutoff,draw.baseColor.a),
@@ -135,6 +152,7 @@ namespace PlutoGE::render
             glm::mat4 previousViewProjection{1.0f};
             std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
             glm::vec4 physicalSkySettings{0.0f}; // enabled, exposure, ambient scale, padding
+            CloudOcclusionParameters cloudOcclusion{};
             glm::vec4 temporalClipOffset{0.0f}; // clip jitter xy, temporal accumulation, dither frame
             std::array<glm::vec4, 32> pointPositionRange{};
             std::array<glm::vec4, 32> pointColorIntensity{};
@@ -149,7 +167,7 @@ namespace PlutoGE::render
             std::array<AmbientProbeVolumeParameters, PLUTO_AMBIENT_PROBE_VOLUMES> probeVolumes{};
             glm::vec4 geometryParameters{}; // Preserve receiver shadow sampling for diagnostic outputs.
         };
-        static_assert(sizeof(BasicFrameParameters) == 6016 + 16 * PLUTO_SKY_LANE_COUNT);
+        static_assert(sizeof(BasicFrameParameters) == 6016 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
 
         struct alignas(16) BasicObjectParameters
         {
@@ -905,7 +923,8 @@ namespace PlutoGE::render
                 if (type == BasicPostProcessEffectType::SSR)
                     postDescriptor.resourceBindings.push_back(
                         {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                if (type == BasicPostProcessEffectType::VolumetricCloud) // Baked noise lattice volume.
+                // Baked noise lattice volume: cloud density and fog density variation.
+                if (type == BasicPostProcessEffectType::VolumetricCloud || type == BasicPostProcessEffectType::VolumetricFog)
                     postDescriptor.resourceBindings.push_back(
                         {15, 0, 15, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 if (type == BasicPostProcessEffectType::VolumetricFog || type == BasicPostProcessEffectType::Ocean)
@@ -2076,6 +2095,7 @@ namespace PlutoGE::render
             glm::vec4(lighting.physicalSkyEnabled ? 1.0f : 0.0f,
                       std::max(lighting.physicalSkyExposure, 0.0f),
                       1.0f, m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky ? 1.0f : 0.0f),
+            BuildCloudOcclusion(postProcessEffects),
             temporalClipOffset,
         };
         const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
@@ -3653,7 +3673,10 @@ namespace PlutoGE::render
             auto effectParameters = effect.parameters;
             const auto volumeDepth = volumetric ? oceanVolumeDepth : rhi::TextureHandle{};
             if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+            {
                 effectParameters[4].x = volumeDepth ? 1.0f : 0.0f;
+                effectParameters[5] = glm::vec4(FogNoiseWindOffset(effect), 0.0f);
+            }
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
                 effectParameters[5].w = volumeDepth ? 1.0f : 0.0f;
             if (effect.type == BasicPostProcessEffectType::TAA)
@@ -3782,7 +3805,8 @@ namespace PlutoGE::render
                 commands.BindPipeline(drawPass == 1 ? m_oceanVolumeDepthPipeline.Get() : pipeline);
                 commands.BindUniformBuffer(0, drawParameterBuffer);
                 if (effect.type == BasicPostProcessEffectType::Ocean) commands.BindUniformBuffer(15, oceanBuffer);
-                if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
+                if (effect.type == BasicPostProcessEffectType::VolumetricCloud ||
+                    effect.type == BasicPostProcessEffectType::VolumetricFog)
                     commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
                 commands.BindTexture(1, drawPass == 1 && oceanVolumeDepth ? oceanVolumeDepth : m_outputColor, m_screenSampler.Get());
                 const auto inputs = InputsFor(effect.type);

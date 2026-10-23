@@ -33,13 +33,16 @@ namespace PlutoGE::render
             int stepCount, shadowStepStride;
             bool halfResolution;
             float horizonHaze, hazeWidth, hazeDistance;
+            float noiseStrength, noiseScale;
+            glm::vec2 noiseWind; // World units per second along X and Z.
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_fogColor, m_density, m_heightFalloff, m_heightOffset, m_shadowDetailDistance,
                     m_scattering, m_anisotropy, m_ambientContribution,
                     m_directionalContribution, m_maxOpacity, m_stepCount,
-                    m_shadowStepStride, m_halfResolution, m_horizonHaze, m_hazeWidth, m_hazeDistance};
+                    m_shadowStepStride, m_halfResolution, m_horizonHaze, m_hazeWidth, m_hazeDistance,
+                    m_noiseStrength, m_noiseScale, m_noiseWind};
         }
 
     private:
@@ -72,6 +75,11 @@ namespace PlutoGE::render
         float m_horizonHaze = 1.0f;
         float m_hazeWidth = 4.0f;
         float m_hazeDistance = 2000.0f;
+        // Mean-preserving density variation; Noise Scale is the feature size
+        // in world units. RHI renderer only.
+        float m_noiseStrength = 0.5f;
+        float m_noiseScale = 40.0f;
+        glm::vec2 m_noiseWind{1.5f, 0.5f};
         int m_stepCount = 16;
         int m_shadowStepStride = 2;
         int m_internalWidth = 0;

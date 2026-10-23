@@ -44,6 +44,7 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &, std::span<const std::byte> = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &, std::span<const std::byte> = {}) override;
+        bool UpdateTexture(TextureHandle texture, const TextureRegion &region, std::span<const std::byte> data) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &) override;
         [[nodiscard]] PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &) override;
         [[nodiscard]] PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &) override;
@@ -71,6 +72,8 @@ namespace PlutoGE::render::rhi::vulkan
         void PrepareTextureForEditorSampling(void *nativeCommandContext, TextureHandle texture);
 
     private:
+        TextureHandle CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data);
+
         friend class VulkanCommandContext;
         friend class VulkanSwapchain;
         struct Impl;

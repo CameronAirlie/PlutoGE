@@ -1,6 +1,7 @@
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
+#include "../TextureUpdates.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -28,6 +29,11 @@ namespace PlutoGE::render::rhi::opengl
             GLuint name = 0;
             TextureDescriptor descriptor;
         };
+
+        GLenum TextureTarget(const TextureDescriptor &descriptor)
+        {
+            return descriptor.arrayLayers > 0 ? GL_TEXTURE_2D_ARRAY : descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
+        }
         struct SamplerResource
         {
             GLuint name = 0;
@@ -429,7 +435,7 @@ namespace PlutoGE::render::rhi::opengl
             if (!texture || !sampler)
                 throw std::invalid_argument("Invalid RHI texture or sampler");
             glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(texture->descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D, texture->name);
+            glBindTexture(TextureTarget(texture->descriptor), texture->name);
             glBindSampler(slot, sampler->name);
         }
 
@@ -691,8 +697,10 @@ namespace PlutoGE::render::rhi::opengl
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (descriptor.width == 0 || descriptor.height == 0 || descriptor.depth == 0)
             throw std::invalid_argument("RHI texture dimensions must be non-zero");
+        if (descriptor.arrayLayers > 0)
+            return CreateTextureArray(descriptor, data);
         const auto format = ToTextureFormat(descriptor.format);
-        const GLenum target = descriptor.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
+        const GLenum target = TextureTarget(descriptor);
         const auto maximumDimension = std::max({descriptor.width, descriptor.height, descriptor.depth});
         const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(std::floor(std::log2(maximumDimension)));
         const std::uint32_t mipCount = descriptor.mipLevels != 0 ? descriptor.mipLevels
@@ -741,6 +749,58 @@ namespace PlutoGE::render::rhi::opengl
         glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        LabelObject(GL_TEXTURE, name, descriptor.debugName);
+        return m_impl->textures.Insert(TextureResource{name, descriptor});
+    }
+
+    bool OpenGLDevice::UpdateTexture(TextureHandle handle, const TextureRegion &region, std::span<const std::byte> data)
+    {
+        auto *texture = m_impl->textures.Get(handle);
+        if (!texture || !IsValidTextureUpdate(texture->descriptor, region, data))
+            return false;
+        const auto format = ToTextureFormat(texture->descriptor.format);
+        const GLenum target = TextureTarget(texture->descriptor);
+        glBindTexture(target, texture->name);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        if (target == GL_TEXTURE_2D_ARRAY)
+            glTexSubImage3D(target, 0, static_cast<GLint>(region.x), static_cast<GLint>(region.y), static_cast<GLint>(region.layer),
+                            static_cast<GLsizei>(region.width), static_cast<GLsizei>(region.height), 1, format.format, format.type, data.data());
+        else
+            glTexSubImage2D(target, 0, static_cast<GLint>(region.x), static_cast<GLint>(region.y), static_cast<GLsizei>(region.width),
+                            static_cast<GLsizei>(region.height), format.format, format.type, data.data());
+        if (TextureMipLevels(texture->descriptor) > 1)
+            glGenerateMipmap(target);
+        return true;
+    }
+
+    TextureHandle OpenGLDevice::CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data)
+    {
+        if (descriptor.depth != 1 || descriptor.storage || descriptor.normalMipmapsProvided ||
+            (descriptor.format != Format::R8G8B8A8Unorm && descriptor.format != Format::R8G8B8A8Srgb))
+            throw std::invalid_argument("RHI texture arrays are 2D RGBA8 sampled textures");
+        const std::size_t layerBytes = std::size_t(descriptor.width) * descriptor.height * 4;
+        if (!data.empty() && data.size() != layerBytes * descriptor.arrayLayers)
+            throw std::invalid_argument("RHI texture array data must hold every layer's base level");
+        const auto format = ToTextureFormat(descriptor.format);
+        const std::uint32_t fullMipCount = 1u + static_cast<std::uint32_t>(
+            std::floor(std::log2(std::max(descriptor.width, descriptor.height))));
+        const std::uint32_t mipCount = descriptor.mipLevels != 0 ? descriptor.mipLevels : fullMipCount;
+        GLuint name = 0;
+        glGenTextures(1, &name);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, name);
+        glTexStorage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLsizei>(mipCount), format.internalFormat,
+                       static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height),
+                       static_cast<GLsizei>(descriptor.arrayLayers));
+        if (!data.empty())
+        {
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, static_cast<GLsizei>(descriptor.width),
+                            static_cast<GLsizei>(descriptor.height), static_cast<GLsizei>(descriptor.arrayLayers),
+                            format.format, format.type, data.data());
+            if (mipCount > 1)
+                glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        }
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         LabelObject(GL_TEXTURE, name, descriptor.debugName);
         return m_impl->textures.Insert(TextureResource{name, descriptor});
     }

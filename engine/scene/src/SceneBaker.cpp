@@ -2926,7 +2926,7 @@ namespace PlutoGE::scene
             {
                 auto *mutableEntity = const_cast<Entity *>(entity);
                 if (auto *terrain = mutableEntity->GetComponent<TerrainComponent>();
-                    terrain && terrain->IsEnabled() && terrain->IsStatic() && terrain->GetMaterial())
+                    terrain && terrain->IsEnabled() && terrain->IsStatic() && terrain->GetRenderMaterial())
                 {
                     if (auto *terrainMesh = terrain->GetMeshForBaking())
                     {
@@ -2938,7 +2938,7 @@ namespace PlutoGE::scene
                             ("lightmap_terrain_entity_" + std::to_string(entity->GetID()) + ".pfm");
                         terrainTarget.resolution = lightmapResolution;
                         for (std::size_t submeshIndex = 0; submeshIndex < terrainMesh->GetSubmeshCount(); ++submeshIndex)
-                            appendOccluderSubmesh(*terrainMesh, submeshIndex, *terrain->GetMaterial(),
+                            appendOccluderSubmesh(*terrainMesh, submeshIndex, *terrain->GetRenderMaterial(),
                                                   entity->GetWorldTransform(), true, &terrainTarget);
                     }
                 }

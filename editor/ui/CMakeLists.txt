@@ -30,6 +30,7 @@ add_library(PlutoGEEditorUI
     src/ModelImportDependenciesInspector.cpp
     src/ModelHierarchyInspector.cpp
     src/SurfacePlacement.cpp
+    src/TerrainLayerEditing.cpp
     src/GroundPlacement.cpp
     src/GroundPlacementUI.cpp
     src/AssetReferenceSearchPanel.cpp

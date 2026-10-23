@@ -53,6 +53,15 @@ namespace PlutoGE::render
             "RHI TAA", "RHI SSAO", "RHI SSGI", "RHI SSR", "RHI Volumetric Fog", "RHI Physical Sky",
             "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean"};
 
+        // std140 mirror of TerrainLayers.slang's TerrainLayerParameters.
+        struct alignas(16) BasicTerrainLayerParameters
+        {
+            std::array<glm::vec4, kMaxTerrainLayers> tiling{};
+            std::array<glm::vec4, kMaxTerrainLayers> tint{};
+            glm::vec4 parameters{0.0f}; // x layer count, y height blend
+        };
+        static_assert(sizeof(BasicTerrainLayerParameters) == 16 * (2 * kMaxTerrainLayers + 1));
+
         struct alignas(16) BasicMaterialParameters
         {
             glm::vec4 baseColor{1.0f};
@@ -636,6 +645,7 @@ namespace PlutoGE::render
             m_colorVertices = {shaders.colorVertex, shaders.colorInstancedVertex};
             m_standardVertices = shaders.standardVertices;
             m_standardColorVertices = shaders.standardColorVertices;
+            m_terrainShaders = shaders.terrain;
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1325,6 +1335,7 @@ namespace PlutoGE::render
         m_colorVertices = {};
         m_standardVertices = {};
         m_standardColorVertices = {};
+        m_terrainShaders = {};
         m_depthTarget.Reset();
         m_temporalUpscalerOutput.Reset();
         m_displayTarget.Reset();
@@ -2898,6 +2909,8 @@ namespace PlutoGE::render
                     if (!geometryResourcesBound || previousEmissionTexture != emissionTexture)
                         commands.BindTexture(26, emissionTexture, m_fallbackSampler.Get());
                     previousEmissionTexture = emissionTexture;
+                    if (const auto *terrain = draw.terrainLayers.get(); terrain && m_terrainShaders.Available())
+                        BindTerrainLayers(commands, *terrain);
                 }
                 previousMaterialTextures = materialTextures;
                 geometryResourcesBound = !leanDepth;
@@ -5063,5 +5076,23 @@ namespace PlutoGE::render
         executor.Execute(graph, compiled, *m_postProcessResourcePool,
                          m_postProcessWidth, m_postProcessHeight);
         return m_postProcessResourcePool->Get(result);
+    }
+
+    void BasicRenderer::BindTerrainLayers(rhi::ICommandContext &commands, const BasicTerrainLayers &terrain)
+    {
+        // Weight maps cover the terrain once (clamped); the layer arrays tile (repeat, mips, anisotropy).
+        for (std::uint32_t index = 0; index < terrain.weights.size(); ++index)
+            commands.BindTexture(TerrainTextureSlot + index,
+                terrain.weights[index] ? terrain.weights[index] : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+        const std::array arrays{terrain.albedo, terrain.normal};
+        for (std::uint32_t index = 0; index < arrays.size(); ++index)
+            commands.BindTexture(TerrainTextureSlot + static_cast<std::uint32_t>(terrain.weights.size()) + index,
+                arrays[index], m_fallbackSampler.Get());
+        BasicTerrainLayerParameters parameters;
+        parameters.tiling = terrain.tiling;
+        parameters.tint = terrain.tint;
+        parameters.parameters = glm::vec4(float(terrain.layerCount), std::max(terrain.heightBlend, 0.0f),
+                                          std::max(terrain.detailDistance, 0.0f), std::max(terrain.detailFade, 0.0f));
+        commands.BindUniformBuffer(TerrainParameterSlot, m_geometryParameters->Acquire(*m_device, Bytes(parameters)));
     }
 }

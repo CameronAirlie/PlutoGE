@@ -54,7 +54,9 @@ namespace PlutoGE::render
             && a.roughnessChannel == b.roughnessChannel
             && a.flipNormalY == b.flipNormalY
             && a.castsShadow == b.castsShadow
-            && a.contributesToGi == b.contributesToGi;
+            && a.contributesToGi == b.contributesToGi
+            && (a.terrainLayers == b.terrainLayers ||
+                (a.terrainLayers && b.terrainLayers && *a.terrainLayers == *b.terrainLayers));
     }
 
     inline bool SameBasicDrawMaterial(const BasicDraw &a, const BasicDraw &b)
@@ -166,6 +168,22 @@ namespace PlutoGE::render
         for (const auto sampler : draw.graphSamplers)
             HashBatchValue(hash, sampler);
         HashBatchValue(hash, draw.graphPassOrder);
+        if (const auto *terrain = draw.terrainLayers.get())
+        {
+            for (const auto texture : terrain->weights)
+                HashBatchValue(hash, texture);
+            HashBatchValue(hash, terrain->albedo);
+            HashBatchValue(hash, terrain->normal);
+            HashBatchValue(hash, terrain->layerCount);
+            HashBatchValue(hash, terrain->heightBlend);
+            HashBatchValue(hash, terrain->detailDistance);
+            HashBatchValue(hash, terrain->detailFade);
+            for (std::uint32_t layer = 0; layer < terrain->layerCount; ++layer)
+            {
+                HashBatchValue(hash, terrain->tiling[layer]);
+                HashBatchValue(hash, terrain->tint[layer]);
+            }
+        }
         return hash;
     }
 

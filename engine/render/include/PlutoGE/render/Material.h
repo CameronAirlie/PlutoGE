@@ -2,6 +2,7 @@
 #include "PlutoGE/render/RenderObjectIdentity.h"
 
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/TerrainLayers.h"
 
 #include <glm/glm.hpp>
 
@@ -87,6 +88,9 @@ namespace PlutoGE::render
         std::vector<std::shared_ptr<Material>> additionalPasses;
         unsigned graphPassOrder = 0;
         Shader *compiledShaderGraph = nullptr;
+        // Set on a terrain's own material: the RHI renderer then draws it with the terrain layer shader, and
+        // albedoTexture serves as the low-detail colour for GI, baking and renderers without that shader.
+        std::shared_ptr<const TerrainLayerSet> terrainLayers;
     };
 
     class Material
@@ -140,6 +144,7 @@ namespace PlutoGE::render
         void SetAttenuationDistance(float distance) { if (m_config.attenuationDistance != (distance)) { m_config.attenuationDistance = distance; Touch(); } }
         void SetLightmapTexture(Texture *texture) { if (m_config.lightmapTexture != (texture)) { m_config.lightmapTexture = texture; Touch(); } }
         void SetLightmapUvTransform(const glm::vec4 &transform) { if (m_config.lightmapUvTransform != (transform)) { m_config.lightmapUvTransform = transform; Touch(); } }
+        void SetTerrainLayers(std::shared_ptr<const TerrainLayerSet> layers) { if (m_config.terrainLayers != layers) { m_config.terrainLayers = std::move(layers); Touch(); } }
         // Legacy mutable references can outlive a call. Never trust revisions after
         // one escapes; those materials retain value-based validation.
         MaterialConfig &GetConfig() { if (!m_untrackedEdits) { m_untrackedEdits = true; Touch(); } return m_config; }

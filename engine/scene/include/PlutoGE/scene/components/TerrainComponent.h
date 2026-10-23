@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/scene/TerrainLayerStack.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
@@ -22,6 +23,7 @@ namespace PlutoGE::scene
         Lower,
         Smooth,
         Flatten,
+        Layer, // paints the selected material layer (see TerrainLayerStack)
     };
 
     struct TerrainComponentConfig
@@ -62,6 +64,9 @@ namespace PlutoGE::scene
         // Bounded local surface query. Unlike GetHeightAtLocalPosition, this
         // rejects out-of-terrain coordinates instead of clamping them.
         bool TrySampleSurface(float x, float z, float &height, glm::vec3 &normal) const;
+        // The same in world space: the surface's world height and normal under a world position (vertically, along
+        // the terrain's up axis); false off the terrain.
+        bool TrySampleWorldSurface(const glm::vec3 &worldPosition, float &worldHeight, glm::vec3 &worldNormal) const;
         int GetChunkSize() const { return m_chunkSize; }
         void SetLodCount(int lodCount);
         int GetLodCount() const { return m_lodCount; }
@@ -89,6 +94,26 @@ namespace PlutoGE::scene
         void SetFlattenHeight(float height) { m_flattenHeight = height; }
         float GetFlattenHeight() const { return m_flattenHeight; }
 
+        // Material layers: surfaces painted onto the terrain and blended by weight (see TerrainLayerStack). With
+        // no layers the terrain draws with its material as before; with layers it draws with a private copy of
+        // that material carrying the layers (GetRenderMaterial).
+        TerrainLayerStack &GetLayers() { return m_layers; }
+        const TerrainLayerStack &GetLayers() const { return m_layers; }
+        render::Material *GetRenderMaterial();
+        // One dab of the selected layer at a world position, with the brush radius, layer opacity and hardness.
+        TerrainWeightRect PaintLayerAtWorldPosition(const glm::vec3 &worldPosition);
+        // One dab of `layer` with an explicit brush (`radius` in world units), e.g. from gameplay scripts.
+        TerrainWeightRect PaintLayerAtWorldPosition(const glm::vec3 &worldPosition, std::size_t layer, float radius,
+                                                    const TerrainLayerBrush &brush);
+        // The terrain's 0..1 UV under a world position (the weight maps' coordinates).
+        glm::vec2 WorldToTerrainUv(const glm::vec3 &worldPosition) const;
+        void SetPaintLayer(int layer) { m_paintLayer = glm::max(layer, 0); }
+        int GetPaintLayer() const { return m_paintLayer; }
+        void SetLayerOpacity(float opacity) { m_layerOpacity = glm::clamp(opacity, 0.0f, 1.0f); }
+        float GetLayerOpacity() const { return m_layerOpacity; }
+        void SetBrushHardness(float hardness) { m_brushHardness = glm::clamp(hardness, 0.0f, 1.0f); }
+        float GetBrushHardness() const { return m_brushHardness; }
+
     private:
         float GetHeightSample(int x, int z) const;
         void SetHeightSample(int x, int z, float height);
@@ -98,6 +123,7 @@ namespace PlutoGE::scene
         void MarkMeshDirty();
         void RebuildMesh();
         void RebuildMaterialFromReference();
+        static TerrainLayerStack::Services EngineLayerServices();
 
         int m_width = 65;
         int m_depth = 65;
@@ -121,6 +147,14 @@ namespace PlutoGE::scene
         float m_brushRadius = 3.0f;
         float m_brushStrength = 2.0f;
         float m_flattenHeight = 0.0f;
+
+        TerrainLayerStack m_layers{EngineLayerServices()};
+        std::unique_ptr<render::Material> m_layeredMaterial;
+        const render::Material *m_layeredBase = nullptr;
+        std::uint64_t m_layeredBaseRevision = 0;
+        int m_paintLayer = 0;
+        float m_layerOpacity = 0.5f;
+        float m_brushHardness = 0.5f;
 
         glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
         bool m_hasPreviousModelMatrix = false;

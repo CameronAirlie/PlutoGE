@@ -200,6 +200,10 @@ Sampler2D directionalShadowTexture2 : register(t7, space1);
 [[vk::binding(8, 1)]]
 Sampler2D directionalShadowTexture3 : register(t8, space1);
 
+#ifdef PLUTO_TERRAIN_LAYERS
+#include "TerrainLayers.slang"
+#endif
+
 [[vk::binding(14,1)]] Sampler2D graphExtra0 : register(t14,space1);
 [[vk::binding(15,1)]] Sampler2D graphExtra1 : register(t15,space1);
 [[vk::binding(16,1)]] Sampler2D graphExtra2 : register(t16,space1);
@@ -941,6 +945,20 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         sampledRoughness = roughnessTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)[roughnessChannel];
     float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
+#ifdef PLUTO_TERRAIN_LAYERS
+    // The layers replace the material maps; the material colour still tints the result. Beyond the detail distance
+    // the material's own albedo (the terrain's macro colour, sampled above) stands in for them.
+    const float terrainDetail = terrainDetailAmount(distance(cameraPositionAmbient.xyz, input.worldPosition));
+    if (terrainDetail > 0.0)
+    {
+        const TerrainSurface terrain = sampleTerrainLayers(input.uv, input.worldPosition, derivatives.worldDx, derivatives.worldDy,
+                                                           normalize(input.worldNormal), input.worldTangent);
+        sampledColor = float4(lerp(sampledBaseColor.rgb, terrain.albedo, terrainDetail) * baseColor.rgb, 1.0);
+        normal = normalize(lerp(normal, terrain.normal, terrainDetail));
+        materialMetallic = lerp(materialMetallic, terrain.metallic, terrainDetail);
+        materialRoughness = lerp(materialRoughness, terrain.roughness, terrainDetail);
+    }
+#endif
     // Material emission illuminates the albedo texture. An explicit graph
     // emission output can replace this textured input independently.
     float3 emissionSample = emissionParameters.x != 0

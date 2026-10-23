@@ -26,6 +26,17 @@ namespace PlutoGE::render
                 return {};
             return code;
         }
+
+        // The terrain layer bindings (TerrainLayers.slang): weight maps and layer arrays in texture slots 3..6, the
+        // per-layer parameters in uniform slot 4. They are only declared by terrain pipelines.
+        void AddTerrainLayerBindings(rhi::GraphicsPipelineDescriptor &descriptor)
+        {
+            for (std::uint32_t index = 0; index < 4; ++index)
+                descriptor.resourceBindings.push_back({BasicRenderer::TerrainTextureSlot + index, 1, 20 + index,
+                    rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+            descriptor.resourceBindings.push_back({BasicRenderer::TerrainParameterSlot, 1, 25,
+                rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
+        }
     }
 
     void BasicRenderer::EnsureGeometryTargets(GeometryOutputLayout layout)
@@ -66,8 +77,10 @@ namespace PlutoGE::render
     rhi::PipelineHandle BasicRenderer::GeometryPipeline(const BasicDraw &draw, bool instanced,
         GeometryOutputLayout layout, bool depthOnly, bool prepassed)
     {
-        const bool standard = !draw.shaderGraphProgram &&
-            (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty());
+        // Terrain layers use their own standard-material variant; without its shaders they draw as standard.
+        const bool terrain = draw.terrainLayers && m_terrainShaders.Available();
+        const bool standard = terrain || (!draw.shaderGraphProgram &&
+            (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty()));
         auto cull = draw.outlinePass ? rhi::CullMode::Front : rhi::CullMode::None;
         if (!draw.outlinePass && m_materialCulling && !draw.twoSided && draw.alphaMode < 2)
         {
@@ -90,7 +103,8 @@ namespace PlutoGE::render
             : GraphFragmentVariant(m_graphVariants.get(), m_device->GetApi(), draw, layout, depthOnly);
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
-                (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9),
+                (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
+                (unsigned(terrain) << 11),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -148,12 +162,24 @@ namespace PlutoGE::render
             }
             descriptor.depthWrite = !prepassed;
         }
+        if (terrain && depthResources == DepthResources::Full)
+        {
+            // Material-free depth (Opaque) keeps the shaders chosen above; every other case shades the layers.
+            const auto &shaders = m_terrainShaders;
+            const bool colorOnly = depthOnly || layout == GeometryOutputLayout::Color;
+            descriptor.vertexShader = (colorOnly ? shaders.colorVertices : shaders.vertices)[instanced ? 1 : 0];
+            descriptor.fragmentShader = depthOnly ? shaders.coverageFragment
+                : layout < GeometryOutputLayout::Surface ? shaders.compactFragments[static_cast<unsigned>(layout)]
+                : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.indirectFragment : shaders.fragment;
+            AddTerrainLayerBindings(descriptor);
+        }
         if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
-        descriptor.debugName = depthOnly ? "Geometry coverage" : "Geometry required outputs";
+        descriptor.debugName = terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
+            : depthOnly ? "Geometry coverage" : "Geometry required outputs";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();
         m_geometryPipelines.emplace(key, std::move(pipeline));
-        if (standard)
+        if (standard && !terrain)
         {
             // Prepare the matching graph path when the scene first prepares
             // ordinary geometry. Unlit loot and hit effects use this path;

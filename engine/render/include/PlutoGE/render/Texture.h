@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -15,6 +16,13 @@ namespace PlutoGE::render
     {
         Linear = 0,
         SRGB = 1,
+    };
+
+    // A rectangle of texels.
+    struct TextureRect
+    {
+        int x = 0, y = 0, width = 0, height = 0;
+        [[nodiscard]] bool Empty() const { return width <= 0 || height <= 0; }
     };
 
     struct TextureConfig
@@ -46,6 +54,17 @@ namespace PlutoGE::render
         // Linear HDR faces in +X,-X,+Y,-Y,+Z,-Z order, bottom-up within each face.
         static Texture *CpuColorCubemap(int resolution, std::span<const float> pixels);
         bool SetCubemapPixels(std::span<const float> pixels);
+        // A CPU-owned RGBA8 2D texture (no OpenGL object): the RHI renderers upload its pixels and re-upload them
+        // after SetRgba8Pixels, which keeps the size. Used for generated data such as terrain weight maps.
+        static std::unique_ptr<Texture> CreateRgba8(int width, int height, std::span<const unsigned char> pixels,
+                                                    std::string name = {});
+        bool SetRgba8Pixels(std::span<const unsigned char> pixels);
+        // Replaces a rectangle of a CPU-owned RGBA8 texture (`pixels` packed for the rectangle). Renderers already
+        // holding the texture upload just that rectangle (GetChangedRectSince).
+        bool UpdateRgba8Region(const TextureRect &rect, std::span<const unsigned char> pixels);
+        // The rectangle covering every change after `revision` when all of them were region updates (empty when
+        // nothing changed); nullopt when any change replaced the whole texture, so it must be read again in full.
+        [[nodiscard]] std::optional<TextureRect> GetChangedRectSince(std::uint64_t revision) const;
         bool EnsureCubemapGpuTexture();
 
         // Lazily creates a stable depth-only framebuffer view owned by this
@@ -75,6 +94,8 @@ namespace PlutoGE::render
         // Decoded source pixels are retained independently of the active GPU
         // backend. This is the upload source for both OpenGL and Vulkan.
         std::vector<unsigned char> m_rgba8Pixels;
+        // Recent region updates (revision, rectangle), for GetChangedRectSince; bounded.
+        std::vector<std::pair<std::uint64_t, TextureRect>> m_regionUpdates;
         std::vector<float> m_cubemapPixels;
         std::array<GLuint, 6> m_depthFramebuffers{};
 

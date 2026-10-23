@@ -10,6 +10,7 @@
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
 #include "EmissionTextureRenderingChecks.h"
+#include "TerrainLayerRenderingChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "OutlineRenderingChecks.h"
@@ -255,6 +256,23 @@ int main(int argc, char **argv)
             if (std::string_view(argv[1]) == "--glass-only") return 0;
             CheckTransparencyDepth(renderer, device, read);
             CheckEmissionTexture(renderer, device, read);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--terrain-layers")
+        {
+            const auto load = [](const char *module, const char *stage) {
+                return rhi::GraphicsPipelineDescriptor::ShaderCode{.spirv = ReadSpirv((std::string(module) + "." + stage + ".spv").c_str())};
+            };
+            shaders.terrain = {
+                .vertices = {load("BasicLitTerrain", "vertex"), load("BasicLitTerrainInstanced", "vertex")},
+                .colorVertices = {load("BasicLitTerrainColor", "vertex"), load("BasicLitTerrainColorInstanced", "vertex")},
+                .fragment = load("BasicLitTerrain", "fragment"),
+                .coverageFragment = load("BasicLitTerrainCoverage", "fragment"),
+                .indirectFragment = load("BasicLitTerrainIndirect", "fragment"),
+                .compactFragments = {load("BasicLitTerrainColor", "fragment"), load("BasicLitTerrainColorMotion", "fragment")}};
+            if (!shaders.terrain.Available() || !renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
+                throw std::runtime_error("Terrain layer shaders failed to initialize");
+            CheckTerrainLayers(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--render-optimizations")

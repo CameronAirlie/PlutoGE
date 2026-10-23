@@ -1,5 +1,6 @@
 add_library(PlutoGEScripting
     src/HostFxrScriptRuntime.cpp
+    src/TerrainScriptApi.cpp
     src/ScriptEngine.cpp
     src/ScriptBuildProcess.cpp
 )

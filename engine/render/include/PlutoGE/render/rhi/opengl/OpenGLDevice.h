@@ -22,6 +22,7 @@ namespace PlutoGE::render::rhi::opengl
         [[nodiscard]] std::unique_ptr<ISwapchain> CreateSwapchain(const SwapchainDescriptor &descriptor) override;
         [[nodiscard]] BufferHandle CreateBuffer(const BufferDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
         [[nodiscard]] TextureHandle CreateTexture(const TextureDescriptor &descriptor, std::span<const std::byte> initialData = {}) override;
+        bool UpdateTexture(TextureHandle texture, const TextureRegion &region, std::span<const std::byte> data) override;
         [[nodiscard]] SamplerHandle CreateSampler(const SamplerDescriptor &descriptor) override;
         [[nodiscard]] PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &descriptor) override;
         [[nodiscard]] PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &descriptor) override;
@@ -37,6 +38,8 @@ namespace PlutoGE::render::rhi::opengl
         [[nodiscard]] std::uint64_t GetTextureNativeHandle(TextureHandle texture) const noexcept;
 
     private:
+        TextureHandle CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data);
+
         friend class OpenGLCommandContext;
         friend class OpenGLSwapchain;
         struct Impl;

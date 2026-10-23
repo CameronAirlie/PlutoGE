@@ -196,6 +196,9 @@ namespace PlutoGE::render::rhi
         [[nodiscard]] virtual PipelineHandle CreateGraphicsPipeline(const GraphicsPipelineDescriptor &descriptor) = 0;
         [[nodiscard]] virtual PipelineHandle CreateComputePipeline(const ComputePipelineDescriptor &) { return {}; }
         virtual void UpdateBuffer(BufferHandle buffer, std::size_t offset, std::span<const std::byte> data) = 0;
+        // Replaces a rectangle of a sampled RGBA8 texture's base level with tightly packed texels and regenerates its
+        // mips, without re-creating it. Returns false when the backend cannot (callers then re-create the texture).
+        virtual bool UpdateTexture(TextureHandle, const TextureRegion &, std::span<const std::byte>) { return false; }
         virtual void DestroyBuffer(BufferHandle buffer) = 0;
         virtual void DestroyTexture(TextureHandle texture) = 0;
         // Synchronous offline HDR capture. Returns linear RGBA, preserving values above one.

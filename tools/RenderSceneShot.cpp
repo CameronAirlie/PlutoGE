@@ -165,7 +165,7 @@ int main(int argc, char **argv) try
         if (auto *terrain = entity->GetComponent<scene::TerrainComponent>(); terrain && terrain->IsEnabled())
         {
             auto *mesh = terrain->GetMeshForBaking();
-            auto *material = terrain->GetMaterial();
+            auto *material = terrain->GetRenderMaterial();
             if (!mesh || !material) ++skipped;
             else
                 for (std::size_t index = 0; index < mesh->GetSubmeshCount(); ++index)

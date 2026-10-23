@@ -7,6 +7,7 @@
 #include <optional>
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 
@@ -212,6 +213,19 @@ namespace PlutoGE::render
         std::span<const std::uint32_t> indices;
     };
 
+    // The BasicLitTerrain variant: the standard material path with terrain layer blending. Draws carrying
+    // BasicDraw::terrainLayers use it for every geometry layout; without it they fall back to the standard path.
+    struct BasicTerrainShaderPackage
+    {
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> vertices, colorVertices; // plain, instanced
+        rhi::GraphicsPipelineDescriptor::ShaderCode fragment, coverageFragment, indirectFragment;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> compactFragments;        // colour, colour+motion
+        [[nodiscard]] bool Available() const
+        {
+            return (!fragment.glsl.empty() || !fragment.spirv.empty()) && (!vertices[0].glsl.empty() || !vertices[0].spirv.empty());
+        }
+    };
+
     struct BasicRendererShaderPackage
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
@@ -225,6 +239,7 @@ namespace PlutoGE::render
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
         std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
+        BasicTerrainShaderPackage terrain;
         // Optional per-graph specialisations of fragment, compactFragments[0]
         // and coverageFragments[0]. Null keeps graphs interpreted.
         std::shared_ptr<ShaderGraphVariantCache> graphVariants;
@@ -291,6 +306,24 @@ namespace PlutoGE::render
         std::vector<ShadowGeometryCluster> m_shadowClusters;
     };
 
+    // A terrain draw's layers on the GPU (RhiSceneRenderer builds them from a TerrainLayerSet): two weight maps
+    // over the terrain's UVs and two 2D arrays with one layer per terrain layer (see TerrainLayerArrayPixels).
+    struct BasicTerrainLayers
+    {
+        std::array<rhi::TextureHandle, kTerrainWeightMaps> weights{};
+        rhi::TextureHandle albedo, normal;
+        std::uint32_t layerCount = 0;
+        float heightBlend = 0.0f;
+        float detailDistance = 0.0f; // 0 = layers at every distance
+        float detailFade = 0.0f;     // band beyond detailDistance over which the layers fade out
+        std::array<glm::vec4, kMaxTerrainLayers> tiling{}; // x 1 / tile size, y normal strength, z roughness, w metallic
+        std::array<glm::vec4, kMaxTerrainLayers> tint{};   // rgb tint, w anti-tiling (0 or 1)
+        // Owns the arrays (RhiTerrainLayerCache) while any draw refers to them.
+        std::shared_ptr<const void> owner;
+
+        bool operator==(const BasicTerrainLayers &) const = default;
+    };
+
     struct BasicDraw
     {
         const BasicMesh *mesh = nullptr;
@@ -351,6 +384,8 @@ namespace PlutoGE::render
         // authored/mutable packets. Consumers must retain mesh-revision checks.
         std::uint64_t preparationRevision = 0;
         std::size_t preparedMaterialHash = 0;
+        // Set for terrains with material layers: drawn with the BasicLitTerrain variant.
+        std::shared_ptr<const BasicTerrainLayers> terrainLayers;
     };
 
     struct BasicParticleVertex
@@ -588,6 +623,11 @@ namespace PlutoGE::render
     class BasicRenderer
     {
     public:
+        // Terrain layer resources (TerrainLayers.slang): weight maps 0..1 and the albedo and normal arrays in four
+        // texture slots from TerrainTextureSlot, the layer parameters in a uniform slot.
+        static constexpr std::uint32_t TerrainTextureSlot = 3;
+        static constexpr std::uint32_t TerrainParameterSlot = 4;
+
         // Runs outside a rendering pass with command recording open. The
         // callback may append camera work, but must not begin or submit a frame.
         using BeforeTemporalResolve = std::function<void(BasicRenderer &, glm::vec2)>;
@@ -699,6 +739,8 @@ namespace PlutoGE::render
                                      std::span<const ShadowGeometryCluster> shadowClusters);
         [[nodiscard]] rhi::PipelineHandle GeometryPipeline(const BasicDraw &draw, bool instanced,
             GeometryOutputLayout layout, bool depthOnly, bool prepassed);
+        // Binds a terrain draw's weight maps, layer arrays and layer parameters (terrain pipelines only).
+        void BindTerrainLayers(rhi::ICommandContext &commands, const BasicTerrainLayers &terrain);
         void EnsureGeometryTargets(GeometryOutputLayout layout);
         bool m_compactGeometry = true, m_depthPrepass = true, m_materialCulling = true;
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
@@ -710,6 +752,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode m_standardFragment;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_indirectFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
+        BasicTerrainShaderPackage m_terrainShaders;
         // Pipeline state flags plus the specialised graph structure (0 = interpreter or standard).
         struct GeometryPipelineKey
         {

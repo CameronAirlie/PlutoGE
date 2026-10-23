@@ -16,6 +16,8 @@ add_library(PlutoGEScene
     src/ModelInstanceUnpacking.cpp
     src/AssetReconciliation.cpp
     src/Scene.cpp
+    src/TerrainLayerStack.cpp
+    src/TerrainWeightMap.cpp
     src/RagdollJoints.cpp
     src/RagdollProfile.cpp
     src/SceneBaker.cpp

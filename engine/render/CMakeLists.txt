@@ -35,6 +35,7 @@ add_library(PlutoGERender
     src/CloudNoiseVolume.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
+    src/RhiTerrainLayerCache.cpp
     src/RhiCameraStack.cpp
     src/RhiRenderTextureRenderer.cpp
     src/RenderTexture.cpp
@@ -50,6 +51,7 @@ add_library(PlutoGERender
     src/BuiltinShaders.cpp
     src/ShaderArtifacts.cpp
     src/Texture.cpp
+    src/TerrainLayers.cpp
     src/ShaderGraph.cpp
     src/ShaderGraphProgram.cpp
     src/ShaderGraphCodegen.cpp
@@ -135,6 +137,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TerrainLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
@@ -244,7 +247,11 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(BasicLitColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" colorInstancedVertexMain colorMain)
     pluto_add_slang_graphics_shader(BasicLitStandardInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLitStandardColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" colorInstancedVertexMain colorMain)
-    foreach(material IN ITEMS BasicLit BasicLitStandard)
+    pluto_add_slang_graphics_shader(BasicLitTerrain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BasicLitTerrainInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" instancedVertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BasicLitTerrainColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" colorInstancedVertexMain colorMain)
+    pluto_add_slang_graphics_shader(BasicLitTerrainIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" vertexMain indirectMain)
+    foreach(material IN ITEMS BasicLit BasicLitStandard BasicLitTerrain)
         pluto_add_slang_graphics_shader(${material}Color "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" colorVertexMain colorMain)
         pluto_add_slang_graphics_shader(${material}ColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain colorMotionMain)
         pluto_add_slang_graphics_shader(${material}Coverage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain coverageMain)

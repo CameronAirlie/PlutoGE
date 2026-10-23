@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/RhiTerrainLayerCache.h"
 #include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
@@ -311,6 +312,7 @@ namespace PlutoGE::render
           std::unordered_map<const Texture *, rhi::Texture> srgb, linear, normal;
           std::unordered_map<const Texture *, TextureVersion> versions;
           std::uint64_t residencyRevision = 1;
+          RhiTerrainLayerCache terrainLayers;
       };
       std::shared_ptr<TextureCache> m_textureCache;
       struct CachedIblCapture

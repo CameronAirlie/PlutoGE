@@ -2673,8 +2673,10 @@ namespace PlutoGE::scene
         }
 
         for (auto *terrainComponent : m_terrainComponents)
-            if (terrainComponent && terrainComponent->GetMaterial())
-                materials.insert(terrainComponent->GetMaterial());
+            if (terrainComponent)
+                for (auto *material : {terrainComponent->GetMaterial(), terrainComponent->GetRenderMaterial()})
+                    if (material)
+                        materials.insert(material);
 
         for (auto *foliageComponent : m_foliageComponents)
         {

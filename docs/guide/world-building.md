@@ -112,6 +112,12 @@ collision is available, nor that navigation considers the hill walkable. Increas
 sample density only where the shape needs it; more samples increase geometry,
 editing, serialization, and collision work. Recheck navigation after reshaping.
 
+**Painting materials.** For detailed ground, add **Material Layers** in the
+terrain's inspector (dust, grass, rock...), give each its own textures and tile
+size, and paint them with **Paint > Mode: Layer**. Layers tile in world units, so
+the ground keeps its detail however large the terrain. See
+[Terrain Material Layers](../TERRAIN_LAYERS.md).
+
 ## Foliage
 
 FoliageComponent places many mesh instances without one entity per plant. Add it

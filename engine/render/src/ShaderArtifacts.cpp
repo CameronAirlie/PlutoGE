@@ -127,6 +127,13 @@ namespace PlutoGE::render
             result.ssao[index] = {.vertex = Load(ssaoModules[index], "vertex"),
                                    .fragment = Load(ssaoModules[index], "fragment")};
         result.indirectFragments = {Load("BasicLitIndirect", "fragment"), Load("BasicLitStandardIndirect", "fragment")};
+        result.terrain = {
+            .vertices = {Load("BasicLitTerrain", "vertex"), Load("BasicLitTerrainInstanced", "vertex")},
+            .colorVertices = {Load("BasicLitTerrainColor", "vertex"), Load("BasicLitTerrainColorInstanced", "vertex")},
+            .fragment = Load("BasicLitTerrain", "fragment"),
+            .coverageFragment = Load("BasicLitTerrainCoverage", "fragment"),
+            .indirectFragment = Load("BasicLitTerrainIndirect", "fragment"),
+            .compactFragments = {Load("BasicLitTerrainColor", "fragment"), Load("BasicLitTerrainColorMotion", "fragment")}};
         result.ssaoDepth = Load("SSAODepth", "compute");
         result.ssaoFilter = {Load("SSAOFilter", "vertex"),Load("SSAOFilter", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};

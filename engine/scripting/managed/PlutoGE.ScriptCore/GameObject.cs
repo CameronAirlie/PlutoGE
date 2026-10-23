@@ -167,6 +167,7 @@ public sealed class GameObject
             _ when type == typeof(ParticleSystemComponent) => ScriptBridge.NativeComponentType.ParticleSystem,
             _ when type == typeof(SoundEmitterComponent) => ScriptBridge.NativeComponentType.SoundEmitter,
             _ when type == typeof(RmlWidgetComponent) => ScriptBridge.NativeComponentType.RmlWidget,
+            _ when type == typeof(TerrainComponent) => ScriptBridge.NativeComponentType.Terrain,
             _ => null,
         };
         nativeType = match ?? default;
@@ -192,6 +193,7 @@ public sealed class GameObject
             var type when type == typeof(ParticleSystemComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ParticleSystem),
             var type when type == typeof(SoundEmitterComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.SoundEmitter),
             var type when type == typeof(RmlWidgetComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget),
+            var type when type == typeof(TerrainComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Terrain),
             _ => ScriptBridge.GetScript<T>(EntityId) is not null,
         };
     }
@@ -236,6 +238,10 @@ public sealed class GameObject
         if (typeof(T) == typeof(ActiveRagdollComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ActiveRagdoll))
         {
             return new ActiveRagdollComponent(EntityId) as T;
+        }
+        if (typeof(T) == typeof(TerrainComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Terrain))
+        {
+            return new TerrainComponent(EntityId) as T;
         }
         if (typeof(T) == typeof(RmlWidgetComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget))
         {

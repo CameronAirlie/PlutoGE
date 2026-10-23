@@ -461,7 +461,9 @@ namespace PlutoGE::scene
             }
             if (componentType == "TerrainComponent")
             {
-                return propertyName == "HeightMap" || propertyName == "MaterialAsset";
+                // HeightMap, the layers' Layer.<n>.<Kind>Map textures and the WeightMap<n> files.
+                return propertyName == "MaterialAsset" || propertyName == "PaintedAlbedo" ||
+                       propertyName.ends_with("Map") || propertyName.starts_with("WeightMap");
             }
             if (componentType == "ClothComponent")
             {

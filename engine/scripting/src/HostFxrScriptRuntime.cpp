@@ -33,7 +33,10 @@
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+
+#include "TerrainScriptApi.h"
 
 #include <algorithm>
 #include <array>
@@ -143,6 +146,7 @@ namespace PlutoGE::scripting
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_terrain_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_skeletal_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
@@ -276,6 +280,7 @@ namespace PlutoGE::scripting
             SoundEmitter = 13,
             RmlWidget = 14,
             ActiveRagdoll = 15,
+            Terrain = 16,
         };
 
         std::string HostStringToUtf8(std::basic_string_view<char_t> text)
@@ -1044,6 +1049,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::RmlWidgetComponent>();
             case ManagedComponentKind::ActiveRagdoll:
                 return entity->GetComponent<scene::ActiveRagdollComponent>();
+            case ManagedComponentKind::Terrain:
+                return entity->GetComponent<scene::TerrainComponent>();
             default:
                 return nullptr;
             }
@@ -3792,6 +3799,7 @@ namespace PlutoGE::scripting
         register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
+        register_terrain_api_fn registerTerrainApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
         register_skeletal_api_fn registerSkeletalApi = nullptr;
@@ -3918,6 +3926,7 @@ namespace PlutoGE::scripting
             impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
             impl.registerSurfaceResponseApi = nullptr;
+            impl.registerTerrainApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
             impl.registerSkeletalApi = nullptr;
@@ -4285,6 +4294,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterTerrainApi"), impl.registerTerrainApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi) &&
@@ -5106,6 +5116,11 @@ namespace PlutoGE::scripting
         if (!m_impl->registerSurfaceResponseApi || m_impl->registerSurfaceResponseApi(reinterpret_cast<void *>(&ResolveSurfaceResponse)) == 0)
         {
             setManagedBridgeFailure("RegisterSurfaceResponseApi");
+            return false;
+        }
+        if (!m_impl->registerTerrainApi || m_impl->registerTerrainApi(reinterpret_cast<void *>(&ControlTerrain)) == 0)
+        {
+            setManagedBridgeFailure("RegisterTerrainApi");
             return false;
         }
         if (!m_impl->registerSceneStreamingApi || m_impl->registerSceneStreamingApi(reinterpret_cast<void *>(&ControlSceneStreaming)) == 0)

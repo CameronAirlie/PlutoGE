@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/ui/TerrainLayerEditing.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
 #include "PlutoGE/ui/SurfacePlacement.h"
@@ -203,6 +204,8 @@ namespace PlutoGE::ui
                 return "Smooth";
             case scene::TerrainPaintMode::Flatten:
                 return "Flatten";
+            case scene::TerrainPaintMode::Layer:
+                return "Layer";
             case scene::TerrainPaintMode::Raise:
             default:
                 return "Raise";
@@ -224,6 +227,7 @@ namespace PlutoGE::ui
                     scene::TerrainPaintMode::Lower,
                     scene::TerrainPaintMode::Smooth,
                     scene::TerrainPaintMode::Flatten,
+                    scene::TerrainPaintMode::Layer,
                 };
                 for (auto mode : modes)
                 {
@@ -246,6 +250,12 @@ namespace PlutoGE::ui
             if (ImGui::DragFloat("Radius##TerrainPaint", &radius, 0.05f, 0.05f, 512.0f, "%.2f"))
             {
                 terrainComponent.SetBrushRadius(radius);
+            }
+
+            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Layer)
+            {
+                RenderTerrainLayerPaintControls(terrainComponent);
+                return;
             }
 
             ImGui::SameLine();
@@ -2573,7 +2583,8 @@ namespace PlutoGE::ui
                         auto *material = meshComponent->GetMaterial();
                         RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
                     }
-                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>();
+                        terrainComponent && terrainComponent->GetLayers().Empty())
                     {
                         auto *material = terrainComponent->GetMaterial();
                         RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
@@ -3408,6 +3419,7 @@ namespace PlutoGE::ui
             bool foliagePaintActive = false;
             bool texturePaintActive = false;
             static bool s_terrainStrokeActive = false;
+            static TerrainLayerStroke s_terrainLayerStroke;
             bool foliageSampled = false;
             if (g_texturePaint.enabled)
             {
@@ -3517,7 +3529,11 @@ namespace PlutoGE::ui
                                                      !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
                             terrainPaintActive = canTerrainPaint && brushActive && !canFoliagePaint;
                             foliagePaintActive = canFoliagePaint && brushActive;
-                            if (terrainPaintActive && !s_terrainStrokeActive)
+                            // Layer painting records its own undo step (the weights live in files, not the scene).
+                            const bool layerPaint = terrainComponent->GetPaintMode() == scene::TerrainPaintMode::Layer;
+                            if (terrainPaintActive && layerPaint)
+                                s_terrainLayerStroke.Dab(editorShell, *selectedEntity, *terrainComponent, hitPoint);
+                            if (terrainPaintActive && !layerPaint && !s_terrainStrokeActive)
                             {
                                 editorShell.BeginSceneEdit("Paint Terrain");
                                 s_terrainStrokeActive = true;
@@ -3573,6 +3589,8 @@ namespace PlutoGE::ui
                 editorShell.EndSceneEdit();
                 s_terrainStrokeActive = false;
             }
+            if (s_terrainLayerStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+                s_terrainLayerStroke.End(editorShell);
             if (g_texturePaint.strokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {
                 if (g_texturePaint.painter)

@@ -327,6 +327,9 @@ namespace PlutoGE::ui
                                   std::function<bool()> undo,
                                   std::function<bool()> redo,
                                   std::size_t retainedBytes = 0);
+        // Records pending inspector edits as their own undo step. Call before capturing state for a command pushed
+        // with PushSceneEditCommand, which would otherwise absorb them.
+        void FlushPendingSceneEdits() { FlushUntrackedSceneEdit(); }
         bool BeginSceneEdit(std::string label);
         bool EndSceneEdit();
         void CancelSceneEdit();

@@ -164,6 +164,7 @@ internal static unsafe partial class ScriptBridge
         SoundEmitter = 13,
         RmlWidget = 14,
         ActiveRagdoll = 15,
+        Terrain = 16,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext

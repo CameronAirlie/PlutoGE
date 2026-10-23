@@ -234,6 +234,17 @@ namespace PlutoGE::render::rhi
         bool normalMap = false;
         // Data contains the complete packed RGBA8 normal mip chain.
         bool normalMipmapsProvided = false;
+        // Non-zero creates a sampled 2D array (Sampler2DArray in shaders) with this many
+        // layers; zero is an ordinary texture. Data is the layers' base levels in order,
+        // and mips are generated per layer. Arrays are 2D, RGBA8 and never storage images.
+        std::uint32_t arrayLayers = 0;
+    };
+
+    // A rectangle of a texture's base level (texels), and the array layer for texture arrays.
+    struct TextureRegion
+    {
+        std::uint32_t x = 0, y = 0, width = 0, height = 0;
+        std::uint32_t layer = 0;
     };
 
     struct GraphicsPipelineDescriptor

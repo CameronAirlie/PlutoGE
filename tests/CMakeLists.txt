@@ -148,6 +148,8 @@ add_test(NAME PlutoGEVulkanCloudTransformTests COMMAND PlutoGEVulkanRhiTests --c
 add_test(NAME PlutoGEOpenGLCloudTransformTests COMMAND PlutoGEOpenGLRhiTests --cloud-transforms)
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
+add_test(NAME PlutoGEOpenGLTerrainLayerTests COMMAND PlutoGEOpenGLRhiTests --terrain-layers)
+add_test(NAME PlutoGEVulkanTerrainLayerTests COMMAND PlutoGEVulkanRhiTests --terrain-layers)
 add_test(NAME PlutoGEOpenGLGlassTests COMMAND PlutoGEOpenGLRhiTests --glass-only)
 add_test(NAME PlutoGEVulkanGlassTests COMMAND PlutoGEVulkanRhiTests --glass-only)
 add_test(NAME PlutoGEOpenGLIblTests COMMAND PlutoGEOpenGLRhiTests --ibl-only)
@@ -412,6 +414,10 @@ add_test(NAME PlutoGEAudioOcclusionTests COMMAND PlutoGEAudioOcclusionTests)
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGESurfaceResponseManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SurfaceResponseSmokeTests/PlutoGE.SurfaceResponseSmokeTests.csproj --configuration Release)
+endif()
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGETerrainManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.TerrainSmokeTests/PlutoGE.TerrainSmokeTests.csproj --configuration Release)
 endif()
 
 add_executable(PlutoGEPrefabVariantTests
@@ -725,6 +731,10 @@ target_include_directories(PlutoGEBrushStrokeSamplerTests PRIVATE ../editor/ui/i
 target_link_libraries(PlutoGEBrushStrokeSamplerTests PRIVATE glm::glm)
 target_compile_features(PlutoGEBrushStrokeSamplerTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEBrushStrokeSamplerTests COMMAND PlutoGEBrushStrokeSamplerTests)
+
+add_executable(PlutoGETerrainLayerTests TerrainLayerTests.cpp)
+pluto_link_engine(PlutoGETerrainLayerTests)
+add_test(NAME PlutoGETerrainLayerTests COMMAND PlutoGETerrainLayerTests)
 
 add_executable(PlutoGESurfacePlacementTests
     SurfacePlacementTests.cpp

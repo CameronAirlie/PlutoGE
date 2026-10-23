@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
+#include "PlutoGE/ui/TerrainLayerEditing.h"
 #include "PlutoGE/ui/IKInspector.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
@@ -4181,6 +4182,8 @@ namespace PlutoGE::ui
                                 entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
                                 editorShell.MarkSceneDirty();
                             }
+
+                            RenderTerrainLayerInspector(editorShell, *entity, *terrainComponent);
                         }
                         else if (auto *sequencer = dynamic_cast<scene::SequencerComponent *>(componentPtr))
                         {

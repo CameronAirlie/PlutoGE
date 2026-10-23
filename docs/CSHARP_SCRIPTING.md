@@ -399,6 +399,32 @@ void Pause()
 void Stop()
 ```
 
+### TerrainComponent
+
+The ground under a point, and its [material layers](TERRAIN_LAYERS.md) (dust, grass, rock...): use it to pick
+footstep sounds or effects by surface, keep AI on roads, or paint tyre tracks and scorch marks during play.
+Runtime painting lasts for the play session and is not saved. Positions are world space; layer indices follow
+the inspector's order.
+
+Properties: `LayerCount`.
+
+Methods:
+
+```csharp
+string GetLayerName(int layer)
+int FindLayer(string name)                          // case-insensitive; -1 when missing
+bool TryGetSurface(Vector3 worldPosition, out float height, out Vector3 normal)
+float[] GetLayerWeights(Vector3 worldPosition)      // per layer, summing to 1; empty off the terrain
+int GetDominantLayer(Vector3 worldPosition)         // -1 off the terrain or without layers
+bool PaintLayer(Vector3 worldPosition, int layer, float radius, float opacity = 1, float hardness = 0.5f)
+```
+
+```csharp
+var terrain = ground.GetComponent<TerrainComponent>();
+var surface = terrain.GetLayerName(terrain.GetDominantLayer(transform.Position)); // "Gravel" -> gravel footsteps
+terrain.PaintLayer(wheelPosition, terrain.FindLayer("Road"), radius: 0.4f, opacity: 0.3f);
+```
+
 ### Runtime UI
 
 - `CanvasComponent`: `ScaleFactor`, `SortingOrder`

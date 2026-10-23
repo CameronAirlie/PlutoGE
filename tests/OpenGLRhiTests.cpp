@@ -20,6 +20,7 @@
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
 #include "EmissionTextureRenderingChecks.h"
+#include "TerrainLayerRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
 #include "PlutoGE/platform/Window.h"
@@ -333,6 +334,31 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             CheckEmissionTexture(basicRenderer, device, read);
             if (glGetError() != GL_NO_ERROR) return 1;
             return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--terrain-layers")
+        {
+            const auto load = [](const char *module, const char *stage) {
+                return render::rhi::GraphicsPipelineDescriptor::ShaderCode{.glsl = ReadText((std::string(module) + "." + stage + ".glsl").c_str())};
+            };
+            shaders.terrain = {
+                .vertices = {load("BasicLitTerrain", "vertex"), load("BasicLitTerrainInstanced", "vertex")},
+                .colorVertices = {load("BasicLitTerrainColor", "vertex"), load("BasicLitTerrainColorInstanced", "vertex")},
+                .fragment = load("BasicLitTerrain", "fragment"),
+                .coverageFragment = load("BasicLitTerrainCoverage", "fragment"),
+                .indirectFragment = load("BasicLitTerrainIndirect", "fragment"),
+                .compactFragments = {load("BasicLitTerrainColor", "fragment"), load("BasicLitTerrainColorMotion", "fragment")}};
+            if (!shaders.terrain.Available() || !basicRenderer.Initialize(device, shaders) || !basicRenderer.Resize(96, 64))
+            {
+                std::cerr << "Terrain layer shaders failed to initialize\n";
+                return 1;
+            }
+            CheckTerrainLayers(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
         {

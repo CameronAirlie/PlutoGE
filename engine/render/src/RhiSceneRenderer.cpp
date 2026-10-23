@@ -385,11 +385,45 @@ namespace PlutoGE::render
 
         // Revisions are checked without reading texture pixels. Remove expired
         // keys before dereferencing them; identity also handles address reuse.
-        std::erase_if(m_textureCache->versions, [&](const auto &item) {
+        m_textureCache->terrainLayers.Collect();
+        // A texture changed only by region updates (painted weight maps) is patched in place: its handles, and the
+        // materials prepared with them, stay valid. Normal maps keep CPU-built mips, so they are re-uploaded whole.
+        const auto patchUploaded = [&](const Texture &source, std::uint64_t revision) {
+            if (m_textureCache->normal.contains(&source))
+                return false;
+            const auto rect = source.GetChangedRectSince(revision);
+            if (!rect)
+                return false;
+            if (rect->Empty())
+                return true;
+            const auto pixels = source.GetRgba8Pixels();
+            if (pixels.size() != static_cast<std::size_t>(source.GetWidth()) * source.GetHeight() * 4)
+                return false;
+            const std::size_t row = static_cast<std::size_t>(rect->width) * 4;
+            std::vector<std::byte> region(row * rect->height);
+            for (int y = 0; y < rect->height; ++y)
+                std::memcpy(region.data() + y * row,
+                            pixels.data() + (static_cast<std::size_t>(rect->y + y) * source.GetWidth() + rect->x) * 4, row);
+            const rhi::TextureRegion target{static_cast<std::uint32_t>(rect->x), static_cast<std::uint32_t>(rect->y),
+                                            static_cast<std::uint32_t>(rect->width), static_cast<std::uint32_t>(rect->height)};
+            for (auto *cache : {&m_textureCache->srgb, &m_textureCache->linear})
+                if (const auto found = cache->find(&source); found != cache->end() && !m_device->UpdateTexture(found->second.Get(), target, region))
+                    return false;
+            return true;
+        };
+        std::erase_if(m_textureCache->versions, [&](auto &item) {
             const auto *source = item.first;
-            const auto &version = item.second;
-            if (!version.lifetime.expired() && version.identity == source->GetIdentity() &&
-                version.revision == source->GetContentRevision()) return false;
+            auto &version = item.second;
+            if (!version.lifetime.expired() && version.identity == source->GetIdentity())
+            {
+                if (version.revision == source->GetContentRevision())
+                    return false;
+                if (patchUploaded(*source, version.revision))
+                {
+                    version.revision = source->GetContentRevision();
+                    return false;
+                }
+            }
             m_textureCache->srgb.erase(source); m_textureCache->linear.erase(source); m_textureCache->normal.erase(source);
             ++m_textureCache->residencyRevision;
             return true;
@@ -484,6 +518,43 @@ namespace PlutoGE::render
                             : rhi::TextureHandle{};
         };
 
+        // A terrain's layers: its weight maps (ordinary linear textures) and the device's layer arrays. Null when
+        // the material has no layers or they cannot be read yet; the terrain then draws with its plain material.
+        const auto prepareTerrainLayers = [&](const MaterialConfig &material) -> std::shared_ptr<const BasicTerrainLayers> {
+            const auto *set = material.terrainLayers.get();
+            if (!set || set->layers.empty() || !texturePixelReader)
+                return nullptr;
+            // Layer textures re-prepare this material when they change, like its other textures.
+            for (const auto &layer : set->layers)
+                for (const auto *texture : {layer.albedoMap, layer.normalMap, layer.roughnessMap, layer.heightMap})
+                    if (texture)
+                        m_textureCache->versions.try_emplace(texture, TextureVersion{texture->GetLifetimeToken(),
+                            texture->GetIdentity(), texture->GetContentRevision()});
+            auto arrays = m_textureCache->terrainLayers.Prepare(*m_device, *set, texturePixelReader);
+            if (!arrays)
+                return nullptr;
+            auto terrain = std::make_shared<BasicTerrainLayers>();
+            for (std::size_t index = 0; index < set->weightMaps.size(); ++index)
+                terrain->weights[index] = uploadTexture(set->weightMaps[index], rhi::Format::R8G8B8A8Unorm,
+                                                        m_textureCache->linear, "Terrain weights");
+            terrain->albedo = arrays->albedo.Get();
+            terrain->normal = arrays->normal.Get();
+            terrain->layerCount = arrays->layers;
+            terrain->heightBlend = set->heightBlend;
+            // The fade band ends at the detail distance, so nothing past it pays for the layers.
+            terrain->detailFade = std::max(set->detailDistance, 0.0f) * 0.25f;
+            terrain->detailDistance = std::max(set->detailDistance, 0.0f) - terrain->detailFade;
+            for (std::uint32_t index = 0; index < arrays->layers; ++index)
+            {
+                const auto &layer = set->layers[index];
+                terrain->tiling[index] = glm::vec4(1.0f / std::max(layer.tileSize, 0.001f), layer.normalStrength,
+                                                   layer.roughness, layer.metallic);
+                terrain->tint[index] = glm::vec4(layer.tint, layer.antiTiling ? 1.0f : 0.0f);
+            }
+            terrain->owner = std::move(arrays);
+            return terrain;
+        };
+
         // Direct config edits are legal. Validate each distinct material once
         // per frame, then use its revision for every list and batching key.
         const auto prepareMaterial = [&](const Material *source) -> const RhiDrawPreparationCache::MaterialEntry & {
@@ -546,6 +617,7 @@ namespace PlutoGE::render
                 uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Scene metallic");
             draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
                                                   m_textureCache->linear, "Scene roughness");
+            draw.terrainLayers = prepareTerrainLayers(material);
             if (entry.revision == 0 || !SameBasicDrawSurface(entry.draw, draw))
             {
                 entry.revision = preparation.NextRevision();
@@ -558,10 +630,13 @@ namespace PlutoGE::render
             const bool pendingTexture = (material.albedoTexture && !entry.draw.baseColorTexture) ||
                 (material.normalTexture && !entry.draw.normalTexture) || (material.metallicTexture && !entry.draw.metallicTexture) ||
                 (material.roughnessTexture && !entry.draw.roughnessTexture) || (material.emissionTexture && !entry.draw.emissionTexture);
+            bool pendingTerrain = material.terrainLayers && !material.terrainLayers->layers.empty() && !entry.draw.terrainLayers;
+            for (std::size_t index = 0; !pendingTerrain && entry.draw.terrainLayers && index < kTerrainWeightMaps; ++index)
+                pendingTerrain = material.terrainLayers->weightMaps[index] && !entry.draw.terrainLayers->weights[index];
             bool pendingGraphTexture = false;
             for (std::size_t i = 0; i < material.graphTextures.size(); ++i)
                 pendingGraphTexture |= material.graphTextures[i] && !entry.draw.graphTextures[i];
-            entry.sourceRevision = pendingTexture || pendingGraphTexture ? 0 : sourceRevision;
+            entry.sourceRevision = pendingTexture || pendingGraphTexture || pendingTerrain ? 0 : sourceRevision;
             entry.textureResidencyRevision = m_textureCache->residencyRevision;
             entry.frame = m_preparationFrame;
             return entry;

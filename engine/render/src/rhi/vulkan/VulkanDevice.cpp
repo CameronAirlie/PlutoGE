@@ -2,6 +2,7 @@
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
+#include "../TextureUpdates.h"
 
 #include <volk.h>
 #include <GLFW/glfw3.h>
@@ -234,6 +235,7 @@ namespace PlutoGE::render::rhi::vulkan
             TextureDescriptor descriptor;
             VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
             std::uint32_t mipLevels = 1;
+            std::uint32_t arrayLayers = 1;
         };
 
         struct SamplerResource
@@ -1110,6 +1112,50 @@ namespace PlutoGE::render::rhi::vulkan
             Check(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
         }
 
+        // Rebuilds levels 1.. of `layerCount` layers from level 0 with linear blits. The image must be in
+        // TRANSFER_DST_OPTIMAL (as after an upload); it is left there, so the caller's final transition still applies.
+        void GenerateMipmaps(VkCommandBuffer command, const TextureResource &texture, std::uint32_t firstLayer, std::uint32_t layerCount)
+        {
+            const auto &descriptor = texture.descriptor;
+            for (std::uint32_t level = 1; level < texture.mipLevels; ++level)
+            {
+                VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = texture.image;
+                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, firstLayer, layerCount};
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &barrier);
+                VkImageBlit blit{};
+                blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, firstLayer, layerCount};
+                blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, firstLayer, layerCount};
+                blit.srcOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> (level - 1))),
+                                      static_cast<int>(std::max(1u, descriptor.height >> (level - 1))), 1};
+                blit.dstOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> level)),
+                                      static_cast<int>(std::max(1u, descriptor.height >> level)), 1};
+                vkCmdBlitImage(command, texture.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+                // Restore a uniform layout for the whole-image tracker and its final shader-read transition.
+                std::swap(barrier.oldLayout, barrier.newLayout);
+                std::swap(barrier.srcAccessMask, barrier.dstAccessMask);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &barrier);
+            }
+        }
+
+        // Whether linear blits can build `format`'s mips on this device.
+        bool CanBlitMipmaps(VkFormat format) const
+        {
+            VkFormatProperties properties{};
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+            constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            return (properties.optimalTilingFeatures & required) == required;
+        }
+
         void Transition(VkCommandBuffer command, TextureResource &texture, VkImageLayout next,
                         VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess)
         {
@@ -1120,7 +1166,7 @@ namespace PlutoGE::render::rhi::vulkan
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = texture.image;
-            barrier.subresourceRange = {Aspect(texture), 0, texture.mipLevels, 0, 1};
+            barrier.subresourceRange = {Aspect(texture), 0, texture.mipLevels, 0, texture.arrayLayers};
             barrier.srcAccessMask = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL   ? VK_ACCESS_TRANSFER_WRITE_BIT
                                                                                   : texture.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL     ? VK_ACCESS_TRANSFER_READ_BIT
                                                                                   : texture.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT
@@ -2127,7 +2173,7 @@ namespace PlutoGE::render::rhi::vulkan
         };
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
-        static constexpr std::size_t MaxDescriptorBindings = 32;
+        static constexpr std::size_t MaxDescriptorBindings = 40;
         // Slots 0..31 cover existing lighting; slot 32 is glass's opaque SSR snapshot.
         static constexpr std::size_t MaxResourceSlots = 33;
         static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
@@ -3022,6 +3068,8 @@ namespace PlutoGE::render::rhi::vulkan
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (!descriptor.width || !descriptor.height || !descriptor.depth)
             throw std::invalid_argument("Invalid Vulkan texture dimensions");
+        if (descriptor.arrayLayers > 0)
+            return CreateTextureArray(descriptor, data);
         TextureResource resource;
         resource.descriptor = descriptor;
         TextureHandle handle;
@@ -3199,34 +3247,111 @@ namespace PlutoGE::render::rhi::vulkan
                     static_cast<std::uint32_t>(copies.size()), copies.data());
                 // Hardware filtering handles sRGB decode/encode and avoids
                 // millions of CPU colour conversions on first visibility.
-                for (std::uint32_t level = 1; gpuMips && level < stored->mipLevels; ++level)
-                {
-                    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = stored->image;
-                    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1};
-                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0, 0, nullptr, 0, nullptr, 1, &barrier);
-                    VkImageBlit blit{};
-                    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
-                    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
-                    blit.srcOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> (level - 1))),
-                                          static_cast<int>(std::max(1u, descriptor.height >> (level - 1))), 1};
-                    blit.dstOffsets[1] = {static_cast<int>(std::max(1u, descriptor.width >> level)),
-                                          static_cast<int>(std::max(1u, descriptor.height >> level)), 1};
-                    vkCmdBlitImage(command, stored->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-                    // Restore a uniform layout for the existing whole-image
-                    // tracker and its final shader-read transition.
-                    std::swap(barrier.oldLayout, barrier.newLayout);
-                    std::swap(barrier.srcAccessMask, barrier.dstAccessMask);
-                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0, 0, nullptr, 0, nullptr, 1, &barrier);
-                }
+                if (gpuMips)
+                    m_impl->GenerateMipmaps(command, *stored, 0, 1);
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            });
+        }
+        failedTexture.Dismiss();
+        return handle;
+    }
+
+    bool VulkanDevice::UpdateTexture(TextureHandle handle, const TextureRegion &region, std::span<const std::byte> data)
+    {
+        auto *texture = m_impl->textures.Get(handle);
+        if (!texture || !IsValidTextureUpdate(texture->descriptor, region, data) || texture->descriptor.normalMap ||
+            (texture->mipLevels > 1 && !m_impl->CanBlitMipmaps(ToVkFormat(texture->descriptor.format))))
+            return false;
+        const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture update staging"}, data);
+        auto *staging = m_impl->buffers.Get(stagingHandle);
+        ScopeExit releaseStaging([&]
+        {
+            if (auto removed = m_impl->buffers.Remove(stagingHandle))
+                vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
+        });
+        // Immediate waits for the queue: earlier frames have finished reading, later ones see the new texels.
+        m_impl->Immediate([&](VkCommandBuffer command)
+        {
+            m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const VkBufferImageCopy copy{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, region.layer, 1},
+                {static_cast<std::int32_t>(region.x), static_cast<std::int32_t>(region.y), 0}, {region.width, region.height, 1}};
+            vkCmdCopyBufferToImage(command, staging->buffer, texture->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            m_impl->GenerateMipmaps(command, *texture, region.layer, 1);
+            m_impl->Transition(command, *texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        });
+        return true;
+    }
+
+    TextureHandle VulkanDevice::CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data)
+    {
+        if (descriptor.depth != 1 || descriptor.storage || descriptor.normalMipmapsProvided ||
+            (descriptor.format != Format::R8G8B8A8Unorm && descriptor.format != Format::R8G8B8A8Srgb))
+            throw std::invalid_argument("RHI texture arrays are 2D RGBA8 sampled textures");
+        const std::size_t layerBytes = std::size_t(descriptor.width) * descriptor.height * 4;
+        if (!data.empty() && data.size() != layerBytes * descriptor.arrayLayers)
+            throw std::invalid_argument("RHI texture array data must hold every layer's base level");
+        TextureResource resource;
+        resource.descriptor = descriptor;
+        resource.arrayLayers = descriptor.arrayLayers;
+        resource.mipLevels = descriptor.mipLevels != 0 ? descriptor.mipLevels
+            : 1u + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>((std::max)(descriptor.width, descriptor.height)))));
+        TextureHandle handle;
+        ScopeExit failedTexture([&]
+        {
+            if (handle.IsValid())
+            {
+                auto removed = m_impl->textures.Remove(handle);
+                if (!removed) return;
+                resource = std::move(*removed);
+            }
+            if (resource.view) vkDestroyImageView(m_impl->device, resource.view, nullptr);
+            if (resource.image) vmaDestroyImage(m_impl->allocator, resource.image, resource.allocation);
+        });
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {descriptor.width, descriptor.height, 1};
+        image.mipLevels = resource.mipLevels;
+        image.arrayLayers = descriptor.arrayLayers;
+        image.format = ToVkFormat(descriptor.format);
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        Check(vmaCreateImage(m_impl->allocator, &image, &allocation, &resource.image, &resource.allocation, nullptr), "vmaCreateImage(array)");
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = resource.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        view.format = image.format;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, resource.mipLevels, 0, descriptor.arrayLayers};
+        Check(vkCreateImageView(m_impl->device, &view, nullptr, &resource.view), "vkCreateImageView(array)");
+        handle = m_impl->textures.Insert(std::move(resource));
+        auto *stored = m_impl->textures.Get(handle);
+        if (!data.empty())
+        {
+            if (stored->mipLevels > 1 && !m_impl->CanBlitMipmaps(image.format))
+                throw std::runtime_error("Vulkan texture arrays need linear blits to build mipmaps");
+            const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture array staging"}, data);
+            auto *staging = m_impl->buffers.Get(stagingHandle);
+            ScopeExit releaseStaging([&]
+            {
+                if (auto removed = m_impl->buffers.Remove(stagingHandle))
+                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
+            });
+            m_impl->Immediate([&](VkCommandBuffer command)
+            {
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                // The layers' base levels are contiguous in the staging buffer.
+                const VkBufferImageCopy copy{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, descriptor.arrayLayers},
+                    {0, 0, 0}, {descriptor.width, descriptor.height, 1}};
+                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                // Each level is blitted from the previous one for every layer at once.
+                m_impl->GenerateMipmaps(command, *stored, 0, descriptor.arrayLayers);
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
             });

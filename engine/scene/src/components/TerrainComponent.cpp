@@ -43,7 +43,30 @@ namespace PlutoGE::scene
             {
                 return TerrainPaintMode::Flatten;
             }
+            if (value == "Layer" || value == "layer" || value == "4")
+            {
+                return TerrainPaintMode::Layer;
+            }
             return TerrainPaintMode::Raise;
+        }
+
+        glm::vec3 ParseVec3(const std::string &value, const glm::vec3 &fallback)
+        {
+            glm::vec3 result = fallback;
+            return std::sscanf(value.c_str(), "%f,%f,%f", &result.x, &result.y, &result.z) == 3 ? result : fallback;
+        }
+
+        std::string FormatVec3(const glm::vec3 &value)
+        {
+            char buffer[96];
+            std::snprintf(buffer, sizeof(buffer), "%.6f,%.6f,%.6f", value.x, value.y, value.z);
+            return buffer;
+        }
+
+        // Per-layer properties ("Layer.<index>.<Field>"); map fields are asset paths (SceneSerializer).
+        std::string LayerProperty(std::size_t index, const char *field)
+        {
+            return "Layer." + std::to_string(index) + "." + field;
         }
 
         std::string SerializeHeightSamples(const std::vector<float> &heights)
@@ -189,7 +212,8 @@ namespace PlutoGE::scene
             RebuildMesh();
         }
 
-        if (!m_mesh || !m_material)
+        auto *material = GetRenderMaterial();
+        if (!m_mesh || !material)
         {
             return;
         }
@@ -208,9 +232,9 @@ namespace PlutoGE::scene
             command.ownerEntity = entity->GetID();
             command.model = modelMatrix;
             command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
-            command.material = m_material;
+            command.material = material;
             command.mesh = m_mesh.get();
-            command.shader = m_material->GetShader();
+            command.shader = material->GetShader();
             command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
             command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
             command.submeshIndex = static_cast<uint32_t>(submeshIndex);
@@ -239,7 +263,7 @@ namespace PlutoGE::scene
 
     std::vector<Property> TerrainComponent::Serialize() const
     {
-        return {
+        std::vector<Property> properties{
             {"Width", PropertyType::Int, std::to_string(m_width)},
             {"Depth", PropertyType::Int, std::to_string(m_depth)},
             {"CellSize", PropertyType::Float, std::to_string(m_cellSize)},
@@ -258,6 +282,32 @@ namespace PlutoGE::scene
             {"BrushStrength", PropertyType::Float, std::to_string(m_brushStrength)},
             {"FlattenHeight", PropertyType::Float, std::to_string(m_flattenHeight)},
         };
+        properties.push_back({"PaintLayer", PropertyType::Int, std::to_string(m_paintLayer)});
+        properties.push_back({"LayerOpacity", PropertyType::Float, std::to_string(m_layerOpacity)});
+        properties.push_back({"BrushHardness", PropertyType::Float, std::to_string(m_brushHardness)});
+        properties.push_back({"HeightBlend", PropertyType::Float, std::to_string(m_layers.GetHeightBlend())});
+        properties.push_back({"DetailDistance", PropertyType::Float, std::to_string(m_layers.GetDetailDistance())});
+        properties.push_back({"WeightResolution", PropertyType::Int, std::to_string(m_layers.GetWeights().GetResolution())});
+        for (std::size_t plane = 0; plane < m_layers.GetWeightMapPaths().size(); ++plane)
+            properties.push_back({"WeightMap" + std::to_string(plane), PropertyType::String, m_layers.GetWeightMapPaths()[plane]});
+        const auto &layers = m_layers.GetLayers();
+        properties.push_back({"LayerCount", PropertyType::Int, std::to_string(layers.size())});
+        for (std::size_t index = 0; index < layers.size(); ++index)
+        {
+            const auto &layer = layers[index];
+            properties.push_back({LayerProperty(index, "Name"), PropertyType::String, layer.name});
+            properties.push_back({LayerProperty(index, "AlbedoMap"), PropertyType::String, layer.albedoMap});
+            properties.push_back({LayerProperty(index, "NormalMap"), PropertyType::String, layer.normalMap});
+            properties.push_back({LayerProperty(index, "RoughnessMap"), PropertyType::String, layer.roughnessMap});
+            properties.push_back({LayerProperty(index, "HeightMap"), PropertyType::String, layer.heightMap});
+            properties.push_back({LayerProperty(index, "Tint"), PropertyType::Vec3, FormatVec3(layer.tint)});
+            properties.push_back({LayerProperty(index, "TileSize"), PropertyType::Float, std::to_string(layer.tileSize)});
+            properties.push_back({LayerProperty(index, "NormalStrength"), PropertyType::Float, std::to_string(layer.normalStrength)});
+            properties.push_back({LayerProperty(index, "Roughness"), PropertyType::Float, std::to_string(layer.roughness)});
+            properties.push_back({LayerProperty(index, "Metallic"), PropertyType::Float, std::to_string(layer.metallic)});
+            properties.push_back({LayerProperty(index, "AntiTiling"), PropertyType::Bool, layer.antiTiling ? "true" : "false"});
+        }
+        return properties;
     }
 
     void TerrainComponent::Deserialize(const std::vector<Property> &properties)
@@ -266,6 +316,26 @@ namespace PlutoGE::scene
         std::string materialAssetReference = m_materialAssetReference;
         std::string paintedAlbedoPath = m_paintedAlbedoPath;
         std::string serializedHeightSamples;
+        std::vector<TerrainLayer> layers;
+        std::size_t layerCount = 0;
+        bool hasLayerCount = false;
+        int weightResolution = m_layers.GetWeights().GetResolution();
+        float heightBlend = m_layers.GetHeightBlend();
+        float detailDistance = m_layers.GetDetailDistance();
+        auto weightMapPaths = m_layers.GetWeightMapPaths();
+        const auto layerAt = [&](const std::string &name, std::string &field) -> TerrainLayer * {
+            // "Layer.<index>.<Field>"
+            const auto dot = name.find('.', 6);
+            if (name.rfind("Layer.", 0) != 0 || dot == std::string::npos)
+                return nullptr;
+            const auto index = static_cast<std::size_t>(std::strtoul(name.c_str() + 6, nullptr, 10));
+            if (index >= TerrainLayerStack::kMaxLayers)
+                return nullptr;
+            if (layers.size() <= index)
+                layers.resize(index + 1);
+            field = name.substr(dot + 1);
+            return &layers[index];
+        };
         for (const auto &property : properties)
         {
             if (property.name == "Width")
@@ -302,7 +372,62 @@ namespace PlutoGE::scene
                 m_brushStrength = std::max(0.0f, std::stof(property.value));
             else if (property.name == "FlattenHeight")
                 m_flattenHeight = std::stof(property.value);
+            else if (property.name == "PaintLayer")
+                SetPaintLayer(std::stoi(property.value));
+            else if (property.name == "LayerOpacity")
+                SetLayerOpacity(std::stof(property.value));
+            else if (property.name == "BrushHardness")
+                SetBrushHardness(std::stof(property.value));
+            else if (property.name == "HeightBlend")
+                heightBlend = std::stof(property.value);
+            else if (property.name == "DetailDistance")
+                detailDistance = std::stof(property.value);
+            else if (property.name == "WeightResolution")
+                weightResolution = glm::clamp(std::stoi(property.value), 16, 4096);
+            else if (property.name.rfind("WeightMap", 0) == 0 && property.name.size() == 10)
+            {
+                const auto plane = static_cast<std::size_t>(property.name.back() - '0');
+                if (plane < weightMapPaths.size())
+                    weightMapPaths[plane] = property.value;
+            }
+            else if (property.name == "LayerCount")
+            {
+                layerCount = static_cast<std::size_t>(std::clamp(std::stoi(property.value), 0, int(TerrainLayerStack::kMaxLayers)));
+                hasLayerCount = true;
+            }
+            else if (std::string field; auto *layer = layerAt(property.name, field))
+            {
+                if (field == "Name") layer->name = property.value;
+                else if (field == "AlbedoMap") layer->albedoMap = property.value;
+                else if (field == "NormalMap") layer->normalMap = property.value;
+                else if (field == "RoughnessMap") layer->roughnessMap = property.value;
+                else if (field == "HeightMap") layer->heightMap = property.value;
+                else if (field == "Tint") layer->tint = ParseVec3(property.value, glm::vec3(1.0f));
+                else if (field == "TileSize") layer->tileSize = std::max(0.01f, std::stof(property.value));
+                else if (field == "NormalStrength") layer->normalStrength = std::max(0.0f, std::stof(property.value));
+                else if (field == "Roughness") layer->roughness = std::max(0.0f, std::stof(property.value));
+                else if (field == "Metallic") layer->metallic = glm::clamp(std::stof(property.value), 0.0f, 1.0f);
+                else if (field == "AntiTiling") layer->antiTiling = property.value == "true" || property.value == "1";
+            }
         }
+        if (hasLayerCount)
+            layers.resize(layerCount);
+        m_layers.SetLayers(std::move(layers));
+        m_layers.SetHeightBlend(heightBlend);
+        m_layers.SetDetailDistance(detailDistance);
+        // Reload the weights only when they come from different files: undoing an unrelated edit must not throw
+        // away painting that is newer than the files.
+        if (weightMapPaths != m_layers.GetWeightMapPaths())
+        {
+            m_layers.SetWeightMapPaths(weightMapPaths);
+            if (!m_layers.LoadWeightMaps())
+            {
+                TerrainWeightMap weights(weightResolution);
+                m_layers.SetWeights(std::move(weights));
+            }
+        }
+        else if (weightResolution != m_layers.GetWeights().GetResolution())
+            m_layers.SetWeightResolution(weightResolution);
 
         EnsureHeightStorage();
         const std::size_t expectedHeightSampleCount = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_depth);
@@ -376,7 +501,7 @@ namespace PlutoGE::scene
     bool TerrainComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
     {
         auto *entity = GetOwner();
-        if (!entity || !m_paintEnabled)
+        if (!entity || !m_paintEnabled || m_paintMode == TerrainPaintMode::Layer)
         {
             return false;
         }
@@ -615,6 +740,93 @@ namespace PlutoGE::scene
 
         m_materialAssetReference = materialAssetReference;
         RebuildMaterialFromReference();
+    }
+
+    TerrainLayerStack::Services TerrainComponent::EngineLayerServices()
+    {
+        TerrainLayerStack::Services services;
+        services.loadTexture = [](const std::string &reference, render::TextureColorSpace colorSpace) -> const render::Texture * {
+            return core::Engine::GetInstance().GetAssetManager().LoadTexture(reference.c_str(), colorSpace);
+        };
+        services.resolvePath = [](const std::string &reference) {
+            auto resolved = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference);
+            return resolved.empty() ? reference : resolved;
+        };
+        services.readFile = [](const std::string &path, std::string &bytes) {
+            if (content::IsMounted(path))
+                return content::ReadFile(path, bytes);
+            std::ifstream input(path, std::ios::binary);
+            if (!input)
+                return false;
+            bytes.assign(std::istreambuf_iterator<char>(input), {});
+            return true;
+        };
+        return services;
+    }
+
+    render::Material *TerrainComponent::GetRenderMaterial()
+    {
+        if (m_layers.Empty() || !m_material)
+            return m_material;
+        // A private copy of the terrain's material carries the layers; it follows edits to that material.
+        const auto baseRevision = m_material->GetRevision();
+        if (!m_layeredMaterial || m_layeredBase != m_material || (baseRevision != 0 && baseRevision != m_layeredBaseRevision))
+        {
+            auto config = m_material->ReadConfig();
+            // The terrain variant is a standard material: graph and material maps give way to the layers.
+            config.shaderGraphProgram = nullptr;
+            config.normalTexture = config.metallicTexture = config.roughnessTexture = nullptr;
+            config.terrainLayers = nullptr;
+            if (!m_layeredMaterial)
+                m_layeredMaterial = std::make_unique<render::Material>(config);
+            else
+                m_layeredMaterial->SetConfig(std::move(config));
+            m_layeredBase = m_material;
+            m_layeredBaseRevision = baseRevision;
+        }
+        m_layeredMaterial->SetTerrainLayers(m_layers.GetRenderSet());
+        m_layeredMaterial->SetAlbedoTexture(const_cast<render::Texture *>(m_layers.GetMacroAlbedo()));
+        return m_layeredMaterial.get();
+    }
+
+    glm::vec2 TerrainComponent::WorldToTerrainUv(const glm::vec3 &worldPosition) const
+    {
+        const auto *entity = GetOwner();
+        const glm::vec3 local = entity ? glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f)) : worldPosition;
+        const glm::vec2 extent(std::max(1, m_width - 1) * m_cellSize, std::max(1, m_depth - 1) * m_cellSize);
+        return glm::vec2(local.x, local.z) / extent;
+    }
+
+    TerrainWeightRect TerrainComponent::PaintLayerAtWorldPosition(const glm::vec3 &worldPosition)
+    {
+        return PaintLayerAtWorldPosition(worldPosition, static_cast<std::size_t>(m_paintLayer), m_brushRadius,
+                                         TerrainLayerBrush{m_layerOpacity, m_brushHardness});
+    }
+
+    TerrainWeightRect TerrainComponent::PaintLayerAtWorldPosition(const glm::vec3 &worldPosition, std::size_t layer, float radius,
+                                                                  const TerrainLayerBrush &brush)
+    {
+        if (!GetOwner() || layer >= m_layers.GetLayers().size() || !(radius > 0.0f))
+            return {};
+        // The radius is in the terrain's local units, like the sculpting brush.
+        const glm::vec2 extent(std::max(1, m_width - 1) * m_cellSize, std::max(1, m_depth - 1) * m_cellSize);
+        return m_layers.Paint(WorldToTerrainUv(worldPosition), glm::vec2(radius) / extent, layer, brush);
+    }
+
+    bool TerrainComponent::TrySampleWorldSurface(const glm::vec3 &worldPosition, float &worldHeight, glm::vec3 &worldNormal) const
+    {
+        const auto *entity = GetOwner();
+        if (!entity)
+            return false;
+        const glm::mat4 world = entity->GetWorldTransform();
+        const glm::vec3 local = glm::vec3(glm::inverse(world) * glm::vec4(worldPosition, 1.0f));
+        float height = 0.0f;
+        glm::vec3 normal(0.0f, 1.0f, 0.0f);
+        if (!TrySampleSurface(local.x, local.z, height, normal))
+            return false;
+        worldHeight = glm::vec3(world * glm::vec4(local.x, height, local.z, 1.0f)).y;
+        worldNormal = glm::normalize(glm::transpose(glm::inverse(glm::mat3(world))) * normal);
+        return true;
     }
 
     void TerrainComponent::SetPaintedAlbedoPath(const std::string &path)

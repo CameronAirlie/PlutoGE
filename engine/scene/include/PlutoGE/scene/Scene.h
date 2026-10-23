@@ -146,6 +146,11 @@ namespace PlutoGE::scene
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
+        // Per-component, per-script and animation-phase breakdowns of GetUpdateTimingStats (phase totals are always
+        // measured). Timing and naming every component update costs real frame time, so hosts turn it off while no
+        // profiler or benchmark reads the breakdowns; their lists then stay empty.
+        void SetDetailedTimingEnabled(bool enabled) noexcept { m_detailedTimingEnabled = enabled; }
+        [[nodiscard]] bool IsDetailedTimingEnabled() const noexcept { return m_detailedTimingEnabled; }
         void RecordComponentTiming(const char *name, float elapsedMs, const Entity &entity);
         void RecordAnimationTiming(const char *phase, float elapsedMs, const Entity &entity);
         void RecordScriptTiming(const std::string &scriptClass, float elapsedMs, const Entity &entity, bool lateUpdate);
@@ -340,6 +345,7 @@ namespace PlutoGE::scene
         float m_shaderTime = 0.0f;
         float m_physicsTimeAccumulator = 0.0f;
         SceneUpdateTimingStats m_updateTimingStats;
+        bool m_detailedTimingEnabled = true;
         mutable std::uint64_t m_bakedProbeRevision = 0;
         mutable std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;

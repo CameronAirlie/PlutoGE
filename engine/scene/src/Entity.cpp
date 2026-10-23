@@ -627,15 +627,16 @@ namespace PlutoGE::scene
 
     void Entity::Update(float deltaTime)
     {
+        const bool timed = m_scene && m_scene->IsDetailedTimingEnabled();
         for (const auto &component : m_componentStorage)
         {
             if (component->IsEnabled() && component->RequiresFrameUpdate())
             {
-                const auto start = std::chrono::high_resolution_clock::now();
+                const auto start = timed ? std::chrono::high_resolution_clock::now() : std::chrono::high_resolution_clock::time_point{};
                 core::CpuScope componentScope(core::CpuTrace::current ? ComponentTraceName(*component) : std::string_view{}, core::CpuCategory::Other, core::CpuTrace::current ? std::string_view(GetName()) : std::string_view{});
                 component->Update(deltaTime);
                 componentScope.End();
-                if (m_scene)
+                if (timed)
                 {
                     const float elapsedMs = std::chrono::duration<float, std::milli>(
                         std::chrono::high_resolution_clock::now() - start).count();

@@ -15,6 +15,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 
 * `<out.gpu.csv>` lists every GPU scope (mean, p95, max). Nested scopes such as
   `RHI VCT GI / Cone trace` sit inside their parent; do not add them together.
+* `<out.cpu.csv>` lists the scene update's CPU cost per component type, animation
+  phase, script `OnUpdate` and script `OnLateUpdate` (same columns). A script's
+  row includes whatever it calls, so a spawner's max shows its `Instantiate` cost.
 * `--geometry-diagnostic` applies one shading diagnostic to every measured
   frame and requires `--frozen-render`. `--scalar-shadows` remains an alias
   for `scalar-shadows`.

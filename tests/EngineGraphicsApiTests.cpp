@@ -474,7 +474,7 @@ int main(int argc, char **argv)
         submit();
         animation->SetTime(.5f);
         if (submit().model[3].x != 0) return 43;
-        clip.channels[0].targetName = "Parent";
+        clip.channels.Mutable()[0].targetName = "Parent";
         animation->SetClipsFromImportedAnimations({clip});
         if (!animation->CanAnimateNode(nodeMesh.GetAnimationNodes(), 2)) return 44;
         animation->SetTime(.5f);

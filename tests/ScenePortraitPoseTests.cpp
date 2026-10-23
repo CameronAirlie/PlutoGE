@@ -26,7 +26,7 @@ int main() try
     render::AnimationClip idle;
     idle.name = "Idle"; idle.duration = 1; idle.channelCount = 1; idle.channels = {channel};
     auto attack = idle; attack.name = "Attack";
-    attack.channels.front().values = {glm::vec4(3, 0, 0, 0), glm::vec4(3, 0, 0, 0)};
+    attack.channels.Mutable().front().values = {glm::vec4(3, 0, 0, 0), glm::vec4(3, 0, 0, 0)};
     config.animations = {attack, idle};
     render::Mesh body(config);
     config.animations.clear();

@@ -17,9 +17,11 @@ namespace PlutoGE
 {
     using ProjectBenchmarkGpuScopes = std::map<std::string, std::vector<float>>;
 
-    inline void WriteProjectBenchmarkGpuScopes(std::filesystem::path path, ProjectBenchmarkGpuScopes scopes)
+    // Per-scope timings beside the benchmark CSV: GPU scopes (".gpu.csv") or CPU component and script costs (".cpu.csv").
+    inline void WriteProjectBenchmarkGpuScopes(std::filesystem::path path, ProjectBenchmarkGpuScopes scopes,
+                                               std::string_view extension = ".gpu.csv")
     {
-        path.replace_extension(".gpu.csv");
+        path.replace_extension(extension);
         std::ofstream file(path);
         file.exceptions(std::ios::failbit | std::ios::badbit);
         file.imbue(std::locale::classic());

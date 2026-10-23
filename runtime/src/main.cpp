@@ -555,7 +555,7 @@ int RunRuntime(int argc, char **argv)
     std::size_t benchmarkFrameIndex = 0;
     std::vector<double> benchmarkFrameTimes;
     std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
-    PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes;
+    PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes, projectBenchmarkCpuScopes;
     std::uint64_t lastBenchmarkGpuObservation = 0;
     if (projectBenchmark) projectBenchmarkSamples.reserve(benchmarkFrameCount);
     if (benchmarkEnabled)
@@ -602,6 +602,8 @@ int RunRuntime(int argc, char **argv)
                 {mouse.x, mouse.y}, glfwGetWindowAttrib(nativeWindow, GLFW_FOCUSED) != 0);
             scene->SetRuntimeUIInputOverride(viewportInput.canvasSize, viewportInput.canvasPointer,
                                              viewportInput.pointerInside, viewportInput.logicalViewport);
+            // Only the profiler overlay and the benchmark read the per-component and per-script breakdowns.
+            scene->SetDetailedTimingEnabled(projectBenchmark.has_value() || runtimeProfiler != nullptr);
             scene->Update(projectBenchmark && projectBenchmark->frozenRender ? 0.0f : deltaTime);
         }
         const auto updateEnd = std::chrono::high_resolution_clock::now();
@@ -811,6 +813,15 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.renderSize.width), static_cast<double>(render.renderSize.height),
                         static_cast<double>(render.outputSize.width), static_cast<double>(render.outputSize.height),
                         static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount), 0};
+                    const auto addCpuScopes = [&](std::string_view group, const auto &timings)
+                    {
+                        for (const auto &timing : timings)
+                            projectBenchmarkCpuScopes[std::string(group) + " / " + timing.name].push_back(timing.totalMs);
+                    };
+                    addCpuScopes("Component", update.componentTimings);
+                    addCpuScopes("Animation", update.animationTimings);
+                    addCpuScopes("Script", update.scriptUpdateTimings);
+                    addCpuScopes("Late script", update.scriptLateUpdateTimings);
                     if (useVulkanRenderer)
                     {
                         const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
@@ -910,6 +921,7 @@ int RunRuntime(int argc, char **argv)
             {
                 PlutoGE::WriteProjectBenchmark(projectBenchmark->output, projectBenchmarkSamples);
                 PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkGpuScopes));
+                PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkCpuScopes), ".cpu.csv");
             }
             if (benchmarkSucceeded && !projectBenchmark->capture.empty())
             {

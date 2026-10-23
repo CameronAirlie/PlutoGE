@@ -269,20 +269,21 @@ namespace PlutoGE::ui
         render::AnimationChannel *EnsureChannel(render::AnimationClip &clip, const std::string &bone,
                                                 render::AnimationTargetPath path)
         {
-            const auto existing = std::find_if(clip.channels.begin(), clip.channels.end(), [&](const auto &channel) {
+            auto &channels = clip.channels.Mutable();
+            const auto existing = std::find_if(channels.begin(), channels.end(), [&](const auto &channel) {
                 return TargetName(channel) == bone && channel.path == path;
             });
-            if (existing != clip.channels.end()) return &*existing;
-            const auto source = std::find_if(clip.channels.begin(), clip.channels.end(), [&](const auto &channel) {
+            if (existing != channels.end()) return &*existing;
+            const auto source = std::find_if(channels.begin(), channels.end(), [&](const auto &channel) {
                 return TargetName(channel) == bone;
             });
-            if (source == clip.channels.end()) return nullptr;
-            clip.channels.push_back(*source);
-            auto &channel = clip.channels.back();
+            if (source == channels.end()) return nullptr;
+            channels.push_back(*source);
+            auto &channel = channels.back();
             channel.path = path;
             channel.times.clear();
             channel.values.clear();
-            clip.channelCount = static_cast<int>(clip.channels.size());
+            clip.channelCount = static_cast<int>(channels.size());
             return &channel;
         }
 
@@ -548,7 +549,7 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                auto &channel = m_clip.channels[selected->channel];
+                auto &channel = m_clip.channels.Mutable()[selected->channel];
                 const auto nearest = std::min_element(channel.times.begin(), channel.times.end(), [&](float a, float b) {
                     return std::abs(Frame(a) - m_currentFrame) < std::abs(Frame(b) - m_currentFrame);
                 });
@@ -616,7 +617,7 @@ namespace PlutoGE::ui
                 }
                 else if (selected->channel < m_clip.channels.size())
                 {
-                    auto &channel = m_clip.channels[selected->channel];
+                    auto &channel = m_clip.channels.Mutable()[selected->channel];
                     const auto nearest = m_selectedKey >= 0 && m_selectedKey < static_cast<int>(channel.times.size())
                                              ? channel.times.begin() + m_selectedKey
                                              : std::min_element(channel.times.begin(), channel.times.end(), [&](float a, float b) {
@@ -643,7 +644,7 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Save"))
         {
-            for (auto &channel : m_clip.channels) SortChannel(channel);
+            for (auto &channel : m_clip.channels.Mutable()) SortChannel(channel);
             std::stable_sort(m_clip.events.begin(), m_clip.events.end(), [](const auto &a, const auto &b) { return a.time < b.time; });
             std::string error;
             if (core::Engine::GetInstance().GetAssetManager().SaveAnimationClipAsset(reference, m_clip, &error))

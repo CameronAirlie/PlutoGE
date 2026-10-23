@@ -80,6 +80,67 @@ namespace PlutoGE::render
         std::vector<glm::vec4> values;
     };
 
+    // A vector whose copies share one allocation until a copy is modified. Reads never copy; writes
+    // (Mutable(), push_back, ...) first take a private copy if another owner shares the elements.
+    // Clips are copied out of the asset cache into every AnimationComponent: deep copies made each
+    // spawn of a character with a large graph cost tens of milliseconds.
+    template <class T>
+    class CopyOnWriteVector
+    {
+    public:
+        using value_type = T;
+        using size_type = typename std::vector<T>::size_type;
+        using iterator = typename std::vector<T>::iterator;
+        using const_iterator = typename std::vector<T>::const_iterator;
+
+        CopyOnWriteVector() = default;
+        CopyOnWriteVector(std::vector<T> values)
+            : m_values(values.empty() ? nullptr : std::make_shared<std::vector<T>>(std::move(values))) {}
+        CopyOnWriteVector(std::initializer_list<T> values) : CopyOnWriteVector(std::vector<T>(values)) {}
+
+        operator const std::vector<T> &() const { return Get(); }
+        const std::vector<T> &Get() const { return m_values ? *m_values : Empty(); }
+        std::vector<T> &Mutable()
+        {
+            if (!m_values)
+                m_values = std::make_shared<std::vector<T>>();
+            else if (m_values.use_count() > 1)
+                m_values = std::make_shared<std::vector<T>>(*m_values);
+            return *m_values;
+        }
+        // True when this and other read the same elements without a copy (tests).
+        bool SharesStorageWith(const CopyOnWriteVector &other) const { return m_values && m_values == other.m_values; }
+
+        size_type size() const { return Get().size(); }
+        bool empty() const { return Get().empty(); }
+        const T *data() const { return Get().data(); }
+        const T &operator[](size_type index) const { return Get()[index]; }
+        const T &front() const { return Get().front(); }
+        const T &back() const { return Get().back(); }
+        const_iterator begin() const { return Get().begin(); }
+        const_iterator end() const { return Get().end(); }
+        const_iterator cbegin() const { return Get().cbegin(); }
+        const_iterator cend() const { return Get().cend(); }
+
+        // Element writes go through Mutable(), so reading a non-const clip never copies it.
+        void push_back(const T &value) { Mutable().push_back(value); }
+        void push_back(T &&value) { Mutable().push_back(std::move(value)); }
+        template <class... Args> T &emplace_back(Args &&...args) { return Mutable().emplace_back(std::forward<Args>(args)...); }
+        void reserve(size_type count) { Mutable().reserve(count); }
+        void resize(size_type count) { Mutable().resize(count); }
+        void clear() { m_values.reset(); }
+
+        bool operator==(const CopyOnWriteVector &other) const { return m_values == other.m_values || Get() == other.Get(); }
+
+    private:
+        static const std::vector<T> &Empty()
+        {
+            static const std::vector<T> empty;
+            return empty;
+        }
+        std::shared_ptr<std::vector<T>> m_values;
+    };
+
     struct AnimationClip
     {
         struct Event
@@ -96,7 +157,8 @@ namespace PlutoGE::render
         std::string name;
         float duration = 0.0f;
         int channelCount = 0;
-        std::vector<AnimationChannel> channels;
+        // Shared between copies (the clip cache and every component playing the clip).
+        CopyOnWriteVector<AnimationChannel> channels;
         std::vector<Event> events;
     };
 

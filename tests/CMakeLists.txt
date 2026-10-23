@@ -215,6 +215,8 @@ target_link_libraries(PlutoGERecookMesh PRIVATE ${pluto_import_test_libraries})
 add_executable(PlutoGEPrepareNativeMeshLods EXCLUDE_FROM_ALL ../tools/PrepareNativeMeshLods.cpp)
 target_link_libraries(PlutoGEPrepareNativeMeshLods PRIVATE ${pluto_import_test_libraries})
 target_include_directories(PlutoGEPrepareNativeMeshLods PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_executable(PlutoGEMergeMeshSubmeshes EXCLUDE_FROM_ALL ../tools/MergeMeshSubmeshes.cpp)
+target_link_libraries(PlutoGEMergeMeshSubmeshes PRIVATE ${pluto_import_test_libraries})
 add_executable(PlutoGEDdsImageTests DdsImageTests.cpp)
 target_include_directories(PlutoGEDdsImageTests PRIVATE ../engine/render/include)
 target_compile_features(PlutoGEDdsImageTests PRIVATE cxx_std_20)
@@ -709,6 +711,9 @@ add_test(NAME PlutoGEHumanoidRetargetBasisTests COMMAND PlutoGEHumanoidRetargetB
 add_executable(PlutoGEAnimationBlendSpaceTests AnimationBlendSpaceTests.cpp)
 pluto_link_engine(PlutoGEAnimationBlendSpaceTests)
 add_test(NAME PlutoGEAnimationBlendSpaceTests COMMAND PlutoGEAnimationBlendSpaceTests)
+add_executable(PlutoGEAnimationClipSharingTests AnimationClipSharingTests.cpp)
+pluto_link_engine(PlutoGEAnimationClipSharingTests)
+add_test(NAME PlutoGEAnimationClipSharingTests COMMAND PlutoGEAnimationClipSharingTests)
 
 add_executable(PlutoGEViewportOverlayLayoutTests ViewportOverlayLayoutTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportOverlayLayout.cpp)

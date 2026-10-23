@@ -27,13 +27,19 @@ Instantiating a character used to cost 300+ ms, nearly all of it in `AnimationCo
 
 * **Clip cache.** `AssetManager::LoadAnimationClipAsset` keeps decoded clips by resolved path, revalidated by
   file write time (packaged clips are kept). A graph with hundreds of clips no longer re-reads and decodes every
-  `.plutoclip` for each instance; each instance still copies the decoded clips (tens of milliseconds for a
-  large graph), so sharing clip data between instances is the next step.
+  `.plutoclip` for each instance.
+* **Shared clip data.** `AnimationClip::channels` is a `CopyOnWriteVector`: the cache and every component
+  playing a clip read one copy of its channels. Reads never copy; a writer calls `channels.Mutable()` (or
+  `push_back`, ...), which takes a private copy first if the channels are shared, so editing a clip never
+  changes the cache or another character. Before this, each instance deep-copied every decoded clip: 32 ms of a
+  ~39 ms Mercenary spawn. `PlutoGEAnimationClipSharingTests` checks sharing, detaching and playback.
 * **Lazy retarget caches.** Each clip's retarget binding cache is built the first time the clip is sampled,
   not for every clip on the first evaluation, so a character pays only for the clips it plays.
 * **Prefab preloading.** `Prefab::Preload` (C#: `Prefab.Preload`) parses a prefab ahead of time.
 
-A mercenary on the ThirdPersonProject's 268-clip graph went from about 330 ms to 60 ms per spawn.
+A mercenary on the ThirdPersonProject's 268-clip graph went from about 330 ms to 60 ms per spawn, and to about
+7 ms of instantiation (a ~19 ms frame including its scripts) once clips were shared. The remaining cost is
+hierarchy allocation (~4 ms) and the first instantiation of each held-item prefab nobody preloaded.
 
 ## GPU skinning
 
@@ -69,6 +75,19 @@ marked experimental upstream.
 Native `.plutomesh` assets get LODs offline with `PlutoGEPrepareNativeMeshLods`.
 Pass `project-root input-reference --report` to print an asset's per-level
 triangles, LOD coverage and skinned-vertex prefix without writing anything.
+
+## Submesh count
+
+Skinned commands are never cached by the RHI draw preparation (poses change every frame), so each submesh of a
+character costs command translation plus a draw in every pass it reaches (visible, coverage depth, VSM receiver
+and caster pages). A character exported with one material per part multiplies that: the ThirdPersonProject's
+CoD Soldier had 46 submeshes, about 57 draws per guard per pass with its weapon, and 13 guards cost ~3.5 ms of
+render CPU while the GPU barely changed. Merge parts that share material settings:
+`PlutoGEMergeMeshSubmeshes project-root mesh-reference --report` lists submeshes, materials and UV ranges;
+with a plan file (`MATERIAL`, `SUBMESH`, `SOURCE` lines; see the tool's header) it writes a mesh whose
+sources are concatenated per LOD, with each source's UVs moved into its rectangle of a caller-built texture
+atlas. Skeleton, humanoid map and LODs are kept. The project's `Tools/make_soldier_atlas.py` builds the atlas
+and plan (46 -> 4 submeshes; gate view 17.6 -> 15.5 ms).
 
 ## Shadow casters
 

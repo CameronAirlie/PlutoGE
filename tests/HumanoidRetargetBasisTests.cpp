@@ -232,7 +232,7 @@ namespace
                     Require(std::isfinite(matrix[c][r]),"Unsupported reference data produced a nonfinite pose");
             };
             auto legacyClip=clip;
-            for(auto &channel:legacyClip.channels)
+            for(auto &channel:legacyClip.channels.Mutable())
                 channel.hasSourceGlobalBindTransform=channel.hasSourceLocalBindTransform=false;
             animation->SetClipsFromImportedAnimations({legacyClip});
             finitePalette(animation->GetJointMatrices(target));

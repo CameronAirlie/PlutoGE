@@ -3910,6 +3910,8 @@ namespace PlutoGE::ui
                         m_scene->SetRuntimeUIInputOverride(canvasSize, canvasMouse, pointerInside,
                             glm::vec4(viewportMin - windowOrigin, viewportSize));
                     }
+                    // Per-component and per-script timing costs frame time; only the profiler reads it.
+                    m_scene->SetDetailedTimingEnabled(m_profiler.IsRecording() || (profilerPanel && profilerPanel->IsOpen()));
                     m_scene->Update(deltaTime.count());
                     const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();
                     frameTimingStats.scenePreparationMs = sceneTimingStats.preparationMs;

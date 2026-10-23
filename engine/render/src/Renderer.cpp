@@ -290,6 +290,10 @@ namespace PlutoGE::render
             RenderCommand culled = command;
             culled.instanceModels = modelScratch;
             culled.previousInstanceModels = command.previousInstanceModels ? previousModelScratch : nullptr;
+            // The scratch arrays are pooled by visible order and refilled every
+            // frame, so the producer revision no longer vouches for the contents:
+            // a cached packet would draw this mesh with another cluster's models.
+            culled.sourceRevision = 0;
             return culled;
         }
 

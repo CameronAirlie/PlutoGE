@@ -10,13 +10,18 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 
 ```
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
-               [--geometry-diagnostic=<mode>] [--capture=<frame.png>]
+               [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
 ```
+
+* Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
+  render statistics in a sample then describe the previous frame, the last one completed.
 
 * `<out.gpu.csv>` lists every GPU scope (mean, p95, max). Nested scopes such as
   `RHI VCT GI / Cone trace` sit inside their parent; do not add them together.
 * The CSV's `parallel_recording`, `descriptor_cpu_ms` and `descriptor_binds` columns show whether shadows and geometry
   recorded on worker threads and what descriptor work cost (see [parallel-recording.md](parallel-recording.md)).
+  `uniform_bytes` and `persistent_uniform_bytes` count uniform data copied into the frame's arena, and
+  `vsm_page_batches` the virtual shadow page draws issued (see [frame-pipeline.md](frame-pipeline.md)).
 * `<out.cpu.csv>` lists the scene update's CPU cost per component type, animation
   phase, script `OnUpdate` and script `OnLateUpdate` (same columns). A script's
   row includes whatever it calls, so a spawner's max shows its `Instantiate` cost.

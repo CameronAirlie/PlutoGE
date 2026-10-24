@@ -246,6 +246,52 @@ int main() try
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 240;
         std::cout << (useScope ? "Scoped" : "Leased") << " stationary scene: " << ms << " ms/frame (2048 producers)\n";
     }
+
+    // LOD selection, frustum tests and instance culling run across the task pool; the visible list must equal the
+    // serial one, in order, including the culled instance arrays.
+    {
+        MeshConfig cubeConfig;
+        cubeConfig.data.vertices.resize(3);
+        cubeConfig.data.indices = {0, 1, 2};
+        cubeConfig.submeshes.push_back({.indexCount = 3, .bounds = {.center = glm::vec3(0), .radius = 0.5f}});
+        Mesh cube(cubeConfig);
+        CameraData camera{.view = glm::lookAt(glm::vec3(0, 2, 10), glm::vec3(0), glm::vec3(0, 1, 0)),
+                          .projection = glm::perspective(glm::radians(50.0f), 1.0f, 0.1f, 200.0f)};
+        const auto prepare = [&](bool parallel)
+        {
+            Renderer visibility;
+            visibility.SetParallelVisibilityEnabled(parallel);
+            visibility.ClearRenderCommands();
+            for (int i = 0; i < 3000; ++i)
+            {
+                RenderCommand command{.mesh = &cube};
+                command.model = glm::translate(glm::mat4(1), glm::vec3(float(i % 60) - 30, 0, -float(i / 60) * 3));
+                command.worldBounds = {glm::vec3(command.model[3]), 0.5f};
+                command.maxDrawDistance = i % 7 == 0 ? 40.0f : std::numeric_limits<float>::max();
+                if (i % 25 == 0)
+                {
+                    // A cluster straddling the frustum, so some of its instances are culled.
+                    auto instances = std::make_shared<std::vector<glm::mat4>>();
+                    for (int instance = 0; instance < 40; ++instance)
+                        instances->push_back(glm::translate(glm::mat4(1), glm::vec3(float(instance) * 2 - 40, 0, -float(i / 60))));
+                    command.instanceModels = instances;
+                    command.worldBounds = {glm::vec3(0, 0, -float(i / 60)), 45.0f};
+                }
+                visibility.SubmitRenderCommand(command);
+            }
+            visibility.PrepareVisibleRenderCommands(camera, 512);
+            std::vector<std::pair<glm::mat4, std::vector<glm::mat4>>> visible;
+            for (const auto &command : visibility.GetVisibleRenderCommandView())
+                visible.emplace_back(command.model, command.instanceModels ? *command.instanceModels : std::vector<glm::mat4>{});
+            return visible;
+        };
+        const auto serial = prepare(false);
+        Require(!serial.empty() && serial.size() < 3000, "Visibility test scene was not partly culled");
+        Require(std::ranges::any_of(serial, [](const auto &command)
+                { return !command.second.empty() && command.second.size() < 40; }),
+                "Visibility test scene culled no instances");
+        Require(prepare(true) == serial, "Parallel visibility changed the visible commands or their order");
+    }
     std::cout << "Retained scene lifecycle, borrowed views and incremental batching passed\n";
 }
 catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }

@@ -3,6 +3,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/TaskPool.h"
 #include "ParallelRecording.h"
+#include "GeometryArena.h"
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
 #include "CascadedShadowLayers.h"
@@ -594,6 +595,7 @@ namespace PlutoGE::render
         try
         {
             m_device = &device;
+            SetGeometryArenaEnabled(m_geometryArenaEnabled);
             rhi::GraphicsPipelineDescriptor descriptor;
             descriptor.vertexShader = shaders.vertex;
             descriptor.fragmentShader = shaders.fragment;
@@ -1353,6 +1355,7 @@ namespace PlutoGE::render
     void BasicRenderer::Shutdown()
     {
         ResetVctResources();
+        m_geometryArena.reset();
         m_geometryPipelines.clear();
         m_geometryDescriptors = {};
         m_compactFragments = {};
@@ -1527,6 +1530,25 @@ namespace PlutoGE::render
         m_ssaoHistoryValid = false;
     }
 
+    void BasicRenderer::SetGeometryArenaEnabled(bool enabled)
+    {
+        m_geometryArenaEnabled = enabled;
+        // OpenGL rejects indirect draws from an index buffer bound at an offset, which arena meshes need.
+        if (enabled && m_device && m_device->GetApi() == rhi::GraphicsApi::Vulkan)
+        {
+            if (!m_geometryArena) m_geometryArena = std::make_unique<GeometryArena>(*m_device, sizeof(BasicVertex));
+        }
+        else
+            m_geometryArena.reset();   // Meshes already in it keep their ranges alive.
+    }
+
+    void BasicRenderer::BindMeshBuffers(rhi::ICommandContext &commands, const BasicMesh &mesh)
+    {
+        // Mesh-relative first indices: the index buffer is bound at the mesh's first index.
+        commands.BindVertexBuffer(mesh.m_vertexBuffer);
+        commands.BindIndexBuffer(mesh.m_indexBuffer, rhi::Format::R32Uint, std::size_t(mesh.m_baseIndex) * sizeof(std::uint32_t));
+    }
+
     BasicMesh BasicRenderer::CreateMesh(const BasicMeshData &data)
     {
         if (!m_device || data.vertices.empty() || data.indices.empty())
@@ -1534,10 +1556,24 @@ namespace PlutoGE::render
 
         BasicMesh mesh;
         mesh.m_revision = m_nextMeshRevision++;
-        mesh.m_vertexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                                         {data.vertices.size_bytes(), rhi::BufferUsage::Vertex, "BasicRenderer mesh vertices"}, Bytes(data.vertices)));
-        mesh.m_indexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                                        {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
+        if (m_geometryArena)
+        {
+            auto range = m_geometryArena->Allocate(Bytes(data.vertices), data.indices);
+            mesh.m_vertexBuffer = range->VertexBuffer();
+            mesh.m_indexBuffer = range->IndexBuffer();
+            mesh.m_baseVertex = range->BaseVertex();
+            mesh.m_baseIndex = range->BaseIndex();
+            mesh.m_arenaRange = std::move(range);
+        }
+        else
+        {
+            mesh.m_ownedVertexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                {data.vertices.size_bytes(), rhi::BufferUsage::Vertex, "BasicRenderer mesh vertices"}, Bytes(data.vertices)));
+            mesh.m_ownedIndexBuffer = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                {data.indices.size_bytes(), rhi::BufferUsage::Index, "BasicRenderer mesh indices"}, Bytes(data.indices)));
+            mesh.m_vertexBuffer = mesh.m_ownedVertexBuffer.Get();
+            mesh.m_indexBuffer = mesh.m_ownedIndexBuffer.Get();
+        }
         mesh.m_indexCount = static_cast<std::uint32_t>(data.indices.size());
         mesh.m_vertexCount = data.vertices.size();
         mesh.m_shadowIndices.assign(data.indices.begin(), data.indices.end());
@@ -1560,10 +1596,12 @@ namespace PlutoGE::render
         BasicMesh mesh;
         mesh.m_gpuSkinningState = m_gpuSkinning->CreateState(source);
         mesh.m_vertexCount = source->vertexCount;
-        mesh.m_vertexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
+        mesh.m_ownedVertexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
             {mesh.m_vertexCount * sizeof(BasicVertex),rhi::BufferUsage::VertexStorage,"GPU skinned vertices"}));
-        mesh.m_indexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
+        mesh.m_ownedIndexBuffer = rhi::Buffer(*m_device,m_device->CreateBuffer(
             {indices.size_bytes(),rhi::BufferUsage::Index,"GPU skinned indices",true},Bytes(indices)));
+        mesh.m_vertexBuffer = mesh.m_ownedVertexBuffer.Get();
+        mesh.m_indexBuffer = mesh.m_ownedIndexBuffer.Get();
         mesh.m_indexCount = static_cast<std::uint32_t>(indices.size());
         mesh.m_shadowClusters.assign(bounds.begin(),bounds.end());
         mesh.m_revision = m_nextMeshRevision++;
@@ -1904,7 +1942,7 @@ namespace PlutoGE::render
                 const auto &state = *draw.mesh->m_gpuSkinningState;
                 // Submeshes share one state; count its work once.
                 if (std::ranges::any_of(m_gpuSkinningDispatches, [&](const auto &queued) { return queued.state == &state; })) continue;
-                m_gpuSkinningDispatches.push_back({draw.mesh->m_gpuSkinningState.get(), draw.mesh->m_vertexBuffer.Get()});
+                m_gpuSkinningDispatches.push_back({draw.mesh->m_gpuSkinningState.get(), draw.mesh->m_vertexBuffer});
                 m_frameStats.gpuSkinningVertices += state.endVertex - state.firstVertex;
                 m_frameStats.gpuSkinningPaletteBytes += state.paletteRows.size() * sizeof(glm::vec4);
             }
@@ -1931,7 +1969,7 @@ namespace PlutoGE::render
                     ? std::span<const BasicVertex>(*mesh.m_pendingSharedVertices)
                     : std::span<const BasicVertex>(mesh.m_pendingVertices);
                 if (vertices.empty()) continue;
-                m_device->UpdateBuffer(mesh.m_vertexBuffer.Get(), 0,
+                m_device->UpdateBuffer(mesh.m_vertexBuffer, std::size_t(mesh.m_baseVertex) * sizeof(BasicVertex),
                     Bytes(vertices));
                 mesh.m_pendingVertices.clear();
                 mesh.m_pendingSharedVertices.reset();
@@ -2214,17 +2252,18 @@ namespace PlutoGE::render
         // Each job submits VSM meshes with binding state of its own.
         const auto virtualShadowSubmitter = [this](rhi::ICommandContext &commands)
         {
-            return [this, &commands, boundShadowMesh = static_cast<const BasicMesh *>(nullptr)](
+            return [this, &commands, boundShadowGeometry = rhi::BufferHandle{}](
                 const VirtualShadowMaps::Submission &submission) mutable
             {
                 const auto &mesh = *submission.draw->mesh;
-                // OpenGL pipelines own VAOs, so a pipeline switch requires
-                // rebinding even when the mesh itself has not changed.
-                if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
+                // VSM first indices are absolute (they include BaseIndex), so meshes sharing a geometry arena page
+                // share one binding and batch together. OpenGL pipelines own VAOs, so a pipeline switch requires
+                // rebinding even when the buffers have not changed.
+                if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowGeometry != mesh.m_vertexBuffer)
                 {
-                    commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
-                    boundShadowMesh = &mesh;
+                    commands.BindVertexBuffer(mesh.m_vertexBuffer);
+                    commands.BindIndexBuffer(mesh.m_indexBuffer);
+                    boundShadowGeometry = mesh.m_vertexBuffer;
                 }
                 if (submission.indirect)
                 {
@@ -2378,8 +2417,7 @@ namespace PlutoGE::render
                         commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
                         for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
                     }
-                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    BindMeshBuffers(commands, *draw.mesh);
                     const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
                     if (count)
@@ -2441,8 +2479,7 @@ namespace PlutoGE::render
                                 commands.BindPipeline(m_opaqueShadowPipeline.Get());
                                 commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
                                 commands.BindUniformBuffer(17, buffer);
-                                commands.BindVertexBuffer(batch.mesh->m_vertexBuffer.Get());
-                                commands.BindIndexBuffer(batch.mesh->m_indexBuffer.Get());
+                                BindMeshBuffers(commands, *batch.mesh);
                                 commands.DrawIndexedInstanced(count, batch.count, batch.firstIndex);
                                 ++m_frameStats.shadowDrawsByCascade[cascade];
                                 m_frameStats.shadowInstances += batch.count;
@@ -2637,8 +2674,7 @@ namespace PlutoGE::render
                         }
                         if (boundPointMesh != draw.mesh)
                         {
-                            commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                            commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                            BindMeshBuffers(commands, *draw.mesh);
                             boundPointMesh = draw.mesh;
                         }
                         auto &resources = m_pointShadowResources[drawIndex];
@@ -2980,8 +3016,7 @@ namespace PlutoGE::render
             }
             if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundDrawMesh != draw.mesh)
             {
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                BindMeshBuffers(commands, *draw.mesh);
                 boundDrawMesh = draw.mesh;
             }
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount
@@ -3086,8 +3121,7 @@ namespace PlutoGE::render
             occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, commands, draws, occlusionProjection,
                 m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
                 {
-                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    BindMeshBuffers(commands, *draw.mesh);
                     const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
                     commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
                 }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
@@ -4693,7 +4727,7 @@ namespace PlutoGE::render
                     commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
                     commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
                         for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
-                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get()); commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    BindMeshBuffers(commands, *draw.mesh);
                     const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
                     const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);
                     const auto triangleIndices = count - count % 3;
@@ -4779,8 +4813,7 @@ namespace PlutoGE::render
                             commands.BindTexture(10 + shadowCascade,
                                 cascade.shadowDepth ? cascade.shadowDepth.Get() : fallbackShadow,
                                 m_shadowSampler.Get());
-                        commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                        commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                        BindMeshBuffers(commands, *draw.mesh);
                         const auto available = draw.firstIndex < draw.mesh->m_indexCount
                                                    ? draw.mesh->m_indexCount - draw.firstIndex : 0u;
                         const auto count = std::min(draw.indexCount == 0 ? available : draw.indexCount, available);

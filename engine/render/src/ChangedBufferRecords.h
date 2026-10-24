@@ -1,6 +1,10 @@
 #pragma once
 #include "PlutoGE/render/rhi/RenderDevice.h"
+#include "PlutoGE/render/rhi/Resource.h"
+#include <algorithm>
 #include <cstring>
+#include <span>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -41,4 +45,31 @@ namespace PlutoGE::render
         if (changed) mirror.assign(bytes.begin(), bytes.end());
         return changed;
     }
+
+    // A storage buffer of fixed-size records that grows as needed and uploads only the records that changed.
+    class GpuRecordTable
+    {
+    public:
+        explicit GpuRecordTable(const char *name) : m_name(name) {}
+
+        // Returns true when any record changed.
+        bool Upload(rhi::IRenderDevice &device, std::span<const std::byte> bytes, std::size_t stride)
+        {
+            if (m_capacity < std::max<std::size_t>(stride, bytes.size()))
+            {
+                m_capacity = std::max<std::size_t>(stride, bytes.size() * 2);
+                m_buffer = rhi::Buffer(device, device.CreateBuffer({m_capacity, rhi::BufferUsage::Storage, m_name}));
+                m_uploaded.clear();
+            }
+            return UploadChangedRecords(device, m_buffer.Get(), bytes, stride, m_uploaded);
+        }
+        [[nodiscard]] rhi::BufferHandle Get() const noexcept { return m_buffer.Get(); }
+        [[nodiscard]] std::size_t MemoryBytes() const noexcept { return m_capacity + m_uploaded.size(); }
+
+    private:
+        const char *m_name;
+        rhi::Buffer m_buffer;
+        std::vector<std::byte> m_uploaded;
+        std::size_t m_capacity = 0;
+    };
 }

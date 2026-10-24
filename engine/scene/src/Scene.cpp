@@ -1,6 +1,8 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "RuntimeComponentIndex.h"
+#include "AnimationPoseBatch.h"
+#include "PlutoGE/core/TaskPool.h"
 #include <atomic>
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
@@ -1491,6 +1493,7 @@ namespace PlutoGE::scene
     Scene::Scene()
         : m_runtimeComponents(std::make_unique<RuntimeComponentIndex>()), m_uiSystem(std::make_unique<UISystem>())
     {
+        m_animationPoses = std::make_unique<AnimationPoseBatch>();
     }
     Scene::~Scene() = default;
     void Scene::RegisterRuntimeComponent(Component *component) { m_runtimeComponents->Register(component); }
@@ -3103,12 +3106,14 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
-        struct UpdateInProgress
+        // Sets a flag for a scope, clearing it however the scope ends.
+        struct ScopedFlag
         {
             bool &flag;
-            explicit UpdateInProgress(bool &value) : flag(value) { flag = true; }
-            ~UpdateInProgress() { flag = false; }
-        } updateInProgress(m_updateInProgress);
+            explicit ScopedFlag(bool &value) : flag(value) { flag = true; }
+            ~ScopedFlag() { flag = false; }
+        };
+        const ScopedFlag updateInProgress(m_updateInProgress);
         if (m_streaming)
             m_streaming->Pump();
         using Clock = std::chrono::high_resolution_clock;
@@ -3183,13 +3188,25 @@ namespace PlutoGE::scene
         // Scripts may instantiate a prefab while an entity is updating. Iterate a
         // snapshot so appending a new root cannot invalidate this traversal.
         const std::size_t rootCountAtFrameStart = m_rootEntities.size();
-        for (std::size_t rootIndex = 0; rootIndex < rootCountAtFrameStart; ++rootIndex)
         {
-            auto *rootEntity = m_rootEntities[rootIndex];
-            if (rootEntity->IsActive())
+            const ScopedFlag batchingPoses(m_batchingAnimationPoses);
+            for (std::size_t rootIndex = 0; rootIndex < rootCountAtFrameStart; ++rootIndex)
             {
-                rootEntity->Update(simulationDeltaTime);
+                auto *rootEntity = m_rootEntities[rootIndex];
+                if (rootEntity->IsActive())
+                {
+                    rootEntity->Update(simulationDeltaTime);
+                }
             }
+        }
+        {
+            // Poses left pending by the pass above, before physics, late scripts and rendering read them.
+            core::CpuScope poseScope("Animation pose evaluation", core::CpuCategory::Animation);
+            const auto poseStart = Clock::now();
+            m_runtimeComponents->Refresh(m_rootEntities);
+            m_updateTimingStats.animationPoseCount = static_cast<std::uint32_t>(m_animationPoses->Evaluate(
+                m_runtimeComponents->animations, m_parallelAnimation ? &core::TaskPool::Shared() : nullptr));
+            m_updateTimingStats.animationPoseMs = std::chrono::duration<float, std::milli>(Clock::now() - poseStart).count();
         }
         componentsScope.End();
         const auto componentsEnd = Clock::now();

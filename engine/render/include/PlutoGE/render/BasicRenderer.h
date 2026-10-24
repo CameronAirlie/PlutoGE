@@ -47,6 +47,7 @@ namespace PlutoGE::render
     class GeometryObjectStream;
     class ShaderGraphVariantCache;
     class OpaqueShadowBatches;
+    class GeometryArena;
     class CascadedShadowLayers;
 
     enum class BasicPostProcessEffectType : std::uint8_t
@@ -292,11 +293,21 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t GetIndexCount() const noexcept { return m_indexCount; }
         [[nodiscard]] std::uint64_t GetRevision() const noexcept { return m_revision; }
         [[nodiscard]] std::span<const ShadowGeometryCluster> GetShadowClusters() const noexcept { return m_shadowClusters; }
+        // Where the geometry lives: buffers of the mesh's own, or a range of a geometry arena page shared with other
+        // meshes. Either way indices are stored rebased by the mesh's first vertex, so draws use a vertex offset of
+        // zero, and the mesh's indices start at BaseIndex in IndexBuffer: bind the index buffer at that offset to draw
+        // with mesh-relative first indices, or at zero and add BaseIndex to batch draws of several meshes.
+        [[nodiscard]] rhi::BufferHandle VertexBuffer() const noexcept { return m_vertexBuffer; }
+        [[nodiscard]] rhi::BufferHandle IndexBuffer() const noexcept { return m_indexBuffer; }
+        [[nodiscard]] std::uint32_t BaseIndex() const noexcept { return m_baseIndex; }
 
     private:
         friend class BasicRenderer;
-        rhi::Buffer m_vertexBuffer;
-        rhi::Buffer m_indexBuffer;
+        // Owned buffers, or the arena range (kept alive here) for meshes in a geometry arena.
+        rhi::Buffer m_ownedVertexBuffer, m_ownedIndexBuffer;
+        std::shared_ptr<const void> m_arenaRange;
+        rhi::BufferHandle m_vertexBuffer, m_indexBuffer;
+        std::uint32_t m_baseVertex = 0, m_baseIndex = 0;
         std::uint32_t m_indexCount = 0;
         std::size_t m_vertexCount = 0;
         std::uint64_t m_revision = 0;
@@ -684,6 +695,11 @@ namespace PlutoGE::render
         // Single objects read their constants from a per-frame stream indexed by first instance (devices that
         // support it). The output is identical; switching it off is for comparisons and debugging.
         void SetObjectStreamingEnabled(bool enabled) noexcept { m_objectStreaming = enabled; }
+        // Rigid meshes created afterwards share geometry arena buffers (Vulkan), so shadow-page draws of different
+        // meshes batch into one indirect draw. The output is identical; switching it off is for comparisons.
+        void SetGeometryArenaEnabled(bool enabled);
+        // Binds a mesh's vertex and index buffers for draws with mesh-relative first indices.
+        static void BindMeshBuffers(rhi::ICommandContext &commands, const BasicMesh &mesh);
         void SetOpaqueShadowBatchingEnabled(bool enabled) noexcept
         {
             if (m_opaqueShadowBatchingEnabled != enabled)
@@ -857,6 +873,8 @@ namespace PlutoGE::render
         std::vector<rhi::Buffer> m_opaqueShadowInstanceBuffers;
         bool m_opaqueShadowBatchingEnabled = true;
         bool m_parallelRecording = true;
+        std::unique_ptr<GeometryArena> m_geometryArena;
+        bool m_geometryArenaEnabled = true;
         bool m_objectStreaming = true;
         rhi::GraphicsPipeline m_shadowDepthSeedPipeline;
         std::unique_ptr<CascadedShadowLayers> m_shadowLayers;

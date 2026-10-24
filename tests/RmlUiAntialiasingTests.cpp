@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/render/rhi/DeferredCommandList.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/platform/Window.h"
@@ -111,6 +112,26 @@ div { display: block; }
         Require(red(50,40)>250,"Nested transformed masks clipped visible content");
         Require(red(30,40)==0 && red(105,40)==0 && red(50,95)==0,"Nested transformed masks leaked outside their intersection");
         Require(variant >= 2 ? red(98,85) < 20 : red(98,85) > 250, "Rounded mask was approximated by a rectangle");
+    }
+    {
+        // A render thread replays UI the game thread captured into a deferred list: rounded masks (which end and
+        // resume rendering) and the antialiasing composite must give the image of recording directly.
+        const auto renderClipped=[&](bool deferred) {
+            rhi::Texture target(device, device.CreateTexture({160,128,Format::R8G8B8A8Unorm,TextureUsage::ColorAttachment,"Deferred UI",true,1,false,1}));
+            auto& cmd = device.GetImmediateContext();
+            rhi::DeferredCommandList captured(&cmd);
+            if (deferred) { ui.BeginFrame(target.Get(), captured); context->Render(); ui.EndFrame(false); }
+            cmd.BeginFrame("Deferred UI");
+            RenderingInfo info; info.colorAttachments={target.Get()}; info.width=160; info.height=128; info.clearDepth=false;
+            cmd.BeginRendering(info); cmd.EndRendering();
+            if (deferred) captured.Replay(cmd);
+            else { ui.BeginFrame(target.Get(),false); context->Render(); ui.EndFrame(false); }
+            cmd.Submit();
+            Require(!deferred || !captured.Empty(), "UI recorded nothing into the deferred list");
+            return read(target.Get(),160,128);
+        };
+        context->SetDimensions({160,128}); context->Update(); ui.SetViewport(160,128); ui.SetAntialiasingEnabled(true);
+        Require(renderClipped(true)==renderClipped(false),"Replayed UI differs from UI recorded directly");
     }
     clipped->Hide(); context->Update();
     ui.SetAntialiasingEnabled(true);

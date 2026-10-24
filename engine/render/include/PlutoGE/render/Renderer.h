@@ -228,6 +228,8 @@ namespace PlutoGE::render
         // Updates LOD selection and camera visibility without executing the
         // legacy OpenGL pass graph. RHI backends use this shared scene-prep path.
         void PrepareVisibleRenderCommands(const CameraData &cameraData, int viewportHeight);
+        // Whether LOD selection and frustum tests run across the shared task pool (on by default; the result is the same).
+        void SetParallelVisibilityEnabled(bool enabled) noexcept { m_parallelVisibility = enabled; }
         [[nodiscard]] bool GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
 
         void BeginLightingStageTiming(std::size_t stageIndex);
@@ -358,6 +360,16 @@ namespace PlutoGE::render
         std::vector<DecalCommand> m_decalCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
         std::vector<std::pair<std::size_t, bool>> m_visibilityCandidates;
+        // Per-range candidates while visibility is classified across the task pool.
+        std::vector<std::vector<std::pair<std::size_t, bool>>> m_visibilityCandidateRanges;
+        bool m_parallelVisibility = true;
+        // Instanced visibility candidates and their culled commands, in candidate order.
+        struct InstanceCullJob
+        {
+            std::size_t candidate = 0;
+            RenderCommand visible;
+        };
+        std::vector<InstanceCullJob> m_instanceCullJobs;
         std::vector<std::shared_ptr<std::vector<glm::mat4>>> m_visibleInstanceModelPool;
         std::vector<std::shared_ptr<std::vector<glm::mat4>>> m_visiblePreviousInstanceModelPool;
         std::vector<SubmissionFrustum> m_submissionFrustums;

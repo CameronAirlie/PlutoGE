@@ -1396,7 +1396,7 @@ namespace PlutoGE::scene
         {
             m_playing = false;
             recordPlaybackTiming();
-            EvaluateOwnedSkeletonPose(*this);
+            RequestPoseEvaluation();
             return;
         }
 
@@ -1407,7 +1407,7 @@ namespace PlutoGE::scene
         {
             m_playing = false;
             recordPlaybackTiming();
-            EvaluateOwnedSkeletonPose(*this);
+            RequestPoseEvaluation();
             return;
         }
 
@@ -1420,7 +1420,7 @@ namespace PlutoGE::scene
         if (!m_playing)
         {
             recordPlaybackTiming();
-            EvaluateOwnedSkeletonPose(*this);
+            RequestPoseEvaluation();
             return;
         }
 
@@ -1444,7 +1444,53 @@ namespace PlutoGE::scene
         m_jointMatricesDirty = true;
         m_nodeMatricesDirty = m_basePoseDirty = true;
         recordPlaybackTiming();
+        RequestPoseEvaluation();
+    }
+
+    void AnimationComponent::RequestPoseEvaluation()
+    {
+        if (const auto *owner = GetOwner(); owner && owner->GetScene() && owner->GetScene()->IsBatchingAnimationPoses())
+        {
+            m_poseEvaluationPending = true;
+            return;
+        }
         EvaluateOwnedSkeletonPose(*this);
+    }
+
+    std::optional<AnimationComponent::PoseEvaluation> AnimationComponent::PreparePoseEvaluation()
+    {
+        auto *meshComponent = FindOwnedSkinnedMesh(GetOwner(), this);
+        auto *mesh = meshComponent ? meshComponent->GetMesh() : nullptr;
+        if (!mesh)
+        {
+            m_poseEvaluationPending = false;
+            return std::nullopt;
+        }
+        return PoseEvaluation{&mesh->GetSkeleton(), &mesh->GetAnimationNodes()};
+    }
+
+    void AnimationComponent::EvaluateBasePose(const PoseEvaluation &pose)
+    {
+        m_holdPhaseTimings = true;
+        EnsureBasePose(*pose.skeleton, *pose.nodes);
+        m_holdPhaseTimings = false;
+    }
+
+    void AnimationComponent::FinishPoseEvaluation(const PoseEvaluation &pose)
+    {
+        for (const auto &[phase, elapsedMs] : m_heldPhaseTimings)
+            RecordPhaseTiming(phase, elapsedMs);
+        m_heldPhaseTimings.clear();
+        (void)GetJointMatrices(*pose.skeleton, *pose.nodes);
+        m_poseEvaluationPending = false;
+    }
+
+    void AnimationComponent::RecordPhaseTiming(const char *phase, float elapsedMs)
+    {
+        if (m_holdPhaseTimings)
+            m_heldPhaseTimings.emplace_back(phase, elapsedMs);
+        else if (auto *owner = GetOwner(); owner && owner->GetScene())
+            owner->GetScene()->RecordAnimationTiming(phase, elapsedMs, *owner);
     }
 
     void AnimationComponent::DispatchClipEvents(int clipIndex, float previousTime, float currentTime,
@@ -3322,52 +3368,58 @@ namespace PlutoGE::scene
         RefreshAuthoredIK(skeleton);
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
-            if (IsBasePoseStale(skeleton) || m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
-            {
-                using Clock = std::chrono::high_resolution_clock;
-                if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
-                {
-                    EvaluateNodeMatrices(nodes);
-                }
-                const auto nodePoseEnd = Clock::now();
-
-                m_basePoseMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
-                bool usedNodeHierarchy = false;
-                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-                {
-                    const auto &joint = skeleton.joints[jointIndex];
-                    if (joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(m_nodeMatrices.size()))
-                    {
-                        continue;
-                    }
-
-                    m_basePoseMatrices[jointIndex] = joint.inverseRootMatrix *
-                                                     m_nodeMatrices[static_cast<size_t>(joint.nodeIndex)] *
-                                                     joint.inverseBindMatrix;
-                    usedNodeHierarchy = true;
-                }
-                const auto skinningEnd = Clock::now();
-                if (auto *owner = GetOwner(); owner && owner->GetScene())
-                {
-                    owner->GetScene()->RecordAnimationTiming(
-                        "Node pose / Skin matrices",
-                        std::chrono::duration<float, std::milli>(skinningEnd - nodePoseEnd).count(), *owner);
-                }
-
-                if (!usedNodeHierarchy)
-                {
-                    EvaluateJointMatrices(skeleton);
-                }
-                else
-                {
-                    m_basePoseSkeleton = &skeleton;
-                    m_basePoseDirty = false;
-                }
-            }
+            EnsureBasePose(skeleton, nodes);
             ComposeJointMatrices(skeleton);
         }
 
         return m_jointMatrices;
+    }
+
+    void AnimationComponent::EnsureBasePose(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes)
+    {
+        if (nodes.empty() || !skeleton.humanoidBoneMappings.empty())
+        {
+            if (IsBasePoseStale(skeleton))
+                EvaluateJointMatrices(skeleton);
+            return;
+        }
+        if (!IsBasePoseStale(skeleton) && !m_nodeMatricesDirty && m_nodeMatrices.size() == nodes.size())
+            return;
+
+        using Clock = std::chrono::high_resolution_clock;
+        if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
+        {
+            EvaluateNodeMatrices(nodes);
+        }
+        const auto nodePoseEnd = Clock::now();
+
+        m_basePoseMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
+        bool usedNodeHierarchy = false;
+        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        {
+            const auto &joint = skeleton.joints[jointIndex];
+            if (joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(m_nodeMatrices.size()))
+            {
+                continue;
+            }
+
+            m_basePoseMatrices[jointIndex] = joint.inverseRootMatrix *
+                                             m_nodeMatrices[static_cast<size_t>(joint.nodeIndex)] *
+                                             joint.inverseBindMatrix;
+            usedNodeHierarchy = true;
+        }
+        RecordPhaseTiming("Node pose / Skin matrices",
+                          std::chrono::duration<float, std::milli>(Clock::now() - nodePoseEnd).count());
+
+        if (!usedNodeHierarchy)
+        {
+            EvaluateJointMatrices(skeleton);
+        }
+        else
+        {
+            m_basePoseSkeleton = &skeleton;
+            m_basePoseDirty = false;
+        }
     }
 
     std::vector<glm::mat4> AnimationComponent::GetAnimatedJointMatrices(
@@ -3410,11 +3462,7 @@ namespace PlutoGE::scene
         const auto evaluationStart = Clock::now();
         const auto recordPhase = [&](const char *name, const auto &start, const auto &end)
         {
-            if (auto *owner = GetOwner(); owner && owner->GetScene())
-            {
-                owner->GetScene()->RecordAnimationTiming(
-                    name, std::chrono::duration<float, std::milli>(end - start).count(), *owner);
-            }
+            RecordPhaseTiming(name, std::chrono::duration<float, std::milli>(end - start).count());
         };
 
         m_nodeMatrices.assign(nodes.size(), glm::mat4(1.0f));
@@ -3890,11 +3938,7 @@ namespace PlutoGE::scene
         const auto evaluationStart = Clock::now();
         const auto recordPhase = [&](const char *name, const auto &start, const auto &end)
         {
-            if (auto *owner = GetOwner(); owner && owner->GetScene())
-            {
-                owner->GetScene()->RecordAnimationTiming(
-                    name, std::chrono::duration<float, std::milli>(end - start).count(), *owner);
-            }
+            RecordPhaseTiming(name, std::chrono::duration<float, std::milli>(end - start).count());
         };
 
         m_basePoseMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));

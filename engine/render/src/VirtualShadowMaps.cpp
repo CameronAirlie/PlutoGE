@@ -26,6 +26,13 @@ namespace PlutoGE::render
             glm::vec4 alpha{};
         };
         static_assert(sizeof(RigidDrawParameters) == 96);
+        // One batched page draw's record (VirtualShadowRaster's BatchedDraw); parameters.w is its first model.
+        struct alignas(16) BatchedDraw
+        {
+            glm::uvec4 parameters{};
+            glm::vec4 alpha{};
+        };
+        static_assert(sizeof(BatchedDraw) == 32);
         struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; };
         static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128);
         // Subdivision buys little when the entire mesh fits within one page's
@@ -142,6 +149,14 @@ namespace PlutoGE::render
         result.camera = glm::vec4(lighting.cameraPosition, lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f);
         return result;
     }
+    VirtualShadowMaps::VirtualShadowMaps()
+        : m_batchedDraws(std::make_unique<GpuRecordTable>("VSM batched draw table")),
+          m_batchedModels(std::make_unique<GpuRecordTable>("VSM batched model table"))
+    {
+    }
+
+    VirtualShadowMaps::~VirtualShadowMaps() = default;
+
     void VirtualShadowMaps::Initialize(rhi::IRenderDevice &device, const VirtualShadowShaders &shaders)
     {
         if (!shaders.Complete() || !device.GetImmediateContext().SupportsGpuDrivenShadows())
@@ -177,7 +192,10 @@ namespace PlutoGE::render
             if (role != 2)
             {
                 if (index == 5)
+                {
                     descriptor.resourceBindings.push_back({5, 0, 5, ResourceBindingType::StorageBuffer, ShaderStageMask::AllGraphics});
+                    descriptor.resourceBindings.push_back({6, 0, 6, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
+                }
                 else descriptor.resourceBindings.push_back({1, 0, 1, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics});
                 descriptor.resourceBindings.push_back({9, 1, 1, ResourceBindingType::SampledTexture, ShaderStageMask::Fragment});
             }
@@ -266,8 +284,8 @@ namespace PlutoGE::render
                 // Do not create another refinement backlog while existing updates are deferred.
                 m_stats->deferred == 0 ? m_stats->directionalFineCapacity : 0u);
         auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionPolicy.Scale());
-        m_batchRigid = lighting.virtualShadowBatching && device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 0;
-        parameters.scheduling.z = m_batchRigid ? 1u : 0u;
+        m_batchPages = lighting.virtualShadowBatching && device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 0;
+        parameters.scheduling.z = m_batchPages ? 1u : 0u;
         auto preparationProjection = parameters;
         preparationProjection.camera.x = preparationProjection.camera.y = preparationProjection.camera.z = 0;
         m_preparationScratch.clear();
@@ -396,6 +414,8 @@ namespace PlutoGE::render
                     const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
                     const auto drawCount = std::min(draw.indexCount ? draw.indexCount : available, available);
                     if (drawCount == 0) continue;
+                    // Submissions use absolute first indices (see BasicMesh::BaseIndex) so arena meshes batch together.
+                    const auto baseIndex = draw.mesh->BaseIndex();
                     const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
                     auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
                     const bool subdivide = shadow && useClusters && draw.firstIndex % 3 == 0 && !clusters.empty();
@@ -417,7 +437,8 @@ namespace PlutoGE::render
                             if (draw.preparationRevision && chunk.preparationRevision == draw.preparationRevision &&
                                 chunk.mesh == draw.mesh && chunk.meshRevision == draw.mesh->GetRevision() &&
                                 chunk.firstInstance == first && chunk.submission.instances == models &&
-                                chunk.submission.firstIndex == firstIndex && chunk.submission.indexCount == count && chunk.clustered == subdivide)
+                                chunk.submission.firstIndex == baseIndex + firstIndex && chunk.submission.indexCount == count &&
+                                chunk.clustered == subdivide)
                             {
                                 // Refresh the borrowed packet address even on a hit.
                                 // Clipmap/camera/lighting feedback is still processed
@@ -428,7 +449,7 @@ namespace PlutoGE::render
                                 {
                                     const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
                                     inputs.push_back({chunk.bounds,
-                                                      {count, firstIndex, models, index},
+                                                      {count, baseIndex + firstIndex, models, index},
                                                       {std::uint32_t(signature),
                                                        std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
                                 }
@@ -467,9 +488,11 @@ namespace PlutoGE::render
                             }
                             const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                             changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
-                                chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != firstIndex;
+                                chunk.texture != texture || chunk.submission.indexCount != count ||
+                                chunk.submission.firstIndex != baseIndex + firstIndex;
                             chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
-                            chunk.submission = {&draw, count, firstIndex, models, {}, cursor * 20};
+                            chunk.geometry = draw.mesh->VertexBuffer();
+                            chunk.submission = {&draw, count, baseIndex + firstIndex, models, {}, cursor * 20};
                             chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                             if (shadow)
                             {
@@ -480,7 +503,7 @@ namespace PlutoGE::render
                                 const auto bounds = subdivide ? ShadowClusterWorldBounds(clusters[range], transforms) : ShadowWorldBounds{};
                                 chunk.bounds = subdivide ? bounds.sphere : glm::vec4(draw.shadowBoundsCenter, radius);
                                 chunk.extents = bounds.extents;
-                                inputs.push_back({chunk.bounds, {count, firstIndex, models, index},
+                                inputs.push_back({chunk.bounds, {count, baseIndex + firstIndex, models, index},
                                     {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
                             }
                             ++cursor;
@@ -537,20 +560,36 @@ namespace PlutoGE::render
         }
         m_preparationKey.swap(m_preparationScratch);
         m_preparationProjection = preparationProjection;
-        if (m_batchRigid && !reusePreparation)
+        if (m_batchPages && !reusePreparation)
         {
-            std::vector<RigidDrawParameters> records(m_casterCount);
+            // Batched page draws read each caster chunk's parameters and models from two tables (VirtualShadowRaster's
+            // BatchedDraw), so chunks of any model count batch. The chunk uniforms prepared above hold the same values.
+            std::vector<BatchedDraw> draws(m_casterCount);
+            std::vector<glm::mat4> models;
+            models.reserve(m_casterCount);
             for (std::size_t index = 0; index < m_casterCount; ++index)
-                if (m_casterChunks[index].submission.instances == 1)
-                    std::memcpy(&records[index], m_casterChunks[index].uploaded.data(), sizeof(RigidDrawParameters));
-            const auto bytes = std::as_bytes(std::span(records));
-            if (m_rigidDrawCapacity < std::max<std::size_t>(1, bytes.size()))
             {
-                m_rigidDrawCapacity = std::max<std::size_t>(sizeof(RigidDrawParameters), bytes.size() * 2);
-                m_rigidDraws = rhi::Buffer(device, device.CreateBuffer({m_rigidDrawCapacity, rhi::BufferUsage::Storage, "VSM rigid draw table"}));
-                m_uploadedRigidDraws.clear();
+                const auto &chunk = m_casterChunks[index];
+                auto &record = draws[index];
+                const auto firstModel = static_cast<std::uint32_t>(models.size());
+                if (chunk.submission.instances == 1 && chunk.uploaded.size() == sizeof(RigidDrawParameters))
+                {
+                    RigidDrawParameters rigid;
+                    std::memcpy(&rigid, chunk.uploaded.data(), sizeof(rigid));
+                    models.push_back(rigid.model);
+                    record = {rigid.draw, rigid.alpha};
+                }
+                else if (chunk.uploaded.size() == sizeof(DrawParameters))
+                {
+                    const auto parameters = std::make_unique<DrawParameters>();
+                    std::memcpy(parameters.get(), chunk.uploaded.data(), sizeof(DrawParameters));
+                    models.insert(models.end(), parameters->models.begin(), parameters->models.begin() + chunk.submission.instances);
+                    record = {parameters->draw, parameters->alpha};
+                }
+                record.parameters.w = firstModel;
             }
-            UploadChangedRecords(device, m_rigidDraws.Get(), bytes, sizeof(RigidDrawParameters), m_uploadedRigidDraws);
+            m_batchedDraws->Upload(device, std::as_bytes(std::span(draws)), sizeof(BatchedDraw));
+            m_batchedModels->Upload(device, std::as_bytes(std::span(models)), sizeof(glm::mat4));
         }
         for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
@@ -617,14 +656,19 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < count; ++index)
         {
             const auto &chunk = chunks[index];
-            const bool batch = m_batchRigid && instancedPipeline == 1 && chunk.submission.instances == 1;
+            // Batching covers every caster page chunk; receivers draw one chunk at a time.
+            const bool batch = m_batchPages && instancedPipeline == 1;
             const auto pipeline = batch ? 5 : chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
             if (pipeline != boundPipeline)
             {
                 commands.BindPipeline(m_raster[pipeline].Get());
                 boundPipeline = pipeline;
             }
-            if (batch) commands.BindStorageBuffer(5, m_rigidDraws.Get());
+            if (batch)
+            {
+                commands.BindStorageBuffer(5, m_batchedDraws->Get());
+                commands.BindStorageBuffer(6, m_batchedModels->Get());
+            }
             else commands.BindUniformBuffer(1, chunk.uniform.Get());
             if (!boundTexture || (chunk.submission.draw->alphaMode == 1 && chunk.texture != boundTexture))
             {
@@ -638,7 +682,7 @@ namespace PlutoGE::render
                 while (submission.commandCount < limit)
                 {
                     const auto &next = chunks[index + submission.commandCount];
-                    if (next.submission.instances != 1 || next.mesh != chunk.mesh ||
+                    if (next.geometry != chunk.geometry ||
                         (next.submission.draw->alphaMode == 1 && next.texture != boundTexture)) break;
                     ++submission.commandCount;
                 }
@@ -741,7 +785,7 @@ namespace PlutoGE::render
         stats.memoryBytes = std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * PLUTO_VSM_PAGE_METADATA_BYTES + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
             m_capacity * (sizeof(Caster) + poolCapacity * (4 + sizeof(glm::uvec4)) + 20) + PLUTO_VSM_CAPACITY * 4 +
-            std::uint64_t(m_width) * m_height * 8 + m_rigidDrawCapacity + m_uploadedRigidDraws.size();
+            std::uint64_t(m_width) * m_height * 8 + m_batchedDraws->MemoryBytes() + m_batchedModels->MemoryBytes();
         for (const auto &chunk : m_receiverChunks) stats.memoryBytes += chunk.uploaded.size();
         for (const auto &chunk : m_casterChunks) stats.memoryBytes += chunk.uploaded.size();
         return stats;

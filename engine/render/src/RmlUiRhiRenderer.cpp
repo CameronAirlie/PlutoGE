@@ -133,9 +133,23 @@ namespace PlutoGE::render
     {
         if (!m_device || !target || m_frameActive)
             return;
-        auto &commands = m_device->GetImmediateContext();
+        m_commands = nullptr;
         if (beginSubmission)
-            commands.BeginFrame("Runtime UI");
+            m_device->GetImmediateContext().BeginFrame("Runtime UI");
+        BeginTarget(target);
+    }
+
+    void RmlUiRhiRenderer::BeginFrame(rhi::TextureHandle target, rhi::ICommandContext &commands)
+    {
+        if (!m_device || !target || m_frameActive)
+            return;
+        m_commands = &commands;
+        BeginTarget(target);
+    }
+
+    void RmlUiRhiRenderer::BeginTarget(rhi::TextureHandle target)
+    {
+        auto &commands = Commands();
         m_outputTarget = target;
         m_renderScale = 1;
         PrepareRenderTextures();
@@ -172,7 +186,7 @@ namespace PlutoGE::render
     {
         if (!m_device || !m_frameActive)
             return;
-        auto &commands = m_device->GetImmediateContext();
+        auto &commands = Commands();
         commands.EndRendering();
         if (m_renderScale == 2)
         {
@@ -201,8 +215,9 @@ namespace PlutoGE::render
             commands.Draw(6);
             commands.EndRendering();
         }
-        if (submit)
+        if (submit && !m_commands)
             commands.Submit();
+        m_commands = nullptr;
         m_frameActive = false;
     }
 
@@ -285,7 +300,7 @@ namespace PlutoGE::render
         parameters.inverseSize[0] = 1.0f / (m_width * m_renderScale);
         parameters.inverseSize[1] = 1.0f / (m_height * m_renderScale);
         auto &parameterBuffer = AcquireParameterBuffer(parameters);
-        auto &commands = m_device->GetImmediateContext();
+        auto &commands = Commands();
         commands.BindPipeline(m_maskMode != 0 ? m_clipPipeline.Get() : m_pipeline.Get());
         commands.BindVertexBuffer(geometry->vertices.Get());
         commands.BindIndexBuffer(geometry->indices.Get());
@@ -310,7 +325,7 @@ namespace PlutoGE::render
 
     void RmlUiRhiRenderer::PrepareRenderTextures()
     {
-        auto &commands = m_device->GetImmediateContext();
+        auto &commands = Commands();
         bool pipelineBound = false;
         for (const auto *texture : m_renderTextureImages)
         {
@@ -472,7 +487,7 @@ namespace PlutoGE::render
                 return;
             }
         }
-        auto &commands = m_device->GetImmediateContext();
+        auto &commands = Commands();
         commands.EndRendering();
         const int width = m_width * m_renderScale, height = m_height * m_renderScale;
         if (m_clipWidth != width || m_clipHeight != height)
@@ -561,6 +576,6 @@ namespace PlutoGE::render
         scissor.y *= m_renderScale;
         scissor.width *= m_renderScale;
         scissor.height *= m_renderScale;
-        m_device->GetImmediateContext().SetScissor(scissor);
+        Commands().SetScissor(scissor);
     }
 }

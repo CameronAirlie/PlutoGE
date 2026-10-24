@@ -38,10 +38,12 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -222,7 +224,11 @@ namespace PlutoGE::render::rhi::vulkan
             VmaAllocation allocation = VK_NULL_HANDLE;
             std::vector<std::byte> uniformData;
             bool immutable = false;
+            // Immutable uniforms live in the persistent region from creation; others move there while they stop
+            // changing (see EnsureUniformResident). Read and written atomically: parallel recorders bind concurrently.
             VkDeviceSize persistentOffset = VK_WHOLE_SIZE;
+            // The uniform frame of the last update, for promotion.
+            std::uint64_t lastUniformWrite = 0;
             std::array<VkDeviceSize, 3> uniformOffsets{VK_WHOLE_SIZE, VK_WHOLE_SIZE, VK_WHOLE_SIZE};
             std::array<std::uint64_t, 3> uniformEpochs{};
             std::size_t size = 0;
@@ -965,9 +971,24 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr VkDeviceSize UniformArenaSize = TransientUniformSize + 16ull * 1024ull * 1024ull;
         struct UniformRange { VkDeviceSize offset, size; };
         std::vector<UniformRange> freeUniformRanges{{TransientUniformSize, UniformArenaSize - TransientUniformSize}};
+        // Guards freeUniformRanges and moving buffers in and out of the persistent region.
+        std::mutex persistentUniformMutex;
+        // A uniform buffer bound after this many frames without an update moves to the persistent region, so binding it
+        // stops copying it into every frame's arena; updating it moves it back. Larger buffers stay transient.
+        static constexpr std::uint64_t UniformPromotionFrames = 8;
+        static constexpr std::size_t MaxPromotedUniformSize = 64 * 1024;
+        std::atomic<std::uint64_t> uniformFrame{1};
+        // Persistent ranges given up by updated buffers; frames still in flight may read them until they retire.
+        struct RetiredUniformRange { std::uint64_t retireAfterSubmission = 0; UniformRange range; };
+        std::vector<RetiredUniformRange> retiredUniformRanges;
+        VkDeviceSize AlignUniform(VkDeviceSize size) const { return (size + uniformAlignment - 1) & ~(uniformAlignment - 1); }
         VkDeviceSize AllocatePersistentUniform(std::size_t size)
         {
-            const auto alignedSize = (size + uniformAlignment - 1) & ~(uniformAlignment - 1);
+            std::lock_guard lock(persistentUniformMutex);
+            return AllocateUniformRangeLocked(AlignUniform(size));
+        }
+        VkDeviceSize AllocateUniformRangeLocked(VkDeviceSize alignedSize)
+        {
             for (auto it = freeUniformRanges.begin(); it != freeUniformRanges.end(); ++it)
                 if (it->size >= alignedSize)
                 {
@@ -981,8 +1002,12 @@ namespace PlutoGE::render::rhi::vulkan
         void FreePersistentUniform(const BufferResource &resource)
         {
             if (resource.persistentOffset == VK_WHOLE_SIZE) return;
-            freeUniformRanges.push_back({resource.persistentOffset,
-                (resource.size + uniformAlignment - 1) & ~(uniformAlignment - 1)});
+            std::lock_guard lock(persistentUniformMutex);
+            FreeUniformRangeLocked({resource.persistentOffset, AlignUniform(resource.size)});
+        }
+        void FreeUniformRangeLocked(UniformRange range)
+        {
+            freeUniformRanges.push_back(range);
             std::sort(freeUniformRanges.begin(), freeUniformRanges.end(),
                 [](const auto &a, const auto &b) { return a.offset < b.offset; });
             for (std::size_t i = 1; i < freeUniformRanges.size();)
@@ -1005,6 +1030,34 @@ namespace PlutoGE::render::rhi::vulkan
         // Serializes resource creation, updates, destruction and the uniform arena: parallel recorders create and
         // update resources lazily from worker threads. Recursive because creation paths nest (staging buffers).
         std::recursive_mutex sharedMutex;
+        // Vulkan queues need external synchronization: a render thread submits and presents frames while other
+        // threads create resources through immediate uploads. Taken after sharedMutex, never before it.
+        std::recursive_mutex queueMutex;
+        // Guards timingStatsBySubmission, written as frames are submitted and presented and read from any thread.
+        mutable std::mutex timingMutex;
+        // The thread recording frames (IRenderDevice::SetRecordingThread), or none. Meanwhile updates and destruction
+        // requested from other threads wait in deferredWork, which the next frame to begin applies in request order.
+        std::atomic<std::thread::id> recordingThread{};
+        std::mutex deferredWorkMutex;
+        std::vector<std::function<void()>> deferredWork;
+        void RunDeferredWork()
+        {
+            std::vector<std::function<void()>> work;
+            {
+                std::lock_guard lock(deferredWorkMutex);
+                work.swap(deferredWork);
+            }
+            for (auto &item : work)
+            {
+                try { item(); }
+                catch (const std::exception &error) { std::cerr << "Deferred Vulkan device call failed: " << error.what() << '\n'; }
+            }
+        }
+        void WaitIdle()
+        {
+            std::lock_guard lock(queueMutex);
+            vkDeviceWaitIdle(device);
+        }
         detail::HandleRegistry<BufferHandle, BufferResource> buffers;
         detail::HandleRegistry<TextureHandle, TextureResource> textures;
         detail::HandleRegistry<SamplerHandle, SamplerResource> samplers;
@@ -1033,6 +1086,7 @@ namespace PlutoGE::render::rhi::vulkan
 
         void BeginUniformFrame(std::size_t frameIndex)
         {
+            uniformFrame.fetch_add(1, std::memory_order_relaxed);
             activeFrameIndex = frameIndex;
             auto &arena = uniformArenas[frameIndex];
             arena.cursor.store(0, std::memory_order_relaxed);
@@ -1049,13 +1103,17 @@ namespace PlutoGE::render::rhi::vulkan
         VkDeviceSize EnsureUniformResident(BufferResource &resource)
         {
             auto &arena = uniformArenas[activeFrameIndex];
-            const bool persistent = resource.persistentOffset != VK_WHOLE_SIZE;
+            std::atomic_ref persistentOffset(resource.persistentOffset);
+            if (!resource.immutable && persistentOffset.load(std::memory_order_acquire) == VK_WHOLE_SIZE)
+                TryPromoteUniform(resource);
+            const auto persistentAt = persistentOffset.load(std::memory_order_acquire);
+            const bool persistent = persistentAt != VK_WHOLE_SIZE;
             const auto epoch = persistent ? std::uint64_t{1} : arena.epoch;
             std::atomic_ref residentEpoch(resource.uniformEpochs[activeFrameIndex]);
             std::atomic_ref residentOffset(resource.uniformOffsets[activeFrameIndex]);
             if (residentEpoch.load(std::memory_order_acquire) == epoch)
                 return residentOffset.load(std::memory_order_relaxed);
-            VkDeviceSize aligned = resource.persistentOffset;
+            VkDeviceSize aligned = persistentAt;
             if (!persistent)
             {
                 auto cursor = arena.cursor.load(std::memory_order_relaxed);
@@ -1074,6 +1132,48 @@ namespace PlutoGE::render::rhi::vulkan
             uniformBytesUploaded.fetch_add(resource.size, std::memory_order_relaxed);
             if (persistent) persistentUniformBytesUploaded.fetch_add(resource.size, std::memory_order_relaxed);
             return aligned;
+        }
+
+        // Moves a buffer that has stopped changing into the persistent region. Its copy in each frame slot is then
+        // made once, on that slot's next bind (the epochs reset to 0, which no frame uses). A freshly allocated range is
+        // read by no frame in flight, so writing it while other slots render is safe.
+        void TryPromoteUniform(BufferResource &resource)
+        {
+            if (resource.size > MaxPromotedUniformSize)
+                return;
+            const auto lastWrite = std::atomic_ref(resource.lastUniformWrite).load(std::memory_order_acquire);
+            if (uniformFrame.load(std::memory_order_relaxed) - lastWrite < UniformPromotionFrames)
+                return;
+            std::lock_guard lock(persistentUniformMutex);
+            std::atomic_ref persistentOffset(resource.persistentOffset);
+            if (persistentOffset.load(std::memory_order_acquire) != VK_WHOLE_SIZE)
+                return;
+            const auto offset = AllocateUniformRangeLocked(AlignUniform(resource.size));
+            if (offset == VK_WHOLE_SIZE)
+                return;
+            for (auto &slotEpoch : resource.uniformEpochs)
+                std::atomic_ref(slotEpoch).store(0, std::memory_order_relaxed);
+            persistentOffset.store(offset, std::memory_order_release);
+        }
+
+        // Moves an updated buffer back to the transient arena. Frames still in flight may read its persistent copy,
+        // so the range is freed once they retire.
+        void DemoteUniform(BufferResource &resource, std::uint64_t retireAfterSubmission)
+        {
+            std::atomic_ref(resource.lastUniformWrite).store(uniformFrame.load(std::memory_order_relaxed), std::memory_order_release);
+            if (resource.immutable)
+                return;
+            std::atomic_ref persistentOffset(resource.persistentOffset);
+            if (persistentOffset.load(std::memory_order_acquire) == VK_WHOLE_SIZE)
+                return;
+            std::lock_guard lock(persistentUniformMutex);
+            const auto offset = persistentOffset.load(std::memory_order_acquire);
+            if (offset == VK_WHOLE_SIZE)
+                return;
+            retiredUniformRanges.push_back({retireAfterSubmission, {offset, AlignUniform(resource.size)}});
+            for (auto &slotEpoch : resource.uniformEpochs)
+                std::atomic_ref(slotEpoch).store(0, std::memory_order_relaxed);
+            persistentOffset.store(VK_WHOLE_SIZE, std::memory_order_release);
         }
 
         void FlushUniformArena()
@@ -1135,6 +1235,16 @@ namespace PlutoGE::render::rhi::vulkan
                     });
             collect(deferredBuffers, [&](auto &resource)
                     { FreePersistentUniform(resource); if (resource.buffer) vmaDestroyBuffer(allocator, resource.buffer, resource.allocation); });
+            {
+                std::lock_guard lock(persistentUniformMutex);
+                std::erase_if(retiredUniformRanges, [&](const RetiredUniformRange &retired)
+                {
+                    if (retired.retireAfterSubmission > completedSubmission)
+                        return false;
+                    FreeUniformRangeLocked(retired.range);
+                    return true;
+                });
+            }
 #if PLUTO_HAS_FSR2
             collect(deferredFsr2Contexts, [](auto &context)
                     {
@@ -1147,6 +1257,7 @@ namespace PlutoGE::render::rhi::vulkan
 
         VkResult SubmitWithMemoryRetry(const VkSubmitInfo &submit, VkFence fence)
         {
+            std::lock_guard queueLock(queueMutex);
             VkResult result = vkQueueSubmit(queue, 1, &submit, fence);
             if (result != VK_ERROR_OUT_OF_DEVICE_MEMORY && result != VK_ERROR_OUT_OF_HOST_MEMORY)
                 return result;
@@ -1161,6 +1272,8 @@ namespace PlutoGE::render::rhi::vulkan
 
         void Immediate(const auto &record)
         {
+            // Holds the queue across submit and wait: the shared command buffer is reused by the next call.
+            std::lock_guard queueLock(queueMutex);
             Check(vkResetCommandBuffer(commandBuffer, 0), "vkResetCommandBuffer");
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -2364,6 +2477,8 @@ namespace PlutoGE::render::rhi::vulkan
             m_recording = true;
             m_frameOpen = true;
             ++m_frameSerial;
+            // Updates and destruction other threads requested while the last frame recorded apply before this one.
+            m_impl.RunDeferredWork();
         }
 
         void InvalidateDescriptorCaches()
@@ -2431,6 +2546,7 @@ namespace PlutoGE::render::rhi::vulkan
                 m_impl.timingStats.gpuScopes.clear();
             }
             m_impl.PublishUniformStats();
+            std::unique_lock timingLock(m_impl.timingMutex);
             auto &published = m_impl.timingStatsBySubmission[frame.submissionLabel];
             const float resolvedGpuMs = published.frameGpuMs;
             const bool hasResolvedGpu = published.hasGpuResult;
@@ -2441,6 +2557,7 @@ namespace PlutoGE::render::rhi::vulkan
             published.hasGpuResult = frame.profilingEnabled && hasResolvedGpu;
             published.gpuObservationId = published.hasGpuResult ? resolvedObservation : 0;
             published.gpuScopes = frame.profilingEnabled ? std::move(resolvedGpuScopes) : std::vector<RenderDeviceTimingStats::GpuScope>{};
+            timingLock.unlock();
             m_recording = false;
             m_frameOpen = false;
             m_frameIndex = (m_frameIndex + 1) % m_frames.size();
@@ -2693,6 +2810,7 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 return static_cast<float>(values[end] - values[start]) * m_impl.timestampPeriodNs * 1.0e-6f;
             };
+            std::lock_guard timingLock(m_impl.timingMutex);
             auto &timing = m_impl.timingStatsBySubmission[frame.submissionLabel];
             timing.frameGpuMs = milliseconds(0, 1);
             timing.gpuScopes.clear();
@@ -2749,7 +2867,7 @@ namespace PlutoGE::render::rhi::vulkan
 
         ~VulkanSwapchain() override
         {
-            vkDeviceWaitIdle(m_impl.device);
+            m_impl.WaitIdle();
             DestroySwapchain();
             for (auto &frame : m_frames)
             {
@@ -2822,7 +2940,10 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 // Acquire succeeded but its wait was never submitted. Retire
                 // the acquired image and its signalled semaphore before reuse.
-                Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(interrupted presentation)");
+                {
+                    std::lock_guard queueLock(m_impl.queueMutex);
+                    Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(interrupted presentation)");
+                }
                 auto &frame = m_frames[m_frameIndex];
                 VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
                 VkSemaphore replacement = VK_NULL_HANDLE;
@@ -2843,8 +2964,13 @@ namespace PlutoGE::render::rhi::vulkan
             {
                 return std::chrono::duration<float, std::milli>(end - start).count();
             };
-            auto &timing = m_impl.timingStatsBySubmission["Presentation"];
-            timing = {};
+            // Published under the timing lock however presentation ends.
+            RenderDeviceTimingStats timing;
+            ScopeExit publishTiming([&]
+            {
+                std::lock_guard timingLock(m_impl.timingMutex);
+                m_impl.timingStatsBySubmission["Presentation"] = timing;
+            });
             const auto totalStart = Clock::now();
             auto &frame = m_frames[m_frameIndex];
             const auto fenceStart = Clock::now();
@@ -2976,7 +3102,11 @@ namespace PlutoGE::render::rhi::vulkan
             present.pSwapchains = &m_swapchain;
             present.pImageIndices = &imageIndex;
             const auto presentStart = Clock::now();
-            const VkResult result = vkQueuePresentKHR(m_impl.presentQueue, &present);
+            VkResult result;
+            {
+                std::lock_guard queueLock(m_impl.queueMutex);
+                result = vkQueuePresentKHR(m_impl.presentQueue, &present);
+            }
             timing.presentQueueMs = elapsedMs(presentStart, Clock::now());
             m_presented[imageIndex] = true;
             if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
@@ -3009,11 +3139,17 @@ namespace PlutoGE::render::rhi::vulkan
 
         bool Recreate()
         {
-            Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(swapchain)");
+            {
+                std::lock_guard queueLock(m_impl.queueMutex);
+                Check(vkDeviceWaitIdle(m_impl.device), "vkDeviceWaitIdle(swapchain)");
+            }
             m_impl.completedSubmission = m_impl.lastSubmittedSubmission;
             // Resizing can retire many large render targets between command
             // submissions. They are safe to free after the idle wait.
-            m_impl.CollectDeferredResources(m_impl.completedSubmission);
+            {
+                std::lock_guard lock(m_impl.sharedMutex);
+                m_impl.CollectDeferredResources(m_impl.completedSubmission);
+            }
             VkSurfaceCapabilitiesKHR capabilities{};
             Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_impl.physicalDevice, m_impl.surface, &capabilities), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
             std::uint32_t formatCount = 0;
@@ -3411,7 +3547,7 @@ namespace PlutoGE::render::rhi::vulkan
         if (!m_impl)
             return;
         if (m_impl->device)
-            vkDeviceWaitIdle(m_impl->device);
+            m_impl->WaitIdle();
 #if PLUTO_HAS_STREAMLINE
         if (m_impl->streamline)
             m_impl->streamline->Shutdown();
@@ -3494,6 +3630,7 @@ namespace PlutoGE::render::rhi::vulkan
         if (descriptor.usage == BufferUsage::Uniform)
         {
             resource.uniformData.resize(descriptor.size);
+            resource.lastUniformWrite = m_impl->uniformFrame.load(std::memory_order_relaxed);
             if (descriptor.immutable) resource.persistentOffset = m_impl->AllocatePersistentUniform(descriptor.size);
             if (!data.empty())
                 std::memcpy(resource.uniformData.data(), data.data(), data.size());
@@ -3734,6 +3871,15 @@ namespace PlutoGE::render::rhi::vulkan
 
     bool VulkanDevice::UpdateTexture(TextureHandle handle, const TextureRegion &region, std::span<const std::byte> data)
     {
+        if (DefersToRecordingThread())
+        {
+            const auto *texture = m_impl->textures.Get(handle);
+            if (!texture || !IsValidTextureUpdate(texture->descriptor, region, data))
+                return false;
+            Defer([this, handle, region, bytes = std::vector<std::byte>(data.begin(), data.end())]
+                  { UpdateTexture(handle, region, bytes); });
+            return true;
+        }
         std::lock_guard lock(m_impl->sharedMutex);
         auto *texture = m_impl->textures.Get(handle);
         if (!texture || !IsValidTextureUpdate(texture->descriptor, region, data) || texture->descriptor.normalMap ||
@@ -4071,16 +4217,62 @@ namespace PlutoGE::render::rhi::vulkan
         return m_impl->pipelines.Insert(std::move(resource));
     }
 
+    bool VulkanDevice::SupportsRecordingThread() const noexcept { return true; }
+
+    std::uint64_t VulkanDevice::PendingSubmission() const noexcept
+    {
+        return m_impl->context ? m_impl->context->RetirementSubmission() : 0;
+    }
+
+    std::uint64_t VulkanDevice::CompletedSubmission() const noexcept
+    {
+        return std::atomic_ref(m_impl->completedSubmission).load(std::memory_order_acquire);
+    }
+
+    void VulkanDevice::SetRecordingThread(std::thread::id thread)
+    {
+        m_impl->recordingThread.store(thread, std::memory_order_release);
+    }
+
+    // Whether a call must be left for the next frame to apply (see SetRecordingThread): it comes from another thread
+    // while a render thread records, or it has to stay behind calls still waiting from then. Threads bound to a
+    // parallel recording context record for the render thread and apply calls at once.
+    bool VulkanDevice::DefersToRecordingThread() const
+    {
+        if (t_threadRecorder)
+            return false;
+        const auto recorder = m_impl->recordingThread.load(std::memory_order_acquire);
+        if (recorder == std::this_thread::get_id())
+            return false;
+        if (recorder != std::thread::id{})
+            return true;
+        std::lock_guard lock(m_impl->deferredWorkMutex);
+        return !m_impl->deferredWork.empty();
+    }
+
+    void VulkanDevice::Defer(std::function<void()> work)
+    {
+        std::lock_guard lock(m_impl->deferredWorkMutex);
+        m_impl->deferredWork.push_back(std::move(work));
+    }
+
     void VulkanDevice::UpdateBuffer(BufferHandle handle, std::size_t offset, std::span<const std::byte> data)
     {
         auto *resource = m_impl->buffers.Get(handle);
         if (!resource || offset > resource->size || data.size() > resource->size - offset)
             throw std::invalid_argument("Invalid Vulkan buffer update");
         if (resource->immutable) throw std::invalid_argument("Cannot update an immutable buffer");
+        if (DefersToRecordingThread())
+        {
+            Defer([this, handle, offset, bytes = std::vector<std::byte>(data.begin(), data.end())]
+                  { UpdateBuffer(handle, offset, bytes); });
+            return;
+        }
         if (resource->usage == BufferUsage::Uniform)
         {
             // Lock-free (see EnsureUniformResident): each buffer is updated by one thread at a time.
             const auto uploadStart = std::chrono::steady_clock::now();
+            m_impl->DemoteUniform(*resource, m_impl->context ? m_impl->context->RetirementSubmission() : 0);
             auto &arena = m_impl->uniformArenas[m_impl->activeFrameIndex];
             const bool wasResident = std::atomic_ref(resource->uniformEpochs[m_impl->activeFrameIndex])
                                          .load(std::memory_order_acquire) == arena.epoch;
@@ -4140,6 +4332,11 @@ namespace PlutoGE::render::rhi::vulkan
     }
     void VulkanDevice::DestroyBuffer(BufferHandle h)
     {
+        if (DefersToRecordingThread())
+        {
+            Defer([this, h] { DestroyBuffer(h); });
+            return;
+        }
         std::lock_guard lock(m_impl->sharedMutex);
         if (auto r = m_impl->buffers.Remove(h))
         {
@@ -4151,6 +4348,11 @@ namespace PlutoGE::render::rhi::vulkan
     }
     void VulkanDevice::DestroyTexture(TextureHandle h)
     {
+        if (DefersToRecordingThread())
+        {
+            Defer([this, h] { DestroyTexture(h); });
+            return;
+        }
         std::lock_guard lock(m_impl->sharedMutex);
         // Resizing an editor target may retire an image while its buffered
         // readback is still queued. Wait only for slots that reference this
@@ -4172,6 +4374,11 @@ namespace PlutoGE::render::rhi::vulkan
     }
     void VulkanDevice::DestroySampler(SamplerHandle h)
     {
+        if (DefersToRecordingThread())
+        {
+            Defer([this, h] { DestroySampler(h); });
+            return;
+        }
         std::lock_guard lock(m_impl->sharedMutex);
         if (auto r = m_impl->samplers.Remove(h))
         {
@@ -4184,6 +4391,11 @@ namespace PlutoGE::render::rhi::vulkan
     }
     void VulkanDevice::DestroyPipeline(PipelineHandle h)
     {
+        if (DefersToRecordingThread())
+        {
+            Defer([this, h] { DestroyPipeline(h); });
+            return;
+        }
         std::lock_guard lock(m_impl->sharedMutex);
         if (auto r = m_impl->pipelines.Remove(h))
         {
@@ -4199,6 +4411,7 @@ namespace PlutoGE::render::rhi::vulkan
     {
         if (!submissionLabel.empty())
         {
+            std::lock_guard timingLock(m_impl->timingMutex);
             const auto found = m_impl->timingStatsBySubmission.find(std::string(submissionLabel));
             if (found != m_impl->timingStatsBySubmission.end())
                 return found->second;
@@ -4314,7 +4527,7 @@ namespace PlutoGE::render::rhi::vulkan
             // so an explicit idle here is preferable to leaking old viewport
             // contexts until device shutdown.
             if (m_impl->device)
-                vkDeviceWaitIdle(m_impl->device);
+                m_impl->WaitIdle();
             m_impl->streamline->ReleaseViewport(contextId);
         }
 #endif
@@ -4514,7 +4727,10 @@ namespace PlutoGE::render::rhi::vulkan
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &slot.commandBuffer;
-        Check(vkQueueSubmit(m_impl->queue, 1, &submit, slot.fence), "vkQueueSubmit(readback)");
+        {
+            std::lock_guard queueLock(m_impl->queueMutex);
+            Check(vkQueueSubmit(m_impl->queue, 1, &submit, slot.fence), "vkQueueSubmit(readback)");
+        }
         slot.pending = true;
         slot.sequence = m_impl->nextReadbackSequence++;
         slot.source = handle;

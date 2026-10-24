@@ -40,6 +40,7 @@ namespace PlutoGE::render
     namespace rhi
     {
         class IRenderDevice;
+        class ICommandContext;
     }
     class RmlUiRhiRenderer;
     class RmlLoadingDocument;
@@ -96,10 +97,12 @@ namespace PlutoGE::render
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
                     const glm::mat4 &view, const glm::mat4 &projection,
                     const std::function<void()> &drawWorldSurfaces = {});
+        // `commands`, when given, receives the UI's commands (for example a deferred list a render thread replays)
+        // in place of the device's immediate context; nothing is then submitted.
         void RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device, rhi::TextureHandle target,
                        int width, int height, std::uint64_t frameSequence,
                        const glm::mat4 &view, const glm::mat4 &projection,
-                       bool manageSubmission = true);
+                       bool manageSubmission = true, rhi::ICommandContext *commands = nullptr);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }

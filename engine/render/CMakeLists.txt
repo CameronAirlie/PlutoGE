@@ -25,6 +25,7 @@ add_library(PlutoGERender
     src/VirtualShadowMaps.cpp
     src/OcclusionCulling.cpp
     src/ParallelRecording.cpp
+    src/GeometryArena.cpp
     src/SceneEnvironment.cpp
     src/PhysicalSkyModel.cpp
     src/RhiRenderService.cpp
@@ -62,6 +63,7 @@ add_library(PlutoGERender
     src/ShaderGraphCpu.cpp
     src/ShaderGraphTessellation.cpp
     src/Graphics.cpp
+    src/rhi/DeferredCommandList.cpp
     src/rhi/RenderDeviceFactory.cpp
     src/rhi/opengl/OpenGLDevice.cpp
     src/rhi/vulkan/VulkanBootstrap.cpp

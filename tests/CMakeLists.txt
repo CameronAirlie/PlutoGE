@@ -26,6 +26,9 @@ add_test(NAME PlutoGECapsuleQueryTests COMMAND PlutoGECapsuleQueryTests)
 add_executable(PlutoGEAnimationSeekTests AnimationSeekTests.cpp)
 pluto_link_engine(PlutoGEAnimationSeekTests)
 add_test(NAME PlutoGEAnimationSeekTests COMMAND PlutoGEAnimationSeekTests)
+add_executable(PlutoGEAnimationPoseBatchTests AnimationPoseBatchTests.cpp)
+pluto_link_engine(PlutoGEAnimationPoseBatchTests)
+add_test(NAME PlutoGEAnimationPoseBatchTests COMMAND PlutoGEAnimationPoseBatchTests)
 # The editor's graph document and canvas view model are ImGui-free, so they
 # are compiled in directly rather than linking the whole editor.
 add_executable(PlutoGEAnimationGraphTests AnimationGraphTests.cpp
@@ -717,6 +720,9 @@ add_test(NAME PlutoGEAnimationClipSharingTests COMMAND PlutoGEAnimationClipShari
 add_executable(PlutoGETaskPoolTests TaskPoolTests.cpp)
 target_link_libraries(PlutoGETaskPoolTests PRIVATE PlutoGE::Core)
 add_test(NAME PlutoGETaskPoolTests COMMAND PlutoGETaskPoolTests)
+add_executable(PlutoGEFrameWorkerTests FrameWorkerTests.cpp)
+target_link_libraries(PlutoGEFrameWorkerTests PRIVATE PlutoGE::Core)
+add_test(NAME PlutoGEFrameWorkerTests COMMAND PlutoGEFrameWorkerTests)
 
 add_executable(PlutoGEViewportOverlayLayoutTests ViewportOverlayLayoutTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportOverlayLayout.cpp)

@@ -460,15 +460,30 @@ namespace PlutoGE::render
         catch(const std::exception &e) { if(error) *error=e.what(); return {}; }
     }
     bool ValidateShaderGraph(const ShaderGraph &graph, std::string *error) { return bool(BuildShaderGraphProgram(graph,{},error)); }
-    namespace { std::atomic<float> graphClock{-1.0f},previousGraphClock{-1.0f}; }
+    namespace
+    {
+        std::atomic<float> graphClock{-1.0f},previousGraphClock{-1.0f};
+        thread_local std::optional<ScopedShaderGraphClock::Values> t_pinnedGraphClock;
+    }
     void SetShaderGraphTimeSeconds(float seconds) { if(std::isfinite(seconds) && seconds>=0){const auto previous=graphClock.exchange(seconds);previousGraphClock.store(previous<0?seconds:previous);} }
-    float ShaderGraphPreviousTimeSeconds(){const float previous=previousGraphClock.load();return previous<0?ShaderGraphTimeSeconds():previous;}
+    float ShaderGraphPreviousTimeSeconds(){if(t_pinnedGraphClock)return t_pinnedGraphClock->previousTime;const float previous=previousGraphClock.load();return previous<0?ShaderGraphTimeSeconds():previous;}
     void ResetShaderGraphClock() { graphClock.store(-1.0f);previousGraphClock.store(-1.0f); }
     float ShaderGraphTimeSeconds()
     {
+        if(t_pinnedGraphClock) return t_pinnedGraphClock->time;
         const float supplied=graphClock.load();
         if(supplied>=0) return supplied;
         static const auto start=std::chrono::steady_clock::now();
         return std::chrono::duration<float>(std::chrono::steady_clock::now()-start).count();
     }
+    ScopedShaderGraphClock::ScopedShaderGraphClock(std::optional<Values> values) : m_outer(t_pinnedGraphClock)
+    {
+        if (values) t_pinnedGraphClock = values;
+    }
+    ScopedShaderGraphClock::~ScopedShaderGraphClock() { t_pinnedGraphClock = m_outer; }
+    ScopedShaderGraphClock::Values ScopedShaderGraphClock::Current()
+    {
+        return {ShaderGraphTimeSeconds(), ShaderGraphPreviousTimeSeconds()};
+    }
+    std::optional<ScopedShaderGraphClock::Values> ScopedShaderGraphClock::Pinned() { return t_pinnedGraphClock; }
 }

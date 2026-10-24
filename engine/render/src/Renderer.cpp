@@ -1,4 +1,5 @@
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/core/TaskPool.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "PlutoGE/render/Renderer.h"
@@ -1294,17 +1295,19 @@ namespace PlutoGE::render
         const float projectionScaleY = std::abs(cameraData.projection[1][1]);
         const float halfViewportHeight = static_cast<float>(std::max(viewportHeight, 1)) * 0.5f;
         const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
-        bool changed = false;
         const auto commandCount = commands.empty() ? m_renderCommands.size() : commands.size();
         m_visibilityCandidates.clear();
         m_visibilityCandidates.reserve(commandCount);
 
-        for (std::size_t commandIndex = 0; commandIndex < commandCount; ++commandIndex)
+        // Selects one command's LOD and tests its visibility. Touches only that command, so ranges of commands run on
+        // the task pool, each collecting its own candidates; concatenating them in range order gives the serial order.
+        const auto classify = [&](std::size_t commandIndex, std::vector<std::pair<std::size_t, bool>> &candidates) -> bool
         {
+            bool changed = false;
             auto &command = commands.empty() ? m_renderCommands[commandIndex] : *commands[commandIndex];
             if (!command.mesh)
             {
-                continue;
+                return false;
             }
 
             // A generated fallback UV2 atlas is built against the source
@@ -1344,15 +1347,44 @@ namespace PlutoGE::render
             }
 
             if(HasVertexGraph(command)) {
-                m_visibilityCandidates.emplace_back(commandIndex,false);
-                continue;
+                candidates.emplace_back(commandIndex,false);
+                return changed;
             }
             const FrustumContainment containment = ClassifyBounds(command.worldBounds, frustumPlanes);
             if (containment != FrustumContainment::Outside &&
                 PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
                 PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
-                m_visibilityCandidates.emplace_back(commandIndex, containment == FrustumContainment::Inside);
+                candidates.emplace_back(commandIndex, containment == FrustumContainment::Inside);
+            }
+            return changed;
+        };
+
+        bool changed = false;
+        constexpr std::size_t commandsPerRange = 256;
+        auto &pool = core::TaskPool::Shared();
+        const auto ranges = m_parallelVisibility ? pool.RangeCount(commandCount, commandsPerRange) : 1;
+        if (ranges <= 1)
+        {
+            for (std::size_t commandIndex = 0; commandIndex < commandCount; ++commandIndex)
+                changed |= classify(commandIndex, m_visibilityCandidates);
+        }
+        else
+        {
+            m_visibilityCandidateRanges.resize(ranges);
+            std::vector<char> rangeChanged(ranges, 0);
+            pool.RunRanges(commandCount, commandsPerRange, [&](std::size_t range, std::size_t begin, std::size_t end)
+            {
+                auto &candidates = m_visibilityCandidateRanges[range];
+                candidates.clear();
+                for (std::size_t commandIndex = begin; commandIndex < end; ++commandIndex)
+                    rangeChanged[range] |= classify(commandIndex, candidates) ? 1 : 0;
+            });
+            for (std::size_t range = 0; range < ranges; ++range)
+            {
+                changed |= rangeChanged[range] != 0;
+                m_visibilityCandidates.insert(m_visibilityCandidates.end(), m_visibilityCandidateRanges[range].begin(),
+                                              m_visibilityCandidateRanges[range].end());
             }
         }
 
@@ -1724,11 +1756,41 @@ namespace PlutoGE::render
         m_visibleCommandRefs.reserve(m_sceneCommandRefs.size());
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_sceneCommandRefs.size());
-        std::size_t visibleInstanceScratchCursor = 0;
         const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
-        for (const auto &[commandIndex, fullyInsideFrustum] : m_visibilityCandidates)
+        // Instanced candidates cull their instances into pooled scratch arrays, one per candidate in visible order.
+        // The culling touches only its own command and scratch, so it runs across the task pool; the visible list is
+        // then assembled in candidate order.
+        auto &instanceCulls = m_instanceCullJobs;
+        instanceCulls.clear();
+        for (std::size_t candidate = 0; candidate < m_visibilityCandidates.size(); ++candidate)
         {
+            const auto commandIndex = m_visibilityCandidates[candidate].first;
+            if (commandIndex < m_sceneCommandRefs.size() && m_sceneCommandRefs[commandIndex]->instanceModels)
+                instanceCulls.push_back({candidate, {}});
+        }
+        while (m_visibleInstanceModelPool.size() < instanceCulls.size())
+        {
+            m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+            m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+        }
+        const auto cull = [&](std::size_t job)
+        {
+            const auto &[commandIndex, fullyInsideFrustum] = m_visibilityCandidates[instanceCulls[job].candidate];
+            const auto &command = *m_sceneCommandRefs[commandIndex];
+            instanceCulls[job].visible = CullRenderCommandInstances(
+                command, cameraPosition, command.maxDrawDistance, &frustumPlanes, fullyInsideFrustum,
+                m_visibleInstanceModelPool[job], m_visiblePreviousInstanceModelPool[job]);
+        };
+        if (m_parallelVisibility && instanceCulls.size() > 1)
+            core::TaskPool::Shared().Run(instanceCulls.size(), cull);
+        else
+            for (std::size_t job = 0; job < instanceCulls.size(); ++job)
+                cull(job);
+        std::size_t nextCull = 0;
+        for (std::size_t candidate = 0; candidate < m_visibilityCandidates.size(); ++candidate)
+        {
+            const auto commandIndex = m_visibilityCandidates[candidate].first;
             if (commandIndex >= m_sceneCommandRefs.size())
                 continue;
             const auto &command = *m_sceneCommandRefs[commandIndex];
@@ -1737,16 +1799,7 @@ namespace PlutoGE::render
                 m_visibleCommandRefs.push_back(&command);
                 continue;
             }
-            if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
-            {
-                m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
-                m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
-            }
-            const auto &modelScratch = m_visibleInstanceModelPool[visibleInstanceScratchCursor];
-            const auto &previousModelScratch = m_visiblePreviousInstanceModelPool[visibleInstanceScratchCursor++];
-            RenderCommand visibleCommand = CullRenderCommandInstances(
-                command, cameraPosition, command.maxDrawDistance, &frustumPlanes,
-                fullyInsideFrustum, modelScratch, previousModelScratch);
+            auto &visibleCommand = instanceCulls[nextCull++].visible;
             if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
                 continue;
             m_visibleRenderCommands.push_back(std::move(visibleCommand));

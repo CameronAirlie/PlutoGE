@@ -13,13 +13,16 @@
 [[vk::binding(4, 0)]] StructuredBuffer<uint> pageLists : register(t4, space0);
 [[vk::binding(1, 1)]] Sampler2D baseTexture : register(t1, space1);
 #ifdef VSM_BATCHED
-struct RigidDraw
+// Batched pages: one record per caster chunk, whose models are rows [first, first + count) of the model table, so
+// consecutive chunks of any model count share one indirect draw.
+struct BatchedDraw
 {
-    column_major float4x4 model;
-    uint4 parameters;
-    float4 alpha;
+    uint4 parameters; // chunk index, model count, alpha mode, first model
+    float4 alpha;     // UV scale, cutoff, base colour alpha
 };
-[[vk::binding(5, 0)]] StructuredBuffer<RigidDraw> rigidDraws : register(t5, space0);
+struct BatchedModel { column_major float4x4 value; };
+[[vk::binding(5, 0)]] StructuredBuffer<BatchedDraw> batchedDraws : register(t5, space0);
+[[vk::binding(6, 0)]] StructuredBuffer<BatchedModel> batchedModels : register(t6, space0);
 #endif
 struct VertexInput { float3 position : POSITION; float2 uv : TEXCOORD0; };
 struct ReceiverOutput { float4 position : SV_Position; float2 uv : TEXCOORD0; };
@@ -50,8 +53,8 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
     uint localInstance = instance % PLUTO_VSM_INSTANCE_STRIDE;
 #ifdef VSM_BATCHED
     uint chunk = instance / PLUTO_VSM_INSTANCE_STRIDE;
-    uint4 parameters = rigidDraws[chunk].parameters;
-    float3 world = mul(rigidDraws[chunk].model, float4(input.position, 1)).xyz;
+    uint4 parameters = batchedDraws[chunk].parameters;
+    float3 world = mul(batchedModels[parameters.w + localInstance % parameters.y].value, float4(input.position, 1)).xyz;
 #else
     uint chunk = drawParameters.x;
     uint4 parameters = drawParameters;
@@ -80,8 +83,8 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 float pageFragment(PageOutput input) : SV_Target
 {
 #ifdef VSM_BATCHED
-    uint4 drawParameters = rigidDraws[input.chunk].parameters;
-    float4 alpha = rigidDraws[input.chunk].alpha;
+    uint4 drawParameters = batchedDraws[input.chunk].parameters;
+    float4 alpha = batchedDraws[input.chunk].alpha;
 #endif
     if (drawParameters.z == 1 && baseTexture.Sample(input.uv * alpha.xy).a * alpha.w < alpha.z) discard;
     return input.position.z;

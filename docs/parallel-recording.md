@@ -31,7 +31,7 @@ arena is lock-free for that reason.
 
 | Layer | Piece | Role |
 | --- | --- | --- |
-| Core | `core::TaskPool` | Fixed worker threads; a batch runs `task(0..n-1)` with the caller taking part, rethrows the first exception, runs nested batches inline. `TaskPool::Shared()` is the engine's pool. |
+| Core | `core::TaskPool` | Fixed worker threads; a batch runs `task(0..n-1)` with the caller taking part, rethrows the first exception, runs nested batches inline; batches from different threads run at once, sharing the workers. `TaskPool::Shared()` is the engine's pool. |
 | RHI | `ICommandContext::BeginParallelRecording` / `EndParallelRecording` | Hands out N contexts whose commands execute in order inside the frame. `MaxParallelRecordingContexts() == 0` means serial (OpenGL). `BindToCurrentThread` routes device calls that record commands (buffer uploads) on a thread into a context. |
 | RHI | `DrawIndexedInstanced(..., firstInstance)`, `SupportsFirstInstance()` | Lets a draw select its entry in an instanced constant block. |
 | Vulkan | `VulkanRecorder` | Everything that turns RHI calls into commands: binding and descriptor state, draws, barriers, uploads, GPU scopes. |

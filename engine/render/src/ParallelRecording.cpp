@@ -1,6 +1,7 @@
 #include "ParallelRecording.h"
 
 #include "PlutoGE/core/TaskPool.h"
+#include "PlutoGE/render/ShaderGraph.h"
 
 namespace PlutoGE::render
 {
@@ -26,11 +27,14 @@ namespace PlutoGE::render
         }
 
         const auto contexts = m_commands.BeginParallelRecording(static_cast<std::uint32_t>(count));
+        // Workers read the frame's shader-graph clock, which a render thread pins for itself.
+        const auto clock = ScopedShaderGraphClock::Pinned();
         try
         {
             m_pool->Run(count, [&](std::size_t index)
             {
                 auto &context = *contexts[index];
+                const ScopedShaderGraphClock pinnedClock(clock);
                 // Device calls on this thread that record commands (buffer uploads) belong to this job's context.
                 context.BindToCurrentThread();
                 struct Unbind

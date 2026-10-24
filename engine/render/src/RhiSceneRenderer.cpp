@@ -273,7 +273,7 @@ namespace PlutoGE::render
         m_upscalerContextId = 0;
     }
 
-    bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
+    std::optional<RhiSceneRenderer::PreparedFrame> RhiSceneRenderer::Prepare(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
                                   const BasicLighting &sourceLighting, RenderCommandView commands,
                                   RenderCommandView shadowCommands,
                                   std::span<IPostProcessEffect *const> postProcessEffects,
@@ -307,7 +307,7 @@ namespace PlutoGE::render
         const bool reuseDirectionalShadows = reusedShadowReceivers && lighting.shadowsEnabled &&
             lighting.shadowMethod == ShadowMethod::Virtual && reusedShadowReceivers.MatchesLight(lighting.directionalDirection);
         if (!m_renderer || !m_device || width == 0 || height == 0)
-            return false;
+            return std::nullopt;
         m_renderer->SetTransparentBackground(m_transparentBackground);
         if (reuseDirectionalShadows)
             m_renderer->ReuseDirectionalShadowsForFrame(reusedShadowReceivers);
@@ -322,7 +322,7 @@ namespace PlutoGE::render
             ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
             : outputSize;
         if (renderSize.width == 0 || renderSize.height == 0)
-            return false;
+            return std::nullopt;
         m_upscalerStatus = {
             .options = m_upscalerOptions,
             .renderSize = renderSize,
@@ -341,7 +341,7 @@ namespace PlutoGE::render
             effectiveUpscaler.technology = rhi::TemporalUpscaler::None;
         m_renderer->SetTemporalUpscalerOptions(effectiveUpscaler);
         if (!m_renderer->Resize(renderSize.width, renderSize.height, outputSize.width, outputSize.height))
-            return false;
+            return std::nullopt;
         width = renderSize.width;
         height = renderSize.height;
         m_timingStats.translationPreparationMs = millisecondsBetween(totalStart, std::chrono::steady_clock::now());
@@ -1655,7 +1655,7 @@ namespace PlutoGE::render
         }
         setupScope.End();
         const auto setupEnd = std::chrono::steady_clock::now();
-        core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
+        core::CpuScope recordingPreparationScope("Recording preparation", core::CpuCategory::Rendering);
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         auto &giDraws = preparation.gi.draws;
         if (std::ranges::any_of(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::VCTGI; }))
@@ -1877,16 +1877,53 @@ namespace PlutoGE::render
                 decals.push_back(draw);
             }
         }
-        m_renderer->Render(projection * cameraData.view, effectiveLighting, draws, basicEffects, shadowDraws, debugView,
-                           useTemporalUpscaler ? &upscalerFrame : nullptr,
-                           useTemporalUpscaler ? &currentUnjitteredViewProjection : nullptr, submit, giDraws,
-                           std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount),
-                           beforeTemporalResolve, linearOutput, sharedClipJitter, decals, recordingMode);
-        m_upscalerStatus.active = useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
+        PreparedFrame frame;
+        frame.viewProjection = projection * cameraData.view;
+        frame.lighting = effectiveLighting;
+        frame.draws = draws;
+        frame.shadowDraws = shadowDraws;
+        frame.giDraws = giDraws;
+        frame.particles = std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount);
+        frame.effects = std::move(basicEffects);
+        frame.decals = std::move(decals);
+        frame.debugView = debugView;
+        frame.useTemporalUpscaler = useTemporalUpscaler;
+        if (useTemporalUpscaler) frame.upscalerFrame = upscalerFrame;
+        frame.unjitteredViewProjection = currentUnjitteredViewProjection;
+        frame.submit = submit;
+        frame.beforeTemporalResolve = beforeTemporalResolve;
+        frame.linearOutput = linearOutput;
+        frame.sharedClipJitter = sharedClipJitter;
+        frame.recordingMode = recordingMode;
+        frame.renderSize = renderSize;
+        frame.outputSize = outputSize;
+        frame.virtualShadowCapacityFallback = virtualShadowCapacityFallback;
+        frame.clock = ScopedShaderGraphClock::Current();
+        const auto preparedEnd = std::chrono::steady_clock::now();
+        frame.recordingSetupMs = millisecondsBetween(setupEnd, preparedEnd);
+        frame.preparationMs = millisecondsBetween(totalStart, preparedEnd);
+        return frame;
+    }
+
+    void RhiSceneRenderer::Record(PreparedFrame &frame)
+    {
+        const auto millisecondsBetween = [](const auto start, const auto end)
+        {
+            return std::chrono::duration<float, std::milli>(end - start).count();
+        };
+        core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
+        const ScopedShaderGraphClock clock(frame.clock);
+        const auto recordStart = std::chrono::steady_clock::now();
+        m_renderer->Render(frame.viewProjection, frame.lighting, frame.draws, frame.effects, frame.shadowDraws, frame.debugView,
+                           frame.upscalerFrame ? &*frame.upscalerFrame : nullptr,
+                           frame.useTemporalUpscaler ? &frame.unjitteredViewProjection : nullptr, frame.submit, frame.giDraws,
+                           frame.particles, frame.beforeTemporalResolve, frame.linearOutput, frame.sharedClipJitter,
+                           frame.decals, frame.recordingMode);
+        m_upscalerStatus.active = frame.useTemporalUpscaler && m_renderer->WasTemporalUpscalerEvaluated();
         m_upscalerStatus.nativeInput = m_upscalerStatus.active &&
                                        m_upscalerOptions.quality != rhi::UpscalerQuality::Dlaa &&
-                                       renderSize == outputSize;
-        if (useTemporalUpscaler && !m_upscalerStatus.active)
+                                       frame.renderSize == frame.outputSize;
+        if (frame.useTemporalUpscaler && !m_upscalerStatus.active)
         {
             m_upscalerStatus.reason =
                 m_device->GetTemporalUpscalerFailureReason(m_upscalerOptions.technology);
@@ -1895,7 +1932,7 @@ namespace PlutoGE::render
         }
         if (m_upscalerStatus.active)
         {
-            m_previousUpscalerViewProjection = currentUnjitteredViewProjection;
+            m_previousUpscalerViewProjection = frame.unjitteredViewProjection;
             m_upscalerHistoryValid = true;
         }
         else
@@ -1906,8 +1943,8 @@ namespace PlutoGE::render
         // not clear it merely because an external temporal upscaler is absent:
         // doing so marks every native-TAA frame as a resize and restarts the
         // Halton sequence at sample one forever.
-        m_previousRenderSize = renderSize;
-        m_previousOutputSize = outputSize;
+        m_previousRenderSize = frame.renderSize;
+        m_previousOutputSize = frame.outputSize;
         const auto &frameStats = m_renderer->GetFrameStats();
         const auto &rendererTiming = m_renderer->GetTimingStats();
         m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;
@@ -1953,10 +1990,10 @@ namespace PlutoGE::render
         m_timingStats.gpuSkinningDispatches = frameStats.gpuSkinningDispatches;
         m_timingStats.gpuSkinningVertices = frameStats.gpuSkinningVertices;
         m_timingStats.gpuSkinningPaletteBytes = frameStats.gpuSkinningPaletteBytes;
-        m_timingStats.renderSize = renderSize;
-        m_timingStats.outputSize = outputSize;
+        m_timingStats.renderSize = frame.renderSize;
+        m_timingStats.outputSize = frame.outputSize;
         m_timingStats.geometryDiagnosticMode = frameStats.geometryDiagnosticMode;
-        m_timingStats.directionalShadowSoftness = effectiveLighting.shadowSoftness;
+        m_timingStats.directionalShadowSoftness = frame.lighting.shadowSoftness;
         m_timingStats.recordedShadowDrawCount = frameStats.ShadowDraws();
         m_timingStats.recordedShadowInstanceCount = frameStats.shadowInstances;
         m_timingStats.shadowObjectUploadCount = frameStats.shadowObjectUploads;
@@ -1965,17 +2002,37 @@ namespace PlutoGE::render
         m_timingStats.shadowCascadeTargetCount = frameStats.shadowCascadeTargets;
         m_timingStats.occlusion = frameStats.occlusion;
         m_timingStats.occlusionActive = frameStats.occlusionActive;
-        m_timingStats.occlusionMode = effectiveLighting.occlusionMode;
+        m_timingStats.occlusionMode = frame.lighting.occlusionMode;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;
-        m_timingStats.directionalShadowStatus = virtualShadowCapacityFallback
+        m_timingStats.directionalShadowStatus = frame.virtualShadowCapacityFallback
             ? "Cascaded shadow maps (fallback: more casters in reach than VSM accepts)"
             : frameStats.directionalShadowStatus;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();
-        m_timingStats.renderRecordingMs = millisecondsBetween(setupEnd, renderEnd);
-        m_timingStats.totalMs = millisecondsBetween(totalStart, renderEnd);
+        m_timingStats.renderRecordingMs = frame.recordingSetupMs + millisecondsBetween(recordStart, renderEnd);
+        m_timingStats.totalMs = frame.preparationMs + millisecondsBetween(recordStart, renderEnd);
+    }
+
+    bool RhiSceneRenderer::Render(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
+                                  const BasicLighting &sourceLighting, RenderCommandView commands,
+                                  RenderCommandView shadowCommands,
+                                  std::span<IPostProcessEffect *const> postProcessEffects,
+                                  std::span<const BasicPostProcessEffect> atmosphereEffects,
+                                  const TexturePixelReader &texturePixelReader, PostProcessDebugView debugView,
+                                  bool submit, const scene::Scene *scene,
+                                  std::optional<std::span<scene::Light *const>> lights,
+                                  const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve, bool linearOutput,
+                                  std::optional<glm::vec2> sharedClipJitter,
+                                  BasicRenderer::RecordingMode recordingMode)
+    {
+        auto frame = Prepare(width, height, cameraData, sourceLighting, commands, shadowCommands, postProcessEffects,
+                             atmosphereEffects, texturePixelReader, debugView, submit, scene, lights, beforeTemporalResolve,
+                             linearOutput, sharedClipJitter, recordingMode);
+        if (!frame)
+            return false;
+        Record(*frame);
         return true;
     }
 

@@ -34,56 +34,74 @@ namespace PlutoGE::core
 
     struct TaskPool::Impl
     {
+        // One Run's tasks. Lives on its caller's stack until every task has finished and no worker still refers to it.
+        struct Batch
+        {
+            const std::function<void(std::size_t)> *task = nullptr;
+            std::size_t count = 0;
+            std::atomic<std::size_t> next{0};       // Next task to claim.
+            std::atomic<std::size_t> completed{0};
+            unsigned workers = 0;                   // Workers inside Drain; guarded by Impl::mutex.
+            std::exception_ptr error;
+            std::mutex errorMutex;
+
+            [[nodiscard]] bool HasUnclaimedTasks() const noexcept { return next.load(std::memory_order_relaxed) < count; }
+        };
+
         std::mutex mutex;
         std::condition_variable ready, finished;
-        std::mutex runMutex;   // One batch at a time.
         std::vector<std::thread> workers;
-
-        // The active batch. Written under `mutex` before workers are woken.
-        const std::function<void(std::size_t)> *task = nullptr;
-        std::size_t count = 0;
-        std::atomic<std::size_t> next{0};
-        std::uint64_t generation = 0;
-        unsigned busyWorkers = 0;
+        // Batches with tasks left to run, oldest first. Batches from several threads run at once, sharing the workers.
+        std::vector<Batch *> batches;
         bool stopping = false;
-        std::exception_ptr error;
-        std::mutex errorMutex;
 
-        // Claims tasks until the batch is exhausted.
-        void Drain()
+        // Claims and runs the batch's tasks until none are left to claim.
+        void Drain(Batch &batch)
         {
             const bool outer = !t_insideTask;
             t_insideTask = true;
-            for (auto index = next.fetch_add(1, std::memory_order_relaxed); index < count;
-                 index = next.fetch_add(1, std::memory_order_relaxed))
+            for (auto index = batch.next.fetch_add(1, std::memory_order_relaxed); index < batch.count;
+                 index = batch.next.fetch_add(1, std::memory_order_relaxed))
             {
                 try
                 {
-                    (*task)(index);
+                    (*batch.task)(index);
                 }
                 catch (...)
                 {
-                    std::lock_guard lock(errorMutex);
-                    if (!error) error = std::current_exception();
+                    std::lock_guard lock(batch.errorMutex);
+                    if (!batch.error) batch.error = std::current_exception();
+                }
+                if (batch.completed.fetch_add(1, std::memory_order_acq_rel) + 1 == batch.count)
+                {
+                    std::lock_guard lock(mutex);
+                    finished.notify_all();
                 }
             }
             if (outer) t_insideTask = false;
         }
 
+        Batch *FindWork()
+        {
+            for (auto *batch : batches)
+                if (batch->HasUnclaimedTasks()) return batch;
+            return nullptr;
+        }
+
         void WorkerLoop(unsigned index)
         {
             NameCurrentThread(index);
-            std::uint64_t observed = 0;
             std::unique_lock lock(mutex);
             for (;;)
             {
-                ready.wait(lock, [&] { return stopping || generation != observed; });
+                Batch *batch = nullptr;
+                ready.wait(lock, [&] { return stopping || (batch = FindWork()) != nullptr; });
                 if (stopping) return;
-                observed = generation;
+                ++batch->workers;
                 lock.unlock();
-                Drain();
+                Drain(*batch);
                 lock.lock();
-                if (--busyWorkers == 0) finished.notify_one();
+                if (--batch->workers == 0) finished.notify_all();
             }
         }
 
@@ -144,26 +162,46 @@ namespace PlutoGE::core
             return;
         }
 
-        std::lock_guard run(m_impl->runMutex);
         auto &impl = *m_impl;
+        Impl::Batch batch;
+        batch.task = &task;
+        batch.count = count;
         {
             std::lock_guard lock(impl.mutex);
-            impl.task = &task;
-            impl.count = count;
-            impl.next.store(0, std::memory_order_relaxed);
-            impl.error = nullptr;
-            // Every worker wakes; those finding no task left return at once.
-            impl.busyWorkers = static_cast<unsigned>(impl.workers.size());
-            ++impl.generation;
+            impl.batches.push_back(&batch);
         }
         impl.ready.notify_all();
-        impl.Drain();
+        impl.Drain(batch);
         {
+            // Wait for tasks workers claimed, then for every worker to leave the batch before it goes out of scope.
             std::unique_lock lock(impl.mutex);
-            impl.finished.wait(lock, [&] { return impl.busyWorkers == 0; });
-            impl.task = nullptr;
+            impl.finished.wait(lock, [&]
+            {
+                return batch.completed.load(std::memory_order_acquire) == batch.count && batch.workers == 0;
+            });
+            std::erase(impl.batches, &batch);
         }
-        if (impl.error) std::rethrow_exception(impl.error);
+        if (batch.error) std::rethrow_exception(batch.error);
+    }
+
+    std::size_t TaskPool::RangeCount(std::size_t count, std::size_t grain) const noexcept
+    {
+        if (count == 0) return 0;
+        const auto worthwhile = (count + std::max<std::size_t>(grain, 1) - 1) / std::max<std::size_t>(grain, 1);
+        return std::clamp<std::size_t>(worthwhile, 1, Concurrency());
+    }
+
+    void TaskPool::RunRanges(std::size_t count, std::size_t grain,
+                             const std::function<void(std::size_t, std::size_t, std::size_t)> &task)
+    {
+        const auto ranges = RangeCount(count, grain);
+        Run(ranges, [&](std::size_t range)
+        {
+            // The first `count % ranges` ranges take one extra item.
+            const auto size = count / ranges, extra = count % ranges;
+            const auto begin = range * size + std::min(range, extra);
+            task(range, begin, begin + size + (range < extra ? 1 : 0));
+        });
     }
 
     TaskPool &TaskPool::Shared()

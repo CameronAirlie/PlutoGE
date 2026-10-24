@@ -10,7 +10,8 @@ namespace PlutoGE::core
     // batch, so a pool of N workers runs up to N + 1 tasks at once, and Run returns only once each task has finished.
     // Tasks of one batch must not wait on each other. A Run issued from inside a task (a nested batch) executes
     // inline on that thread instead of deadlocking. If tasks throw, the batch still completes and the first exception
-    // is rethrown from Run. Batches from different threads are serialized.
+    // is rethrown from Run. Batches from different threads (a render thread and the game thread, say) run at the
+    // same time and share the workers; each caller works on its own batch.
     class TaskPool
     {
     public:
@@ -30,6 +31,14 @@ namespace PlutoGE::core
 
         // Runs task(0) .. task(count - 1), each exactly once, in any order and on any participating thread.
         void Run(std::size_t count, const std::function<void(std::size_t)> &task);
+
+        // Splits [0, count) into RangeCount(count, grain) contiguous ranges of nearly equal size and runs
+        // task(range, begin, end) once for each. Ranges follow item order, so a caller can give each range its own
+        // output and concatenate them to get the result a serial loop would produce. `grain` is the fewest items worth
+        // a range of their own.
+        void RunRanges(std::size_t count, std::size_t grain,
+                       const std::function<void(std::size_t range, std::size_t begin, std::size_t end)> &task);
+        [[nodiscard]] std::size_t RangeCount(std::size_t count, std::size_t grain) const noexcept;
 
         // True on a thread currently executing a task of any pool.
         [[nodiscard]] static bool InsideTask() noexcept;

@@ -47,11 +47,15 @@ namespace PlutoGE::render
         // 2x per axis (four coverage samples), filtered back to native size.
         // Layout, input coordinates and scene resolution remain unchanged.
         void SetAntialiasingEnabled(bool enabled) { m_antialiasingEnabled = enabled; }
-        // The flags are false when UI is appended to an already active scene frame.
+        // Records into the device's immediate context. The flags are false when UI is appended to an already active
+        // scene frame.
         void BeginFrame(rhi::TextureHandle target, bool beginSubmission = true);
+        // Records the frame's UI into `commands` instead (a frame another context began, or a deferred command list
+        // replayed into one). EndFrame then never submits.
+        void BeginFrame(rhi::TextureHandle target, rhi::ICommandContext &commands);
         void EndFrame(bool submit = true);
         // CPU-side state only; the owning service recovers the command context.
-        void CancelFrame() noexcept { m_frameActive = false; m_outputTarget = {}; m_maskMode = 0; }
+        void CancelFrame() noexcept { m_frameActive = false; m_outputTarget = {}; m_maskMode = 0; m_commands = nullptr; }
 
         Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                     Rml::Span<const int> indices) override;
@@ -74,6 +78,8 @@ namespace PlutoGE::render
         struct Texture;
         struct Parameters;
         rhi::Buffer &AcquireParameterBuffer(const Parameters &parameters);
+        void BeginTarget(rhi::TextureHandle target);
+        [[nodiscard]] rhi::ICommandContext &Commands() { return m_commands ? *m_commands : m_device->GetImmediateContext(); }
         void ApplyScissor();
         [[nodiscard]] rhi::TextureHandle ResolveTexture(const Texture &texture) const;
         // Render texture images were last written as attachments; transition
@@ -81,6 +87,8 @@ namespace PlutoGE::render
         void PrepareRenderTextures();
 
         rhi::IRenderDevice *m_device = nullptr;
+        // The frame's command context, when not the device's immediate one.
+        rhi::ICommandContext *m_commands = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::GraphicsPipeline m_clipPipeline;
         rhi::Texture m_clipTargets[2];

@@ -14,6 +14,8 @@
 #include "OcclusionRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
 #include "ParallelRecordingChecks.h"
+#include "RenderThreadChecks.h"
+#include "GeometryArenaChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
@@ -196,7 +198,11 @@ int main(int argc, char **argv)
 
         // Before the other checks: parallel and streamed recording must match serial, bound recording exactly.
         if (argc <= 1)
+        {
             CheckParallelRecording(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            CheckRenderThreadRecording(device, shaders);
+            CheckGeometryArena(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+        }
 
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
         {

@@ -29,6 +29,7 @@ namespace PlutoGE::scene
     class Component;
     class AmbientLightVolumeComponent;
     class RuntimeComponentIndex;
+    class AnimationPoseBatch;
     class SceneStreaming;
     class NavigationSystem;
     class Entity;
@@ -100,6 +101,9 @@ namespace PlutoGE::scene
         float terrainSubmissionMs = 0.0f;
         float foliageSubmissionMs = 0.0f;
         float physicsMs = 0.0f;
+        // Batched pose evaluation after the component pass (wall time; part of componentsMs).
+        float animationPoseMs = 0.0f;
+        std::uint32_t animationPoseCount = 0;
         std::vector<ComponentTiming> componentTimings;
         std::vector<ComponentTiming> animationTimings;
         std::vector<ComponentTiming> scriptUpdateTimings;
@@ -155,6 +159,10 @@ namespace PlutoGE::scene
         void RecordAnimationTiming(const char *phase, float elapsedMs, const Entity &entity);
         void RecordScriptTiming(const std::string &scriptClass, float elapsedMs, const Entity &entity, bool lateUpdate);
         [[nodiscard]] uint64_t GetUpdateSequence() const { return m_updateSequence; }
+        // True during Update's component pass, while AnimationComponent::Update leaves poses for one batch after it.
+        [[nodiscard]] bool IsBatchingAnimationPoses() const noexcept { return m_batchingAnimationPoses; }
+        // Whether that batch samples poses across the shared task pool (on by default; off evaluates them in turn).
+        void SetParallelAnimationEnabled(bool enabled) noexcept { m_parallelAnimation = enabled; }
         UISystem &GetUISystem();
         const UISystem &GetUISystem() const;
         [[nodiscard]] bool HasNativeRuntimeUI() const;
@@ -304,6 +312,10 @@ namespace PlutoGE::scene
         void UnregisterRuntimeComponent(Component *component);
         void InvalidateRuntimeHierarchy();
         std::unique_ptr<RuntimeComponentIndex> m_runtimeComponents;
+        // Poses AnimationComponent::Update leaves pending during the component pass, evaluated right after it.
+        std::unique_ptr<AnimationPoseBatch> m_animationPoses;
+        bool m_batchingAnimationPoses = false;
+        bool m_parallelAnimation = true;
         friend class SceneStreaming;
         void AdoptSectionEntities(Scene &source, std::uint64_t section);
         void InvalidateSectionNavigation();

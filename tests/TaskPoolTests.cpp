@@ -75,6 +75,65 @@ namespace
         Require(after.load() == 4, "the pool did not recover after an exception");
     }
 
+    // Ranges cover every item once, in order, and never exceed the pool's concurrency.
+    void RangesCoverItemsInOrder()
+    {
+        for (unsigned workers : {0u, 3u})
+        {
+            TaskPool pool(workers);
+            for (std::size_t count : {std::size_t{0}, std::size_t{1}, std::size_t{7}, std::size_t{1000}})
+                for (std::size_t grain : {std::size_t{1}, std::size_t{64}})
+                {
+                    const auto ranges = pool.RangeCount(count, grain);
+                    Require(ranges <= pool.Concurrency() && (count == 0) == (ranges == 0), "range count");
+                    std::vector<std::pair<std::size_t, std::size_t>> bounds(ranges);
+                    pool.RunRanges(count, grain, [&](std::size_t range, std::size_t begin, std::size_t end)
+                    {
+                        bounds[range] = {begin, end};
+                    });
+                    std::size_t expected = 0;
+                    for (const auto &[begin, end] : bounds)
+                    {
+                        Require(begin == expected && end > begin, "ranges must be contiguous and non-empty");
+                        expected = end;
+                    }
+                    Require(expected == count, "ranges must cover every item");
+                }
+        }
+    }
+
+    // A batch from another thread runs while one is in progress (a render thread recording while the game thread
+    // animates): its caller works through it rather than waiting for the first batch to finish.
+    void BatchesFromThreadsOverlap()
+    {
+        TaskPool pool(2);
+        std::atomic<bool> secondDone{false};
+        std::atomic<int> firstStarted{0};
+        std::thread first([&]
+        {
+            pool.Run(2, [&](std::size_t)
+            {
+                firstStarted.fetch_add(1);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (!secondDone)
+                {
+                    if (std::chrono::steady_clock::now() > deadline) throw std::runtime_error("batches were serialized");
+                    std::this_thread::yield();
+                }
+            });
+        });
+        while (firstStarted.load() == 0) std::this_thread::yield();
+        std::atomic<int> ran{0};
+        pool.Run(16, [&](std::size_t) { ran.fetch_add(1); });
+        Require(ran.load() == 16, "the second thread's batch did not run every task");
+        secondDone = true;
+        first.join();
+        // Both finished batches leave the pool usable.
+        std::atomic<int> after{0};
+        pool.Run(8, [&](std::size_t) { after.fetch_add(1); });
+        Require(after.load() == 8, "the pool did not recover after overlapping batches");
+    }
+
     void NestedRunsExecuteInline()
     {
         TaskPool pool(2);
@@ -98,6 +157,8 @@ int main()
         TasksRunConcurrently();
         ExceptionsReachTheCaller();
         NestedRunsExecuteInline();
+        RangesCoverItemsInOrder();
+        BatchesFromThreadsOverlap();
         Require(TaskPool::Shared().WorkerCount() == TaskPool::DefaultWorkerCount(), "shared pool size");
         std::cout << "Task pool tests passed\n";
         return 0;

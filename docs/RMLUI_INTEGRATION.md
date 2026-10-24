@@ -144,6 +144,14 @@ and, with `--opengl`, OpenGL. Pixel readbacks check increased fractional edge
 coverage, transparent compositing, clipping, resize, shared submissions and
 clearing hidden UI.
 
+With the runtime's render thread, `RmlUiRuntime::RenderRhi` takes a command
+context: the UI is laid out and drawn on the game thread into an
+`rhi::DeferredCommandList`, which the render thread replays after the scene
+(`RmlUiRhiRenderer::BeginFrame(target, commands)`; see `docs/frame-pipeline.md`).
+Geometry and textures the UI releases while that frame records are destroyed
+when the next frame begins. The antialiasing test also checks that replayed UI
+matches UI recorded directly.
+
 Canvas scaling also raises the font atlas density, accounting for the RHI's 2x
 supersampling surface. A small patch to pinned RmlUi 6.1 rasterizes scalable font
 outlines at 1–4x density while preserving the original advances, kerning, line

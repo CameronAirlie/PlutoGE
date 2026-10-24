@@ -54,9 +54,15 @@ namespace PlutoGE::render
     // Owns the complete GPU VSM frame graph. CPU work is limited to stable
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
     // request compaction and bounded indirect submission stay on the GPU.
+    class GpuRecordTable;
+
     class VirtualShadowMaps
     {
     public:
+        VirtualShadowMaps();
+        ~VirtualShadowMaps();
+        VirtualShadowMaps(const VirtualShadowMaps &) = delete;
+        VirtualShadowMaps &operator=(const VirtualShadowMaps &) = delete;
         struct Submission
         {
             const BasicDraw *draw = nullptr;
@@ -102,6 +108,8 @@ namespace PlutoGE::render
           rhi::TextureHandle texture;
           std::vector<std::byte> uploaded;
           const void *mesh = nullptr;
+          // The mesh's vertex buffer: consecutive chunks sharing it (a geometry arena page) batch into one indirect draw.
+          rhi::BufferHandle geometry;
           std::uint64_t meshRevision = 0, preparationRevision = 0;
           std::size_t firstInstance = 0, sourceIndex = 0;
           glm::vec4 bounds{0, 0, 0, -1};
@@ -115,10 +123,9 @@ namespace PlutoGE::render
                                    std::size_t count, std::size_t instancedPipeline, std::size_t rigidPipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, 6> m_raster;
-        rhi::Buffer m_rigidDraws;
-        std::vector<std::byte> m_uploadedRigidDraws;
-        std::size_t m_rigidDrawCapacity = 0;
-        bool m_batchRigid = false;
+        // Batched page draws' records and models (see RecordChunks).
+        std::unique_ptr<GpuRecordTable> m_batchedDraws, m_batchedModels;
+        bool m_batchPages = false;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_receiverColor, m_white;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;

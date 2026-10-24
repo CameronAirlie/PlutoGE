@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace PlutoGE::render::rhi
@@ -235,6 +236,17 @@ namespace PlutoGE::render::rhi
             return false;
         }
         virtual void ReleaseTemporalUpscalerContext(std::uint64_t) {}
+        // Render threads. A device that supports one lets a single thread record, submit and present frames while
+        // others keep using it: SetRecordingThread names that thread (an empty id clears it). Meanwhile buffer and
+        // texture updates and resource destruction requested from other threads wait, and the next frame to begin
+        // applies them in request order, before anything it records. Resource creation stays immediate.
+        [[nodiscard]] virtual bool SupportsRecordingThread() const noexcept { return false; }
+        // Submission serials, for reusing memory the GPU may still read. Work that was submitted, or is being
+        // recorded, when PendingSubmission() returned n has finished once CompletedSubmission() reaches n. Devices whose
+        // updates are implicitly ordered with earlier GPU reads report 0 for both.
+        [[nodiscard]] virtual std::uint64_t PendingSubmission() const noexcept { return 0; }
+        [[nodiscard]] virtual std::uint64_t CompletedSubmission() const noexcept { return 0; }
+        virtual void SetRecordingThread(std::thread::id) {}
         [[nodiscard]] virtual RenderDeviceTimingStats GetTimingStats(std::string_view submissionLabel = {}) const
         {
             (void)submissionLabel;

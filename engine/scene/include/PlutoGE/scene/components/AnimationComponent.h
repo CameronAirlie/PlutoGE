@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -168,6 +169,24 @@ namespace PlutoGE::scene
         std::uint64_t GetJointPoseRevision() const { return m_jointPoseRevision; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
+
+        // Pose evaluation in phases, so a scene can sample many components' poses at once. Inside Scene::Update,
+        // Update leaves the new pose pending instead of evaluating it; the scene then, for each pending component,
+        // calls PreparePoseEvaluation (resolves the skinned mesh), EvaluateBasePose (samples, retargets, blends layers
+        // and builds the hierarchy) and FinishPoseEvaluation (applies IK and the ragdoll, publishes phase timing).
+        // EvaluateBasePose touches only this component and immutable clip and skeleton data, so distinct components
+        // may run it on different threads at once; the other phases are serial. GetJointMatrices stays the lazy path
+        // and evaluates a pending pose itself if something reads it first.
+        struct PoseEvaluation
+        {
+            const render::Skeleton *skeleton = nullptr;
+            const std::vector<render::AnimationNode> *nodes = nullptr;
+        };
+        [[nodiscard]] bool IsPoseEvaluationPending() const noexcept { return m_poseEvaluationPending; }
+        std::optional<PoseEvaluation> PreparePoseEvaluation();
+        void EvaluateBasePose(const PoseEvaluation &pose);
+        void FinishPoseEvaluation(const PoseEvaluation &pose);
+
         std::vector<glm::mat4> GetAnimatedJointMatrices(const render::Skeleton &skeleton,
                                                         const std::vector<render::AnimationNode> &nodes);
         glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
@@ -311,7 +330,13 @@ namespace PlutoGE::scene
         void DispatchClipEvents(int clipIndex, float previousTime, float currentTime, bool looping, float speed);
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
+        // Brings m_basePoseMatrices up to date (from the node hierarchy when the mesh has one).
+        void EnsureBasePose(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
         bool IsBasePoseStale(const render::Skeleton &skeleton) const;
+        // Evaluates now, or leaves the pose pending when the scene batches evaluation.
+        void RequestPoseEvaluation();
+        // Reports a phase's time to the scene, or holds it while EvaluateBasePose may run on a worker thread.
+        void RecordPhaseTiming(const char *phase, float elapsedMs);
         // Copies the sampled base pose and applies IK and ragdoll on top.
         void ComposeJointMatrices(const render::Skeleton &skeleton);
         void ApplyRagdoll(const render::Skeleton &skeleton);
@@ -390,5 +415,8 @@ namespace PlutoGE::scene
         bool m_editorPreviewMode = false;
         std::vector<std::pair<std::string, TwoBoneIKTarget>> m_ikTargets;
         std::vector<TwoBoneIKTarget> m_authoredIKTargets;
+        bool m_poseEvaluationPending = false;
+        bool m_holdPhaseTimings = false;
+        std::vector<std::pair<const char *, float>> m_heldPhaseTimings;
     };
 }

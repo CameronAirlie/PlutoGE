@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <array>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -159,6 +160,28 @@ namespace PlutoGE::render
     void SetShaderGraphTimeSeconds(float seconds);
     float ShaderGraphPreviousTimeSeconds();
     void ResetShaderGraphClock();
+    // Pins ShaderGraphTimeSeconds and ShaderGraphPreviousTimeSeconds on the calling thread for its lifetime, so a
+    // frame recorded on a render thread reads the clock it was prepared with while the game advances the global one.
+    // An empty value leaves the thread on the global clock. Pins nest.
+    class ScopedShaderGraphClock
+    {
+    public:
+        struct Values
+        {
+            float time = 0.0f;
+            float previousTime = 0.0f;
+        };
+        explicit ScopedShaderGraphClock(std::optional<Values> values);
+        ~ScopedShaderGraphClock();
+        ScopedShaderGraphClock(const ScopedShaderGraphClock &) = delete;
+        ScopedShaderGraphClock &operator=(const ScopedShaderGraphClock &) = delete;
+        // The clock this thread reads now (pinned or global).
+        [[nodiscard]] static Values Current();
+        // This thread's pin, if any (to carry it to helper threads).
+        [[nodiscard]] static std::optional<Values> Pinned();
+    private:
+        std::optional<Values> m_outer;
+    };
     std::string ShaderGraphRuntimeGlsl(bool vertexStage = false);
     struct ShaderGraphSample
     {

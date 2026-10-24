@@ -575,6 +575,17 @@ int RunRuntime(int argc, char **argv)
         }
     }
 
+    // Record, submit and present each frame on the render thread while the next frame simulates. The profiler window
+    // draws its overlay into presentation from this thread, so it keeps rendering serial; PLUTO_RENDER_THREAD=0 (or
+    // --serial-render for a project benchmark) does too, for comparisons.
+    if (useVulkanRenderer)
+    {
+        const char *renderThreadSetting = std::getenv("PLUTO_RENDER_THREAD");
+        const bool renderThreadDisabled = renderThreadSetting && std::string_view(renderThreadSetting) == "0";
+        engine.GetRhiRenderService().SetRenderThreadEnabled(
+            !runtimeProfiler && !renderThreadDisabled && !(projectBenchmark && projectBenchmark->serialRender));
+    }
+
     while (!window.ShouldClose())
     {
         PlutoGE::core::CpuTrace cpuTrace(runtimeProfiler && runtimeProfiler->profiler.IsRecording());
@@ -614,6 +625,8 @@ int RunRuntime(int argc, char **argv)
         {
             const std::string reference = project->FindSceneAssetReference(*requestedScene);
             const std::string requestedPath = reference.empty() ? std::string{} : engine.GetAssetManager().ResolveAssetPath(reference);
+            // The loading screen records on this thread.
+            (void)engine.GetRhiRenderService().WaitForFrame();
             if (!loadWithScreen(requestedPath, [&](auto nextScene)
                 {
                     auto previousScene = std::move(scene);
@@ -814,7 +827,9 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.renderSize.width), static_cast<double>(render.renderSize.height),
                         static_cast<double>(render.outputSize.width), static_cast<double>(render.outputSize.height),
                         static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount),
-                        render.parallelRecording ? 1.0 : 0.0, rhiDevice.descriptorCpuMs, static_cast<double>(rhiDevice.descriptorBindCalls), 0};
+                        render.parallelRecording ? 1.0 : 0.0, rhiDevice.descriptorCpuMs, static_cast<double>(rhiDevice.descriptorBindCalls),
+                        static_cast<double>(rhiDevice.uniformBytesUploaded), static_cast<double>(rhiDevice.persistentUniformBytesUploaded),
+                        static_cast<double>(render.virtualShadows.pageDrawBatches), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)
@@ -871,6 +886,9 @@ int RunRuntime(int argc, char **argv)
 #endif
     }
 
+    // Finish the frame in flight before reading its output or releasing what it renders.
+    if (useVulkanRenderer && !engine.GetRhiRenderService().WaitForFrame())
+        std::cerr << "The last runtime frame failed to render." << std::endl;
     runtimeProfiler.reset();
     runtimeUpscaler.Shutdown();
     if (runtimeRenderTarget)

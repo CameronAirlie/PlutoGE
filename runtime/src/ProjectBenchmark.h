@@ -47,15 +47,17 @@ namespace PlutoGE
         std::filesystem::path capture;
         std::size_t frames = 600, warmup = 120;
         bool frozenRender = false;
+        // Records, submits and presents on the calling thread instead of the render thread (for comparisons).
+        bool serialRender = false;
         // Geometry shading diagnostic applied to every measured frame.
         render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
         static constexpr float FixedDelta = 1.0f / 60.0f;
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 7) // project, output, two counts and three switches
+            if (args.size() < 2 || args.size() > 8) // project, output, two counts and four switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>]");
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -74,6 +76,7 @@ namespace PlutoGE
                 constexpr std::string_view capturePrefix = "--capture=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
+                else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
                 else if (value.starts_with(capturePrefix) && result.capture.empty())
                 {
                     result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
@@ -110,7 +113,8 @@ namespace PlutoGE
             "translation_ms", "skinning_upload_ms", "scene_setup_ms", "recording_ms", "begin_frame_ms", "shadow_recording_ms", "geometry_recording_ms", "post_recording_ms", "submit_ms",
             "scripts_ms", "animation_components_ms", "skinning_wait_ms", "skinning_caller_ms", "hud_sync_ms", "hud_update_ms", "hud_render_ms", "skinning_vertices", "geometry_draws", "shadow_draws",
             "internal_width", "internal_height", "output_width", "output_height", "opaque_triangles", "geometry_instances",
-            "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "gpu_observation_id"};
+            "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "uniform_bytes", "persistent_uniform_bytes", "vsm_page_batches",
+            "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

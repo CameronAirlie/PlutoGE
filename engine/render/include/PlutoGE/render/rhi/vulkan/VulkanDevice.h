@@ -4,6 +4,7 @@
 
 #include <volk.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -61,6 +62,10 @@ namespace PlutoGE::render::rhi::vulkan
                                       const TemporalUpscalerFrame &frame) override;
         void ReleaseTemporalUpscalerContext(std::uint64_t contextId) override;
         [[nodiscard]] RenderDeviceTimingStats GetTimingStats(std::string_view submissionLabel = {}) const override;
+        [[nodiscard]] bool SupportsRecordingThread() const noexcept override;
+        void SetRecordingThread(std::thread::id thread) override;
+        [[nodiscard]] std::uint64_t PendingSubmission() const noexcept override;
+        [[nodiscard]] std::uint64_t CompletedSubmission() const noexcept override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);
@@ -75,6 +80,8 @@ namespace PlutoGE::render::rhi::vulkan
 
     private:
         TextureHandle CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data);
+        [[nodiscard]] bool DefersToRecordingThread() const;
+        void Defer(std::function<void()> work);
 
         friend class VulkanRecorder;
         friend class VulkanCommandContext;

@@ -1,14 +1,18 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/scene/Scene.h"
 
+#include <iostream>
+
 namespace PlutoGE::render
 {
     bool RhiRenderService::SetGraphicsQuality(const GraphicsQuality &quality) noexcept
     {
         if (!quality.IsValid()) return false;
+        (void)WaitForFrame();
         m_graphicsQuality = quality;
         if (m_sceneRenderer) m_sceneRenderer->SetGraphicsQuality(quality);
         m_cameraStack.SetGraphicsQuality(quality);
@@ -36,6 +40,9 @@ namespace PlutoGE::render
 
     void RhiRenderService::Shutdown()
     {
+        (void)WaitForFrame();
+        m_renderThread.reset();
+        m_runtimeUiCommands.Clear();
         m_loadingRenderer.Shutdown();
         RmlUiRuntime::Get().Shutdown();
         m_cameraStack.Shutdown();
@@ -56,12 +63,74 @@ namespace PlutoGE::render
                                           const RhiSceneRenderer::TexturePixelReader &texturePixelReader,
                                           const scene::Scene *scene)
     {
+        (void)WaitForFrame();
         return m_device && m_renderTextures.Render(*m_device, views, texturePixelReader, scene);
     }
 
     rhi::TextureHandle RhiRenderService::GetPresentedSceneTexture() const noexcept
     {
         return m_sceneRenderer ? m_sceneRenderer->GetColorTexture() : rhi::TextureHandle{};
+    }
+
+    void RhiRenderService::SetRenderThreadEnabled(bool enabled)
+    {
+        (void)WaitForFrame();
+        if (!enabled || !m_device || !m_device->SupportsRecordingThread())
+            m_renderThread.reset();
+        else if (!m_renderThread)
+            m_renderThread = std::make_unique<core::FrameWorker>("PlutoGE render thread");
+    }
+
+    bool RhiRenderService::WaitForFrame()
+    {
+        if (!m_renderThread)
+            return true;
+        bool succeeded = true;
+        try
+        {
+            core::CpuScope waitScope("Render thread wait", core::CpuCategory::Wait);
+            m_renderThread->Wait();
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "The render thread failed to record or present a frame: " << error.what() << std::endl;
+            succeeded = false;
+        }
+        // The render thread is idle: publish the completed frame's statistics.
+        if (m_sceneRenderer)
+        {
+            m_completedTimingStats = m_sceneRenderer->GetTimingStats();
+            m_completedUpscalerStatus = m_sceneRenderer->GetTemporalUpscalerStatus();
+        }
+        return succeeded;
+    }
+
+    void RhiRenderService::SubmitFrame(RhiSceneRenderer::PreparedFrame frame)
+    {
+        m_renderThread->Submit([this, frame = std::move(frame)]() mutable
+        {
+            // Device updates and destruction other threads request meanwhile wait for the next frame.
+            m_device->SetRecordingThread(std::this_thread::get_id());
+            struct ReleaseRecording
+            {
+                rhi::IRenderDevice &device;
+                ~ReleaseRecording() { device.SetRecordingThread({}); }
+            } release{*m_device};
+            auto &commands = m_device->GetImmediateContext();
+            try
+            {
+                m_sceneRenderer->Record(frame);
+                m_runtimeUiCommands.Replay(commands);
+                commands.Submit();
+            }
+            catch (...)
+            {
+                commands.RecoverInterruptedFrame();
+                throw;
+            }
+            if (!m_swapchain->Present(m_sceneRenderer->GetColorTexture(), m_graphicsApi == rhi::GraphicsApi::Vulkan))
+                throw std::runtime_error("The swapchain could not present the frame");
+        });
     }
 
     bool RhiRenderService::RenderSceneAndPresent(const CameraData &cameraData,
@@ -73,6 +142,8 @@ namespace PlutoGE::render
                                                  std::span<const CameraView> overlays,
                                                  std::optional<std::span<scene::Light *const>> lights)
     {
+        if (!WaitForFrame())
+            return false;
         if (!m_swapchain || !m_renderer)
             return false;
         if (!m_sceneRenderer)
@@ -85,13 +156,13 @@ namespace PlutoGE::render
             sceneRenderer->SetGraphicsQuality(m_graphicsQuality);
             m_sceneRenderer = std::move(sceneRenderer);
         }
+        const bool runtimeUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();
         // Let the first UI frame initialize its pipelines and upload resources
         // outside an active scene command buffer. Subsequent frames can safely
         // append UI rendering to the scene submission.
-        const bool combineRuntimeUiSubmission = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI() &&
-                                                RmlUiRuntime::Get().IsInitialized() &&
+        const bool combineRuntimeUiSubmission = runtimeUi && RmlUiRuntime::Get().IsInitialized() &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
-        if (scene && cameraData.renderRuntimeUI) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
+        if (runtimeUi) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
         BasicRenderer::BeforeTemporalResolve compose;
         if (const auto *source = m_renderTextures.TakeSkinningSource())
@@ -102,11 +173,32 @@ namespace PlutoGE::render
                 if (!m_cameraStack.CompositeBeforeTemporalResolve(*m_device, base, jitter, overlays, texturePixelReader, scene, m_sceneRenderer.get()))
                     throw std::runtime_error("Overlay cameras could not be composited before temporal resolve");
             };
+
+        // Overlay cameras composite from the scene while recording, so those frames stay on this thread.
+        if (m_renderThread && overlays.empty() && (!runtimeUi || combineRuntimeUiSubmission))
+        {
+            auto frame = m_sceneRenderer->Prepare(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting,
+                                                  commands, commands, postProcessEffects, atmosphere, texturePixelReader,
+                                                  PostProcessDebugView::None, false, scene, lights);
+            if (!frame)
+                return false;
+            // The UI reads its documents now; the render thread replays what it drew after the scene.
+            m_runtimeUiCommands.Clear();
+            m_runtimeUiCommands.SetReplayTarget(&m_device->GetImmediateContext());
+            if (runtimeUi)
+                RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
+                                             static_cast<int>(m_swapchain->GetWidth()),
+                                             static_cast<int>(m_swapchain->GetHeight()), ++m_frameSequence,
+                                             cameraData.view, cameraData.projection, false, &m_runtimeUiCommands);
+            SubmitFrame(std::move(*frame));
+            return true;
+        }
+
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
                                      !combineRuntimeUiSubmission, scene, lights, compose))
             return false;
-        if (cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI())
+        if (runtimeUi)
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
                                          static_cast<int>(m_swapchain->GetWidth()),
                                          static_cast<int>(m_swapchain->GetHeight()), ++m_frameSequence,
@@ -114,6 +206,12 @@ namespace PlutoGE::render
                                          !combineRuntimeUiSubmission);
         if (combineRuntimeUiSubmission)
             m_device->GetImmediateContext().Submit();
+        if (m_renderThread)
+        {
+            // Keep the published statistics current for frames rendered on this thread.
+            m_completedTimingStats = m_sceneRenderer->GetTimingStats();
+            m_completedUpscalerStatus = m_sceneRenderer->GetTemporalUpscalerStatus();
+        }
         // Scene output uses the same bottom-up texture convention as editor viewports.
         return m_swapchain->Present(m_sceneRenderer->GetColorTexture(),
                                     m_graphicsApi == rhi::GraphicsApi::Vulkan);
@@ -121,6 +219,7 @@ namespace PlutoGE::render
 
     bool RhiRenderService::Resize(std::uint32_t width, std::uint32_t height)
     {
+        (void)WaitForFrame();
         if (!m_renderer || !m_swapchain || !m_swapchain->Resize(width, height) ||
             !m_renderer->Resize(m_swapchain->GetWidth(), m_swapchain->GetHeight()))
             return false;
@@ -132,6 +231,7 @@ namespace PlutoGE::render
                                             const BasicLighting &lighting,
                                             std::span<const BasicDraw> draws)
     {
+        (void)WaitForFrame();
         if (!m_renderer || !m_swapchain)
             return false;
         if (m_renderer->GetWidth() != m_swapchain->GetWidth() || m_renderer->GetHeight() != m_swapchain->GetHeight())
@@ -144,6 +244,7 @@ namespace PlutoGE::render
 
     bool RhiRenderService::Present()
     {
+        (void)WaitForFrame();
         if (!m_renderer || !m_swapchain)
             return false;
         if (m_renderer->GetWidth() != m_swapchain->GetWidth() ||
@@ -164,6 +265,7 @@ namespace PlutoGE::render
     bool RhiRenderService::RenderLoading(std::uint32_t width, std::uint32_t height,
                                          float elapsedSeconds, unsigned stage, const LoadingScreenStyle &style)
     {
+        (void)WaitForFrame();
         if (!m_device) return false;
         if (!m_loadingRenderer.IsInitialized() && !m_loadingRenderer.Initialize(*m_device)) return false;
         return m_loadingRenderer.Render(width, height, elapsedSeconds, stage, style);
@@ -177,6 +279,7 @@ namespace PlutoGE::render
 
     BasicMesh RhiRenderService::CreateMesh(const BasicMeshData &data)
     {
+        (void)WaitForFrame();
         if (!m_renderer)
             throw std::logic_error("RHI render service is not initialized");
         return m_renderer->CreateMesh(data);
@@ -186,6 +289,7 @@ namespace PlutoGE::render
     {
         if (m_upscalerOptions == options)
             return;
+        (void)WaitForFrame();
         m_upscalerOptions = options;
         if (m_renderer)
             m_renderer->SetTemporalUpscalerOptions(options);

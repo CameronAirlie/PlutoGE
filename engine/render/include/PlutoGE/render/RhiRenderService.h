@@ -8,7 +8,9 @@
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include <memory>
+#include "PlutoGE/core/FrameWorker.h"
 #include "PlutoGE/render/LoadingScreenRenderer.h"
+#include "PlutoGE/render/rhi/DeferredCommandList.h"
 
 namespace PlutoGE::scene
 {
@@ -37,8 +39,22 @@ namespace PlutoGE::render
         [[nodiscard]] const TemporalUpscalerStatus &GetTemporalUpscalerStatus() const noexcept
         {
             static const TemporalUpscalerStatus empty;
+            if (m_renderThread) return m_completedUpscalerStatus;
             return m_sceneRenderer ? m_sceneRenderer->GetTemporalUpscalerStatus() : empty;
         }
+
+        // Render thread. When enabled and the device supports one, RenderSceneAndPresent prepares the frame on the
+        // calling thread (everything that reads the scene: translation, visibility, render textures' sources, runtime
+        // UI layout and drawing, which is captured as a command list) and returns while a render thread records,
+        // submits and presents it, so the caller's next simulation step overlaps that work. A frame whose recording
+        // reads the scene (overlay cameras) or the first runtime-UI frame renders on the calling thread instead.
+        // While a frame is in flight the caller must not use the device's command context or this service's renderers
+        // directly; every call into this service other than the stats getters waits for that frame first.
+        void SetRenderThreadEnabled(bool enabled);
+        [[nodiscard]] bool IsRenderThreadEnabled() const noexcept { return m_renderThread != nullptr; }
+        // Blocks until the frame in flight, if any, has been presented. Returns false when recording or presenting it
+        // failed (the error is logged and the device recovered).
+        [[nodiscard]] bool WaitForFrame();
 
         [[nodiscard]] bool Resize(std::uint32_t width, std::uint32_t height);
         [[nodiscard]] bool RenderAndPresent(const glm::mat4 &viewProjection,
@@ -75,9 +91,11 @@ namespace PlutoGE::render
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 
+        // With the render thread, the stats of the last completed frame (published by WaitForFrame).
         [[nodiscard]] const RhiSceneTimingStats &GetTimingStats() const noexcept
         {
             static const RhiSceneTimingStats empty;
+            if (m_renderThread) return m_completedTimingStats;
             return m_sceneRenderer ? m_sceneRenderer->GetTimingStats() : empty;
         }
 
@@ -97,5 +115,12 @@ namespace PlutoGE::render
         rhi::TemporalUpscalerOptions m_upscalerOptions;
         bool m_hostFrameReady = false;
         LoadingScreenRenderer m_loadingRenderer;
+        // Render thread state: the worker, the frame's runtime UI captured for it, and stats published on completion.
+        std::unique_ptr<core::FrameWorker> m_renderThread;
+        rhi::DeferredCommandList m_runtimeUiCommands;
+        RhiSceneTimingStats m_completedTimingStats;
+        TemporalUpscalerStatus m_completedUpscalerStatus;
+        // Records a prepared frame, its runtime UI and presentation on the render thread.
+        void SubmitFrame(RhiSceneRenderer::PreparedFrame frame);
     };
 }

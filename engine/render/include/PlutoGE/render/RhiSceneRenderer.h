@@ -5,6 +5,7 @@
 
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/ShaderGraph.h"
 
 #include <functional>
 #include <future>
@@ -208,6 +209,47 @@ namespace PlutoGE::render
                     const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
                     std::optional<glm::vec2> sharedClipJitter = std::nullopt,
                     BasicRenderer::RecordingMode recordingMode = BasicRenderer::RecordingMode::Begin);
+
+        // Render in two phases, so a render thread can record a frame while the game simulates the next one.
+        // Prepare does everything that reads the scene, assets and render commands (translation, visibility, GI
+        // selection, particles, decals, uploads of new resources) and returns what recording needs. Record records
+        // and, when the frame asked for it, submits; it reads only the PreparedFrame, this renderer and its device
+        // resources. A PreparedFrame borrows this renderer's preparation caches: record it before the next Prepare,
+        // and do not call this renderer from another thread while Record runs. Render is Prepare then Record.
+        struct PreparedFrame
+        {
+            glm::mat4 viewProjection{1.0f};
+            BasicLighting lighting;
+            std::span<const BasicDraw> draws, shadowDraws, giDraws;
+            std::span<const BasicParticleDraw> particles;
+            std::vector<BasicPostProcessEffect> effects;
+            std::vector<BasicDecalDraw> decals;
+            PostProcessDebugView debugView = PostProcessDebugView::None;
+            bool useTemporalUpscaler = false;
+            std::optional<rhi::TemporalUpscalerFrame> upscalerFrame;
+            glm::mat4 unjitteredViewProjection{1.0f};
+            bool submit = true;
+            BasicRenderer::BeforeTemporalResolve beforeTemporalResolve;
+            bool linearOutput = false;
+            std::optional<glm::vec2> sharedClipJitter;
+            BasicRenderer::RecordingMode recordingMode = BasicRenderer::RecordingMode::Begin;
+            rhi::Extent2D renderSize{}, outputSize{};
+            bool virtualShadowCapacityFallback = false;
+            // The shader-graph clock the frame was prepared with; Record pins it on its thread.
+            ScopedShaderGraphClock::Values clock;
+            float preparationMs = 0.0f, recordingSetupMs = 0.0f;
+        };
+        [[nodiscard]] std::optional<PreparedFrame> Prepare(
+            std::uint32_t width, std::uint32_t height, const CameraData &cameraData, const BasicLighting &lighting,
+            RenderCommandView commands, RenderCommandView shadowCommands,
+            std::span<IPostProcessEffect *const> postProcessEffects = {},
+            std::span<const BasicPostProcessEffect> atmosphereEffects = {}, const TexturePixelReader &texturePixelReader = {},
+            PostProcessDebugView debugView = PostProcessDebugView::None, bool submit = true,
+            const scene::Scene *scene = nullptr, std::optional<std::span<scene::Light *const>> lights = std::nullopt,
+            const BasicRenderer::BeforeTemporalResolve &beforeTemporalResolve = {}, bool linearOutput = false,
+            std::optional<glm::vec2> sharedClipJitter = std::nullopt,
+            BasicRenderer::RecordingMode recordingMode = BasicRenderer::RecordingMode::Begin);
+        void Record(PreparedFrame &frame);
 
         [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept;
         [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept;
